@@ -7,6 +7,7 @@ import {
   Constants as HarnessConstants,
   FlowScenario,
   Report,
+  Steps,
   SwapScenarioContext,
   SwapUserIdentities,
   WireReserveTool,
@@ -22,10 +23,7 @@ import {
 } from "@wireio/cluster-tool"
 import { SwapFromWireScenarioConstants as Constants } from "./SwapFromWireScenarioConstants.js"
 import { SwapFromWireScenarioOutputs as Outputs } from "./SwapFromWireScenarioOutputs.js"
-import {
-  SwapFromWireScenarioUserSteps,
-  SwapFromWireScenarioUwritSteps
-} from "./steps/index.js"
+import { SwapFromWireScenarioUwritSteps } from "./steps/index.js"
 
 const {
   SysioContractName,
@@ -244,7 +242,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       "ProvisionDepositor",
       "Provision the WIRE depositor, funded from the treasury"
     ).push(
-      SwapFromWireScenarioUserSteps.planProvisionWire<SwapScenarioContext>(
+      Steps.user.planProvisionWire<SwapScenarioContext>(
         Actor.User,
         "provision-depositor",
         `provision ${Constants.DepositorAccount} + fund ${Constants.DepositorFunding} WIRE base units from the treasury`,

@@ -11,6 +11,7 @@ import {
 } from "@wireio/opp-typescript-models"
 import {
   attestationEntryTag,
+  containsDesyndicateLIQ,
   containsLIQYield,
   containsSwapRevert,
   containsSyndicateLIQ,
@@ -159,6 +160,34 @@ describe("oppEnvelopeScan", () => {
           attestationEntryTag(AttestationType.SWAP_REVERT)
         )
       ).toBe(false)
+    })
+  })
+
+  describe("containsDesyndicateLIQ", () => {
+    it("defaults to the depot → Solana direction the redemption travels", () => {
+      writeArtifact(
+        DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
+        Buffer.from(DesyndicateLIQTagBytes)
+      )
+      expect(containsDesyndicateLIQ(oppDirectory)).toBe(true)
+      expect(
+        containsDesyndicateLIQ(
+          oppDirectory,
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+        )
+      ).toBe(false)
+    })
+
+    it("is false for a missing directory", () => {
+      expect(containsDesyndicateLIQ(Path.join(oppDirectory, "absent"))).toBe(false)
+    })
+
+    it("does not match the two inbound liq types", () => {
+      writeArtifact(
+        DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
+        Buffer.from([...SyndicateLIQTagBytes, ...LIQYieldTagBytes])
+      )
+      expect(containsDesyndicateLIQ(oppDirectory)).toBe(false)
     })
   })
 

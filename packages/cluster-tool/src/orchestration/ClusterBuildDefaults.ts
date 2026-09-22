@@ -30,7 +30,7 @@ import { ContractSteps } from "./steps/ContractSteps.js"
 
 const log = getLogger(__filename)
 
-const { SysioContractName } = SysioContracts
+const { SysioContractName, SysioContractAccount } = SysioContracts
 const { DeployMode } = ContractSteps
 const { Actor } = Report
 
@@ -47,6 +47,14 @@ const InitialSysSupply = "1000000000.0000 SYS"
 const ProducerSysGrant = "1000000.0000 SYS"
 /** The WIRE emissions token supply (9-decimal). */
 const WireSupply = "1000000000.000000000 WIRE"
+/** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
+const WireSymbol = "9,WIRE"
+/**
+ * `sysio.liq`'s T5 kicker: the share of every yield intake requested from T5
+ * and folded into the same index bump, in basis points. Mirrors the contract
+ * default, so a cluster pays yield the way the network will.
+ */
+const LiqKickerBps = 200
 /** WIRE-leg swap fee (bps) + collateral-lock challenge window (dev). */
 const SwapFeeBps = 30
 const CollateralLockDurationMs = 600_000
@@ -551,7 +559,9 @@ export namespace ClusterBuildDefaults {
       SysioContractName.uwrit,
       SysioContractName.reserv,
       SysioContractName.chalg,
-      SysioContractName.dclaim
+      SysioContractName.dclaim,
+      SysioContractName.swap,
+      SysioContractName.liq
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -897,6 +907,59 @@ export namespace ClusterBuildDefaults {
         prerequisites,
         "MockReserves",
         "Seed the 8 mock (chain, token) PRIMARY reserves",
+        {}
+      )
+    }
+    // The shadow-liq system, in the order sysio.liq's README gives a deployment:
+    // the swap's governance + system token, one shadow symbol per registered liq
+    // token, the T5 kicker. Registry setup a real depot performs too — unconditional.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "SwapConfig",
+      "Configure sysio.swap"
+    ).push(
+      Steps.contracts.sysio.swap.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-swap",
+        "set the swap's fee authority and system token",
+        {},
+        {
+          fee_authority: SysioContractAccount[SysioContractName.system],
+          system_token: {
+            sym: WireSymbol,
+            contract: SysioContractAccount[SysioContractName.token]
+          }
+        }
+      )
+    )
+    Steps.registry.planShadowLiqTokens<C>(
+      prerequisites,
+      "ShadowLiqTokens",
+      "Open the shadow liq symbols on sysio.liq",
+      {}
+    )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "LiqConfig",
+      "Configure sysio.liq"
+    ).push(
+      Steps.contracts.sysio.liq.planSetkicker<C>(
+        Actor.Sysio,
+        "configure-liq-kicker",
+        "set the T5 yield kicker",
+        {},
+        { bps: LiqKickerBps }
+      )
+    )
+    // Mock shadow-liq yield pools — opt-in via `--enable-mock-liq-pools` (default
+    // off, so a real / external depot never mints unbacked shadow). Seeded HERE,
+    // pre-EpochBootstrap, because the contract gates `regliqpool` to the epoch-0
+    // bootstrap window, exactly like `regreserve`.
+    if (config.enableMockLiqPools) {
+      Steps.registry.planMockLiqPools<C>(
+        prerequisites,
+        "MockLiqPools",
+        "Seed the 2 mock shadow-liq yield pools on sysio.swap",
         {}
       )
     }

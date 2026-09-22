@@ -11,6 +11,7 @@ import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
 import { StartScriptSteps } from "./StartScriptSteps.js"
+import { UserSteps } from "./UserSteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
 import { SolanaLiqsolSurfaceSteps } from "../solana/SolanaLiqsolSurfaceSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
@@ -57,4 +58,6 @@ export namespace Steps {
   export import debuggingServerBundle = DebuggingServerBundleSteps
   /** Per-daemon `start.sh` emission (create + create-external-config rebind). */
   export import startScript = StartScriptSteps
+  /** WIRE-side user identities a flow scenario acts as. */
+  export import user = UserSteps
 }

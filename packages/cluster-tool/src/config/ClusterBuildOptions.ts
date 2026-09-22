@@ -68,6 +68,14 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
+   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an
+   * external / real-world depot mints NO unbacked shadow unless a caller (or a
+   * flow's scenario `defaults`) opts in. The depot contract gates `regliqpool`
+   * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
+   */
+  enableMockLiqPools?: boolean
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit

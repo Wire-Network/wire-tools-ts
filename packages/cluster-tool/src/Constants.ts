@@ -117,6 +117,8 @@ export namespace Constants {
     "sysio.reserv",
     "sysio.chalg",
     "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"
@@ -320,7 +322,9 @@ export namespace Constants {
     "sysio.uwrit": "contracts/sysio.uwrit",
     "sysio.reserv": "contracts/sysio.reserv",
     "sysio.chalg": "contracts/sysio.chalg",
-    "sysio.dclaim": "contracts/sysio.dclaim"
+    "sysio.dclaim": "contracts/sysio.dclaim",
+    "sysio.swap": "contracts/sysio.swap",
+    "sysio.liq": "contracts/sysio.liq"
   } as const
 
   export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
@@ -335,7 +339,9 @@ export namespace Constants {
     "sysio.uwrit",
     "sysio.reserv",
     "sysio.chalg",
-    "sysio.dclaim"
+    "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq"
   ] as const
 
   /** Plugins loaded on a batch-operator node. */

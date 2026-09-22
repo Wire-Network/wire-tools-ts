@@ -47,6 +47,24 @@ describe("confirmSignature", () => {
     ).rejects.toThrow(/tx failed/)
   })
 
+  it("throws when a CONFIRMED tx carries an error — inclusion is not success", async () => {
+    // A transaction the runtime processed with an error is still included in a
+    // block, so its status reaches `confirmed` too. Returning on the status
+    // reported an on-chain `EpochRewardsActive` deposit refusal as OK, and the
+    // step after it found the token account that deposit never created.
+    mockStatus("confirmed", "tx-error")
+    await expect(
+      confirmSignature(connection, "sig", "test", { intervalMs: 1 })
+    ).rejects.toThrow(/tx failed/)
+  })
+
+  it("throws when a FINALIZED tx carries an error", async () => {
+    mockStatus("finalized", "tx-error")
+    await expect(
+      confirmSignature(connection, "sig", "test", { intervalMs: 1 })
+    ).rejects.toThrow(/tx failed/)
+  })
+
   it("throws on the deadline when never confirmed", async () => {
     mockStatus("processed")
     await expect(

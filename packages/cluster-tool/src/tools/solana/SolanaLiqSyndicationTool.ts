@@ -39,6 +39,7 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  getAccount,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 
@@ -424,6 +425,40 @@ export namespace SolanaLiqSyndicationTool {
       yieldAccumulatedLiqsol: BigInt(state.yieldAccumulatedLiqsol.toString()),
       liqYieldReported: BigInt(state.liqYieldReported.toString()),
       liqSequence: BigInt(state.liqSequence.toString())
+    }
+  }
+
+  /**
+   * A user's liqSOL balance — the Token-2022 amount on the ATA the liqsol mint
+   * derives for their wallet. A READ; `0n` before the ATA exists (a user who
+   * has never held liqSOL). The redemption case of a flow reads it before and
+   * after `DESYNDICATE_LIQ` lands to prove the outpost paid.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param userName - Durable handle of the user's persisted keypair.
+   * @returns The ATA's raw liqSOL amount (9-decimal base units).
+   */
+  export async function readLiqsolBalance<C extends ClusterBuildContext>(
+    ctx: C,
+    userName: string
+  ): Promise<bigint> {
+    const user = SolanaFundingTool.loadKeypair(ctx.config.dataPath, userName),
+      { userAta } = deriveUserPdas(ctx.config.solanaPath, user.publicKey)
+    try {
+      return (
+        await getAccount(
+          ctx.solana.connection,
+          userAta,
+          undefined,
+          TOKEN_2022_PROGRAM_ID
+        )
+      ).amount
+    } catch (error) {
+      // A missing ATA is the expected never-held case — breadcrumb, not a failure.
+      log.debug(
+        `readLiqsolBalance(${userName} → ${userAta.toBase58()}): ${error instanceof Error ? error.message : String(error)}`
+      )
+      return 0n
     }
   }
 

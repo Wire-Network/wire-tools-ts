@@ -92,4 +92,88 @@ describe("Steps.registry", () => {
       expect(native?.initial_chain_amount).toBe(FullChainSeed)
     })
   })
+
+  describe("planShadowLiqTokens", () => {
+    const LiqethCode = SlugName.from("LIQETH")
+    const SolanaCode = SlugName.from("SOLANA")
+
+    it("returns a Phase of one Sysio create step per liq token", () => {
+      const phase = Steps.registry.planShadowLiqTokens(
+        newBuild(),
+        "ShadowLiqTokens",
+        "open the shadow symbols",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps).toHaveLength(2)
+      expect(
+        phase.steps.every(step => step.actor === Report.Actor.Sysio)
+      ).toBe(true)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "create-shadow-liqeth",
+        "create-shadow-liqsol"
+      ])
+      phase.steps.forEach(step => {
+        expect(step.input.kind).toBe("LiqContractSteps.CreateInput")
+      })
+    })
+
+    it("opens each shadow at the liq precision, bound to its own chain and token", () => {
+      const rows = Steps.registry.ShadowLiqTokenRegistrations
+      expect(rows).toHaveLength(2)
+      const liqeth = rows.find(row => row.token_code.value === LiqethCode)
+      expect(liqeth?.sym).toBe("9,LIQETH")
+      expect(liqeth?.chain_code.value).toBe(SlugName.from("ETHEREUM"))
+      const liqsol = rows.find(row => row.chain_code.value === SolanaCode)
+      expect(liqsol?.sym).toBe("9,LIQSOL")
+      expect(liqsol?.token_code.value).toBe(SlugName.from("LIQSOL"))
+    })
+  })
+
+  describe("planMockLiqPools", () => {
+    const LiqsolCode = SlugName.from("LIQSOL")
+    // The dev-config seeds; the pacing is the dev cluster's own (one-tick sales).
+    const PoolSeed = 10_000_000_000
+    const PoolFee = 30
+    const HorizonSec = 30
+    const DepthCapBps = 3000
+    const ClipFloor = 1000
+
+    it("returns a Phase of one Sysio regliqpool step per shadow", () => {
+      const phase = Steps.registry.planMockLiqPools(
+        newBuild(),
+        "MockLiqPools",
+        "seed the mock yield pools",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps).toHaveLength(2)
+      expect(
+        phase.steps.every(step => step.actor === Report.Actor.Sysio)
+      ).toBe(true)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "seed-liq-pool-ethereum-liqeth",
+        "seed-liq-pool-solana-liqsol"
+      ])
+      phase.steps.forEach(step => {
+        expect(step.input.kind).toBe("LiqContractSteps.RegliqpoolInput")
+      })
+    })
+
+    it("names each pair token after its shadow, seeds both legs equally, and paces for one-tick sales", () => {
+      const rows = Steps.registry.MockLiqPoolRegistrations
+      expect(rows).toHaveLength(2)
+      const liqsol = rows.find(row => row.token_code.value === LiqsolCode)
+      expect(liqsol?.pair_symbol).toBe("9,LIQSOLP")
+      expect(liqsol?.chain_code.value).toBe(SlugName.from("SOLANA"))
+      expect(liqsol?.initial_chain_amount).toBe(PoolSeed)
+      expect(liqsol?.initial_wire_amount).toBe(PoolSeed)
+      expect(liqsol?.fee).toBe(PoolFee)
+      expect(liqsol?.locked_shares).toBe(0)
+      expect(liqsol?.conversion_horizon_sec).toBe(HorizonSec)
+      expect(liqsol?.depth_cap_bps).toBe(DepthCapBps)
+      expect(liqsol?.clip_floor).toBe(ClipFloor)
+      expect(rows.find(row => row.pair_symbol === "9,LIQETHP")).toBeDefined()
+    })
+  })
 })

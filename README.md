@@ -137,6 +137,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real `synd` / `report_liq_yield` emit `SYNDICATE_LIQ` / `LIQ_YIELD`; depot keeps advancing |
+| `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
@@ -353,6 +354,7 @@ command comes first).
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
+| `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at bootstrap — mints the pool shadow from nothing, so a real / external depot never sets it |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |

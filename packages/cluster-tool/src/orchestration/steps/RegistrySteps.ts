@@ -14,6 +14,7 @@ import {
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import type { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { ReservContractSteps } from "./contracts/sysio/ReservContractSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
@@ -81,6 +82,78 @@ export namespace RegistrySteps {
     MockReservePairs.map(([chainCodename, tokenCodename, label]) =>
       toReserveRegistration(chainCodename, tokenCodename, label)
     )
+
+  /**
+   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
+   * tokenCodename]`, one per liq token {@link runSeedRegistry} registers. Private
+   * source both {@link ShadowLiqTokenRegistrations} and
+   * {@link MockLiqPoolRegistrations} derive from, in this order.
+   */
+  const ShadowLiqTokenPairs = [
+    ["ETHEREUM", "LIQETH"],
+    ["SOLANA", "LIQSOL"]
+  ] as const
+  /** Depot-frame precision every liq token is registered at, which its shadow symbol carries. */
+  const LiqTokenPrecision = 9
+  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
+  const LiqPoolPairSuffix = "P"
+  /**
+   * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
+   * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
+   * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
+   * reported yield in ONE tick, so a scenario observes one index bump and then a
+   * stable ledger instead of a day-long drip.
+   */
+  const MockLiqPoolShadowSeed = 10_000_000_000
+  /** WIRE (9-dec base units) the system account seeds each mock pool with. */
+  const MockLiqPoolWireSeed = 10_000_000_000
+  /** Swap fee of each mock pool, per ten-thousand (0.30 %). */
+  const MockLiqPoolFee = 30
+  /** Pair-token shares locked at each mock pool's creation. */
+  const MockLiqPoolLockedShares = 0
+  /** Seconds over which a mock pool's reservoir is time-shared into clips. */
+  const MockLiqPoolConversionHorizonSec = 30
+  /** Ceiling of one clip as bps of the pool's shadow depth. */
+  const MockLiqPoolDepthCapBps = 3000
+  /** Smallest clip (shadow base units) a mock pool sells. */
+  const MockLiqPoolClipFloor = 1000
+
+  /** A symbol in ABI form (`9,LIQSOL`) from a codename, at the liq precision. */
+  function liqSymbol(codename: string): string {
+    return `${LiqTokenPrecision},${codename}`
+  }
+
+  /**
+   * The 2 `sysio.liq::create` rows — one shadow symbol per registered liq
+   * token, bound to that token's chain. Shared by {@link planShadowLiqTokens}
+   * (one Report step per row) and its unit test.
+   */
+  export const ShadowLiqTokenRegistrations: SysioContracts.SysioLiqCreateAction[] =
+    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+      sym: liqSymbol(tokenCodename),
+      chain_code: { value: SlugName.from(chainCodename) },
+      token_code: { value: SlugName.from(tokenCodename) }
+    }))
+
+  /**
+   * The 2 mock `sysio.liq::regliqpool` rows — one yield pool per shadow, seeded
+   * from the system account. Shared by {@link planMockLiqPools} (one Report step
+   * per row) and its unit test. The contract gates `regliqpool` to the bootstrap
+   * window (epoch 0), so these seed ONLY during bootstrap — never from a flow phase.
+   */
+  export const MockLiqPoolRegistrations: SysioContracts.SysioLiqRegliqpoolAction[] =
+    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+      chain_code: { value: SlugName.from(chainCodename) },
+      token_code: { value: SlugName.from(tokenCodename) },
+      pair_symbol: liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
+      initial_chain_amount: MockLiqPoolShadowSeed,
+      initial_wire_amount: MockLiqPoolWireSeed,
+      fee: MockLiqPoolFee,
+      locked_shares: MockLiqPoolLockedShares,
+      conversion_horizon_sec: MockLiqPoolConversionHorizonSec,
+      depth_cap_bps: MockLiqPoolDepthCapBps,
+      clip_floor: MockLiqPoolClipFloor
+    }))
 
   /** Seed chains + tokens + chain-token bindings. */
   export function planSeedRegistry<
@@ -203,6 +276,77 @@ export namespace RegistrySteps {
           `seed the ${chainCodename}/${tokenCodename} PRIMARY reserve`,
           options,
           MockReserveRegistrations[index]
+        )
+    )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase of per-shadow `sysio.liq::create` steps — the shadow symbols the
+   * depot mints syndicated liq into, one per registered liq token. Registry
+   * setup, not mock data: a real depot opens the same symbols, so this phase is
+   * unconditional. It runs after {@link planSeedRegistry} (each shadow binds to
+   * a registered, active liq token) and after `sysio.swap` is configured (the
+   * pools below trade the shadows against its system token). Self-registers
+   * on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every create step.
+   * @returns The self-registered shadow-token phase.
+   */
+  export function planShadowLiqTokens<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+      ([, tokenCodename], index) =>
+        LiqContractSteps.planCreate<C>(
+          Report.Actor.Sysio,
+          `create-shadow-${tokenCodename.toLowerCase()}`,
+          `open the ${tokenCodename} shadow symbol on sysio.liq`,
+          options,
+          ShadowLiqTokenRegistrations[index]
+        )
+    )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase of per-pool `sysio.liq::regliqpool` steps — the mock shadow-liq
+   * yield pools on `sysio.swap`, gated behind `--enable-mock-liq-pools` (default
+   * off, so a real / external depot never mints unbacked shadow). The contract
+   * gates `regliqpool` to the bootstrap window (epoch 0), so this phase only
+   * ever runs pre-EpochBootstrap and can never be reached from a flow phase.
+   * Runs after {@link planShadowLiqTokens}. Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every pool step.
+   * @returns The self-registered pool-seeding phase.
+   */
+  export function planMockLiqPools<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+      ([chainCodename, tokenCodename], index) =>
+        LiqContractSteps.planRegliqpool<C>(
+          Report.Actor.Sysio,
+          `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+          `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
+          options,
+          MockLiqPoolRegistrations[index]
         )
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
@@ -441,7 +585,7 @@ export namespace RegistrySteps {
       code: { value: SlugName.from(codename) },
       symbol_name: symbolName,
       description,
-      precision: 9,
+      precision: LiqTokenPrecision,
       address
     }
   }

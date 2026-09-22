@@ -248,6 +248,7 @@ export namespace ClusterConfigProvider {
       externalOutposts,
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false,
+      enableMockLiqPools: options.enableMockLiqPools ?? false,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,

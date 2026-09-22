@@ -538,6 +538,12 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(
       toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
     ).toBe(false)
+    expect(
+      toClusterBuildOptions({ "enable-mock-liq-pools": true }).enableMockLiqPools
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-liq-pools": false }).enableMockLiqPools
+    ).toBe(false)
   })
 
   it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
@@ -588,8 +594,9 @@ describe("register → parse round-trip", () => {
     expect(options.epochDurationSec).toBe(60)
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
-    // no opt-in ⇒ the default-false mock-reserves flag survives as false
+    // no opt-in ⇒ the default-false mock-data flags survive as false
     expect(options.enableMockReserves).toBe(false)
+    expect(options.enableMockLiqPools).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
@@ -615,6 +622,7 @@ describe("register → parse round-trip", () => {
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
         enableMockReserves: true,
+        enableMockLiqPools: true,
         chainStateDbSizeMb: 8_192,
         apiCount: 2,
         queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
@@ -633,6 +641,8 @@ describe("register → parse round-trip", () => {
     expect(options.terminateWindowMs).toBe(3_600_000)
     // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
     expect(options.enableMockReserves).toBe(true)
+    // …and the one the liq-yield flow's pools ride
+    expect(options.enableMockLiqPools).toBe(true)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
     // …and a flow's API nodes + their query engine
