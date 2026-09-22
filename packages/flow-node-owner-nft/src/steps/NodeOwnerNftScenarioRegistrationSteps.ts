@@ -9,6 +9,7 @@ import {
   Report,
   Steps,
   type ClusterBuildStepOptions,
+  type EthereumIdentity,
   type StepInput
 } from "@wireio/cluster-tool"
 
@@ -39,12 +40,21 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     ctx: C,
     ethereumHdIndex: number
   ): Promise<string> {
-    const pair = await KeyGenerator.create(
-      KeyType.EM,
-      Steps.keys.keyGeneratorContext(ctx),
-      { ethereumHdIndex }
-    )
-    return pair.publicKey
+    return (await newEthereumIdentity(ctx, ethereumHdIndex)).publicKey
+  }
+
+  /** Deterministic depositor EM identity, including the raw address required by nodeownreg. */
+  export async function newEthereumIdentity<C extends ClusterBuildContext>(
+    ctx: C,
+    ethereumHdIndex: number
+  ): Promise<EthereumIdentity> {
+    const pair = await KeyGenerator.create(KeyType.EM, Steps.keys.keyGeneratorContext(ctx), {
+      ethereumHdIndex
+    })
+    return {
+      publicKey: pair.publicKey,
+      nativeAddress: pair.address.slice(2).toLowerCase()
+    }
   }
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
@@ -131,9 +141,11 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * Claim-payload problems (wrong key / invalid name / missing account /
    * replay) soft-fail into a `nodeownerreg` audit row — the transaction
    * SUCCEEDS — so intentionally-bad claims are normal write steps too, with a
-   * following verify step asserting the audit outcome. Only the depot/system
-   * invariants (tier out of [1,3], non-EM eth key) hard-abort; those are
-   * exercised by the scenario's hard-abort verify probes, not by this factory.
+   * following verify step asserting the audit outcome. The depot/system
+   * invariants (tier out of [1,3], non-EM eth key, malformed ETH address
+   * length) hard-abort. The scenario probes tier and key type; focused C++
+   * coverage exercises address length because this factory derives a valid
+   * Ethereum address.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -180,7 +192,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumPublicKey = await newEthereumPublicKey(
+    const ethereumIdentity = await newEthereumIdentity(
       ctx,
       input.ethereumHdIndex
     )
@@ -188,7 +200,8 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       ctx.wire,
       input.ownerAccount,
       input.tier,
-      ethereumPublicKey,
+      ethereumIdentity.nativeAddress,
+      ethereumIdentity.publicKey,
       input.wirePublicKey
     )
   }

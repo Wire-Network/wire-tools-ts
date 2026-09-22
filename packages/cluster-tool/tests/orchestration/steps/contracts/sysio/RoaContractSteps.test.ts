@@ -28,7 +28,8 @@ describe("Steps.contracts.sysio.roa", () => {
       owner: "wireno",
       tier: NodeOwnerTier.T1,
       eth_pub_key: "PUB_EM_examplekey",
-      wire_pub_key: "PUB_K1_examplekey"
+      wire_pub_key: "PUB_K1_examplekey",
+      eth_address: "11".repeat(20)
     }
     const step = Steps.contracts.sysio.roa.planNodeownreg(
       Report.Actor.Sysio,

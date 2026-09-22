@@ -61,6 +61,10 @@ export type WireKeyPair = KeyPair<KeyType.K1>
 export type WireFinalizerKeyPair = KeyPair<KeyType.BLS>
 /** Ethereum (secp256k1 / EM) key pair (`PUB_EM_…` / `PVT_EM_…`). */
 export type EthereumKeyPair = KeyPair<KeyType.EM>
+/** Public Ethereum identity paired with its normalized, prefix-free EVM address. */
+export interface EthereumIdentity extends Pick<EthereumKeyPair, "publicKey"> {
+  readonly nativeAddress: string
+}
 /** Solana (Ed25519 / ED) key pair (`PUB_ED_…` / `PVT_ED_…`). */
 export type SolanaKeyPair = KeyPair<KeyType.ED>
 
