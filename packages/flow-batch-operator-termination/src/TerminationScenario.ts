@@ -81,30 +81,17 @@ interface AbsorbedRemovalCheckpoint {
   solanaNextEpoch: number
 }
 
-/** Epoch state returned by the companion WIRE-385 SYSIO schema. */
-interface ScheduleRecoveryEpochState
-  extends SysioContracts.SysioEpochEpochStateType {
-  next_batch_op_groups: string[][]
-}
-
-/**
- * Read the epoch state through the WIRE-385 schema boundary.
- *
- * A clean Tools checkout may still resolve the last published SDK while the
- * companion Libraries PR is pending. Keep that temporary type lag isolated
- * here, and verify the deployed contract response before the flow uses it.
- */
+/** Read the generated epoch state and verify the deployed schedule capability. */
 async function readScheduleRecoveryEpochState(
   ctx: ClusterBuildContext
-): Promise<ScheduleRecoveryEpochState> {
+): Promise<SysioContracts.SysioEpochEpochStateType> {
   const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
-  const nextGroups = (state as Partial<ScheduleRecoveryEpochState> | undefined)
-    ?.next_batch_op_groups
+  Assert.ok(state, "epoch state is not initialized")
   Assert.ok(
-    Array.isArray(nextGroups),
+    Array.isArray(state.next_batch_op_groups),
     "epoch state does not expose next_batch_op_groups; deploy the WIRE-385 SYSIO schema before running this flow"
   )
-  return state as ScheduleRecoveryEpochState
+  return state
 }
 
 const AbsorbedRemovalCheckpointKey = outputKey<AbsorbedRemovalCheckpoint>(
