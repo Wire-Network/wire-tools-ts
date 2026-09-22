@@ -15,11 +15,11 @@ import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 const AnvilHdIndex = 1
 
 /** A REAL EM pair off the anvil mnemonic — decodable by `keyPairUtils`. */
-function newEthereumKeyPair(): EthereumKeyPair {
+function newEthereumKeyPair(hdIndex: number): EthereumKeyPair {
   return ethereumKeyPairFromWallet(
     ethers.HDNodeWallet.fromMnemonic(
       ethers.Mnemonic.fromPhrase(EthereumOutpostBootstrapper.AnvilMnemonic),
-      `${EthereumOutpostBootstrapper.DerivationPath}${AnvilHdIndex}`
+      `${EthereumOutpostBootstrapper.DerivationPath}${hdIndex}`
     )
   )
 }
@@ -53,12 +53,16 @@ function newSolanaKeyPair(): SolanaKeyPair {
  * @param account - the ON-CHAIN WIRE account name. Defaults to a
  *   node-owner-sponsored spelling that is deliberately DISTINCT from `label`,
  *   so a test that confuses the two still fails.
+ * @param ethereumHdIndex - anvil HD index the EM pair derives from. Defaults to
+ *   one shared index; a suite that needs operators with DISTINCT Ethereum
+ *   addresses (a roster seats one address per member) passes its own.
  * @return a fully-populated operator identity.
  */
 export function fixtureOperatorAccount(
   label: string,
   type: OperatorType,
-  account = `${Constants.BOOTSTRAP_NODE_OWNER}.${label}`
+  account = `${Constants.BOOTSTRAP_NODE_OWNER}.${label}`,
+  ethereumHdIndex = AnvilHdIndex
 ): OperatorAccount {
   let ethereum: EthereumKeyPair, solana: SolanaKeyPair
   return {
@@ -68,7 +72,7 @@ export function fixtureOperatorAccount(
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
     get ethereum(): EthereumKeyPair {
-      return (ethereum ??= newEthereumKeyPair())
+      return (ethereum ??= newEthereumKeyPair(ethereumHdIndex))
     },
     get solana(): SolanaKeyPair {
       return (solana ??= newSolanaKeyPair())
