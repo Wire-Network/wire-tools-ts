@@ -174,16 +174,14 @@ const EchoWrapperExcludePattern = `${TrxEchoExcludePattern}|signaled NACK|bad pa
  * learns via the NEXT envelope's OPERATORS attestation (1–2 epochs), and until
  * that dispatches the underwriter plugin's commit retries bounce off the
  * outpost's status gate: SOL opp-outpost `0x1795` (OperatorNotActive), ETH
- * `OPP_NotActiveOperator`. Anvil prints the latter as its custom-error selector
- * `0xabc01454`; a deliberately revoked batch member gets the same rejection.
- * Forensically verified (2026-07-04,
+ * `OPP_NotActiveOperator`. Forensically verified (2026-07-04,
  * flow-swap-from-wire): the epoch-2 envelope carried ACTIVE and dispatched 24s
  * after the first bounce — the ~5s retry loop heals on the next attempt, so
  * bailing on growth here kills a healthy flow. The liveness probes (epoch
  * advance, opp delta, per-direction growth) remain the bail gates.
  */
 const RegistrySyncLagPattern =
-  "custom program error: 0x1795|OPP_NotActiveOperator|execution reverted: custom error 0xabc01454"
+  "custom program error: 0x1795|OPP_NotActiveOperator"
 
 /**
  * Expected NEGATIVE-TEST reverts — a flow deliberately submits an invalid action
