@@ -988,7 +988,7 @@ export namespace ClusterBuildDefaults {
         ...batchOperators.map((label, index) => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: index + 1,
+          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
           // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
@@ -1000,7 +1000,15 @@ export namespace ClusterBuildDefaults {
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
-          ethereumHdIndex: config.batchOperatorCount + index + 1,
+          // The offset is the length of the PREFIX-FILTERED batch-operator
+          // array, not `config.batchOperatorCount`: only a list already
+          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
+          // rule is defined against. `index` is that same filtered array's
+          // iterator index for underwriters.
+          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
+            batchOperators.length,
+            index
+          ),
           isBootstrapped: false,
           ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
@@ -1057,7 +1065,7 @@ export namespace ClusterBuildDefaults {
     // scenarios that need a real restart.
 
     // ── first epoch ──
-    // Step ORDER is load-bearing: the roster seed reads the schedule
+    // Step ORDER is load-bearing: both roster seeds read the schedule
     // `schbatchgps` just materialized, and must land before `msgch::bootstrap`
     // delivers the first envelope.
     const epochBootstrap = ClusterBuildPhase.create<C>(
@@ -1072,13 +1080,29 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    // SOL-376: seed the LOCAL Solana outpost's operator registry with the
-    // depot's epoch-1 batch-operator group (just materialized by schbatchgps)
-    // BEFORE the first envelope is delivered — `epoch_in` refuses to finalize
-    // until `opp_bootstrap` runs. External outposts are seeded by their own
-    // operators, out of band.
+    // Seed BOTH local outposts with the depot's schedule (just materialized by
+    // schbatchgps) BEFORE the first envelope is delivered. External outposts
+    // are seeded by their own operators, out of band.
+    //
+    // Ethereum: `OPPInbound.initialize` ran in Cluster Prerequisites with a
+    // PROVISIONAL roster — the depot's window did not exist yet, and its
+    // membership is ordered by account names generated later — while under
+    // WNE-27 epoch 1 is deliverable only by the group mapped to it.
+    // `installInitialRoster` (the SOL-376 shape) replaces the provisional
+    // roster with the depot's window; it refuses once an epoch-1 delivery has
+    // been counted, which is why it sits before `bootstrap-epoch`.
+    //
+    // Solana (SOL-376): the outpost's operator registry starts empty and
+    // `epoch_in` refuses to finalize until `opp_bootstrap` seeds the depot's
+    // epoch-1 group.
     if (!isExternalOutpost)
       epochBootstrap.push(
+        Steps.ethereumOutpost.planOppBootstrap<C>(
+          Actor.EthereumOutpost,
+          "seed-ethereum-roster",
+          "seed the Ethereum outpost batch-operator roster from the depot schedule (installInitialRoster)",
+          {}
+        ),
         Steps.solanaOutpost.planOppBootstrap<C>(
           Actor.SolanaOutpost,
           "seed-solana-roster",
