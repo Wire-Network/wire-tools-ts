@@ -40,7 +40,6 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 type DepositNonNativeArgs = [
   chainCode: bigint,
   tokenCode: bigint,
-  reserveCode: bigint,
   operatorType: number,
   compressedPubkey: string | Uint8Array,
   amount: bigint,
@@ -341,7 +340,6 @@ export namespace EthereumCollateralTool {
     readonly operatorLabel: string
     readonly chainCode: bigint
     readonly tokenCode: bigint
-    readonly reserveCode: bigint
     readonly operatorType: OperatorType
     readonly amount: bigint
   }
@@ -360,7 +358,6 @@ export namespace EthereumCollateralTool {
     operatorLabel: string,
     chainCode: bigint,
     tokenCode: bigint,
-    reserveCode: bigint,
     operatorType: OperatorType,
     amount: bigint
   ): ClusterBuildStep<C, DepositNonNativeInput> {
@@ -374,7 +371,6 @@ export namespace EthereumCollateralTool {
         operatorLabel,
         chainCode,
         tokenCode,
-        reserveCode,
         operatorType,
         amount
       },
@@ -420,7 +416,6 @@ export namespace EthereumCollateralTool {
           .staticCall(
             input.chainCode,
             input.tokenCode,
-            input.reserveCode,
             input.operatorType,
             compressedPubkey,
             input.amount
@@ -439,7 +434,6 @@ export namespace EthereumCollateralTool {
             revertReason: ethereumRevertReason(error),
             chainCode: input.chainCode,
             tokenCode: input.tokenCode,
-            reserveCode: input.reserveCode,
             operatorType: input.operatorType,
             amount: input.amount
           }
@@ -450,7 +444,6 @@ export namespace EthereumCollateralTool {
     const response = await registry.depositNonNative(
       input.chainCode,
       input.tokenCode,
-      input.reserveCode,
       input.operatorType,
       compressedPubkey,
       input.amount,
