@@ -26,7 +26,10 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
-import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js"
+import {
+  SwapUserOutput,
+  swapUserOutputKey
+} from "../../orchestration/outputs/SwapUserOutput.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -45,14 +48,26 @@ export namespace SwapUserIdentities {
    * Build the swap-user provisioning Phase: derive identity → airdrop SOL. The
    * identity lands in `ctx.outputs` under {@link swapUserOutputKey} for the swap
    * Steps to read.
+   *
+   * @param parent Build parent receiving the provisioning phase.
+   * @param name Stable phase name.
+   * @param description Human-readable phase description.
+   * @param options Step execution options.
+   * @param ethereumHdIndex Deterministic Anvil wallet index.
+   * @param airdropFloorLamports Required Solana balance floor.
+   * @param actorIndex Zero-based swap-user output index.
+   * @returns Registered identity-provisioning phase.
    */
-  export function planIdentityProvisioning<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planIdentityProvisioning<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
     ethereumHdIndex: number = DefaultEthereumHdIndex,
-    airdropFloorLamports: number = DefaultSolanaAirdropFloorLamports
+    airdropFloorLamports: number = DefaultSolanaAirdropFloorLamports,
+    actorIndex: number = SwapUserOutput.DefaultActorIndex
   ): ClusterBuildPhase<C> {
     return ClusterBuildPhase.create<C>(parent, name, description, [
       planIdentityCreation<C>(
@@ -60,14 +75,16 @@ export namespace SwapUserIdentities {
         "swap-user-identity",
         "generate the swap user's ETH + SOL identity",
         options,
-        ethereumHdIndex
+        ethereumHdIndex,
+        actorIndex
       ),
       planAirdrop<C>(
         Report.Actor.User,
         "swap-user-airdrop",
         "airdrop SOL to the swap user",
         options,
-        airdropFloorLamports
+        airdropFloorLamports,
+        actorIndex
       )
     ])
   }
@@ -77,28 +94,55 @@ export namespace SwapUserIdentities {
   /** Input for {@link planIdentityCreation}. */
   export interface ProvisionIdentityInput extends StepInput {
     readonly kind: "SwapUserIdentities.ProvisionIdentityInput"
+    /** Deterministic Anvil wallet index. */
     readonly ethereumHdIndex: number
+    /** Zero-based swap-user output index. */
+    readonly actorIndex: number
   }
 
-  /** Derive the swap user's ETH wallet + SOL keypair and store a {@link SwapUserOutput}. */
-  export function planIdentityCreation<C extends ClusterBuildContext = ClusterBuildContext>(
+  /**
+   * Plan identity derivation for one indexed swap user.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param ethereumHdIndex Deterministic Anvil wallet index.
+   * @param actorIndex Zero-based swap-user output index.
+   * @returns Identity-creation step.
+   */
+  export function planIdentityCreation<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number
+    ethereumHdIndex: number,
+    actorIndex: number = SwapUserOutput.DefaultActorIndex
   ): ClusterBuildStep<C, ProvisionIdentityInput> {
     return ClusterBuildStep.create<C, ProvisionIdentityInput>(
       actor,
       name,
       description,
       options,
-      { kind: "SwapUserIdentities.ProvisionIdentityInput", ethereumHdIndex },
+      {
+        kind: "SwapUserIdentities.ProvisionIdentityInput",
+        ethereumHdIndex,
+        actorIndex
+      },
       runIdentityCreation
     )
   }
 
-  /** Named runner — derive keys, store the {@link SwapUserOutput}. */
+  /**
+   * Derive keys and store the indexed {@link SwapUserOutput}.
+   *
+   * @param ctx Cluster build context.
+   * @param input Indexed identity input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved after the identity is recorded.
+   */
   export async function runIdentityCreation<C extends ClusterBuildContext>(
     ctx: C,
     input: ProvisionIdentityInput,
@@ -132,14 +176,14 @@ export namespace SwapUserIdentities {
         secretKeyBase64: Buffer.from(solanaKeypair.secretKey).toString("base64")
       }
     })
-    ctx.outputs.set(swapUserOutputKey(), {
+    ctx.outputs.set(swapUserOutputKey(input.actorIndex), {
       ethereumWallet,
       solanaKeypair,
       ethereumAddressBytes: ethers.getBytes(ethereumWallet.address),
       solanaPublicKeyBytes: solanaKeypair.publicKey.toBytes()
     })
     log.info(
-      `[swap-user] ETH ${ethereumWallet.address} (hd=${input.ethereumHdIndex}), SOL ${solanaKeypair.publicKey.toBase58()}`
+      `[swap-user:${input.actorIndex}] ETH ${ethereumWallet.address} (hd=${input.ethereumHdIndex}), SOL ${solanaKeypair.publicKey.toBase58()}`
     )
   }
 
@@ -148,40 +192,70 @@ export namespace SwapUserIdentities {
   /** Input for {@link planAirdrop}. */
   export interface AirdropInput extends StepInput {
     readonly kind: "SwapUserIdentities.AirdropInput"
+    /** Required Solana balance floor. */
     readonly floorLamports: number
+    /** Zero-based swap-user output index. */
+    readonly actorIndex: number
   }
 
-  /** Airdrop SOL to the swap user when the balance is below `floorLamports`. */
-  export function planAirdrop<C extends ClusterBuildContext = ClusterBuildContext>(
+  /**
+   * Plan a SOL airdrop for one indexed swap user.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param floorLamports Required Solana balance floor.
+   * @param actorIndex Zero-based swap-user output index.
+   * @returns Solana airdrop step.
+   */
+  export function planAirdrop<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    floorLamports: number
+    floorLamports: number,
+    actorIndex: number = SwapUserOutput.DefaultActorIndex
   ): ClusterBuildStep<C, AirdropInput> {
     return ClusterBuildStep.create<C, AirdropInput>(
       actor,
       name,
       description,
       options,
-      { kind: "SwapUserIdentities.AirdropInput", floorLamports },
+      {
+        kind: "SwapUserIdentities.AirdropInput",
+        floorLamports,
+        actorIndex
+      },
       runAirdrop
     )
   }
 
-  /** Named runner — read the balance (a read), then ONE `requestAirdrop` if below floor. */
+  /**
+   * Read the indexed user's balance, then request one airdrop when below floor.
+   *
+   * @param ctx Cluster build context.
+   * @param input Indexed airdrop input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved after the balance reaches the requested floor.
+   */
   export async function runAirdrop<C extends ClusterBuildContext>(
     ctx: C,
     input: AirdropInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const swapUser = ctx.outputs.assert(swapUserOutputKey())
+    const swapUser = ctx.outputs.assert(swapUserOutputKey(input.actorIndex))
     const publicKey = swapUser.solanaKeypair.publicKey
     const current = await ctx.solana.getLamports(publicKey)
     if (current >= input.floorLamports) return
     const requestLamports = input.floorLamports - current + LAMPORTS_PER_SOL
-    const signature = await ctx.solana.connection.requestAirdrop(publicKey, requestLamports)
+    const signature = await ctx.solana.connection.requestAirdrop(
+      publicKey,
+      requestLamports
+    )
     await confirmSignature(
       ctx.solana.connection,
       signature,

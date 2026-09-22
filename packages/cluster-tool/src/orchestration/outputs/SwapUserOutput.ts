@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import type { ethers } from "ethers"
 import type { Keypair } from "@solana/web3.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
@@ -21,11 +22,26 @@ export interface SwapUserOutput {
 }
 
 /**
- * Typed cross-step output key for the swap user identity. A flow provisions one
- * swap user, so a single fixed key suffices.
+ * Typed cross-step output key for one swap-user identity.
  *
+ * @param actorIndex Zero-based identity index.
  * @returns A typed `OutputKey<SwapUserOutput>` for `ctx.outputs`.
  */
-export function swapUserOutputKey(): OutputKey<SwapUserOutput> {
-  return outputKey<SwapUserOutput>("swapUser", "swap end-user identity")
+export function swapUserOutputKey(
+  actorIndex: number = SwapUserOutput.DefaultActorIndex
+): OutputKey<SwapUserOutput> {
+  Assert.ok(
+    Number.isSafeInteger(actorIndex) && actorIndex >= 0,
+    `swap user actor index must be a non-negative safe integer: ${actorIndex}`
+  )
+  return outputKey<SwapUserOutput>(
+    `swapUser.${actorIndex}`,
+    `swap end-user identity ${actorIndex}`
+  )
+}
+
+/** Constants for indexed swap-user outputs. */
+export namespace SwapUserOutput {
+  /** Index used by existing single-user swap flows. */
+  export const DefaultActorIndex = 0
 }
