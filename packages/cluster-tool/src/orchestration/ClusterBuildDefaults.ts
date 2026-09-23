@@ -13,10 +13,7 @@ import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { readNodeOwner, readNodeOwnerReg } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -183,6 +180,7 @@ export namespace ClusterBuildDefaults {
       nodeOwner = cluster.context.keyStore.assertOperator(
         Constants.BOOTSTRAP_NODE_OWNER
       ),
+      bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
@@ -198,6 +196,18 @@ export namespace ClusterBuildDefaults {
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
+    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction = {
+      owner: Constants.BOOTSTRAP_NODE_OWNER,
+      tier: NodeOwnerTier.T1,
+      eth_pub_key: bootstrapNodeOwnerEth.publicKey,
+      // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
+      // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
+      // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
+      // this key can satisfy the account's `active` authority BY ITSELF —
+      // i.e. it must be exactly the `newnameduser.pubkey` below.
+      wire_pub_key: nodeOwner.wire.publicKey,
+      eth_address: bootstrapNodeOwnerEth.nativeAddress
+    }
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -440,47 +450,6 @@ export namespace ClusterBuildDefaults {
       {},
       producerSpecs
     )
-    // Genesis producers have to REGISTER, not merely exist. `update_ranked_producers` schedules
-    // only producers that pass one predicate — an active `producers` row, an ACTIVE
-    // `OPERATOR_TYPE_PRODUCER` row in sysio.opreg, and an active finalizer key — so without
-    // these writes a cluster has zero schedulable producers, ranking never publishes, and the
-    // schedule stays frozen at whatever `setprodkeys` stamped. The opreg half lands later
-    // (`GenesisProducerOperators`), because sysio.opreg is not deployed until `OPPContracts`.
-    //
-    // `regfinkey` requires an existing `producers` row, so regproducer strictly precedes it —
-    // and it activates a producer's FIRST key by itself, which is why no `actfinkey` follows.
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "GenesisProducerRegistration",
-      "Register genesis producers + their finalizer keys"
-    ).push(
-      ...producerNodes.flatMap(node =>
-        node.producers.flatMap(label => [
-          Steps.consensus.planGrantProducerRam<C>(
-            Actor.Sysio,
-            `setacctram-${label}`,
-            `grant ${label} RAM for its producer + finalizer-key rows`,
-            {},
-            label,
-            Steps.consensus.ProducerRamBytes
-          ),
-          Steps.consensus.planRegisterProducer<C>(
-            Actor.Producer,
-            `regproducer-${label}`,
-            `register producer ${label}`,
-            {},
-            label
-          ),
-          Steps.consensus.planRegisterFinalizerKey<C>(
-            Actor.Producer,
-            `regfinkey-${label}`,
-            `register ${label}'s finalizer key`,
-            {},
-            label
-          )
-        ])
-      )
-    )
     ClusterBuildPhase.create<C>(
       prerequisites,
       "RemainingSystemAccounts",
@@ -677,6 +646,35 @@ export namespace ClusterBuildDefaults {
         )
       )
     )
+    // Genesis producers have to REGISTER, not merely exist. Registration follows the privileged
+    // bootstrapped operator rows above because sysio.system admits creation only for an ACTIVE
+    // PRODUCER operator. `regfinkey` then requires the producer row and activates the first key by
+    // itself. The producer, finalizer-key, and finalizer rows are billed to sysio.system, so
+    // producers receive no test-only RAM grant.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GenesisProducerRegistration",
+      "Register genesis producers + their finalizer keys"
+    ).push(
+      ...producerNodes.flatMap(node =>
+        node.producers.flatMap(label => [
+          Steps.consensus.planRegisterProducer<C>(
+            Actor.Producer,
+            `regproducer-${label}`,
+            `register producer ${label}`,
+            {},
+            label
+          ),
+          Steps.consensus.planRegisterFinalizerKey<C>(
+            Actor.Producer,
+            `regfinkey-${label}`,
+            `register ${label}'s finalizer key`,
+            {},
+            label
+          )
+        ])
+      )
+    )
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Emissions",
@@ -768,17 +766,7 @@ export namespace ClusterBuildDefaults {
         "register-node-owner",
         `register ${Constants.BOOTSTRAP_NODE_OWNER} at tier 1`,
         {},
-        {
-          owner: Constants.BOOTSTRAP_NODE_OWNER,
-          tier: NodeOwnerTier.T1,
-          eth_pub_key: AuthExLinkTool.newEthereumPubEm(),
-          // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
-          // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
-          // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
-          // this key can satisfy the account's `active` authority BY ITSELF —
-          // i.e. it must be exactly the `newnameduser.pubkey` above.
-          wire_pub_key: nodeOwner.wire.publicKey
-        }
+        bootstrapNodeOwnerRegistration
       ),
       // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
       // silently-unregistered owner would otherwise surface much later as a
@@ -1000,7 +988,7 @@ export namespace ClusterBuildDefaults {
         ...batchOperators.map((label, index) => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: index + 1,
+          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
           // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
@@ -1012,7 +1000,15 @@ export namespace ClusterBuildDefaults {
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
-          ethereumHdIndex: config.batchOperatorCount + index + 1,
+          // The offset is the length of the PREFIX-FILTERED batch-operator
+          // array, not `config.batchOperatorCount`: only a list already
+          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
+          // rule is defined against. `index` is that same filtered array's
+          // iterator index for underwriters.
+          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
+            batchOperators.length,
+            index
+          ),
           isBootstrapped: false,
           ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
@@ -1069,7 +1065,7 @@ export namespace ClusterBuildDefaults {
     // scenarios that need a real restart.
 
     // ── first epoch ──
-    // Step ORDER is load-bearing: the roster seed reads the schedule
+    // Step ORDER is load-bearing: both roster seeds read the schedule
     // `schbatchgps` just materialized, and must land before `msgch::bootstrap`
     // delivers the first envelope.
     const epochBootstrap = ClusterBuildPhase.create<C>(
@@ -1084,13 +1080,29 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    // SOL-376: seed the LOCAL Solana outpost's operator registry with the
-    // depot's epoch-1 batch-operator group (just materialized by schbatchgps)
-    // BEFORE the first envelope is delivered — `epoch_in` refuses to finalize
-    // until `opp_bootstrap` runs. External outposts are seeded by their own
-    // operators, out of band.
+    // Seed BOTH local outposts with the depot's schedule (just materialized by
+    // schbatchgps) BEFORE the first envelope is delivered. External outposts
+    // are seeded by their own operators, out of band.
+    //
+    // Ethereum: `OPPInbound.initialize` ran in Cluster Prerequisites with a
+    // PROVISIONAL roster — the depot's window did not exist yet, and its
+    // membership is ordered by account names generated later — while under
+    // WNE-27 epoch 1 is deliverable only by the group mapped to it.
+    // `installInitialRoster` (the SOL-376 shape) replaces the provisional
+    // roster with the depot's window; it refuses once an epoch-1 delivery has
+    // been counted, which is why it sits before `bootstrap-epoch`.
+    //
+    // Solana (SOL-376): the outpost's operator registry starts empty and
+    // `epoch_in` refuses to finalize until `opp_bootstrap` seeds the depot's
+    // epoch-1 group.
     if (!isExternalOutpost)
       epochBootstrap.push(
+        Steps.ethereumOutpost.planOppBootstrap<C>(
+          Actor.EthereumOutpost,
+          "seed-ethereum-roster",
+          "seed the Ethereum outpost batch-operator roster from the depot schedule (installInitialRoster)",
+          {}
+        ),
         Steps.solanaOutpost.planOppBootstrap<C>(
           Actor.SolanaOutpost,
           "seed-solana-roster",
