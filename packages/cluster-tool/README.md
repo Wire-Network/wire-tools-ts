@@ -30,6 +30,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
 | `create-api-node` | Render a STANDALONE (non-cluster) WIRE API node's `config.ini` + `start.sh` into `--output-path`. The one command with no cluster behind it: no `ClusterConfig`, no process, no chain, no Report. |
+| `readiness` | Run the reusable read-only cluster and swap preflight against explicit Wire, Ethereum, and Solana endpoints; emit the native Report without provisioning or writing chain state. |
 
 The cluster directory is the **single source of truth**: executable paths,
 ports, key material, node layout, deployed contract addresses. `run` never
@@ -205,6 +206,31 @@ Notes specific to this command:
   non-zero through yargs.
 
 Full walkthrough: [`docs/create-api-node-guide.md`](../../docs/create-api-node-guide.md).
+
+### `readiness`
+
+```bash
+wire-cluster-tool readiness \
+  --wire-rpc https://api-josh.sandbox.wire-dev.com \
+  --wire-chain-id <64-character-wire-chain-id> \
+  --ethereum-rpc https://ethereum-josh.sandbox.wire-dev.com \
+  --ethereum-chain-id 31337 \
+  --solana-rpc https://solana-josh.sandbox.wire-dev.com \
+  --report-path ./readiness-reports
+```
+
+This command does not discover a network. The caller selects the three RPCs and
+must pin the Wire chain ID; Ethereum chain ID, Solana genesis hash, and Hyperion
+URL are optional additional checks. It executes the same
+`ReadinessPhaseGroups` used by `flow-cluster-readiness`, collects independent
+failures instead of hiding later diagnostics, and exits non-zero on a blocking
+failure.
+
+The result is a read-only swap preflight: chain identity/liveness, Wire protocol
+configuration, reserve and collateral capacity, external asset existence, and
+canonical client-side route quotes. It does not submit swaps, prove settlement,
+load SDK-outpost deployment profiles, inspect S3 artifacts, or depend on Noco.
+See [`docs/cluster-readiness.md`](../../docs/cluster-readiness.md).
 
 ---
 

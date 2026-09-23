@@ -1,5 +1,6 @@
 import { getLogger } from "../logging/Logger.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -71,7 +72,9 @@ export namespace pollUntil {
  * @param options - Optional per-step tuning (e.g. `timeoutMs`).
  * @returns The definition step.
  */
-export function verifyStep<C extends ClusterBuildContext = ClusterBuildContext>(
+export function verifyStep<
+  C extends OrchestrationContext = ClusterBuildContext
+>(
   actor: Report.Actor,
   name: string,
   description: string,
@@ -104,7 +107,7 @@ export namespace pollStep {
    * @param intervalMs - Delay between checks (ms).
    * @returns The step `fn` `(ctx) => Promise<void>`.
    */
-  export function lift<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function lift<C extends OrchestrationContext = ClusterBuildContext>(
     label: string,
     predicate: (ctx: C) => Promise<boolean>,
     timeoutMs: number,

@@ -15,6 +15,8 @@ import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
 import { ProcessSteps } from "./processes/index.js"
+import { ClusterReadinessSteps } from "./ClusterReadinessSteps.js"
+import { SwapReadinessSteps } from "./SwapReadinessSteps.js"
 
 /**
  * The exported step palette — each member is a sub-namespace of
@@ -26,6 +28,12 @@ import { ProcessSteps } from "./processes/index.js"
  * registry seeding, outpost deploys) that orchestrate several calls.
  */
 export namespace Steps {
+  /** Read-only connected-cluster checks, composed by ReadinessPhaseGroups. */
+  export namespace readiness {
+    export import cluster = ClusterReadinessSteps
+    export import swap = SwapReadinessSteps
+  }
+
   /** Step-layer mirror of the `sysio.*` contracts: `Steps.contracts.sysio.<contract>.<action>`. */
   export namespace contracts {
     export import sysio = SysioContractSteps

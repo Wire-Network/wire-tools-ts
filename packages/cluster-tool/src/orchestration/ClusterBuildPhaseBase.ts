@@ -1,12 +1,15 @@
 import type { Report } from "../report/Report.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 
 /**
  * Anything a phase or phase-group registers onto: the {@link ClusterBuild} root
  * or an enclosing {@link ClusterBuildPhaseGroup}. It carries the build context
  * (which the child adopts) and accepts children.
  */
-export interface ClusterBuildParent<C extends ClusterBuildContext = ClusterBuildContext> {
+export interface ClusterBuildParent<
+  C extends OrchestrationContext = ClusterBuildContext
+> {
   readonly context: C
   push(...children: ClusterBuildPhaseBase<C>[]): this
 }
@@ -20,7 +23,7 @@ export interface ClusterBuildParent<C extends ClusterBuildContext = ClusterBuild
  * node whose children nest to any depth.
  */
 export abstract class ClusterBuildPhaseBase<
-  C extends ClusterBuildContext = ClusterBuildContext
+  C extends OrchestrationContext = ClusterBuildContext
 > {
   protected constructor(
     readonly context: C,
