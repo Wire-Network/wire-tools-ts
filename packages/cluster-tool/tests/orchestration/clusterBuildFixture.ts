@@ -4,6 +4,7 @@ import {
   type ClusterBuildContext,
   type ClusterBuildPhaseBase
 } from "@wireio/cluster-tool/orchestration"
+import type { Report } from "@wireio/cluster-tool/report"
 
 /**
  * Every phase / group name in a built cluster tree, in registration order,
@@ -53,5 +54,27 @@ export function collectStepNames<C extends ClusterBuildContext>(
       : child instanceof ClusterBuildPhase
         ? child.steps.map(step => step.name)
         : []
+  )
+}
+
+/**
+ * Every step's Report actor in a built cluster tree, keyed by step name — the
+ * actor-level companion to {@link collectStepNames}, recursing through groups
+ * and reading each phase's public `steps`.
+ *
+ * @param children - The build's (or a group's) registered children.
+ * @returns Each descendant step's name, mapped to its Report actor.
+ */
+export function collectStepActors<C extends ClusterBuildContext>(
+  children: ReadonlyArray<ClusterBuildPhaseBase<C>>
+): Map<string, Report.Actor> {
+  return new Map(
+    children.flatMap(child =>
+      child instanceof ClusterBuildPhaseGroup
+        ? [...collectStepActors(child.children)]
+        : child instanceof ClusterBuildPhase
+          ? child.steps.map(step => [step.name, step.actor] as const)
+          : []
+    )
   )
 }

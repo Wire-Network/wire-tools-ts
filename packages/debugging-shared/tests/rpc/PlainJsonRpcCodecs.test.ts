@@ -62,7 +62,7 @@ describe("plain-JSON RPC per-shape codecs", () => {
           label: "bios",
           pidPath: "/x/bios.pid",
           directory: "/x",
-          kind: PidSourceKind.Bios
+          kind: PidSourceKind.bios
         }
       ]
     }

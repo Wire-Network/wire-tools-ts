@@ -209,7 +209,7 @@ describe("DaemonConfig", () => {
       }
     )
 
-    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+    it.each([NodeRole.batch_operator, NodeRole.underwriter, NodeRole.api])(
       "keeps the probe for an EXTERNAL %s node",
       role => {
         expect(

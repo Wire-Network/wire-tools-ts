@@ -5,6 +5,7 @@ import {
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
   SignatureProviderType,
+  createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState
 } from "@wireio/cluster-tool-shared"
@@ -31,6 +32,7 @@ const stubConfig: ClusterConfig = {
   nodeCount: 1,
   batchOperatorCount: 0,
   underwriterCount: 0,
+  apiCount: 0,
   epochDurationSec: 60,
   operatorsPerEpoch: null,
   batchOpGroups: null,
@@ -51,6 +53,7 @@ const stubConfig: ClusterConfig = {
         producers: [],
         batch: [],
         underwriters: [],
+        api: [],
         adHoc: []
       }
     },
@@ -98,7 +101,8 @@ const stubConfig: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockReserves: false,
   deploymentKind: ClusterDeploymentKind.local,
-  chainStateDbSizeMb: DefaultChainStateDbSizeMb
+  chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+  queryEngine: createUnsetQueryEngineConfig()
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

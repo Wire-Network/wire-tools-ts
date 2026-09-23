@@ -276,9 +276,9 @@ the same argv `run` would spawn, with three properties worth knowing:
   `--load-state`, nodeop's `--trace-no-abis` — render as shell tests the script
   evaluates itself. The `--trace-no-abis` test is additionally
   PREDICATE-GATED: the flag belongs to `trace_api_plugin`, so it is emitted only
-  for nodes that actually load it (every role on a local cluster; operators only
-  in an external tree). A node without the plugin renders no condition at all —
-  nodeop rejects the flag outright when the plugin is absent.
+  for nodes that actually load it (every role on a local cluster; operators and
+  API nodes in an external tree). A node without the plugin renders no condition
+  at all — nodeop rejects the flag outright when the plugin is absent.
 - **Not bind-registry aware.** The ports were issued by the registry at create
   time, but a `start.sh`-launched daemon does not re-claim them, so it is
   invisible to a concurrently-resolving cluster on the same host. Intended for a
@@ -346,6 +346,9 @@ command comes first).
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
+| `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
+| `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
+| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
@@ -515,7 +518,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`) |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus any set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -524,7 +527,15 @@ programmatic caller agree: `--chain-state-db-size-mb` (1024),
 `--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
 ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
-`--http-threads` (4), `--agent-name` (`wire-api-node`).
+`--http-threads` (4), `--agent-name` (`wire-api-node`), and
+`[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
+(unset — an omitted one renders no line, leaving nodeop's `head` read mode and
+the plugin's own limit defaults in force).
+
+Flag names follow **nodeop's own option names** wherever one exists, so the ini
+line and the flag that produced it read the same — except the `--query-engine-*`
+flags, which are the spellings shared with `create` and render as nodeop's
+`read-mode` / `query-<limit>`.
 
 `start.sh` resolves the wire-sysio install prefix exactly as a cluster daemon's
 does — an explicit `WIRE_PREFIX_PATH`, else the parent of a `nodeop` on `PATH`,

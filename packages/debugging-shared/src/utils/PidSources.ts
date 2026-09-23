@@ -39,18 +39,19 @@ export namespace PidSources {
 
 /**
  * Kind for a `ClusterStateNode` based on its role: `bios` → {@link
- * PidSourceKind.Bios}, `producer` → {@link PidSourceKind.Producer}, and
- * `operator` → {@link PidSourceKind.BatchOperator} when the node has a
- * `batchOperatorLabel`, otherwise {@link PidSourceKind.Underwriter}.
+ * PidSourceKind.bios}, `producer` → {@link PidSourceKind.producer}, `api` →
+ * {@link PidSourceKind.api}, and `operator` → {@link PidSourceKind.batch_operator}
+ * when the node has a `batchOperatorLabel`, otherwise {@link PidSourceKind.underwriter}.
  */
 function kindForNode(node: ClusterStateNode): PidSourceKind {
   return match(node.role)
-    .with(ClusterStateNodeRole.bios, () => PidSourceKind.Bios)
-    .with(ClusterStateNodeRole.producer, () => PidSourceKind.Producer)
+    .with(ClusterStateNodeRole.bios, () => PidSourceKind.bios)
+    .with(ClusterStateNodeRole.producer, () => PidSourceKind.producer)
+    .with(ClusterStateNodeRole.api, () => PidSourceKind.api)
     .with(ClusterStateNodeRole.operator, () =>
       node.batchOperatorLabel != null
-        ? PidSourceKind.BatchOperator
-        : PidSourceKind.Underwriter
+        ? PidSourceKind.batch_operator
+        : PidSourceKind.underwriter
     )
     .exhaustive()
 }
@@ -102,7 +103,7 @@ function sourcesForSubdir(
 /**
  * Enumerate every monitored process for a cluster. Discovered by filesystem
  * scan — no label construction, no nodeId parsing. Covers:
- *   - producer / bios / batch-operator / underwriter nodeop processes
+ *   - producer / bios / batch-operator / underwriter / API nodeop processes
  *   - anvil (if present)
  *   - solana-test-validator (if present)
  *
@@ -118,12 +119,12 @@ export function collectPidSources(
   const anvilSources = sourcesForSubdir(
       clusterPath,
       PidSources.AnvilSubpath,
-      PidSourceKind.Anvil
+      PidSourceKind.anvil
     ),
     solanaSources = sourcesForSubdir(
       clusterPath,
       PidSources.SolanaSubpath,
-      PidSourceKind.SolanaValidator
+      PidSourceKind.solana_validator
     )
   // Stable sort by label so re-renders don't reshuffle the list out from
   // under a cursor that's tracking by index. Filesystem order from

@@ -42,6 +42,13 @@ export const BindConfigNodeopClusterPortsSchema = z.object({
   /** One port pair per underwriter node. */
   underwriters: z.array(BindConfigNodeopPortsSchema),
   /**
+   * One port pair per API node — a non-producing nodeop that serves the chain
+   * HTTP API and `/v1/query/execute` (`sysio::query_engine_plugin`) and joins
+   * the producing set's p2p mesh. Empty unless the cluster asks for a count
+   * (`--api-count`).
+   */
+  api: z.array(BindConfigNodeopPortsSchema),
+  /**
    * Port pairs held for nodes a FLOW starts on its own, outside `NodeConfig.plan`.
    *
    * Reserved here rather than picked when the node spawns so an ad-hoc pair is claimed under the
@@ -154,6 +161,7 @@ const BindConfigNodeopClusterPortsOptionsSchema = z.object({
   producers: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
   batch: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
   underwriters: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
+  api: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
   adHoc: z.array(BindConfigNodeopPortsOptionsSchema).optional()
 })
 const BindConfigNodeopOptionsSchema = z.object({
@@ -250,6 +258,8 @@ export interface ClusterTopologyOptions {
   batchOperatorCount?: number
   /** Number of underwriter nodes. */
   underwriterCount?: number
+  /** Number of API nodes (non-producing chain-API + query-engine nodes). */
+  apiCount?: number
   /**
    * Port pairs to hold for nodes a flow starts itself, outside `NodeConfig.plan`.
    *

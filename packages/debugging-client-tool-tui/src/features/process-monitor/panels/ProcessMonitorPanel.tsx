@@ -48,9 +48,9 @@ function classify(alive: ProcessLivenessSnapshot["alive"]): LivenessKind {
 /** Human-readable identifier shown per row. */
 function identifierForSource(source: PidSource): string {
   return match(source)
-    .with({ kind: PidSourceKind.Anvil }, () => "anvil")
+    .with({ kind: PidSourceKind.anvil }, () => "anvil")
     .with(
-      { kind: PidSourceKind.SolanaValidator },
+      { kind: PidSourceKind.solana_validator },
       () => "solana-test-validator"
     )
     .otherwise(s => `${s.node?.producers[0] ?? s.node?.name ?? s.label}`)

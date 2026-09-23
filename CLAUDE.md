@@ -88,7 +88,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
 | `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -111,8 +111,8 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
 - **Persisted shapes are zod schema-first.** The complex types in
   `@wireio/cluster-tool-shared` (`ClusterConfig`, `BindConfig`, `ClusterState`,
   `ChainTokenAmount`, `SignatureProviderConfig`, `ExternalOutpostConfig`,
-  `ExternalClusterConfig`) are `z.infer` of a zod schema, and every
-  serialize/deserialize path goes through the generic `SchemaCodec` factory
+  `ExternalClusterConfig`, `QueryEngineConfig`) are `z.infer` of a zod schema, and
+  every serialize/deserialize path goes through the generic `SchemaCodec` factory
   (`SchemaCodec.create<T>(schema)` → `{ serialize, deserialize, check }`) — which
   validates on both ends (safeParse results ride `Either`, never `if`) and
   bridges the `TokenAmount` bigint round-trip via a `z.codec`.
@@ -282,7 +282,8 @@ wire-cluster-tool create-external-config \              # clone → deployable e
   --external-bind-config <bind.json>
 wire-cluster-tool create-api-node \                    # standalone (non-cluster) API node: config.ini + start.sh
   --output-path <dir> --http-server-address <addr:port> \
-  [--p2p-peer-address <addr:port>]... [--genesis-json <file>]
+  [--p2p-peer-address <addr:port>]... [--genesis-json <file>] \
+  [--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...
 ```
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
@@ -291,22 +292,35 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), and `--enable-mock-reserves` (default
-off — seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real /
-external depot leaves these unseeded); `package` writes one `<node>.<ext>` per
-node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
-with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
+requires `--external-outpost-config`), `--enable-mock-reserves` (default off —
+seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real / external
+depot leaves these unseeded), `--api-count <N>` (default 0 — plan N API nodes:
+non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
+loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
+kind, and never `producer_api_plugin`), and
+`--query-engine-read-mode <head|irreversible>` / `--query-engine-<limit> <n>`
+(the API nodes' query engine, persisted as `ClusterConfig.queryEngine`; every
+member rendered into their config.ini only when set, so nodeop and the plugin
+own the defaults; any set member requires `--api-count` ≥ 1); `package` writes
+one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
+a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
+other, loosely coupled).
 `create-external-config` clones a CREATED, STOPPED local cluster into a deployable
 external directory with the external `BindConfig` merged in and emits its
 self-described `external-cluster-config.json` (the Validate → Clone → Rebind →
 Emit → Verify pipeline; a mismatched bind config fails fast before any write).
 `create-api-node` is the one command with NO cluster behind it: it resolves an
 `ApiNodeConfig` (defaults in ONE place — `ApiNodeConfig.resolve`, never yargs
-`default:`) and writes `config.ini` + `start.sh` (mode 0755, plus a copied
-`genesis.json` when supplied) into `--output-path`. Having no `ClusterConfig`, it
-builds no `ClusterBuildContext` and produces no Report — see its JSDoc for the
-stated departure. Its endpoints are user-supplied deployment addresses used
-VERBATIM: nothing binds locally, so no bind-registry claim is made or invented.
+`default:`) and writes `config.ini` (plugins `net_plugin`, `chain_api_plugin`,
+`trace_api_plugin`, `query_engine_plugin` — so the artifact requires a nodeop
+built with the query engine — plus the same `--query-engine-*` read mode /
+limits block, each line only when set, emitted by the same
+`QueryEngineConfigProvider.toIniLines` as the cluster's API nodes) + `start.sh`
+(mode 0755, plus a copied `genesis.json` when supplied) into `--output-path`.
+Having no `ClusterConfig`, it builds no `ClusterBuildContext` and produces no
+Report — see its JSDoc for the stated departure. Its endpoints are user-supplied
+deployment addresses used VERBATIM: nothing binds locally, so no bind-registry
+claim is made or invented.
 
 **Every daemon directory also gets a `start.sh`** (`<cluster>/data/<daemon>/`),
 emitted by `create` and re-rendered by `create-external-config`'s Rebind, so a
@@ -334,6 +348,10 @@ same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan(
 The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
 `EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
 so `regreserve` can never be called from a flow phase.
+
+**Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
+(and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in
+the `ApiNodes` group right before `OperatorNodes`.
 
 ## Key Architecture (`packages/cluster-tool/src/`)
 
