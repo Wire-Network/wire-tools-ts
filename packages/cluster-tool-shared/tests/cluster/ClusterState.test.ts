@@ -10,6 +10,7 @@ describe("ClusterStateNodeRole", () => {
     expect(ClusterStateNodeRole.bios).toBe("bios")
     expect(ClusterStateNodeRole.producer).toBe("producer")
     expect(ClusterStateNodeRole.operator).toBe("operator")
+    expect(ClusterStateNodeRole.api).toBe("api")
   })
 })
 
@@ -73,6 +74,32 @@ describe("ClusterStateNode / ClusterState shape", () => {
     expect(
       ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(state))
     ).toEqual(state)
+  })
+
+  it("round-trips an api node row through ClusterStateSchemaCodec", () => {
+    // Reuses the operator row's ports: the schema validates shape, not
+    // port uniqueness.
+    const apiNode: ClusterStateNode = {
+        ...operatorNode,
+        name: "node_02",
+        role: ClusterStateNodeRole.api,
+        nodePath: "/cluster/data/node_02",
+        batchOperatorLabel: null
+      },
+      withApiNode: ClusterState = { ...state, nodes: [...state.nodes, apiNode] }
+    expect(
+      ClusterStateSchemaCodec.deserialize(
+        ClusterStateSchemaCodec.serialize(withApiNode)
+      )
+    ).toEqual(withApiNode)
+  })
+
+  it("rejects a node role outside ClusterStateNodeRole", () => {
+    expect(() =>
+      ClusterStateSchemaCodec.deserialize(
+        JSON.stringify({ ...state, nodes: [{ ...biosNode, role: "archive" }] })
+      )
+    ).toThrow(/nodes\.0\.role/)
   })
 
   it("allows null anvilStateFile/solanaLedgerPath (external-outpost mode)", () => {

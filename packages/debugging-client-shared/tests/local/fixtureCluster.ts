@@ -9,6 +9,7 @@ import {
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
   SignatureProviderType,
+  createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState,
   type ClusterStateNode
@@ -91,6 +92,7 @@ export function makeFixtureCluster(): FixtureCluster {
     nodeCount: 3,
     batchOperatorCount: 1,
     underwriterCount: 1,
+    apiCount: 0,
     epochDurationSec: 60,
     operatorsPerEpoch: null,
     batchOpGroups: null,
@@ -111,6 +113,7 @@ export function makeFixtureCluster(): FixtureCluster {
           producers: [],
           batch: [],
           underwriters: [],
+          api: [],
           adHoc: []
         }
       },
@@ -154,7 +157,8 @@ export function makeFixtureCluster(): FixtureCluster {
     debuggingServerEnabled: true,
     enableMockReserves: false,
     deploymentKind: ClusterDeploymentKind.local,
-    chainStateDbSizeMb: DefaultChainStateDbSizeMb
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+    queryEngine: createUnsetQueryEngineConfig()
   }
 
   Fs.writeFileSync(

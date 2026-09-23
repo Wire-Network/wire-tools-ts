@@ -8,17 +8,21 @@ import {
   AWSSSMSignatureProviderOptionsSchema,
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
+  NodeopReadMode,
+  QueryEngineReadModeSchema,
   SchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
-  type CollateralRequirement
+  type CollateralRequirement,
+  type QueryEngineConfig
 } from "@wireio/cluster-tool-shared"
 import { camelCase, defaultsDeep, identity, isPlainObject, range } from "lodash"
 import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
+import { Constants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 
@@ -41,6 +45,7 @@ const CliDefault = {
   producerCount: 1,
   batchOperatorCount: 3,
   underwriterCount: 1,
+  apiCount: 0,
   adHocCount: 0,
   epochDurationSec: 60
 } as const
@@ -168,6 +173,20 @@ function choicesLeaf(
   return new OptionLeafSpec(value, describe, false, null, choices)
 }
 
+/** String leaf constrained to `choices` with NO seeded default: the resolve-time default is the one author. */
+function optionalChoicesLeaf(
+  choices: readonly string[],
+  describe: string
+): OptionLeafSpec {
+  return new OptionLeafSpec(
+    null,
+    describe,
+    false,
+    OptionLeafType.string,
+    choices
+  )
+}
+
 /**
  * Kebab-case ONE path segment: break camelCase humps (`epochDurationSec` →
  * `epoch-duration-sec`, `debuggingServer` → `debugging-server`) and lowercase,
@@ -198,6 +217,58 @@ function kebabSegment(segment: string): string {
  */
 export function toFlag(path: string[]): string {
   return path.map(segment => kebabSegment(segment)).join("-")
+}
+
+/**
+ * The `ClusterBuildOptions` member every `--query-engine-*` flag hangs off.
+ *
+ * Changing it renames all thirteen `--query-engine-*` flags (the read mode and
+ * the twelve plugin limits) on both `create` and `create-api-node`.
+ */
+export const QueryEngineOptionKey =
+  "queryEngine" as const satisfies keyof ClusterBuildOptions
+
+/**
+ * The `--query-engine-<member>` flag of one query-engine member — the one
+ * path-to-flag spelling both `create` and `create-api-node` register.
+ *
+ * @param member - The `QueryEngineConfig` member.
+ * @returns The kebab-case flag name WITHOUT the leading `--` — the form
+ *   {@link toFlag} returns and yargs `.option()` takes.
+ */
+export function toQueryEngineFlag(member: keyof QueryEngineConfig): string {
+  return toFlag([QueryEngineOptionKey, member])
+}
+
+/**
+ * The `describe` (`--help`) text of `--query-engine-read-mode` — the ONE
+ * wording both `create` and `create-api-node` register, so the two commands'
+ * help cannot drift apart.
+ *
+ * Interpolated from `Constants.READ_MODE_OPTION` and the read modes rather than
+ * restating them, so the text follows the option it sets and the choices yargs
+ * enforces. Changing it changes the `--help` of both commands.
+ *
+ * @returns The flag's `describe` text.
+ */
+export function describeQueryEngineReadModeFlag(): string {
+  return `nodeop ${Constants.READ_MODE_OPTION} the API nodes' query engine serves at — ${QueryEngineReadModeSchema.options.join(" | ")}; omit for nodeop's default (${NodeopReadMode.head}); the plugin rejects ${NodeopReadMode.speculative}`
+}
+
+/**
+ * The `describe` (`--help`) text of one `--query-engine-<limit>` flag — the
+ * ONE wording both `create` and `create-api-node` register.
+ *
+ * Changing it changes the `--help` of every limit flag on both commands.
+ *
+ * @param option - The limit's own plugin option (its ini key), from
+ *   `Constants.QUERY_ENGINE_LIMIT_OPTIONS`.
+ * @returns The flag's `describe` text.
+ */
+export function describeQueryEngineLimitFlag(
+  option: Constants.QueryEngineLimitOption["option"]
+): string {
+  return `nodeop ${option} on the API nodes; omit for the plugin's default`
 }
 
 /** Infer a leaf's yargs type from its default `value`, or its `explicitType` when `null`. */
@@ -275,13 +346,15 @@ function buildDaemonShape(label: string): OptionShapeObject {
   }
 }
 
-/** The `bind` sub-tree; node-port arrays are sized from the topology counts. */
-function buildBindShape(
-  nodeCount: number,
-  batchCount: number,
-  underwriterCount: number,
-  adHocCount: number
-): OptionShapeObject {
+/** The `bind` sub-tree; node-port arrays are sized from the topology counts (CLI defaults when unset). */
+function buildBindShape(options: ClusterBuildOptions): OptionShapeObject {
+  const {
+    nodeCount = CliDefault.nodeCount,
+    batchOperatorCount: batchCount = CliDefault.batchOperatorCount,
+    underwriterCount = CliDefault.underwriterCount,
+    apiCount = CliDefault.apiCount,
+    adHocCount = CliDefault.adHocCount
+  } = options
   return {
     kiod: buildDaemonShape("kiod"),
     nodeop: {
@@ -296,6 +369,9 @@ function buildBindShape(
         ),
         underwriters: range(underwriterCount).map(index =>
           buildPortPairShape(`underwriter[${index}] nodeop`)
+        ),
+        api: range(apiCount).map(index =>
+          buildPortPairShape(`api[${index}] nodeop`)
         ),
         adHoc: range(adHocCount).map(index =>
           buildPortPairShape(`ad-hoc[${index}] nodeop`)
@@ -345,6 +421,31 @@ function buildReportShape(): OptionShapeObject {
 }
 
 /**
+ * The `queryEngine` sub-tree: the API nodes' read mode (an UNSEEDED choice) and
+ * one UNSEEDED number leaf per plugin limit. `optionalChoicesLeaf` /
+ * `optionalLeaf`, never `leaf`: a seeded default would always reach the config
+ * and override nodeop's / the plugin's own default, which is the ONE author.
+ */
+function buildQueryEngineShape(): OptionShapeObject {
+  // Bound to a typed local, never spread inline: an object spread drops the
+  // `Object.fromEntries` index signature, so the limit leaves would go
+  // unchecked against `OptionShapeObject`.
+  const limits: OptionShapeObject = Object.fromEntries(
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ member, option }) => [
+      member,
+      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(option))
+    ])
+  )
+  return {
+    readMode: optionalChoicesLeaf(
+      QueryEngineReadModeSchema.options,
+      describeQueryEngineReadModeFlag()
+    ),
+    ...limits
+  }
+}
+
+/**
  * The canonical {@link ClusterBuildOptions} descriptor — one {@link
  * OptionLeafSpec} per leaf, at every depth. TS interfaces have no runtime shape,
  * so this concrete object IS the source the flag tree is derived from. Node-port
@@ -359,12 +460,6 @@ function buildReportShape(): OptionShapeObject {
 export function buildOptionShape(
   defaults: ClusterBuildOptions
 ): OptionShapeObject {
-  const {
-    nodeCount = CliDefault.nodeCount,
-    batchOperatorCount: batchCount = CliDefault.batchOperatorCount,
-    underwriterCount = CliDefault.underwriterCount,
-    adHocCount = CliDefault.adHocCount
-  } = defaults
   return {
     // ── paths ──
     clusterPath: requiredLeaf(OptionLeafType.string, "cluster data directory"),
@@ -383,6 +478,10 @@ export function buildOptionShape(
       "batch operator count — ODD and divisible by 3 (3, 9, 15, 21) unless --operators-per-epoch OR --batch-op-groups is given; max 26"
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
+    apiCount: leaf(
+      CliDefault.apiCount,
+      "API node count — non-producing nodeops serving /v1/chain/* + /v1/query/execute, meshed with bios + producers"
+    ),
     adHocCount: leaf(
       CliDefault.adHocCount,
       "ad-hoc node count — port pairs reserved for nodes a flow starts itself, outside NodeConfig.plan"
@@ -421,6 +520,8 @@ export function buildOptionShape(
       OptionLeafType.number,
       "maximum chain state DB size in MiB for every nodeop; omit for the default (1024)"
     ),
+    // ── query engine (API nodes; every leaf unseeded — see buildQueryEngineShape) ──
+    [QueryEngineOptionKey]: buildQueryEngineShape(),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,
@@ -441,7 +542,7 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
-    bind: buildBindShape(nodeCount, batchCount, underwriterCount, adHocCount),
+    bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,
       "path to a BindConfig JSON (complete → used verbatim; partial → merged over resolved defaults)"
@@ -774,12 +875,13 @@ function countsFromArgv(argv: OptionArgv): ClusterBuildOptions {
     asOption(readArg(argv, flag))
       .filter(raw => raw != null)
       .map(raw => Number(raw))
-      .filter(Number.isFinite)
+      .filter(value => Number.isSafeInteger(value) && value >= 0)
       .getOrUndefined()
   return {
     nodeCount: count("node-count"),
     batchOperatorCount: count("batch-operator-count"),
     underwriterCount: count("underwriter-count"),
+    apiCount: count("api-count"),
     adHocCount: count("ad-hoc-count")
   }
 }
@@ -866,7 +968,9 @@ const AWSClusterNodeConfigDocumentKey =
 const TopologyCountKeys = [
   "nodeCount",
   "batchOperatorCount",
-  "underwriterCount"
+  "underwriterCount",
+  "apiCount",
+  "adHocCount"
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A topology-count member of a build-options document. */
@@ -952,9 +1056,10 @@ function appendNonFlagOption<K extends NonFlagOptionKey>(
 }
 
 /**
- * Read + validate the three topology counts a document may set — they size the
- * `bind` node-port arrays of the very shape the rest of the document is
- * validated against, so they are checked BEFORE the shape is built.
+ * Read + validate the topology counts ({@link TopologyCountKeys}) a document
+ * may set — they size the `bind` node-port arrays of the very shape the rest of
+ * the document is validated against, so they are checked BEFORE the shape is
+ * built.
  */
 function assertTopologyCounts(
   document: Record<string, unknown>,
@@ -978,8 +1083,8 @@ function appendTopologyCount<K extends TopologyCountKey>(
     return
   }
   Assert.ok(
-    typeof value === "number" && Number.isInteger(value) && value >= 0,
-    `${documentLabel(file)}: "${key}" must be a non-negative integer (got ${JSON.stringify(value)})`
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+    `${documentLabel(file)}: "${key}" must be a non-negative safe integer (got ${JSON.stringify(value)})`
   )
   counts[key] = value
 }

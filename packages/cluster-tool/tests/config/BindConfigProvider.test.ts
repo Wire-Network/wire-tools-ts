@@ -202,12 +202,18 @@ describe("BindConfigProvider", () => {
     it("populates every daemon with addresses + unique ports", async () => {
       const config = await BindConfigProvider.resolve(
         {},
-        { producerCount: 2, batchOperatorCount: 3, underwriterCount: 1 }
+        {
+          producerCount: 2,
+          batchOperatorCount: 3,
+          underwriterCount: 1,
+          apiCount: 1
+        }
       )
       expect(config.kiod.address).toBe(Localhost)
       expect(config.nodeop.ports.producers).toHaveLength(2)
       expect(config.nodeop.ports.batch).toHaveLength(3)
       expect(config.nodeop.ports.underwriters).toHaveLength(1)
+      expect(config.nodeop.ports.api).toHaveLength(1)
       const ports = BindConfigProvider.allPorts(config)
       expect(new Set(ports).size).toBe(ports.length)
       expect(ports.every(port => port > 0)).toBe(true)
@@ -286,6 +292,41 @@ describe("BindConfigProvider", () => {
         expect(new Set(scoped).size).toBe(scoped.length)
         expect(scoped.every(key => key.includes(":"))).toBe(true)
       })
+
+      it("scopes an api pair by its advertiseAddress, and by the shared nodeop address when it has none", async () => {
+        const ApiAdvertiseAddress = "10.60.4.1",
+          config = await BindConfigProvider.resolve(
+            {
+              nodeop: {
+                ports: { api: [{ advertiseAddress: ApiAdvertiseAddress }] }
+              }
+            },
+            { apiCount: 2, batchOperatorCount: 0, underwriterCount: 0 }
+          ),
+          [advertised, shared] = config.nodeop.ports.api
+        expect(BindConfigProvider.allPortBindings(config)).toEqual(
+          expect.arrayContaining([
+            `${ApiAdvertiseAddress}:${advertised.http}`,
+            `${ApiAdvertiseAddress}:${advertised.p2p}`,
+            `${config.nodeop.address}:${shared.http}`,
+            `${config.nodeop.address}:${shared.p2p}`
+          ])
+        )
+      })
+
+      it("carries the ad-hoc pairs, scoped by the shared nodeop address", async () => {
+        const config = await BindConfigProvider.resolve(
+            {},
+            { adHocCount: 1, batchOperatorCount: 0, underwriterCount: 0 }
+          ),
+          [adHoc] = config.nodeop.ports.adHoc
+        expect(BindConfigProvider.allPortBindings(config)).toEqual(
+          expect.arrayContaining([
+            `${config.nodeop.address}:${adHoc.http}`,
+            `${config.nodeop.address}:${adHoc.p2p}`
+          ])
+        )
+      })
     })
 
     it("binds every address to the bind-all address when bindAll is set", async () => {
@@ -348,6 +389,45 @@ describe("BindConfigProvider", () => {
       expect(
         "advertiseAddress" in config.nodeop.ports.producers[1]
       ).toBe(false)
+    })
+
+    it("claims one api pair per requested API node", async () => {
+      const bind = await BindConfigProvider.resolve({}, { apiCount: 2 })
+      expect(bind.nodeop.ports.api).toHaveLength(2)
+    })
+
+    it("claims no api pairs by default", async () => {
+      const bind = await BindConfigProvider.resolve({}, {})
+      expect(BindConfigProvider.DefaultApiCount).toBe(0)
+      expect(bind.nodeop.ports.api).toEqual([])
+    })
+
+    it("carries the api pairs into allPorts so the registry excludes them for every other resolver", async () => {
+      const bind = await BindConfigProvider.resolve({}, { apiCount: 2 }),
+        all = new Set(BindConfigProvider.allPorts(bind))
+      bind.nodeop.ports.api
+        .flatMap(pair => [pair.http, pair.p2p])
+        .forEach(port => expect(all.has(port)).toBe(true))
+    })
+
+    it("never overlaps an api pair with any other planned port", async () => {
+      const bind = await BindConfigProvider.resolve(
+          {},
+          { apiCount: 2, adHocCount: 1 }
+        ),
+        all = BindConfigProvider.allPorts(bind)
+      expect(new Set(all).size).toBe(all.length)
+    })
+
+    it("honors a pinned api pair", async () => {
+      const bind = await BindConfigProvider.resolve(
+        { nodeop: { ports: { api: [{ http: 13_100, p2p: 13_101 }] } } },
+        { apiCount: 1 }
+      )
+      expect(bind.nodeop.ports.api[0]).toMatchObject({
+        http: 13_100,
+        p2p: 13_101
+      })
     })
   })
 
@@ -762,6 +842,7 @@ describe("BindConfigProvider", () => {
             producers: [],
             batch: [],
             underwriters: [],
+            api: [],
             adHoc: []
           }
         },

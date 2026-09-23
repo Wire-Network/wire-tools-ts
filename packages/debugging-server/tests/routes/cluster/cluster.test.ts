@@ -2,7 +2,10 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
-import { ClusterFiles } from "@wireio/cluster-tool-shared"
+import {
+  ClusterFiles,
+  createUnsetQueryEngineConfig
+} from "@wireio/cluster-tool-shared"
 import {
   ApiPaths,
   type GetClusterConfigResponse,
@@ -43,6 +46,7 @@ function fullConfig(clusterPath: string) {
     nodeCount: 1,
     batchOperatorCount: 0,
     underwriterCount: 0,
+    apiCount: 0,
     epochDurationSec: 60,
     warmupEpochs: 1,
     cooldownEpochs: 1,
@@ -57,6 +61,7 @@ function fullConfig(clusterPath: string) {
           producers: [],
           batch: [],
           underwriters: [],
+          api: [],
           adHoc: []
         }
       },
@@ -88,7 +93,8 @@ function fullConfig(clusterPath: string) {
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
-    initialFinalizerKey: null
+    initialFinalizerKey: null,
+    queryEngine: createUnsetQueryEngineConfig()
   }
 }
 

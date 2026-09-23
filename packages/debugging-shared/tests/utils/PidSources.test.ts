@@ -27,15 +27,46 @@ describe("collectPidSources", () => {
     Fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  /**
+   * A `cluster-state.json` node row; the scanner reads only its role, labels,
+   * and path — its ports are unread placeholders, never a binding.
+   */
+  const node = (
+    name: string,
+    nodePath: string,
+    role: ClusterStateNodeRole,
+    batchOperatorLabel: string | null = null,
+    underwriterLabel: string | null = null
+  ): ClusterStateNode => ({
+    name,
+    role,
+    nodePath,
+    ports: { http: 0, p2p: 0 },
+    producers: [],
+    batchOperatorLabel,
+    underwriterLabel
+  })
+
+  /** A `cluster-state.json` snapshot over `nodes` (no anvil / solana state to scan). */
+  const stateOf = (nodes: ClusterStateNode[]): ClusterState => ({
+    createdAt: new Date().toISOString(),
+    nodes,
+    walletPath: "",
+    anvilStateFile: "",
+    solanaLedgerPath: "",
+    solanaIdlFile: null
+  })
+
   it("returns [] when state is null", () => {
     expect(collectPidSources(tmpDir, null)).toEqual([])
   })
 
-  it("classifies bios / producer / batch-operator / underwriter / anvil / solana", () => {
+  it("classifies bios / producer / batch operator / underwriter / api / anvil / solana", () => {
     const biosDir = Path.join(tmpDir, "data", "bios"),
       producerDir = Path.join(tmpDir, "data", "node_00"),
       batchDir = Path.join(tmpDir, "data", "node_01"),
       underwriterDir = Path.join(tmpDir, "data", "node_02"),
+      apiDir = Path.join(tmpDir, "data", "node_03"),
       anvilDir = Path.join(tmpDir, PidSources.AnvilSubpath),
       solanaDir = Path.join(tmpDir, PidSources.SolanaSubpath)
 
@@ -44,6 +75,7 @@ describe("collectPidSources", () => {
       producerDir,
       batchDir,
       underwriterDir,
+      apiDir,
       anvilDir,
       solanaDir
     ].forEach(d => Fs.mkdirSync(d, { recursive: true }))
@@ -52,6 +84,7 @@ describe("collectPidSources", () => {
     Fs.writeFileSync(Path.join(producerDir, "nodeop.pid"), "12", "utf8")
     Fs.writeFileSync(Path.join(batchDir, "nodeop.pid"), "13", "utf8")
     Fs.writeFileSync(Path.join(underwriterDir, "nodeop.pid"), "14", "utf8")
+    Fs.writeFileSync(Path.join(apiDir, "nodeop.pid"), "17", "utf8")
     Fs.writeFileSync(Path.join(anvilDir, "anvil.pid"), "15", "utf8")
     Fs.writeFileSync(
       Path.join(solanaDir, "solana-test-validator.pid"),
@@ -59,41 +92,19 @@ describe("collectPidSources", () => {
       "utf8"
     )
 
-    const node = (
-      name: string,
-      nodePath: string,
-      role: ClusterStateNodeRole,
-      batchOperatorLabel: string | null = null,
-      underwriterLabel: string | null = null
-    ): ClusterStateNode => ({
-      name,
-      role,
-      nodePath,
-      ports: { http: 0, p2p: 0 },
-      producers: [],
-      batchOperatorLabel,
-      underwriterLabel
-    })
-
-    const state: ClusterState = {
-      createdAt: new Date().toISOString(),
-      nodes: [
-        node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
-        node("node_00", producerDir, ClusterStateNodeRole.producer),
-        node("node_01", batchDir, ClusterStateNodeRole.operator, "batchop1"),
-        node(
-          "node_02",
-          underwriterDir,
-          ClusterStateNodeRole.operator,
-          null,
-          "underwriter1"
-        )
-      ],
-      walletPath: "",
-      anvilStateFile: "",
-      solanaLedgerPath: "",
-      solanaIdlFile: null
-    }
+    const state = stateOf([
+      node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
+      node("node_00", producerDir, ClusterStateNodeRole.producer),
+      node("node_01", batchDir, ClusterStateNodeRole.operator, "batchop1"),
+      node(
+        "node_02",
+        underwriterDir,
+        ClusterStateNodeRole.operator,
+        null,
+        "underwriter1"
+      ),
+      node("node_03", apiDir, ClusterStateNodeRole.api)
+    ])
 
     const sources = collectPidSources(tmpDir, state),
       kindsByLabel = Object.fromEntries(sources.map(s => [s.label, s.kind]))
@@ -103,14 +114,36 @@ describe("collectPidSources", () => {
     const kinds = sources.map(s => s.kind).sort()
     expect(kinds).toEqual(
       [
-        PidSourceKind.Anvil,
-        PidSourceKind.BatchOperator,
-        PidSourceKind.Bios,
-        PidSourceKind.Producer,
-        PidSourceKind.SolanaValidator,
-        PidSourceKind.Underwriter
+        PidSourceKind.anvil,
+        PidSourceKind.api,
+        PidSourceKind.batch_operator,
+        PidSourceKind.bios,
+        PidSourceKind.producer,
+        PidSourceKind.solana_validator,
+        PidSourceKind.underwriter
       ].sort()
     )
+  })
+
+  it("classifies an api node as PidSourceKind.api", () => {
+    // Labelled the way ManagedProcess writes a nodeop pid file
+    // (`<nodePath>/<label>.pid`), so the api node's source is found by label.
+    const apiLabel = "node_05",
+      apiDir = Path.join(tmpDir, "data", apiLabel)
+    Fs.mkdirSync(apiDir, { recursive: true })
+    Fs.writeFileSync(
+      Path.join(apiDir, `${apiLabel}${PidSources.PidExt}`),
+      "21",
+      "utf8"
+    )
+    const apiNode = node(apiLabel, apiDir, ClusterStateNodeRole.api),
+      source = collectPidSources(tmpDir, stateOf([apiNode])).find(
+        candidate => candidate.label === apiLabel
+      )
+    expect(source).toBeDefined()
+    expect(source.kind).toBe(PidSourceKind.api)
+    expect(source.node).toEqual(apiNode)
+    expect(source.directory).toBe(apiDir)
   })
 })
 
@@ -134,7 +167,7 @@ describe("logPathForSource", () => {
       label: "nodeop",
       pidPath: "",
       directory: tmpDir,
-      kind: PidSourceKind.Producer
+      kind: PidSourceKind.producer
     })
     expect(path).toBe(Path.join(logsDir, "log_2026-05-08.jsonl"))
   })
@@ -145,7 +178,7 @@ describe("logPathForSource", () => {
         label: "anvil",
         pidPath: "",
         directory: tmpDir,
-        kind: PidSourceKind.Anvil
+        kind: PidSourceKind.anvil
       },
       new Date(2026, 4, 8)
     )

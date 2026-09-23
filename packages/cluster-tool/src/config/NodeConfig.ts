@@ -17,15 +17,17 @@ import { NodeConfigIniRenderer } from "./renderers/NodeConfigIniRenderer.js"
 import { NodeConfigLoggingRenderer } from "./renderers/NodeConfigLoggingRenderer.js"
 
 /**
- * A planned node's role — explicit operator kinds per the author's directive.
- * Identity-mapped string enum so `match` patterns and JSON round-trips are
- * clean.
+ * A planned node's role: the genesis bios node, block-producing nodes, the two
+ * operator kinds, and API nodes (non-producing chain-read nodes that also serve
+ * the query engine). Identity-mapped string enum so `match` patterns and JSON
+ * round-trips are clean.
  */
 export enum NodeRole {
   bios = "bios",
   producer = "producer",
   batch_operator = "batch_operator",
-  underwriter = "underwriter"
+  underwriter = "underwriter",
+  api = "api"
 }
 
 /** Index width used when padding a node index into its `node_NN` name. */
@@ -86,7 +88,7 @@ interface NodeDescriptor {
  * One nodeop instance's configuration. `ini` / `logging` are `Renderer`s
  * producing the `config.ini` / `logging.json` content. Built en masse by
  * {@link NodeConfig.plan}, which maps the cluster's resolved nodeop ports
- * (`bind.nodeop.ports`) onto bios + producer + operator nodes.
+ * (`bind.nodeop.ports`) onto bios + producer + operator + API nodes.
  */
 export class NodeConfig {
   readonly ini: Renderer
@@ -124,12 +126,14 @@ export class NodeConfig {
   /**
    * Plan every node in the cluster from its resolved binding: a bios node, one
    * producer node per `bind.nodeop.ports.producers[]` (with the defproducer
-   * names round-robin-distributed), and one operator node per batch-op /
+   * names round-robin-distributed), one operator node per batch-op /
    * underwriter port pair (associated by its durable `label` handle — the
    * `account` is generated at provisioning time and resolved from the key
-   * store). Peer endpoints are every other node's advertised p2p endpoint —
-   * each node's own `ports.advertiseAddress` when bound (multi-host mesh),
-   * else the shared dialable bind address.
+   * store), and one API node per `bind.nodeop.ports.api[]` (non-producing, no
+   * operator identity, a mesh member every producing node lists as a peer).
+   * Peer endpoints are every other mesh node's advertised p2p endpoint — each
+   * node's own `ports.advertiseAddress` when bound (multi-host mesh), else the
+   * shared dialable bind address; operators attach at one producer.
    *
    * @param cluster - The resolved cluster config.
    * @returns The planned nodes, bios first.
@@ -187,10 +191,21 @@ export class NodeConfig {
         underwriterLabel: Constants.underwriterLabel(k)
       })
     )
+    nodeopPorts.api.forEach(ports =>
+      descriptors.push({
+        role: NodeRole.api,
+        index: opIndex++,
+        name: nodeName(opIndex - 1),
+        ports,
+        producers: [],
+        batchOperatorLabel: null,
+        underwriterLabel: null
+      })
+    )
 
-    // The MESH is the block-producing set only (bios + producers). Operator
-    // nodes attach to it at a single point instead of joining it — see
-    // `peersFor`.
+    // The MESH is the block-producing set plus the API nodes (bios + producers
+    // + api). Operator nodes attach to it at a single point instead of joining
+    // it — see `peersFor`.
     const meshDescriptors = descriptors.filter(
         node => !NodeConfig.isOperatorRole(node.role)
       ),
@@ -220,10 +235,15 @@ export class NodeConfig {
 }
 
 /**
- * The p2p peers ONE node dials — a mesh of PRODUCERS with operators hanging
- * off it, never one flat mesh of everything.
+ * The p2p peers ONE node dials — a mesh of PRODUCERS and API nodes with
+ * operators hanging off it, never one flat mesh of everything.
  *
- * - **bios / producer** → every other mesh member (the block-producing set).
+ * - **bios / producer / api** → every other mesh member. An API node is a mesh
+ *   member (every producing node lists it as a peer, and it dials every mesh
+ *   member) so each block reaches it in one hop from the producer that made it
+ *   and no single peer's restart isolates it. The set is small and bounded by
+ *   the API-node count — api↔api edges cost `apiCount²`, not the operator
+ *   roster's `N²`.
  * - **batch operator / underwriter** → exactly ONE producer (`operatorUplink`).
  *
  * Operators are excluded from the mesh because p2p flooding is O(N²) in mesh
@@ -235,10 +255,12 @@ export class NodeConfig {
  * finalizers could only vote WEAK, no quorum certificate formed, and LIB froze
  * while head kept advancing — reproduced on four consecutive 21-producer
  * bootstraps (2026-08-04). Restricting the mesh to producers takes it to 22
- * members and leaves each operator with one link.
+ * members and leaves each operator with one link. API nodes add `apiCount`
+ * members to that producer mesh; keep the count to the handful a deployment
+ * serves reads from.
  *
  * @param node - The node whose peers are being resolved.
- * @param meshDescriptors - Every mesh member (bios + producers).
+ * @param meshDescriptors - Every mesh member (bios + producers + API nodes).
  * @param operatorUplink - The producer an operator attaches to.
  * @returns The descriptors this node dials.
  */
@@ -283,7 +305,9 @@ export namespace NodeConfig {
    * it on EVERY role (the harness's `WireClient` reads traces off `producer[0]`,
    * so dropping it there breaks every flow); the production-shaped
    * `create-external-config` tree drops it from bios / producer-role nodes;
-   * operator nodes are non-public and retain it everywhere.
+   * operator nodes are non-public and retain it everywhere. API nodes are the
+   * cluster's chain-read surface and retain it everywhere too, like the
+   * standalone `create-api-node` artifact.
    *
    * @param node - The planned node (its `cluster` carries the deployment kind).
    * @returns `true` when the node loads the trace-api plugin.
@@ -291,8 +315,41 @@ export namespace NodeConfig {
   export function runsTraceApiPlugin(node: NodeConfig): boolean {
     return (
       NodeConfig.isOperatorRole(node.role) ||
+      node.role === NodeRole.api ||
       node.cluster.deploymentKind !== ClusterDeploymentKind.external
     )
+  }
+
+  /**
+   * Whether this node's rendered nodeop config loads
+   * `sysio::query_engine_plugin` and carries the cluster's query-engine block —
+   * the ONE predicate the ini renderer and the argv builder both read, so the
+   * two surfaces cannot disagree about which nodes serve `/v1/query/execute`.
+   * Only API-role nodes do: they are the cluster's chain-read surface, and their
+   * shape (no configured producer, a non-speculative read mode) meets the
+   * plugin's own constraints.
+   *
+   * @param node - The planned node.
+   * @returns `true` when the node loads the query-engine plugin.
+   */
+  export function runsQueryEnginePlugin(node: NodeConfig): boolean {
+    return node.role === NodeRole.api
+  }
+
+  /**
+   * Whether this node's nodeop argv loads `sysio::producer_api_plugin` — every
+   * role but the API node. The producer API carries control endpoints
+   * (`/v1/producer/pause`, `update_runtime_options`, snapshots) that must not be
+   * reachable on the cluster's public chain-read surface; the standalone
+   * `create-api-node` artifact omits it for the same reason. Bios and producer
+   * nodes need it (`resumeProduction` calls it on relaunch), and operator nodes
+   * keep it.
+   *
+   * @param node - The planned node.
+   * @returns `true` when the node loads the producer-api plugin.
+   */
+  export function runsProducerApiPlugin(node: NodeConfig): boolean {
+    return node.role !== NodeRole.api
   }
 
   /**
@@ -315,8 +372,8 @@ export namespace NodeConfig {
 
   /**
    * How many cluster peers ONE node must tolerate: the whole planned topology
-   * (bios + producer nodes + batch operators + underwriters) plus headroom for
-   * flow-provisioned ad-hoc daemons.
+   * (bios + producer nodes + batch operators + underwriters + API nodes) plus
+   * headroom for flow-provisioned ad-hoc daemons.
    *
    * Every node is wired to every other (a full mesh on loopback), so this is
    * the bound for BOTH `--p2p-max-nodes-per-host` and `--max-clients`. Capping
@@ -341,6 +398,7 @@ export namespace NodeConfig {
       cluster.nodeCount +
       cluster.batchOperatorCount +
       cluster.underwriterCount +
+      cluster.apiCount +
       BiosNodeCount +
       AdHocDaemonPeerHeadroom
     )
