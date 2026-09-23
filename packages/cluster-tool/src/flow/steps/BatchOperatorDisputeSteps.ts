@@ -1,8 +1,11 @@
 import Assert from "node:assert"
+
 import { ethers } from "ethers"
+
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
+
 import { Constants as TestClusterConstants } from "../../Constants.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -310,13 +313,11 @@ export namespace BatchOperatorDisputeSteps {
 
   /**
    * Wait until the CHAIN's head-block time is past the current epoch's
-   * `next_epoch_start` (plus a margin). A dispute opens only from a deliver
-   * whose ON-CHAIN block time is ≥ `next_epoch_start` (`chkcons` can't open
-   * one), and the SBP-less dispute group never reaches consensus so the epoch
-   * stays put. Gating on the chain clock rather than the runner's wall clock
-   * avoids the race where the runner is past the boundary but the chain is a
-   * block or two behind, landing the divergent deliver pre-boundary so no
-   * dispute ever opens.
+   * `next_epoch_start` (plus a margin). Although `chkcons` can re-drive
+   * `evalcons` and open a pre-boundary tie after the boundary, this flow waits
+   * first so the terminal divergent delivery opens the dispute inline. Gating
+   * on the chain clock rather than the runner's wall clock avoids landing that
+   * delivery while the chain is still a block or two before the boundary.
    *
    * @param ctx - The build context.
    */
@@ -350,7 +351,7 @@ export namespace BatchOperatorDisputeSteps {
    * The schedule reshape runs while the genesis epoch is live, whose envelope
    * bucket already holds the bootstrap operators' consistent deliveries (pushed
    * by their cranks before the group swap de-elected them). Those form an
-   * Option-B majority, so a 3-way divergent split injected at the genesis epoch
+   * Option-B majority, so a divergent split injected at the genesis epoch
    * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
    * dispute. After the swap, the bootstrap operators finish driving the genesis
    * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
@@ -498,11 +499,15 @@ export namespace BatchOperatorDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    const ethereumIdentity = ethereumKeyPairFromWallet(
+      ethers.Wallet.createRandom()
+    )
     await pushNodeOwnerReg(
       ctx.wire,
       input.account,
       input.tier,
-      ethereumKeyPairFromWallet(ethers.Wallet.createRandom()).publicKey,
+      ethereumIdentity.address.slice(2).toLowerCase(),
+      ethereumIdentity.publicKey,
       TestClusterConstants.DEV_K1_PUBLIC_KEY
     )
   }
@@ -584,8 +589,8 @@ export namespace BatchOperatorDisputeSteps {
    * `sysio.msgch::deliver` — one operator delivers one tagged envelope for the
    * contested epoch (read from {@link ContestedEpochKey} at run time). The
    * typed `invoke` waits for finality, so the deliver is CONFIRMED to land — a
-   * forked-out/dropped deliver would leave fewer than 3 distinct checksums and
-   * the dispute would never open.
+   * forked-out/dropped deliver would leave fewer than the topology's expected
+   * live candidate count and the dispute would never open.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -634,9 +639,9 @@ export namespace BatchOperatorDisputeSteps {
     // Chain the synthetic envelope from the outpost's current inbound tips so the winner (or, for
     // the non-contested outpost, the consensus envelope) passes SEC-102 validation in
     // apply_consensus: `previous_envelope_hash` continues the envelope chain and
-    // `previous_message_id` continues the message chain. The three divergent envelopes for the
-    // contested outpost all read the SAME pre-dispute tips; only the voted winner dispatches and
-    // advances them.
+    // `previous_message_id` continues the message chain. The divergent envelopes for the contested
+    // outpost all read the SAME pre-dispute tips; only the voted winner dispatches and advances
+    // them.
     const tips = await readInboundTips(ctx, input.chainCode, epochIndex)
     const envelope = encodeTaggedEnvelope({
       epochIndex,
@@ -775,9 +780,9 @@ export namespace BatchOperatorDisputeSteps {
 
   /**
    * Poll until an OPEN dispute row appears for the contested (outpost, epoch),
-   * assert it carries a candidate per dispute operator, resolve the canonical
-   * candidate's checksum, and store the {@link DisputeResolutionTarget} for the
-   * vote + resolve steps.
+   * assert it carries a candidate per live delivering operator, resolve the
+   * canonical candidate's checksum, and store the
+   * {@link DisputeResolutionTarget} for the vote + resolve steps.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.

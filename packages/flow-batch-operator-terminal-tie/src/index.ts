@@ -1,4 +1,5 @@
 import { FlowCLI } from "@wireio/cluster-tool"
+
 import { TerminalTieScenario } from "./TerminalTieScenario.js"
 
 /** Run the terminal two-candidate dispute flow — exit code = report success. */

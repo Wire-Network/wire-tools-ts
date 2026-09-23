@@ -193,6 +193,19 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
 })
 
 describe("applyClusterBuildOptionsArgs registration", () => {
+  it("registers ad-hoc-count seeded from a scenario's defaults", () => {
+    // The seam a flow's reservation travels: `FlowCLI` registers `Scenario.defaults` as the
+    // yargs defaults, so a leaf missing from the option TREE never reaches argv and
+    // `toClusterBuildOptions` drops it — the flow then resolves 0 ad-hoc pairs and fails at
+    // cluster-build time on its first `claimAdHocPorts`, which no unit test reaches.
+    expect(register({ adHocCount: 2 }).get("ad-hoc-count")).toMatchObject({
+      type: "number",
+      default: 2
+    })
+    // Absent from a scenario's defaults, no pairs are reserved.
+    expect(register().get("ad-hoc-count")).toMatchObject({ default: 0 })
+  })
+
   it("registers a described, typed yargs option for every deep flag", () => {
     const options = register()
     expect(options.get("bind-kiod-port")).toMatchObject({
@@ -333,6 +346,15 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
+  })
+
+  it("reverse-parses ad-hoc-count, and sizes the ad-hoc bind array from it", () => {
+    const options = toClusterBuildOptions({
+      "ad-hoc-count": 2,
+      "bind-nodeop-ports-ad-hoc-1-http": 4321
+    })
+    expect(options.adHocCount).toBe(2)
+    expect(options.bind?.nodeop?.ports?.adHoc?.[1]?.http).toBe(4321)
   })
 
   it("absolutizes path leaves and leaves unset bind ports absent", () => {

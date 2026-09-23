@@ -3,9 +3,6 @@
   "version": "0.1.8",
   "private": true,
   "type": "commonjs",
-  "exports": {
-    ".": "./lib/index.js"
-  },
   "description": "Flow: Batch Operator Slashing via OPP envelope dispute vote",
   "scripts": {
     "build": "tsc -b tsconfig.json",

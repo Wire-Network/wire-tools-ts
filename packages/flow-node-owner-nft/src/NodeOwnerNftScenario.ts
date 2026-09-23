@@ -70,13 +70,17 @@ async function assertNodeOwnerRegistrationAborts(
   ethereumPublicKey: string,
   abortPattern: RegExp
 ): Promise<void> {
+  const registration: SysioContracts.SysioRoaNodeownregAction = {
+    owner: ownerAccount,
+    tier,
+    eth_pub_key: ethereumPublicKey,
+    wire_pub_key: Constants.DEV_K1_PUBLIC_KEY,
+    eth_address: "00".repeat(20)
+  }
   await Assert.rejects(
-    ctx.wire.getSysioContract(SysioContractName.roa).actions.nodeownreg.invoke({
-      owner: ownerAccount,
-      tier,
-      eth_pub_key: ethereumPublicKey,
-      wire_pub_key: Constants.DEV_K1_PUBLIC_KEY
-    }),
+    ctx.wire
+      .getSysioContract(SysioContractName.roa)
+      .actions.nodeownreg.invoke(registration),
     abortPattern
   )
 }

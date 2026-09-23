@@ -157,6 +157,13 @@ export namespace Constants {
   export const MAX_TRANSACTION_CPU_USAGE = 375_000
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
+  /**
+   * `sysio.system::min_schedule_size` — the floor `update_ranked_producers`
+   * publishes above. Below it the contract RETAINS the last good schedule rather
+   * than publishing a shorter one, so a flow that takes a producer out of the
+   * schedule needs one more schedulable producer than this to observe the exit.
+   */
+  export const MIN_SCHEDULE_SIZE = 4
 
   /**
    * Extra nodeop arguments applied to every node, in EVERY phase — the ini is
@@ -308,6 +315,37 @@ export namespace Constants {
   }
 
   /**
+   * HD account index the operators' EM (Ethereum) keys derive from. Index 0 is
+   * reserved for the deploy owner (`EthereumOutpostBootstrapper.DeployerAccountIndex`),
+   * so operators start at 1: batch operators occupy `1..batchOperatorCount`,
+   * underwriters continue immediately after.
+   *
+   * These are the ONE authority for the mapping. The Ethereum outpost's genesis
+   * batch-operator roster is derived from the SAME (mnemonic, index) pair the
+   * operator's own key is later generated from, at a point in the bootstrap
+   * where the operator accounts do not exist yet — so a second spelling of the
+   * rule would silently authorize the wrong addresses.
+   */
+  export function batchOperatorEthereumHdIndex(index: number): number {
+    return index + 1
+  }
+
+  /**
+   * HD account index for an underwriter's EM key — continues past the batch
+   * operators. See {@link batchOperatorEthereumHdIndex}.
+   *
+   * @param batchOperatorCount - Size of the batch-operator roster.
+   * @param index - Zero-based underwriter index.
+   * @returns The HD account index.
+   */
+  export function underwriterEthereumHdIndex(
+    batchOperatorCount: number,
+    index: number
+  ): number {
+    return batchOperatorCount + index + 1
+  }
+
+  /**
    * Shape of the `sysio.system::setemitcfg` action payload. Mirrors the
    * on-chain `emission_config` struct (post wire-sysio PR #354 — no
    * `capital_bps`; the implicit capital reserve is the remainder).
@@ -332,6 +370,7 @@ export namespace Constants {
     producer_bps: number
     batch_op_bps: number
     standby_end_rank: number
+    standby_bps: number
     epoch_log_retention_count: number
     pay_cadence_epochs: number
   }
@@ -362,6 +401,10 @@ export namespace Constants {
     producer_bps: 7000,
     batch_op_bps: 3000,
     standby_end_rank: 28,
+    // The standby retainer's share of the producer pool. 8% keeps the economics where the
+    // weight-based model left them (28 of 343 weight units at full attendance); the rest funds
+    // the per-block rate.
+    standby_bps: 800,
     epoch_log_retention_count: 8640,
     pay_cadence_epochs: 1
   }
@@ -447,6 +490,14 @@ export namespace ProtocolTiming {
   export const DoubleHopBudgetMs = 840_000
 
   /**
+   * One outpost WRITE step's ceiling (ms): a local anvil / test-validator
+   * transaction and its confirmation. A loaded-host local-operation ceiling,
+   * not a protocol hop — the depot-side effect of that write is a
+   * {@link CollateralVerifyBudgetMs} / {@link SingleHopBudgetMs} wait.
+   */
+  export const OutpostWriteBudgetMs = 60_000
+
+  /**
    * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),
    * so the step's own timeout never races the poll it wraps (finality waits +
    * the final post-poll reads fit inside the margin). Shared by every flow
@@ -472,6 +523,40 @@ export namespace ProtocolTiming {
 
   /** Seconds → milliseconds, the conversion every epoch-derived budget applies. */
   export const MsPerSecond = 1_000
+
+  /** Block interval (ms) — the chain's `block_interval_ms`: one slot every half second. */
+  export const BlockIntervalMs = 500
+
+  /**
+   * Blocks one producer holds before the round-robin rotates — the chain's
+   * `producer_repetitions`.
+   */
+  export const ProducerRepetitions = 12
+
+  /**
+   * Least time between two ranked-schedule rebuilds (ms): `onblock` proposes a
+   * new schedule at most once per 120 block slots, so a change that makes a
+   * producer schedulable (or not) waits up to this long before a rebuild can
+   * publish it, and the pending schedule then needs its proposing block final.
+   * Every deadline on "the schedule picks it up / drops it" carries this term
+   * on top of the rotations it budgets.
+   */
+  export const ScheduleRebuildIntervalMs = 60_000
+
+  /**
+   * Wall clock one full rotation of `scheduleSize` producers takes (ms): every
+   * scheduled producer holds {@link ProducerRepetitions} slots of
+   * {@link BlockIntervalMs} each. TOPOLOGY-derived like
+   * {@link irreversibilityBudgetMs}: a producer's slot comes round once per
+   * rotation, so a missed-round budget is a multiple of this rather than a
+   * guessed constant.
+   *
+   * @param scheduleSize - Producers in the active schedule.
+   * @returns One rotation in ms.
+   */
+  export function producerRotationMs(scheduleSize: number): number {
+    return scheduleSize * ProducerRepetitions * BlockIntervalMs
+  }
 
   /**
    * Effective per-epoch duration for N-epoch deadlines (s): the nominal

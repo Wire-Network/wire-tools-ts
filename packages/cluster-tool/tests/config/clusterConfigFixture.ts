@@ -59,7 +59,10 @@ export const PersistedFixture: ClusterConfig = {
         },
         producers: [pair(0)],
         batch: [pair(1), pair(2), pair(3)],
-        underwriters: [pair(4)]
+        underwriters: [pair(4)],
+        // Two pairs so a fixture-driven tool can start an ad-hoc node (and a second one) without
+        // exhausting the pool — `resolve` reserves these for real clusters.
+        adHoc: [pair(5), pair(6)]
       }
     },
     anvil: { address: Address, port: BindConfigProvider.DefaultAnvil },

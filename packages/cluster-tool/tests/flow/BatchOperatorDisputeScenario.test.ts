@@ -10,8 +10,10 @@ import {
   ClusterBuildPhase,
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
-import { OperatorType } from "@wireio/opp-typescript-models"
+import { Constants as TestClusterConstants } from "@wireio/cluster-tool/Constants"
+import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
@@ -253,6 +255,80 @@ describe("BatchOperatorDisputeScenario", () => {
     expect(() =>
       new TestBatchOperatorDisputeScenario(options).plan(newBuild())
     ).toThrow("slashing targets must be distinct")
+  })
+
+  it("rejects two deliveries when no scheduled operator is terminated", () => {
+    const options = {
+      ...TerminalTieOptions,
+      terminatedOperator: undefined
+    } satisfies BatchOperatorDisputeScenarioOptions
+
+    expect(() =>
+      new TestBatchOperatorDisputeScenario(options).plan(newBuild())
+    ).toThrow(
+      "a non-terminal dispute must include all three scheduled operators"
+    )
+  })
+
+  it("rejects incomplete non-canonical slashing coverage", () => {
+    const options = {
+      ...ThreeWayOptions,
+      losingOperators: ["dispop.b"]
+    } satisfies BatchOperatorDisputeScenarioOptions
+
+    expect(() =>
+      new TestBatchOperatorDisputeScenario(options).plan(newBuild())
+    ).toThrow("slashing targets must be exactly the non-canonical deliverers")
+  })
+
+  it("registers a voter with a lowercase Ethereum address and EM public key", async () => {
+    const ctx = fixtureContext(),
+      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue({} as never)
+
+    await DisputeSteps.runNodeownreg(
+      ctx,
+      {
+        kind: "BatchOperatorDisputeSteps.NodeownregInput",
+        account: "voter1",
+        tier: NodeOwnerTier.T1
+      },
+      new AbortController().signal
+    )
+
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith(
+      "sysio.roa",
+      "nodeownreg",
+      {
+        owner: "voter1",
+        tier: NodeOwnerTier.T1,
+        eth_address: expect.stringMatching(/^[0-9a-f]{40}$/),
+        eth_pub_key: expect.stringMatching(/^PUB_EM_/),
+        wire_pub_key: TestClusterConstants.DEV_K1_PUBLIC_KEY
+      },
+      [{ actor: "sysio.roa", permission: "active" }]
+    )
+  })
+
+  it("does not submit voter registration after pre-abort", async () => {
+    const ctx = fixtureContext(),
+      invoke = jest.spyOn(ctx.wire, "invoke"),
+      controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      DisputeSteps.runNodeownreg(
+        ctx,
+        {
+          kind: "BatchOperatorDisputeSteps.NodeownregInput",
+          account: "voter1",
+          tier: NodeOwnerTier.T1
+        },
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: "AbortError" })
+
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it("rejects a terminal-tie run if epochcfg no longer retains three operators", async () => {

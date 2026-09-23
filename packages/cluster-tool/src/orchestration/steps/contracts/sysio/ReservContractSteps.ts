@@ -1,4 +1,5 @@
-import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
+import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -10,15 +11,12 @@ import type { StepInput } from "../../../StepRunner.js"
 const { SysioContractName } = SysioContracts
 
 /**
- * `<owner>@active` — the owner-fee actions are signed by the RESERVE'S OWNER,
- * not by the contract. The owner is not part of either action's data (the
- * contract reads it off the row), so it rides the step input.
+ * Steps for `sysio.reserv` actions.
+ *
+ * The owner-fee actions are signed by the RESERVE'S OWNER (`WireClient.activeAuthorization`),
+ * not by the contract. The owner is not part of either action's data (the contract reads it
+ * off the row), so it rides the step input.
  */
-const ownerAuthorization = (owner: string): PermissionLevelType[] => [
-  { actor: owner, permission: "active" }
-]
-
-/** Steps for `sysio.reserv` actions. */
 export namespace ReservContractSteps {
   /** Input for {@link planRegreserve} — the generated `reserv::regreserve` data. */
   export interface RegreserveInput extends StepInput {
@@ -139,7 +137,7 @@ export namespace ReservContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.reserv)
       .actions.setrsvfee.invoke(input.data, {
-        authorization: ownerAuthorization(input.owner)
+        authorization: WireClient.activeAuthorization(input.owner)
       })
   }
 
@@ -183,7 +181,7 @@ export namespace ReservContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.reserv)
       .actions.claimrsvfee.invoke(input.data, {
-        authorization: ownerAuthorization(input.owner)
+        authorization: WireClient.activeAuthorization(input.owner)
       })
   }
 }

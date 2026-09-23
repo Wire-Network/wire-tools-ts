@@ -1,6 +1,8 @@
 import Assert from "node:assert"
+
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
@@ -270,6 +272,34 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
           !deliveryOperators.includes(terminatedOperator)),
       "a terminated operator must be scheduled but absent from contested delivery"
     )
+    Assert.deepStrictEqual(
+      [...losingOperators].sort(),
+      deliveryOperators
+        .filter(operator => operator !== Constants.CanonicalOperator)
+        .sort(),
+      "slashing targets must be exactly the non-canonical deliverers"
+    )
+    if (terminatedOperator == null) {
+      Assert.strictEqual(
+        candidateCount,
+        Constants.DisputeOperatorCount,
+        "a non-terminal dispute must include all three scheduled operators"
+      )
+    } else {
+      Assert.strictEqual(
+        candidateCount,
+        Constants.DisputeOperatorCount - 1,
+        "a terminal dispute must include exactly two delivering operators"
+      )
+      Assert.ok(
+        Constants.DisputeOperators.every(
+          operator =>
+            operator === terminatedOperator ||
+            deliveryOperators.includes(operator)
+        ),
+        "the terminated operator must be the only scheduled operator absent from contested delivery"
+      )
+    }
 
     // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 1-group/3-op epoch ──
     const setup = ClusterBuildPhaseGroup.create(
@@ -454,10 +484,10 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       `${candidateCount} live batch operators each deliver the consensus SOLANA envelope + a distinct ETHEREUM envelope`
     )
 
-    // A dispute opens ONLY from deliver's inline evalcons, and only when that
-    // deliver lands with now >= next_epoch_start (chkcons does NOT open
-    // disputes) — so wait past the frozen epoch's boundary first, capturing the
-    // contested epoch index for every subsequent deliver / dispute read.
+    // `chkcons` can re-drive `evalcons` and open a pre-boundary tie after the
+    // boundary. This flow intentionally waits past the boundary before the
+    // divergent deliveries so the terminal delivery itself opens the dispute
+    // inline; capture the contested epoch for every subsequent delivery/read.
     ClusterBuildPhase.create(
       inject,
       "StageContestedEpoch",

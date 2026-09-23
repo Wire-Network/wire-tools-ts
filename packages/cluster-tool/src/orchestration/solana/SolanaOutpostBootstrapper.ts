@@ -771,7 +771,8 @@ export class SolanaOutpostBootstrapper {
       .accounts({
         ...this.getAdminAccounts(deployer),
         config: configPda,
-        operatorRegistry: operatorRegistryPda
+        operatorRegistry: operatorRegistryPda,
+        systemProgram: anchor.web3.SystemProgram.programId
       })
       .signers([deployer])
       .transaction()

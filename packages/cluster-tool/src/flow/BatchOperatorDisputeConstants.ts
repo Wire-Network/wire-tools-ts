@@ -1,12 +1,14 @@
 import { SlugName } from "@wireio/sdk-core"
+
 import { ProtocolTiming } from "../Constants.js"
 
 /**
  * Constants for the shared batch-operator-dispute harness. Names, tags, epoch budgets,
  * and envelope fixture values carry over from the previously-validated jest
  * flow (tests/BatchOperatorSlashing.test.ts): three SBP-less dispute operators
- * inject a 3-way divergent split on the contested outpost, three Tier-1 owners
- * vote the canonical checksum, and the non-canonical deliverers are slashed.
+ * form the scheduled group; either all three inject a divergent split, or one
+ * is terminated and the two live operators inject a tie. Three Tier-1 owners
+ * vote the canonical checksum, and every non-canonical deliverer is slashed.
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
 export namespace BatchOperatorDisputeConstants {
@@ -28,15 +30,15 @@ export namespace BatchOperatorDisputeConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * The three batch operators whose divergent deliveries form the split. The
-   * operator delivering the canonical tag is the one the Tier-1 owners vote
-   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
-   * and non-bootstrapped, so the flow fully controls their deliveries.
+   * The three scheduled batch operators used by both dispute topologies. The
+   * canonical operator and either one or two non-canonical operators deliver;
+   * every non-canonical deliverer is slashed. They are provisioned SBP-less
+   * (no daemon) and non-bootstrapped, so the flow controls their deliveries.
    */
   export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
   /** Label of an operator provisioned by the shared dispute scenario. */
   export type DisputeOperator = (typeof DisputeOperators)[number]
-  /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
+  /** Configured schedule size; the live candidate set contains two or three operators. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
    * Bootstrapped batch operators provisioned by the harness — exactly
@@ -73,9 +75,9 @@ export namespace BatchOperatorDisputeConstants {
    * tally / resolve. The dispute ops therefore never accrue 5 consecutive missed
    * ADVANCES, so at the loosest valid thresholds they don't trip `termcheck`
    * before the slash lands (which would make the slash a no-op on an
-   * already-TERMINATED operator). Termination itself is exercised by
-   * flow-batch-operator-termination; THIS flow verifies the dispute-driven slash,
-   * independent of the miss ladder.
+   * already-TERMINATED operator). Automatic miss-driven termination is covered
+   * by flow-batch-operator-termination; the terminal-tie topology performs an
+   * explicit administrative termination before verifying dispute-driven slash.
    */
   export const TerminateMaxConsecutiveMisses = 5
   /** Companion miss-percentage threshold — the max the contract allows (see above). */
@@ -103,7 +105,7 @@ export namespace BatchOperatorDisputeConstants {
   /** Distinct payload tags → distinct envelope checksums (no majority). */
   export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const
   /**
-   * Tag delivered IDENTICALLY by all three dispute operators on the
+   * Tag delivered identically by all live delivery operators on the
    * non-contested outpost, so that outpost reaches Option-A consensus for the
    * contested epoch (the post-resolution advance where the slash runs requires
    * every active outpost at epoch consensus).
@@ -160,12 +162,12 @@ export namespace BatchOperatorDisputeConstants {
   export const BoundaryEpochBudget = 2
   /**
    * Epochs budgeted for the dispute row to appear. CI-load timing margin: the
-   * dispute opens on the 3rd divergent deliver's inline `evalcons` once it
-   * lands past `next_epoch_start`. Under CI load the deliver txns + epoch
-   * boundary can lag, so the dispute row can appear a little late — 4 epochs
-   * (2 raced the boundary and flaked, e.g. run 28108464932). The poll returns
-   * the instant the row appears, so a wider ceiling adds no wall-clock to the
-   * happy path.
+   * dispute opens on the final expected divergent delivery's inline `evalcons`
+   * once it lands past `next_epoch_start`. Under CI load the deliver txns +
+   * epoch boundary can lag, so the dispute row can appear a little late — 4
+   * epochs (2 raced the boundary and flaked, e.g. run 28108464932). The poll
+   * returns the instant the row appears, so a wider ceiling adds no wall-clock
+   * to the happy path.
    */
   export const DisputeOpenEpochBudget = 4
   /** Epochs budgeted for the vote tally to resolve the dispute. */
