@@ -13,11 +13,7 @@ import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import type { NodeOwnerRegistrationAction } from "../types/NodeOwnerRegistrationAction.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { readNodeOwner, readNodeOwnerReg } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -200,7 +196,7 @@ export namespace ClusterBuildDefaults {
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
-    const bootstrapNodeOwnerRegistration: NodeOwnerRegistrationAction = {
+    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction = {
       owner: Constants.BOOTSTRAP_NODE_OWNER,
       tier: NodeOwnerTier.T1,
       eth_pub_key: bootstrapNodeOwnerEth.publicKey,
@@ -643,8 +639,7 @@ export namespace ClusterBuildDefaults {
             {},
             {
               account: label,
-              type: SysioContracts.SysioOpregOperatortype
-                .OPERATOR_TYPE_PRODUCER,
+              type: SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_PRODUCER,
               is_bootstrapped: true
             }
           )
@@ -1328,8 +1323,7 @@ export namespace ClusterBuildDefaults {
         config.terminateMaxConsecutiveMisses ??
         DefaultTerminateMaxConsecutiveMisses,
       terminate_max_pct_misses_24h:
-        config.terminateMaxPercentMisses24h ??
-        DefaultTerminateMaxPercentMisses24h,
+        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:

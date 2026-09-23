@@ -6,7 +6,6 @@ import {
   type ClusterBuildStepOptions
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
-import type { NodeOwnerRegistrationAction } from "../../../../types/NodeOwnerRegistrationAction.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -19,9 +18,7 @@ export namespace RoaContractSteps {
   }
 
   /** `sysio.roa::activateroa` — activate ROA (seeds the sysio pool, makes sysio.* accounts finite). */
-  export function planActivateroa<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planActivateroa<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -61,9 +58,7 @@ export namespace RoaContractSteps {
    * finite, pool-gifted RAM allocation (the create step the depot inline-sends
    * for a real NFT claim).
    */
-  export function planNewnameduser<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planNewnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -95,7 +90,7 @@ export namespace RoaContractSteps {
   /** Input for {@link planNodeownreg} — the generated `roa::nodeownreg` data. */
   export interface NodeownregInput extends StepInput {
     readonly kind: "RoaContractSteps.NodeownregInput"
-    readonly data: NodeOwnerRegistrationAction
+    readonly data: SysioContracts.SysioRoaNodeownregAction
   }
 
   /**
@@ -105,14 +100,12 @@ export namespace RoaContractSteps {
    * problems SOFT-FAIL into a `nodeownerreg` audit row rather than throwing —
    * follow with a verify step that asserts the `nodeowners` row exists.
    */
-  export function planNodeownreg<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planNodeownreg<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    data: NodeOwnerRegistrationAction
+    data: SysioContracts.SysioRoaNodeownregAction
   ): ClusterBuildStep<C, NodeownregInput> {
     return ClusterBuildStep.create<C, NodeownregInput>(
       actor,

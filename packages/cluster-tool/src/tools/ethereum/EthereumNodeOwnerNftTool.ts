@@ -33,7 +33,6 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import type { NodeOwnerRegistrationAction } from "../../types/NodeOwnerRegistrationAction.js"
 import {
   loadOutpostContract,
   resolveLatestNonce,
@@ -257,14 +256,14 @@ export async function pushNodeOwnerReg(
   wirePubKey: string
 ): Promise<void> {
   try {
-    const registration: NodeOwnerRegistrationAction = {
+    const registration: SysioContracts.SysioRoaNodeownregAction = {
       owner: ownerAccount,
       tier,
       eth_pub_key: ethPubKey,
       wire_pub_key: wirePubKey,
       eth_address: ethAddress
     }
-    await wire.invoke<NodeOwnerRegistrationAction>(
+    await wire.invoke<SysioContracts.SysioRoaNodeownregAction>(
       "sysio.roa",
       "nodeownreg",
       registration,

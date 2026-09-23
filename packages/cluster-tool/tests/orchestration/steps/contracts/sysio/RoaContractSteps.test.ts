@@ -1,7 +1,6 @@
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import type { NodeOwnerRegistrationAction } from "@wireio/cluster-tool"
 import { SysioContracts } from "@wireio/sdk-core"
 
 describe("Steps.contracts.sysio.roa", () => {
@@ -25,7 +24,7 @@ describe("Steps.contracts.sysio.roa", () => {
   })
 
   it("nodeownreg carries the roa::nodeownreg data", () => {
-    const data: NodeOwnerRegistrationAction = {
+    const data: SysioContracts.SysioRoaNodeownregAction = {
       owner: "wireno",
       tier: NodeOwnerTier.T1,
       eth_pub_key: "PUB_EM_examplekey",
