@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import Crypto from "node:crypto"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
@@ -65,36 +66,48 @@ async function getPort(...args: GetPortParameters): Promise<number> {
  * free, or `resolve` throws) or a newly-claimed free port.
  */
 export namespace BindConfigProvider {
-  /** Basename of the mutex guarding port selection, inside the registry dir. */
-  const PortLockFilename = "wire-cluster-ports.lock"
+  /** Filename stem of the {@link portLockPath} advisory lock. */
+  const PortLockPrefix = "wire-cluster-ports"
+  /** Hex characters of the registry-path digest in a {@link portLockPath}. */
+  const PortLockKeyLength = 16
 
   /**
-   * Lock path serializing port SELECTION across every process sharing a
-   * registry. `get-port` only de-dupes within one process; this cross-process
-   * advisory lock (via `withFileLock`) stops two processes racing the same free
-   * port while finding it.
+   * Lock path serializing port SELECTION across every process that shares a
+   * registry (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only
+   * de-dupes within one process; this cross-process advisory lock (via
+   * `withFileLock`) stops two processes racing the same free port while
+   * finding it.
    *
-   * It is deliberately derived from {@link registryPath} rather than pinned to
-   * the OS temp dir: **a mutex must be scoped to the state it guards.** The
-   * registry IS that state, and it is env-overridable
-   * ({@link RegistryPathEnvVar}) — jest's setup gives every test file its own
-   * `mkdtemp` registry so suites never read each other's reservations. A
-   * host-global lock over per-worker registries produced pure FALSE contention:
-   * 8 jest projects' port-resolving tests queued on one mutex while having
-   * nothing to serialize against, and a rotating victim exhausted its retry
-   * budget with `Lock file is already being held`.
+   * KEYED BY {@link registryPath}, but kept in the OS temp dir. The lock's
+   * scope must match the scope of the registry it guards: real runs all
+   * resolve the same default registry dir, so they hash to the SAME lock and
+   * still serialize host-globally — behaviour unchanged. A caller that
+   * sandboxes the registry via {@link RegistryPathEnvVar} (every jest suite
+   * does, in `tests/jest.setup.ts`) hashes to its OWN lock, which is correct:
+   * disjoint registries cannot collide on a port, so serializing them protects
+   * nothing.
    *
-   * Production is unchanged: with the env var unset every process resolves the
-   * same default registry, hence the same lock, and the cross-process guarantee
-   * holds exactly as before.
+   * When the path was a FIXED tmpdir name the two scopes disagreed, and every
+   * port-drawing test across all 8 jest projects queued on one global lock
+   * despite already holding private registries — blowing `FileLockOptions`'
+   * retry budget and failing ~37 tests per run with "Lock file is already
+   * being held". Raising that budget had already been tried once; it treats
+   * the symptom, because the contention was self-inflicted.
    *
-   * Living inside the registry dir is safe because every reader filters on
-   * {@link RegistryFileSuffix}, so this file and the `.lock` directory
-   * `proper-lockfile` creates beside it are never mistaken for registrations —
-   * keep that filter if the reader is ever rewritten.
+   * The lock lives in the temp dir rather than INSIDE the registry dir because
+   * a sandboxing caller owns (and deletes) that dir: `proper-lockfile` keeps an
+   * mtime-refresh timer alive for a held lock and its `onCompromised` hook
+   * THROWS when the lock's directory vanishes underneath it, so a fixture
+   * tearing down its temp root raced the refresh and produced
+   * `ENOENT ... wire-cluster-ports.lock.lock`. Hashing the path keeps the
+   * scoping while putting the file somewhere no test owns.
    */
   export function portLockPath(): string {
-    return Path.join(registryPath(), PortLockFilename)
+    const registryKey = Crypto.createHash("sha256")
+      .update(Path.resolve(registryPath()))
+      .digest("hex")
+      .slice(0, PortLockKeyLength)
+    return Path.join(Os.tmpdir(), `${PortLockPrefix}-${registryKey}.lock`)
   }
   /**
    * agave's built-in validator port range — RESERVED host-wide; the harness
