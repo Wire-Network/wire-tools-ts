@@ -137,6 +137,39 @@ describe("EthereumOutpostBootstrapper constructor", () => {
         })
     ).toThrow(/epochDurationSec must be positive/)
   })
+
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true]
+  ] as const)(
+    "writes enableMockYieldEmitter=%s to the outpost deploy config",
+    (enableMockYieldEmitter, expected) => {
+      const bootstrapper = new EthereumOutpostBootstrapper({
+        ethereumPath: "/repo/eth",
+        anvilDataPath: "/tmp/anvil",
+        rpcUrl,
+        deploymentsPath,
+        initialRoster,
+        enableMockYieldEmitter
+      })
+      const configBuilder = bootstrapper as unknown as {
+        outpostDeployConfig(
+          rpcUrl: string,
+          deployerPrivateKey: string,
+          localDir: string
+        ): { enableMockYieldEmitter: boolean }
+      }
+
+      expect(
+        configBuilder.outpostDeployConfig(
+          rpcUrl,
+          AnvilAccount0PrivateKey,
+          deploymentsPath
+        ).enableMockYieldEmitter
+      ).toBe(expected)
+    }
+  )
 })
 
 describe("EthereumOutpostBootstrapper.initialBatchOperatorGroups", () => {

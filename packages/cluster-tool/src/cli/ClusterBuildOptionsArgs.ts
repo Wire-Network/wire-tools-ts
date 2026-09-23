@@ -119,7 +119,9 @@ export class OptionLeafSpec {
  * walk.
  */
 export type OptionShapeNode =
-  OptionLeafSpec | OptionShapeNode[] | OptionShapeObject
+  | OptionLeafSpec
+  | OptionShapeNode[]
+  | OptionShapeObject
 
 /** A nested object of shape nodes (named — no inline object types). */
 export interface OptionShapeObject {
@@ -591,9 +593,7 @@ export function applyClusterBuildOptionsArgs(
     environmentPathDefaults(environment),
     defaults
   )
-  const withShape = flattenOptionLeaves(
-    buildOptionShape(seededDefaults)
-  ).reduce(
+  const withShape = flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
     (instance, optionLeaf) =>
       instance.option(
         optionLeaf.flag,
@@ -702,7 +702,10 @@ function isIndexSegment(segment: string): boolean {
 }
 
 /** Read a child by segment (arrays accept numeric-string keys uniformly). */
-function childOf(node: OptionTreeContainer, segment: string): OptionTreeValue {
+function childOf(
+  node: OptionTreeContainer,
+  segment: string
+): OptionTreeValue {
   return (node as OptionTreeObject)[segment] ?? null
 }
 

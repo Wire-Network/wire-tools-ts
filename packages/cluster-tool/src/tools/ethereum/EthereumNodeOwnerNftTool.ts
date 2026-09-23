@@ -174,7 +174,7 @@ export function loadBar(
 /**
  * Commit a node NFT via `BAR.commitNode` — the production claim entry point.
  * Claims are drawn from the canonical WireNodes contract configured in BAR
- * (`setWireNodesContract`, wired by the local outpost deployment), and
+ * (`setWireNodesContract`, wired by deployLocal on the local cluster), and
  * the commit ESCROWS the claimed unit in BAR — the signer must hold ≥ 1
  * unit of `tier` and have approved BAR first (see {@link approveNodeEscrow}).
  * The contract validates every payload class the depot would silently drop

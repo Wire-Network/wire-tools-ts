@@ -33,7 +33,7 @@ export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
 /**
  * Load a deployed outpost contract from the run's wire-ethereum deploy
  * artifacts: resolve its address from the `outpost-addrs.json` map (written by
- * the local deployment scripts), read the hardhat-emitted ABI artifact under
+ * `deployLocal.ts`), read the hardhat-emitted ABI artifact under
  * `<ethereumPath>/artifacts/contracts/<...artifactSubpath>/<contractName>.sol/
  * <contractName>.json`, and bind it to `signer` via {@link contractView}. The
  * ONE artifact-loading path every per-contract loader (`loadBar`,
@@ -57,7 +57,7 @@ export function loadOutpostContract<View extends object>(
   Assert.ok(
     addr && EvmAddressPattern.test(addr),
     `loadOutpostContract: ${contractName} not in outpost-addrs.json (got ${addr}). ` +
-      `Did wire-ethereum's local deployment run with the contract enabled?`
+      `Did wire-ethereum's deployLocal.ts run with the contract enabled?`
   )
 
   const artifactPath = Path.join(
