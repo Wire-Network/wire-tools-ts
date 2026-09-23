@@ -17,12 +17,15 @@
  *
  *   --cluster-path <dir>      cluster data dir (env: WIRE_CLUSTER_PATH). Optional — when omitted
  *                             the flow test harness generates a fresh temp cluster path per run.
+ *   -- <scenario options>     pass remaining arguments to the selected flow CLI.
  *
  * Examples:
  *   ./scripts/run-flow.mjs                       # interactive picker
  *   ./scripts/run-flow.mjs swap                  # regex match → picks/prompts among matches
  *   ./scripts/run-flow.mjs flow-swap-with-underwriting --wire-build-path ~/wire-sysio/build/release \
  *       --ethereum-path ~/wire-ethereum --solana-path ~/wire-solana
+ *   ./scripts/run-flow.mjs flow-swap-canary --wire-build-path <dir> \
+ *       --ethereum-path <dir> --solana-path <dir> -- --routes eth-to-sol
  */
 
 import { fileURLToPath } from "node:url"
@@ -80,7 +83,8 @@ async function discoverFlows() {
  */
 function matchFlows(flows, pattern) {
   const exact = flows.find(
-    f => f.name === pattern || f.short === pattern || `flow-${pattern}` === f.name
+    f =>
+      f.name === pattern || f.short === pattern || `flow-${pattern}` === f.name
   )
   if (exact) return [exact]
 
@@ -111,9 +115,12 @@ async function promptForFlow(flows) {
   const names = flows.map(f => f.name)
   while (true) {
     const answer = (
-      await question(chalk.bold(`\nSelect a flow [1-${flows.length} or name]: `), {
-        choices: names
-      })
+      await question(
+        chalk.bold(`\nSelect a flow [1-${flows.length} or name]: `),
+        {
+          choices: names
+        }
+      )
     ).trim()
 
     if (answer.length === 0) {
@@ -129,7 +136,11 @@ async function promptForFlow(flows) {
     const matched = matchFlows(flows, answer)
     if (matched.length === 1) return matched[0]
     if (matched.length > 1) {
-      echo(chalk.yellow(`"${answer}" matches ${matched.length} flows — be more specific.`))
+      echo(
+        chalk.yellow(
+          `"${answer}" matches ${matched.length} flows — be more specific.`
+        )
+      )
       continue
     }
     echo(chalk.yellow(`No flow matches "${answer}" — try again.`))
@@ -212,8 +223,16 @@ const wireBuildPath = requirePath(
   "WIRE_BUILD_PATH",
   "--wire-build-path"
 )
-const ethereumPath = requirePath(argv["ethereum-path"], "WIRE_ETH_PATH", "--ethereum-path")
-const solanaPath = requirePath(argv["solana-path"], "WIRE_SOLANA_PATH", "--solana-path")
+const ethereumPath = requirePath(
+  argv["ethereum-path"],
+  "WIRE_ETH_PATH",
+  "--ethereum-path"
+)
+const solanaPath = requirePath(
+  argv["solana-path"],
+  "WIRE_SOLANA_PATH",
+  "--solana-path"
+)
 
 // Validate the resolved paths.
 assertDir(wireBuildPath, "wire build path")
@@ -225,7 +244,11 @@ if (!fs.existsSync(nodeop)) {
 assertDir(ethereumPath, "ethereum path")
 const hardhatConfig = path.join(ethereumPath, "hardhat.config.ts")
 if (!fs.existsSync(hardhatConfig)) {
-  echo(chalk.red(`Error: not a wire-ethereum repo (no hardhat.config.ts): ${ethereumPath}`))
+  echo(
+    chalk.red(
+      `Error: not a wire-ethereum repo (no hardhat.config.ts): ${ethereumPath}`
+    )
+  )
   process.exit(1)
 }
 assertDir(solanaPath, "solana path")
@@ -238,6 +261,13 @@ const clusterPath =
     ? path.resolve(String(argv["cluster-path"]))
     : (process.env.WIRE_CLUSTER_PATH ?? null)
 
+// Scenario-only flags are deliberately separated by `--`: the canonical
+// runner owns cluster/path options, while the selected strict FlowCLI owns the
+// remaining argument vocabulary.
+const argumentSeparator = process.argv.indexOf("--")
+const scenarioArguments =
+  argumentSeparator >= 0 ? process.argv.slice(argumentSeparator + 1) : []
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -246,7 +276,12 @@ echo(chalk.bold.green(`\nRunning ${flow.pkgName}...`))
 echo(`  wire-build: ${wireBuildPath}`)
 echo(`  ethereum:   ${ethereumPath}`)
 echo(`  solana:     ${solanaPath}`)
-echo(`  cluster:    ${clusterPath ?? chalk.dim("(harness-generated temp dir)")}`)
+echo(
+  `  cluster:    ${clusterPath ?? chalk.dim("(harness-generated temp dir)")}`
+)
+if (scenarioArguments.length > 0) {
+  echo(`  scenario:   ${scenarioArguments.join(" ")}`)
+}
 
 const childEnv = {
   ...process.env,
@@ -265,8 +300,11 @@ const childEnv = {
 // `beforeAll` budget. `pnpm --filter` also matches the working invocation 1:1
 // (same jest binary, same package jest.config.ts) rather than a hand-rolled
 // `npx jest` with divergent flags.
+const forwardedArguments =
+  scenarioArguments.length > 0 ? ["--", ...scenarioArguments] : []
+
 await $({
   stdio: "inherit",
   cwd: repoRoot,
   env: childEnv
-})`pnpm --filter ${flow.pkgName} test`
+})`pnpm --filter ${flow.pkgName} test ${forwardedArguments}`
