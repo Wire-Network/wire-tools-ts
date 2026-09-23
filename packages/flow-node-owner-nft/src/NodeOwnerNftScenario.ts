@@ -14,7 +14,8 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
-  type ClusterBuildOptions
+  type ClusterBuildOptions,
+  type NodeOwnerRegistrationAction
 } from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
 import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwnerNftScenarioCommitSteps.js"
@@ -70,7 +71,7 @@ async function assertNodeOwnerRegistrationAborts(
   ethereumPublicKey: string,
   abortPattern: RegExp
 ): Promise<void> {
-  const registration: SysioContracts.SysioRoaNodeownregAction = {
+  const registration: NodeOwnerRegistrationAction = {
     owner: ownerAccount,
     tier,
     eth_pub_key: ethereumPublicKey,
@@ -124,7 +125,10 @@ async function verifyCommitPathConfirmed(
     Constants.CommitPathDeadlineMs,
     Constants.CommitPathPollIntervalMs
   )
-  const registration = await readNodeOwner(ctx.wire, Constants.CommitPathAccount)
+  const registration = await readNodeOwner(
+    ctx.wire,
+    Constants.CommitPathAccount
+  )
   Assert.strictEqual(
     Number(registration.tier),
     NodeOwnerTier.T1,
@@ -529,7 +533,10 @@ export class NodeOwnerNftScenario extends FlowScenario {
         "confirmed-commit-path",
         "nodeowners row lands via the OPP hop; audit status CONFIRMED",
         verifyCommitPathConfirmed,
-        { timeoutMs: Constants.CommitPathDeadlineMs + ProtocolTiming.PollDeadlineBufferMs }
+        {
+          timeoutMs:
+            Constants.CommitPathDeadlineMs + ProtocolTiming.PollDeadlineBufferMs
+        }
       )
     )
   }
