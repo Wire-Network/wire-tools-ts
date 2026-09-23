@@ -87,7 +87,6 @@ describe("ClusterConfig shape", () => {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    enableMockYieldEmitter: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb
   }
@@ -123,7 +122,6 @@ describe("ClusterConfig shape", () => {
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
-    delete parsed.enableMockYieldEmitter
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -137,7 +135,6 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
-    expect(rehydrated.enableMockYieldEmitter).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)

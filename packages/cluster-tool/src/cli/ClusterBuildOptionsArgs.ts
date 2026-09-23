@@ -441,10 +441,6 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
-    enableMockYieldEmitter: leaf(
-      false,
-      "deploy the transport-only synthetic Ethereum yield emitter"
-    ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount, adHocCount),
     bindConfig: optionalLeaf(
       OptionLeafType.string,

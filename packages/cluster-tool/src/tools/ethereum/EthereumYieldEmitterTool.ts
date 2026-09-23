@@ -3,7 +3,7 @@
  * wire-ethereum's `deployLocal.ts` script under `contracts/test/outpost/`)
  * with an ergonomic helper for the flow-yield-distribution test.
  *
- * The on-chain contract is a permissioned poke-emit fake: an admin
+ * The on-chain contract is a test-only poke-emit fixture: a flow signer
  * records synthetic per-staker positions, then triggers a single tx
  * that fans STAKING_REWARD attestations onto OPP's outbound queue —
  * exercising transport and depot accounting without representing a
@@ -92,8 +92,7 @@ export function loadMockYieldEmitter(
  * Record a stake entry on the emitter. Idempotent in the sense that
  * subsequent calls add to the staker's recorded balance.
  *
- * @param contract   Emitter bound to a signer holding the AccessManager
- *                   admin / configured role.
+ * @param contract   Emitter bound to the flow's test signer.
  * @param staker     ETH address whose stake is being recorded.
  * @param amount     Native base-unit amount to add to `staker`'s position.
  */
@@ -124,7 +123,7 @@ export async function recordStake(
  *   * Have at most one entry per staker (the contract's monotonic
  *     check would reject a same-`externalEpochRef` repeat).
  *
- * @param contract           Emitter bound to admin signer.
+ * @param contract           Emitter bound to the flow's test signer.
  * @param entries            Per-staker reward triples.
  * @param externalEpochRef   Monotonic-per-staker reference. The depot
  *                           rejects any inbound STAKING_REWARD whose

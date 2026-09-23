@@ -25,7 +25,7 @@ end-to-end.
   STAKING_REWARD attestations arriving from the outposts. Production reward
   emission belongs to a separate future track and is not implemented here.
   The dedicated yield-distribution flow tests only the OPP transport and depot
-  accounting path with an explicitly enabled synthetic emitter.
+  accounting path with a synthetic emitter.
 
   `capital_shortfall_total` is asserted to stay at `0` in this soak —
   trivially true today because no `fundclaim` calls occur.

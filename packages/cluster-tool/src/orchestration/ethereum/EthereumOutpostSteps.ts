@@ -193,7 +193,6 @@ export namespace EthereumOutpostSteps {
         toDialAddress(ctx.config.bind.anvil.address)
       ),
       deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-      enableMockYieldEmitter: ctx.config.enableMockYieldEmitter,
       initialRoster
     }
   }

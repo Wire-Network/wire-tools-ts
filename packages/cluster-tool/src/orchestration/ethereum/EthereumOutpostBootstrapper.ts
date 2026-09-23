@@ -69,8 +69,6 @@ export interface EthereumOutpostBootstrapperOptions {
    * sharing `<wire-ethereum>/.local/deployments/` wiped each other mid-run).
    */
   deploymentsPath: string
-  /** Deploy the transport-only synthetic yield emitter into the local outpost. */
-  enableMockYieldEmitter?: boolean
   /**
    * WNE-41 initial batch-operator roster for `OPPInbound.initialize`. Required:
    * a cluster deployed without one has an outpost whose `epochIn` is callable
@@ -219,11 +217,19 @@ export class EthereumOutpostBootstrapper {
       withdrawalDelay: 50
     }
     const { initialRoster } = this.config,
-      outpostConfig = this.outpostDeployConfig(
-        rpcUrl,
-        deployerPrivateKey,
-        localDir
-      )
+      outpostConfig = {
+        url: rpcUrl,
+        key: deployerPrivateKey,
+        addressFile: Path.join(localDir, "outpost-addrs.json"),
+        gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
+        useMockAggregator: true,
+        // WNE-41: consumed by `deployLocal.ts`'s OutpostLocalDeploy, which
+        // hands them to `OPPInbound.initialize`. The deployer is deliberately
+        // NOT among them — on a cluster the batch-operator daemons sign
+        // `epochIn` with their own keys.
+        initialOperatorGroups: initialRoster.groups,
+        epochDurationSec: initialRoster.epochDurationSec
+      }
     log.info(
       `[ethereum] initial batch-operator roster: ${initialRoster.groups
         .map(group => `[${group.join(", ")}]`)
@@ -306,28 +312,6 @@ export class EthereumOutpostBootstrapper {
       }
     })
     log.info("[ethereum] contract deployment complete")
-  }
-
-  /** Build the exact outpost JSON payload consumed by wire-ethereum's local deploy. */
-  private outpostDeployConfig(
-    rpcUrl: string,
-    deployerPrivateKey: string,
-    localDir: string
-  ) {
-    const { initialRoster } = this.config
-    return {
-      url: rpcUrl,
-      key: deployerPrivateKey,
-      addressFile: Path.join(localDir, "outpost-addrs.json"),
-      gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-      enableMockYieldEmitter: this.config.enableMockYieldEmitter,
-      // WNE-41: consumed by `deployLocal.ts`'s OutpostLocalDeploy, which
-      // hands them to `OPPInbound.initialize`. The deployer is deliberately
-      // NOT among them — on a cluster the batch-operator daemons sign
-      // `epochIn` with their own keys.
-      initialOperatorGroups: initialRoster.groups,
-      epochDurationSec: initialRoster.epochDurationSec
-    }
   }
 
   /**
@@ -706,8 +690,7 @@ export namespace EthereumOutpostBootstrapper {
    *  anvil's `--accounts` so every generated account is pre-funded. */
   export function createDefaultOptions(): Partial<EthereumOutpostBootstrapperOptions> {
     return {
-      accountCount: AnvilProcess.AccountCount,
-      enableMockYieldEmitter: false
+      accountCount: AnvilProcess.AccountCount
     }
   }
 
