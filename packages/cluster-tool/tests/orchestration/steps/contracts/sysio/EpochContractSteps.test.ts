@@ -1,6 +1,37 @@
-import { Steps } from "@wireio/cluster-tool/orchestration"
+import {
+  Steps,
+  type ClusterBuildContext
+} from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
+import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
+
+/** The depot's `epochstate` query result, typed from the client that returns it. */
+type EpochStateQueryResult = Awaited<
+  ReturnType<ClusterBuildContext["wire"]["getEpochState"]>
+>
+
+/** A `epochstate` singleton read stubbed onto a REAL context's memoized client. */
+function contextWithEpochState(
+  ...rows: SysioContracts.SysioEpochEpochStateType[]
+): ClusterBuildContext {
+  const ctx = fixtureContext()
+  jest
+    .spyOn(ctx.wire, "getEpochState")
+    .mockResolvedValue({ rows } as EpochStateQueryResult)
+  return ctx
+}
+
+/** The schedule window + its rotation cursor — the only fields these reads touch. */
+function epochStateRow(
+  currentBatchOpGroup: number,
+  batchOperatorGroups: string[][]
+): SysioContracts.SysioEpochEpochStateType {
+  return {
+    current_batch_op_group: currentBatchOpGroup,
+    batch_op_groups: batchOperatorGroups
+  } as SysioContracts.SysioEpochEpochStateType
+}
 
 describe("Steps.contracts.sysio.epoch", () => {
   it("setconfig carries the epoch::setconfig data", () => {
@@ -33,4 +64,43 @@ describe("Steps.contracts.sysio.epoch", () => {
       expect(typeof step.runner).toBe("function")
     }
   )
+})
+
+describe("Steps.contracts.sysio.epoch epochstate reads", () => {
+  const groups = [["opa", "opb"], ["opc", "opd"], ["ope", "opf"]]
+
+  it("readEpochState unwraps the singleton row", async () => {
+    const row = epochStateRow(0, groups)
+    await expect(
+      Steps.contracts.sysio.epoch.readEpochState(contextWithEpochState(row))
+    ).resolves.toBe(row)
+  })
+
+  it("batchOperatorGroups returns the WHOLE sliding window", async () => {
+    await expect(
+      Steps.contracts.sysio.epoch.batchOperatorGroups(
+        contextWithEpochState(epochStateRow(1, groups))
+      )
+    ).resolves.toEqual(groups)
+  })
+
+  it("activeBatchOperatorGroup indexes by the rotation cursor, never [0]", async () => {
+    // The window rotates: at cursor 2 the ACTIVE group is the third one. A
+    // hardcoded `[0]` would return the expired group and silently pass.
+    await expect(
+      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(
+        contextWithEpochState(epochStateRow(2, groups))
+      )
+    ).resolves.toEqual(groups[2])
+  })
+
+  it("tolerates an epoch state that has no row yet", async () => {
+    const ctx = contextWithEpochState()
+    await expect(
+      Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
+    ).resolves.toEqual([])
+    await expect(
+      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx)
+    ).resolves.toBeUndefined()
+  })
 })

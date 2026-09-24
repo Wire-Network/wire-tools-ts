@@ -32,6 +32,13 @@ export interface ClusterBuildOptions {
   nodeCount?: number
   batchOperatorCount?: number
   underwriterCount?: number
+  /**
+   * Port pairs to reserve for nodes this run starts itself, outside `NodeConfig.plan`.
+   *
+   * Defaults to 0 — a flow asks for exactly the nodes it starts. See
+   * `BindConfigProvider.claimAdHocPorts`.
+   */
+  adHocCount?: number
   // epoch
   epochDurationSec?: number
   /** `operators_per_epoch` (batch-op group SIZE) — omit to derive from `batchOperatorCount`. */

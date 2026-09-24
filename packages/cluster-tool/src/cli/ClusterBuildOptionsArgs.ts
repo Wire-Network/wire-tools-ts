@@ -41,6 +41,7 @@ const CliDefault = {
   producerCount: 1,
   batchOperatorCount: 3,
   underwriterCount: 1,
+  adHocCount: 0,
   epochDurationSec: 60
 } as const
 
@@ -278,7 +279,8 @@ function buildDaemonShape(label: string): OptionShapeObject {
 function buildBindShape(
   nodeCount: number,
   batchCount: number,
-  underwriterCount: number
+  underwriterCount: number,
+  adHocCount: number
 ): OptionShapeObject {
   return {
     kiod: buildDaemonShape("kiod"),
@@ -294,6 +296,9 @@ function buildBindShape(
         ),
         underwriters: range(underwriterCount).map(index =>
           buildPortPairShape(`underwriter[${index}] nodeop`)
+        ),
+        adHoc: range(adHocCount).map(index =>
+          buildPortPairShape(`ad-hoc[${index}] nodeop`)
         )
       }
     },
@@ -357,7 +362,8 @@ export function buildOptionShape(
   const {
     nodeCount = CliDefault.nodeCount,
     batchOperatorCount: batchCount = CliDefault.batchOperatorCount,
-    underwriterCount = CliDefault.underwriterCount
+    underwriterCount = CliDefault.underwriterCount,
+    adHocCount = CliDefault.adHocCount
   } = defaults
   return {
     // ── paths ──
@@ -377,6 +383,10 @@ export function buildOptionShape(
       "batch operator count — ODD and divisible by 3 (3, 9, 15, 21) unless --operators-per-epoch OR --batch-op-groups is given; max 26"
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
+    adHocCount: leaf(
+      CliDefault.adHocCount,
+      "ad-hoc node count — port pairs reserved for nodes a flow starts itself, outside NodeConfig.plan"
+    ),
     // ── epoch ──
     epochDurationSec: leaf(
       CliDefault.epochDurationSec,
@@ -431,7 +441,7 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
-    bind: buildBindShape(nodeCount, batchCount, underwriterCount),
+    bind: buildBindShape(nodeCount, batchCount, underwriterCount, adHocCount),
     bindConfig: optionalLeaf(
       OptionLeafType.string,
       "path to a BindConfig JSON (complete → used verbatim; partial → merged over resolved defaults)"
@@ -769,7 +779,8 @@ function countsFromArgv(argv: OptionArgv): ClusterBuildOptions {
   return {
     nodeCount: count("node-count"),
     batchOperatorCount: count("batch-operator-count"),
-    underwriterCount: count("underwriter-count")
+    underwriterCount: count("underwriter-count"),
+    adHocCount: count("ad-hoc-count")
   }
 }
 

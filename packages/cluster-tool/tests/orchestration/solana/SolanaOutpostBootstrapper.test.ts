@@ -1,6 +1,23 @@
+import * as anchor from "@coral-xyz/anchor"
+import { PublicKey } from "@solana/web3.js"
+import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
+
+/** A minimal roster entry — the asserts under test never read its contents. */
+const bootstrapOperator = (): SolanaOutpostBootstrapper.BootstrapOperator => ({
+  wireName: new anchor.BN(1),
+  solAddress: PublicKey.default,
+  role: OperatorType.BATCH,
+  status: OperatorStatus.ACTIVE
+})
+
+/** A seed of `size` paired roster entries + group members (roster IS the group). */
+const seedOfSize = (size: number): SolanaOutpostBootstrapper.OppBootstrapSeed => {
+  const operators = Array.from({ length: size }, bootstrapOperator)
+  return { operators, groupMembers: operators.map(operator => operator.solAddress) }
+}
 
 describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
   it("provisions USDCSOL / USDTSOL / LIQSOL with the expected decimals", () => {
@@ -54,5 +71,82 @@ describe("SolanaOutpostBootstrapper constructor", () => {
       () =>
         new SolanaOutpostBootstrapper({ solanaPath: "/repo/sol", rpcUrl: "" })
     ).toThrow(/rpcUrl is required/)
+  })
+})
+
+describe("SolanaOutpostBootstrapper.oppBootstrapEncodedBytes", () => {
+  it("caps the group at the largest size Anchor's fixed buffer admits", () => {
+    const {
+      MaxOppBootstrapGroupMembers: max,
+      AnchorInstructionBufferBytes: buffer,
+      oppBootstrapEncodedBytes
+    } = SolanaOutpostBootstrapper
+    // The roster IS the group, so BOTH vectors grow with the group size — the
+    // cap is on GROUP size, never on the cluster's topology.
+    expect(oppBootstrapEncodedBytes(max, max)).toBeLessThanOrEqual(buffer)
+    expect(oppBootstrapEncodedBytes(max + 1, max + 1)).toBeGreaterThan(buffer)
+  })
+})
+
+describe("SolanaOutpostBootstrapper.oppBootstrap argument validation", () => {
+  let bootstrapper: SolanaOutpostBootstrapper
+  const epochDurationSec = 60
+
+  beforeAll(async () => {
+    // The asserts under test run BEFORE any filesystem or RPC access, so an
+    // unbuilt repo path and an unbound (registry-issued) URL are enough.
+    bootstrapper = new SolanaOutpostBootstrapper({
+      solanaPath: "/repo/sol",
+      rpcUrl: toURL(
+        await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaRpc
+        )
+      )
+    })
+  })
+
+  it("rejects an empty roster", async () => {
+    await expect(
+      bootstrapper.oppBootstrap(seedOfSize(0), epochDurationSec)
+    ).rejects.toThrow(/at least one operator is required/)
+  })
+
+  it("rejects an empty group", async () => {
+    await expect(
+      bootstrapper.oppBootstrap(
+        { operators: [bootstrapOperator()], groupMembers: [] },
+        epochDurationSec
+      )
+    ).rejects.toThrow(/at least one group member is required/)
+  })
+
+  it("rejects a non-positive epoch duration", async () => {
+    await expect(bootstrapper.oppBootstrap(seedOfSize(1), 0)).rejects.toThrow(
+      /epochDurationSec must be positive/
+    )
+  })
+
+  it("rejects a group that overruns Anchor's instruction buffer", async () => {
+    await expect(
+      bootstrapper.oppBootstrap(
+        seedOfSize(SolanaOutpostBootstrapper.MaxOppBootstrapGroupMembers + 1),
+        epochDurationSec
+      )
+    ).rejects.toThrow(
+      new RegExp(
+        `exceeds the ${SolanaOutpostBootstrapper.MaxOppBootstrapGroupMembers}-member limit`
+      )
+    )
+  })
+
+  it("admits the largest group the buffer allows (past the size gate)", async () => {
+    // The size assert passes, so the call proceeds to program-id resolution and
+    // fails THERE — proving the gate is sized, not merely present.
+    await expect(
+      bootstrapper.oppBootstrap(
+        seedOfSize(SolanaOutpostBootstrapper.MaxOppBootstrapGroupMembers),
+        epochDurationSec
+      )
+    ).rejects.toThrow(/program keypair missing/)
   })
 })

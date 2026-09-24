@@ -19,7 +19,8 @@ const config: ExternalClusterConfig = {
         bios: { http: 8888, p2p: 9876 },
         producers: [{ http: 8988, p2p: 9976 }],
         batch: [],
-        underwriters: []
+        underwriters: [],
+        adHoc: []
       }
     },
     anvil: { address: "10.0.0.2", port: 8545 },

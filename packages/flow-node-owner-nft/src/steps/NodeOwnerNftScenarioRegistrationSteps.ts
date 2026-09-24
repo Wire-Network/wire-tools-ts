@@ -2,13 +2,14 @@ import { KeyType } from "@wireio/sdk-core"
 import {
   ClusterBuildContext,
   ClusterBuildStep,
-  EthereumOutpostBootstrapper,
   KeyGenerator,
   NodeOwnerTier,
   pushNewNamedUser,
   pushNodeOwnerReg,
   Report,
+  Steps,
   type ClusterBuildStepOptions,
+  type EthereumIdentity,
   type StepInput
 } from "@wireio/cluster-tool"
 
@@ -25,12 +26,13 @@ import {
  */
 export namespace NodeOwnerNftScenarioRegistrationSteps {
   /**
-   * A new depositor `PUB_EM_*` public key, derived from the run's anvil
-   * mnemonic at `ethereumHdIndex` — deterministic, and distinct per claim when
-   * each claim carries its own index. A pure value helper: used inside the
-   * {@link planRegisterNodeOwner} runner and the scenario's hard-abort probes.
+   * A new depositor `PUB_EM_*` public key, derived from the run's Ethereum
+   * mnemonic (`Steps.keys.keyGeneratorContext`) at `ethereumHdIndex` —
+   * deterministic, and distinct per claim when each claim carries its own
+   * index. A pure value helper: used inside the {@link planRegisterNodeOwner}
+   * runner and the scenario's hard-abort probes.
    *
-   * @param ctx - The build context (clio / build-path key-generation material).
+   * @param ctx - The build context (the run's key-generation material).
    * @param ethereumHdIndex - HD account index for the EM derivation.
    * @returns The derived `PUB_EM_*` public key.
    */
@@ -38,15 +40,21 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     ctx: C,
     ethereumHdIndex: number
   ): Promise<string> {
-    const keyContext = KeyGenerator.context(
-      ctx.config.executables.clio,
-      ctx.config.buildPath,
-      EthereumOutpostBootstrapper.AnvilMnemonic
-    )
-    const pair = await KeyGenerator.create(KeyType.EM, keyContext, {
+    return (await newEthereumIdentity(ctx, ethereumHdIndex)).publicKey
+  }
+
+  /** Deterministic depositor EM identity, including the raw address required by nodeownreg. */
+  export async function newEthereumIdentity<C extends ClusterBuildContext>(
+    ctx: C,
+    ethereumHdIndex: number
+  ): Promise<EthereumIdentity> {
+    const pair = await KeyGenerator.create(KeyType.EM, Steps.keys.keyGeneratorContext(ctx), {
       ethereumHdIndex
     })
-    return pair.publicKey
+    return {
+      publicKey: pair.publicKey,
+      nativeAddress: pair.address.slice(2).toLowerCase()
+    }
   }
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
@@ -133,9 +141,11 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * Claim-payload problems (wrong key / invalid name / missing account /
    * replay) soft-fail into a `nodeownerreg` audit row — the transaction
    * SUCCEEDS — so intentionally-bad claims are normal write steps too, with a
-   * following verify step asserting the audit outcome. Only the depot/system
-   * invariants (tier out of [1,3], non-EM eth key) hard-abort; those are
-   * exercised by the scenario's hard-abort verify probes, not by this factory.
+   * following verify step asserting the audit outcome. The depot/system
+   * invariants (tier out of [1,3], non-EM eth key, malformed ETH address
+   * length) hard-abort. The scenario probes tier and key type; focused C++
+   * coverage exercises address length because this factory derives a valid
+   * Ethereum address.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -182,7 +192,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumPublicKey = await newEthereumPublicKey(
+    const ethereumIdentity = await newEthereumIdentity(
       ctx,
       input.ethereumHdIndex
     )
@@ -190,7 +200,8 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       ctx.wire,
       input.ownerAccount,
       input.tier,
-      ethereumPublicKey,
+      ethereumIdentity.nativeAddress,
+      ethereumIdentity.publicKey,
       input.wirePublicKey
     )
   }

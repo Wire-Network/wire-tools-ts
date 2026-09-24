@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-yield-distribution",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "commonjs",
   "description": "Flow: fake-yield STAKING_REWARD → sysio.dclaim::onreward → sysio.system::fundclaim",
@@ -12,8 +12,8 @@
   "dependencies": {
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.88",
+    "@wireio/opp-typescript-models": "^1.0.48",
     "ethers": "^6.14.0"
   },
   "devDependencies": {

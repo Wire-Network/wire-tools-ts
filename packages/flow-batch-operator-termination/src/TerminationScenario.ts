@@ -11,10 +11,12 @@ import {
   SolanaCollateralTool,
   SolanaOutpostBootstrapper,
   SolanaOutpostProgramTool,
+  Steps,
   WireOperatorProvisioningTool,
   getLogger,
   matchesProtoEnum,
   outputKey,
+  packedSlugValue,
   pollUntil,
   slugValue,
   solanaKeypair,
@@ -82,14 +84,15 @@ async function readDoomedOperatorRow(
   return rows.find(row => row.account === account)
 }
 
-/** The sliding-window schedule groups from the `sysio.epoch::epochstate` singleton (a read). */
+/**
+ * The sliding-window schedule groups from the `sysio.epoch::epochstate`
+ * singleton (a read) — the WHOLE window, not just the active group: this
+ * scenario asserts the doomed operator rides into ANY upcoming group.
+ */
 async function readScheduleGroups(
   ctx: ClusterBuildContext
 ): Promise<string[][]> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.epoch)
-    .tables.epochstate.query({ limit: Constants.EpochStateQueryLimit })
-  return rows[0]?.batch_op_groups ?? []
+  return Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
 }
 
 /**
@@ -114,7 +117,7 @@ async function readWithdrawRemitChainCodes(
       // a JS boolean — compare truthiness to match either form.
       Boolean(entry.success)
   )
-  return new Set(remits.map(entry => slugValue(entry.action.chain_code)))
+  return new Set(remits.map(entry => packedSlugValue(entry.action.chain_code)))
 }
 
 /** One SOL outpost `collateral_by_code` ledger entry as Anchor decodes it (camelCased IDL fields, u64s as BN). */

@@ -23,7 +23,6 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
 import { SolanaOutpostBootstrapper } from "../../orchestration/solana/SolanaOutpostBootstrapper.js"
@@ -336,12 +335,10 @@ export namespace SolanaCollateralTool {
     ctx: C,
     keypair: Keypair
   ): anchor.Program<anchor.Idl> {
-    const idl = SolanaOutpostProgramTool.readIdl(ctx.config.solanaPath)
-    const provider = new anchor.AnchorProvider(
+    return SolanaOutpostProgramTool.loadProgram(
       ctx.solana.connection,
-      new anchor.Wallet(keypair),
-      { commitment: SolanaClient.DefaultCommitment }
+      keypair,
+      ctx.config.solanaPath
     )
-    return new anchor.Program(idl, provider)
   }
 }

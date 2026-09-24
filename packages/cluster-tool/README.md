@@ -337,8 +337,8 @@ from the `--external-outpost-config` instead.
 
 Artifact preparation writes one `data/ethereum-client.json`, and every operator
 daemon passes it through `--outpost-ethereum-client-config-file`. The
-protobuf-JSON document uses `schema_version: 1`, nests the stable `eth-default`
-client and signature-provider ids under `connection`, and records `chain_id` as
+protobuf-JSON document uses `schema_version: 1`, nests the `ETHEREUM` client id
+and process-local `eth-default` signature-provider id under `connection`, and records `chain_id` as
 a number. Signature-provider ids are process-local, so each daemon can register
 its own Ethereum private key as `eth-default` while safely sharing the same
 client configuration file. Daemon argument builders remain pure and reuse the

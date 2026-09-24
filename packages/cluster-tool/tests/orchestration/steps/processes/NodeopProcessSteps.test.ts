@@ -21,6 +21,7 @@ import { Report } from "@wireio/cluster-tool/report"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 import { PersistedFixture } from "../../../config/clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -213,7 +214,7 @@ describe("Steps.processes.nodeop", () => {
     ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
     // A CONSTRUCTED (never started) process satisfies the running-nodeop
     // assertion; `stop()` is a no-op without a child and `remove()` accepts it.
-    await NodeopProcess.create(ctx.processManager, { node, operator })
+    await NodeopProcess.create(ctx.processManager, { node, operators: [operator] })
 
     const depotHead = 42
     jest.spyOn(WireClient.prototype, "getHead").mockResolvedValue(depotHead)
@@ -233,14 +234,14 @@ describe("Steps.processes.nodeop", () => {
     )
   })
 
-  describe("resolveOperator (exported for ClusterManager.run reuse)", () => {
+  describe("resolveOperators (exported for ClusterManager.run reuse)", () => {
     it("bios node falls back to the dev K1+BLS keys when the key store has no bios entry", () => {
       // A cluster directory written before `ClusterBuild.create` seeded the
       // bios account — such a cluster is a KEY-mode dev-key cluster by
       // definition, so the dev pair IS its genesis material.
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
-      const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
+      const [operator] = Steps.processes.nodeop.resolveOperators(ctx, node)
       expect(operator.label).toBe(NodeConfig.BiosName)
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.type).toBe(KeyType.K1)
@@ -271,51 +272,78 @@ describe("Steps.processes.nodeop", () => {
         }
       ctx.keyStore.setOperator(seeded)
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
-      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(seeded)
+      expect(Steps.processes.nodeop.resolveOperators(ctx, node)).toEqual([seeded])
     })
 
-    it("producer node resolves its NODE-shared K1+BLS keys from ctx.keyStore", () => {
-      const ctx = fixtureContext()
-      ctx.keyStore.pushNodes({
-        index: 1,
-        keys: {
-          wire: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
+    it("producer node resolves ONE provisioned account per hosted producer, in order", () => {
+      // Materialization gave every account the node's K1 and its OWN finalizer key — the
+      // uniqueness `regfinkey` demands. Resolution must hand back all of them, not just the
+      // first, or the node launches able to vote for only one of the producers it runs.
+      const ctx = fixtureContext(),
+        hosted: OperatorAccount[] = ["defproducera", "defproducerb"].map(label => ({
+          label,
+          publicationLabel: label,
+          account: label,
+          type: OperatorType.PRODUCER,
+          wire: {
+            type: KeyType.K1 as const,
+            publicKey: "PUB_K1_node1",
+            privateKey: "PVT_K1_node1"
+          },
           wireFinalizer: {
-            type: KeyType.BLS,
-            publicKey: "PUB_BLS_node1",
-            privateKey: "PVT_BLS_node1",
-            proofOfPossession: "SIG_BLS_node1"
+            type: KeyType.BLS as const,
+            publicKey: `PUB_BLS_${label}`,
+            privateKey: `PVT_BLS_${label}`,
+            proofOfPossession: `SIG_BLS_${label}`
           }
-        }
-      })
+        }))
+      hosted.forEach(operator => ctx.keyStore.setOperator(operator))
+      const node = testNode(ctx, NodeRole.producer, 1, "node_01", [
+        "defproducera",
+        "defproducerb"
+      ])
+      const operators = Steps.processes.nodeop.resolveOperators(ctx, node)
+      expect(operators.map(operator => operator.account)).toEqual([
+        "defproducera",
+        "defproducerb"
+      ])
+      // One shared block-signing K1, two DISTINCT finalizer keys.
+      expect(new Set(operators.map(operator => operator.wire.publicKey)).size).toBe(1)
+      expect(
+        new Set(operators.map(operator => operator.wireFinalizer?.publicKey)).size
+      ).toBe(2)
+    })
+
+    it("throws when a hosted producer account was never provisioned", () => {
+      // Synthesizing a stand-in from the node's keys would launch a node holding a finalizer
+      // key no producer ever registered — it would sign nothing the policy accepts.
+      const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.producer, 1, "node_01", ["defproducera"])
-      const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.label).toBe("defproducera")
-      expect(operator.type).toBe(OperatorType.PRODUCER)
-      expect(operator.wire.publicKey).toBe("PUB_K1_node1")
-      expect(operator.wireFinalizer?.publicKey).toBe("PUB_BLS_node1")
+      expect(() => Steps.processes.nodeop.resolveOperators(ctx, node)).toThrow(
+        /has not been provisioned/
+      )
     })
 
     it("batch-operator node resolves the provisioned account from ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const provisioned = operatorAccount("batchopaaaa", OperatorType.BATCH)
+      const provisioned = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
       ctx.keyStore.setOperator(provisioned)
       const node = testNode(ctx, NodeRole.batch_operator, 2, "node_02", [], "batchopaaaa")
-      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
+      expect(Steps.processes.nodeop.resolveOperators(ctx, node)).toEqual([provisioned])
     })
 
     it("underwriter node resolves the provisioned account from ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const provisioned = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
+      const provisioned = fixtureOperatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
       ctx.keyStore.setOperator(provisioned)
       const node = testNode(ctx, NodeRole.underwriter, 3, "node_03", [], null, "underwriteraaaa")
-      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
+      expect(Steps.processes.nodeop.resolveOperators(ctx, node)).toEqual([provisioned])
     })
 
     it("throws when an operator node names no batch/underwriter label", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.batch_operator, 4, "node_04")
-      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
+      expect(() => Steps.processes.nodeop.resolveOperators(ctx, node)).toThrow(
         /has no operator label/
       )
     })
@@ -323,7 +351,7 @@ describe("Steps.processes.nodeop", () => {
     it("throws when the named operator label has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.batch_operator, 5, "node_05", [], "unprovisioned")
-      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
+      expect(() => Steps.processes.nodeop.resolveOperators(ctx, node)).toThrow(
         /has not been provisioned/
       )
     })
@@ -337,7 +365,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
+          fixtureOperatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
         )
       ).toEqual([])
     })
@@ -349,7 +377,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount("defproducera", OperatorType.PRODUCER)
+          fixtureOperatorAccount("defproducera", OperatorType.PRODUCER)
         )
       ).toEqual([])
     })
@@ -357,13 +385,11 @@ describe("Steps.processes.nodeop", () => {
     it("builds batch-operator daemon args for a batch_operator node", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
-      const account = operatorAccount("batchopaaaa", OperatorType.BATCH)
+      const account = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.batch_operator, 2, "node_02", [], "batchopaaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--batch-enabled",
-          "true",
           "--batch-operator-account",
           "wireno.batchopaaaa",
           "--outpost-ethereum-client-config-file",
@@ -380,13 +406,11 @@ describe("Steps.processes.nodeop", () => {
     it("builds underwriter daemon args for an underwriter node", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
-      const account = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
+      const account = fixtureOperatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
       const node = testNode(ctx, NodeRole.underwriter, 3, "node_03", [], null, "underwriteraaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--underwriter-enabled",
-          "true",
           "--underwriter-account",
           "wireno.underwriteraaaa",
           "--outpost-ethereum-client-config-file",
@@ -400,7 +424,7 @@ describe("Steps.processes.nodeop", () => {
 
     it("throws when the operator daemon artifacts have not been prepared yet", () => {
       const ctx = fixtureContext()
-      const account = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      const account = fixtureOperatorAccount("batchopbbbb", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.batch_operator, 4, "node_04", [], "batchopbbbb")
       expect(() =>
         Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)

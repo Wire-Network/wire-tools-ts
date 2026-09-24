@@ -352,4 +352,68 @@ describe("WireClient", () => {
       expect(WireClient.blockContainsTransaction(block, "tx3")).toBe(false)
     })
   })
+
+  describe("activeAuthorization", () => {
+    it("is <account>@active — the ONE spelling every self-signed action derives", () => {
+      expect(WireClient.ActivePermission).toBe("active")
+      expect(WireClient.activeAuthorization("defproducera")).toEqual([
+        { actor: "defproducera", permission: "active" }
+      ])
+    })
+
+    it("is the invoker's default authorization, on the contract account", () => {
+      const payload = new WireClient(config)
+        .getSysioContract(SysioContracts.SysioContractName.system)
+        .actions.regproducer.prepare({
+          producer: "defproducera",
+          producer_key: "PUB_K1_p",
+          url: "",
+          location: 0
+        })
+      expect(payload.authorization).toEqual(
+        WireClient.activeAuthorization("sysio")
+      )
+    })
+  })
+
+  describe("typed table getters", () => {
+    it("getProducers reads sysio::producers through the typed accessor", async () => {
+      const client = new WireClient(config),
+        rows = jest
+          .spyOn(client, "getTableRows")
+          .mockResolvedValue({ rows: [], more: false } as never)
+      await client.getProducers()
+      expect(rows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account: "sysio",
+          scope: "sysio",
+          table: "producers"
+        })
+      )
+    })
+  })
+
+  describe("getProducerSchedule", () => {
+    it("projects sdk-core's Name-typed entries onto plain producer names, in slot order", async () => {
+      const client = new WireClient(config)
+      jest.spyOn(client.api.v1.chain, "get_producer_schedule").mockResolvedValue({
+        active: {
+          version: 3,
+          producers: [
+            { producer_name: "defproducera" },
+            { producer_name: "defproducerb" }
+          ]
+        },
+        pending: { version: 4, producers: [{ producer_name: "flowprod" }] }
+      } as never)
+      const schedule = await client.getProducerSchedule()
+      expect(schedule.active).toEqual({
+        version: 3,
+        producers: ["defproducera", "defproducerb"]
+      })
+      expect(schedule.pending).toEqual({ version: 4, producers: ["flowprod"] })
+      // No proposed schedule in flight → nothing is invented for it.
+      expect(schedule.proposed).toBeUndefined()
+    })
+  })
 })

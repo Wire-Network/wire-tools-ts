@@ -225,6 +225,15 @@ These nine owner grants are the ONLY authority rewrites in the bootstrap. The fo
 active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/roa and for `sysio.roa` on
 authex) are no longer configured.
 
+`sysio.dclaim` must be deployed before the first `sysio.authex::createlink` or `recordlink`. Both link
+actions inline `sysio.dclaim::linkswept`. User-signed `createlink` checks that DClaim is deployed and
+privileged before inserting the link, and the inline sweep is atomic with that insertion. Trusted bootstrap
+or remediation calls to `recordlink` retain the soft-failure path: when DClaim is unavailable, they commit
+the link and leave pre-link rewards in `unmapped_tokens` for operator remediation. The **sys** deploy above
+uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so this ordering—not a separate
+`setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in Stage 8
+before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
+
 ## Stage 9 — OPP / application configuration (epoch, opreg, emissions, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
@@ -290,6 +299,7 @@ authex) are no longer configured.
 | `producer_bps` | `7000` | compute split: 70% producers |
 | `batch_op_bps` | `3000` | compute split: 30% batch ops |
 | `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
+| `standby_bps` | `800` | share of the producer pool reserved for the standby retainer (position-decaying); the rest is paid per block |
 | `epoch_log_retention_count` | `8640` | emissions pay-log retention, in epochs |
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
@@ -303,11 +313,12 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 24. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
     creates `wireno` (owner = active = `DEV_K1`) with a finite pool-gifted RAM allocation. `tier:1` = T1
     (Validator); `NodeOwnerTier` = `{T1:1, T2:2, T3:3}`.
-25. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY})` —
+25. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
     `[sysio.roa@active]` — records the depositor ETH key as a `sysio.authex` link (inline `recordlink`) and
     allocates the tier-1 reserve post-bootstrap resource policies are issued from. `eth_pub_key` is a **fresh
-    random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)** — recorded
-    only, never signed with. Claim-payload problems SOFT-FAIL into a `nodeownerreg` audit row rather than
+    random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)**; its
+    corresponding `eth_address` is passed to the inline DClaim sweep. The key is recorded only, never
+    signed with. Claim-payload problems SOFT-FAIL into a `nodeownerreg` audit row rather than
     aborting the transaction, so the tooling follows with a verify that the `nodeowners` row exists
     (surfacing the audit rejection if not).
 
