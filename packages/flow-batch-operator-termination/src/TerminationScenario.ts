@@ -9,6 +9,7 @@ import {
   OperatorType
 } from "@wireio/opp-typescript-models"
 import {
+  BatchOperatorSchedule,
   ClusterBuildPhase,
   ClusterConfigProvider,
   EthereumCollateralTool,
@@ -784,7 +785,9 @@ export class TerminationScenario extends FlowScenario {
                 .map(entry => entry.account)
             ),
             groupCount = start.batch_op_groups.length,
-            groupSize = ctx.config.operatorsPerEpoch,
+            groupSize = BatchOperatorSchedule.resolve(
+              ctx.config
+            ).operatorsPerEpoch,
             targetEpoch =
               Math.max(Number(start.current_epoch_index), ...baseline) +
               groupCount,
