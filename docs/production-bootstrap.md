@@ -305,8 +305,9 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
 23. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
-    with the contract's default 180-day claim window. (No `setclmwindow`/`importseed`/`importdone` in the
-    bootstrap — those are external/operational tools, not part of the sequence.)
+    with the bootstrap import window open. DClaim rewards and imported balances remain claimable
+    indefinitely, including while awaiting account linking. `importseed` and `importdone` are
+    external/operational tools, not part of this bootstrap sequence.
 
 ## Stage 10 — Register the bootstrap node owner (real `nodeownreg` flow; NO `forcereg`)
 Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would inline-send for a real claim:
