@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.88",
-    "@wireio/shared": "^1.0.88",
+    "@wireio/sdk-core": "^1.0.91",
+    "@wireio/shared": "^1.0.91",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
