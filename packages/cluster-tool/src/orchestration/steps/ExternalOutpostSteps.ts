@@ -9,6 +9,7 @@ import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumClientConfigurationConfig } from "../../config/EthereumClientConfigurationConfig.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -114,7 +115,9 @@ export namespace ExternalOutpostSteps {
       "ExternalOutpostSteps.planMaterialize requires config.externalOutposts (external-outpost mode only)"
     )
     const dataPath = ctx.config.dataPath,
-      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
+        ctx.config
+      ),
       abiDir = Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath),
       idlDir = Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath),
       materialize = (source: string, destination: string): void => {
@@ -154,9 +157,10 @@ export namespace ExternalOutpostSteps {
    * Populate {@link OperatorDaemonArtifactsKey} from the MATERIALIZED dataPath
    * files — the external replacement for `OperatorDaemonTool.planArtifactPreparation`
    * (whose ABI/IDL sources are the wire-ethereum/wire-solana CHECKOUTS, absent in
-   * external mode). Reads ONLY `dataPath`, NEVER `config.externalOutposts`:
+   * external mode). Reads deploy artifacts ONLY from `dataPath`:
    * `outpost-addrs.json`, `eth-abis/*.json`, `solana-idls/<name>.json` (program id
-   * = its top-level `address`). Run AFTER {@link planMaterialize}.
+   * = its top-level `address`), then generates `ethereum-client.json` from the
+   * resolved external network coordinates. Run AFTER {@link planMaterialize}.
    *
    * @param actor - The Report actor.
    * @param name - Step name.
@@ -251,9 +255,30 @@ export namespace ExternalOutpostSteps {
       )
     )
 
+    const ethereumClientConfigurationFile = Path.join(
+        dataPath,
+        OperatorDaemonTool.EthereumClientConfigurationFilename
+      ),
+      network = OperatorDaemonTool.networkFromConfig(ctx.config),
+      ethereumClientConfiguration = EthereumClientConfigurationConfig.create(
+        OperatorDaemonTool.EthereumClientId,
+        OperatorDaemonTool.EthereumSignatureProviderId,
+        network.ethereumRpcUrl,
+        network.ethereumChainId
+      )
+    Fs.writeFileSync(
+      ethereumClientConfigurationFile,
+      JSON.stringify(
+        EthereumClientConfigurationConfig.toJson(ethereumClientConfiguration),
+        null,
+        2
+      )
+    )
+
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
       ethereumAddresses,
+      ethereumClientConfigurationFile,
       solanaProgramId,
       solanaIdlFile: idlFile
     })

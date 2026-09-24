@@ -64,6 +64,7 @@ const artifactsFixture: OperatorDaemonArtifacts = {
     OperatorRegistry: "0x3333333333333333333333333333333333333333",
     ReserveManager: "0x4444444444444444444444444444444444444444"
   },
+  ethereumClientConfigurationFile: "/cluster/data/ethereum-client.json",
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"
 }
@@ -390,7 +391,9 @@ describe("Steps.processes.nodeop", () => {
       expect(args).toEqual(
         expect.arrayContaining([
           "--batch-operator-account",
-          "wireno.batchopaaaa"
+          "wireno.batchopaaaa",
+          "--outpost-ethereum-client-config-file",
+          artifactsFixture.ethereumClientConfigurationFile
         ])
       )
       // The depot matches this argv against `sysio.opreg::operators`, which is
@@ -409,7 +412,9 @@ describe("Steps.processes.nodeop", () => {
       expect(args).toEqual(
         expect.arrayContaining([
           "--underwriter-account",
-          "wireno.underwriteraaaa"
+          "wireno.underwriteraaaa",
+          "--outpost-ethereum-client-config-file",
+          artifactsFixture.ethereumClientConfigurationFile
         ])
       )
       // Same chain-boundary rule as `--batch-operator-account`.

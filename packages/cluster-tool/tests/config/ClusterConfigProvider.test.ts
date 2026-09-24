@@ -656,6 +656,8 @@ describe("ClusterConfigProvider", () => {
   })
 
   describe("external outposts vs underwriters", () => {
+    const ExternalEthereumRpcUrl = "https://ethereum-rpc.external.example/",
+      ExternalSolanaRpcUrl = "https://solana-rpc.external.example/"
     let environment: ResolveEnvironment, externalConfigFile: string
 
     beforeEach(() => {
@@ -667,9 +669,13 @@ describe("ClusterConfigProvider", () => {
           ethereum: {
             addressFile: "outpost-addrs.json",
             abiFiles: ["eth-abis/OPP.json"],
-            chainId: 11_155_111
+            chainId: 11_155_111,
+            rpcUrl: ExternalEthereumRpcUrl
           },
-          solana: { idlFile: "solana-idls/liqsol_core.json" }
+          solana: {
+            idlFile: "solana-idls/liqsol_core.json",
+            rpcUrl: ExternalSolanaRpcUrl
+          }
         })
       )
     })
@@ -711,6 +717,12 @@ describe("ClusterConfigProvider", () => {
         externalOptions({ underwriterCount: 0 })
       )
       expect(config.underwriterCount).toBe(0)
+      expect(config.externalOutposts?.ethereum.rpcUrl).toBe(
+        ExternalEthereumRpcUrl
+      )
+      expect(config.externalOutposts?.solana.rpcUrl).toBe(
+        ExternalSolanaRpcUrl
+      )
       expect(config.externalOutposts).not.toBeNull()
     })
 
