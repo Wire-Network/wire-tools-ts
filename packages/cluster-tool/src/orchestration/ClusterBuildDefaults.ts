@@ -796,13 +796,8 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── outpost process bring-up / external materialization ──
-    // Local Ethereum contract deployment is intentionally deferred until after
-    // operator provisioning + schbatchgps. Its initializer must receive the
-    // depot's actual randomized-account schedule, or every legitimate epoch-1
-    // signer is rejected as inactive.
-    //
-    // External mode instead verifies the already-running endpoints here.
+    // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
+    //    verify the already-running remote outpost endpoints instead ──
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         prerequisites,
@@ -834,12 +829,24 @@ export namespace ClusterBuildDefaults {
       ClusterBuildPhase.create<C>(
         prerequisites,
         "EthereumOutpost",
-        "Start the Ethereum outpost process"
+        "Deploy the Ethereum outpost"
       ).push(
         Steps.processes.anvil.planStart<C>(
           Actor.EthereumOutpost,
           "start-anvil",
           "start the run-time anvil (instamine)",
+          {}
+        ),
+        Steps.ethereumOutpost.planDeploy<C>(
+          Actor.EthereumOutpost,
+          "deploy-ethereum",
+          "deploy + seed the Ethereum outpost",
+          { timeoutMs: 900_000 }
+        ),
+        Steps.processes.anvil.planEnableIntervalMining<C>(
+          Actor.EthereumOutpost,
+          "enable-interval-mining",
+          "switch anvil to interval mining",
           {}
         )
       )
@@ -863,93 +870,9 @@ export namespace ClusterBuildDefaults {
       )
     }
 
-    // ═══ Cluster Operator Bootstrap — operators, schedule, outpost, nodes, epoch ═══
-    const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
-      cluster,
-      "Cluster Operator Bootstrap",
-      "Provision operators, seed the outposts, start operator nodes, and bootstrap the first epoch"
-    )
-
-    // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
-    // funding only — deposit flows provision their own non-bootstrapped ops with
-    // collateral funding on top.
-    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
-    WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
-      postContractDeployment,
-      "Create batchops & uws",
-      "Provision the bootstrapped batch operators + underwriters",
-      {},
-      [
-        ...batchOperators.map((label, index) => ({
-          label,
-          type: OperatorType.BATCH,
-          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
-          isBootstrapped: true,
-          // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
-          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
-          // mnemonic and are prefunded, under SSM they come off a generated
-          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
-          airdropSolanaLamports: BatchOperatorAirdropLamports,
-          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
-        })),
-        ...underwriters.map((label, index) => ({
-          label,
-          type: OperatorType.UNDERWRITER,
-          // Use the filtered batch-operator list that owns the preceding HD
-          // indices; the raw config count can include entries this plan did
-          // not provision.
-          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
-            batchOperators.length,
-            index
-          ),
-          isBootstrapped: false,
-          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
-        }))
-      ]
-    )
-
-    // Materialize the one schedule both local outposts authorize for epoch 1.
-    // The generated WIRE account names only exist after provisioning above.
+    // ── registry + optional mock reserves + underwriter config ──
     ClusterBuildPhase.create<C>(
-      postContractDeployment,
-      "InitialBatchOperatorSchedule",
-      "Build the initial batch-operator schedule"
-    ).push(
-      Steps.contracts.sysio.epoch.planSchbatchgps<C>(
-        Actor.Sysio,
-        "schedule-batch-groups",
-        "build the initial batch-operator schedule",
-        {}
-      )
-    )
-
-    if (!isExternalOutpost) {
-      ClusterBuildPhase.create<C>(
-        postContractDeployment,
-        "DeployEthereumOutpost",
-        "Deploy the Ethereum outpost with the depot's initial schedule"
-      ).push(
-        Steps.ethereumOutpost.planDeploy<C>(
-          Actor.EthereumOutpost,
-          "deploy-ethereum",
-          "deploy + seed the Ethereum outpost with the initial operator schedule",
-          { timeoutMs: 900_000 }
-        ),
-        Steps.processes.anvil.planEnableIntervalMining<C>(
-          Actor.EthereumOutpost,
-          "enable-interval-mining",
-          "switch anvil to interval mining",
-          {}
-        )
-      )
-    }
-
-    // Registry token rows consume the local deployment artifacts, so this
-    // follows the schedule-seeded Ethereum deploy. It remains before the first
-    // epoch and before daemon artifact publication in both local and external
-    // modes.
-    ClusterBuildPhase.create<C>(
-      postContractDeployment,
+      prerequisites,
       "Registry",
       "Seed chains + tokens"
     ).push(
@@ -967,14 +890,14 @@ export namespace ClusterBuildDefaults {
     // 0→1) could never seed them.
     if (config.enableMockReserves) {
       Steps.registry.planMockReserves<C>(
-        postContractDeployment,
+        prerequisites,
         "MockReserves",
         "Seed the 8 mock (chain, token) PRIMARY reserves",
         {}
       )
     }
     ClusterBuildPhase.create<C>(
-      postContractDeployment,
+      prerequisites,
       "UnderwriterConfig",
       "Configure sysio.uwrit"
     ).push(
@@ -994,7 +917,7 @@ export namespace ClusterBuildDefaults {
       )
     )
     ClusterBuildPhase.create<C>(
-      postContractDeployment,
+      prerequisites,
       "ReserveConfig",
       "Configure sysio.reserv fee routing"
     ).push(
@@ -1007,11 +930,16 @@ export namespace ClusterBuildDefaults {
       )
     )
 
+    // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
+    const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
+      cluster,
+      "Cluster Post Contract Deployment",
+      "Provision batch operators + underwriters, start operator nodes, bootstrap the first epoch"
+    )
+
     // The operator daemons' shared prerequisites: the in-process OPP debugging
     // sink (external_debugging_plugin posts every envelope there) + the deploy
     // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args reference.
-    // In local mode this must follow DeployEthereumOutpost so the ABI artifacts
-    // carry the addresses from the schedule-seeded deployment.
     ClusterBuildPhase.create<C>(
       postContractDeployment,
       "OperatorDaemonPrerequisites",
@@ -1045,6 +973,46 @@ export namespace ClusterBuildDefaults {
         "write each outpost chain's remote contract addresses onto its sysio.chains row",
         {}
       )
+    )
+
+    // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
+    // funding only — deposit flows provision their own non-bootstrapped ops with
+    // collateral funding on top.
+    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
+      postContractDeployment,
+      "Create batchops & uws",
+      "Provision the bootstrapped batch operators + underwriters",
+      {},
+      [
+        ...batchOperators.map((label, index) => ({
+          label,
+          type: OperatorType.BATCH,
+          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
+          isBootstrapped: true,
+          // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
+          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
+          // mnemonic and are prefunded, under SSM they come off a generated
+          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
+          airdropSolanaLamports: BatchOperatorAirdropLamports,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
+        })),
+        ...underwriters.map((label, index) => ({
+          label,
+          type: OperatorType.UNDERWRITER,
+          // The offset is the length of the PREFIX-FILTERED batch-operator
+          // array, not `config.batchOperatorCount`: only a list already
+          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
+          // rule is defined against. `index` is that same filtered array's
+          // iterator index for underwriters.
+          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
+            batchOperators.length,
+            index
+          ),
+          isBootstrapped: false,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
+        }))
+      ]
     )
 
     // SSM mode: publish the just-provisioned operator keys BEFORE the operator
@@ -1097,21 +1065,44 @@ export namespace ClusterBuildDefaults {
     // scenarios that need a real restart.
 
     // ── first epoch ──
-    // Step ORDER is load-bearing: both local outposts were seeded from the
-    // schedule materialized above, and Solana's transient roster seed must land
-    // before `msgch::bootstrap` delivers the first envelope.
+    // Step ORDER is load-bearing: both roster seeds read the schedule
+    // `schbatchgps` just materialized, and must land before `msgch::bootstrap`
+    // delivers the first envelope.
     const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
-      "Bootstrap epoch 0 → 1"
+      "Schedule groups + bootstrap epoch 0 → 1"
+    ).push(
+      Steps.contracts.sysio.epoch.planSchbatchgps<C>(
+        Actor.Sysio,
+        "schedule-batch-groups",
+        "build the initial batch-operator schedule",
+        {}
+      )
     )
-    // SOL-376: seed the LOCAL Solana outpost's operator registry with the
-    // depot's epoch-1 batch-operator group (just materialized by schbatchgps)
-    // BEFORE the first envelope is delivered — `epoch_in` refuses to finalize
-    // until `opp_bootstrap` runs. External outposts are seeded by their own
-    // operators, out of band.
+    // Seed BOTH local outposts with the depot's schedule (just materialized by
+    // schbatchgps) BEFORE the first envelope is delivered. External outposts
+    // are seeded by their own operators, out of band.
+    //
+    // Ethereum: `OPPInbound.initialize` ran in Cluster Prerequisites with a
+    // PROVISIONAL roster — the depot's window did not exist yet, and its
+    // membership is ordered by account names generated later — while under
+    // WNE-27 epoch 1 is deliverable only by the group mapped to it.
+    // `installInitialRoster` (the SOL-376 shape) replaces the provisional
+    // roster with the depot's window; it refuses once an epoch-1 delivery has
+    // been counted, which is why it sits before `bootstrap-epoch`.
+    //
+    // Solana (SOL-376): the outpost's operator registry starts empty and
+    // `epoch_in` refuses to finalize until `opp_bootstrap` seeds the depot's
+    // epoch-1 group.
     if (!isExternalOutpost)
       epochBootstrap.push(
+        Steps.ethereumOutpost.planOppBootstrap<C>(
+          Actor.EthereumOutpost,
+          "seed-ethereum-roster",
+          "seed the Ethereum outpost batch-operator roster from the depot schedule (installInitialRoster)",
+          {}
+        ),
         Steps.solanaOutpost.planOppBootstrap<C>(
           Actor.SolanaOutpost,
           "seed-solana-roster",
