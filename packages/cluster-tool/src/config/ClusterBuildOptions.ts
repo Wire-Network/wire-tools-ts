@@ -82,6 +82,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  // solana-test-validator tuning
+  /**
+   * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
+   * {@link DefaultSolanaSlotsPerEpoch} default — agave's own default leaves the
+   * validator at Solana epoch 0 for ~2 days, which the liqsol surface cannot be
+   * initialized against.
+   */
+  solanaSlotsPerEpoch?: number
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

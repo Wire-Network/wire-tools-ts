@@ -15,7 +15,10 @@ The OPP message flow spans three chains:
   `sysio.opreg`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OperatorRegistry.sol`,
   `ReserveManager.sol`, `StakingManager.sol` (+ `liqEth`).
-- **Solana outpost** (`solana-test-validator`) — the `opp-outpost` Anchor program (+ `liqsol-*`).
+- **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
+  loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
+  `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol
+  surface stood up by wire-solana's own `anchor run init-*` scripts.
 
 ## Where this repo fits in the platform
 
@@ -26,7 +29,7 @@ nothing on-chain itself, it orchestrates the already-built artifacts of:
 |---|---|---|
 | `wire-sysio` | `nodeop`, `kiod`, `clio`, system-contract `.wasm`/`.abi` | CMake / Ninja |
 | `wire-ethereum` | outpost Solidity contracts + `deployLocal.ts` | Hardhat |
-| `wire-solana` | `opp-outpost` program `.so` + IDL | Anchor |
+| `wire-solana` | the four Anchor programs' `.so` + IDL (`liqsol_core` — which hosts the OPP outpost interface — plus `liqsol_token`, `transfer_hook`, `validator_leaderboard`) + the `init-*` scripts | Anchor |
 
 All four are checked out together as a single workspace via Google's `repo` tool.
 **For cloning and syncing the platform, follow
@@ -47,7 +50,7 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
 | **Solana CLI (`solana-test-validator`)** | `4.2.0` (Agave) | local Solana validator for the SOL outpost | see below |
-| **Anchor (`anchor`) via `avm`** | `0.31.0` | builds + loads the `opp-outpost` program | see below |
+| **Anchor (`anchor`) via `avm`** | `0.31.0` | builds the four wire-solana programs; `anchor run` drives their `init-*` scripts during the bootstrap | see below |
 
 > The Solana / Anchor / Rust versions are pinned by `wire-solana`
 > (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "4.2.0"`;
@@ -107,8 +110,10 @@ ls ../wire-sysio/build/release/bin/nodeop      # sanity check
 # 2. wire-ethereum — compile the outpost contracts
 cd ../wire-ethereum && pnpm install && pnpm build      # npx hardhat compile
 
-# 3. wire-solana — build the opp-outpost program (.so + IDL)
-cd ../wire-solana && anchor build
+# 3. wire-solana — the four programs' .so + IDL, and the deps `anchor run` needs
+#    `build:programs` is the build the platform gate runs and the build the
+#    harness deploys; a bare `anchor build` is NOT equivalent.
+cd ../wire-solana && npm install && npm run build:programs
 ```
 
 ## Install & build this repo
@@ -130,7 +135,8 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
-| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` → `sysio.dclaim::onreward` → `fundclaim` |
+| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
+| `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real `synd` / `report_liq_yield` emit `SYNDICATE_LIQ` / `LIQ_YIELD`; depot keeps advancing |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
@@ -145,7 +151,7 @@ flags to the helper script below):
 |---|---|
 | `WIRE_BUILD_PATH` | `wire-sysio` build dir (must contain `bin/nodeop`), e.g. `../wire-sysio/build/release` |
 | `WIRE_ETH_PATH` | `wire-ethereum` repo root (must contain `hardhat.config.ts`) |
-| `WIRE_SOLANA_PATH` | `wire-solana` repo root (built `opp-outpost`) |
+| `WIRE_SOLANA_PATH` | `wire-solana` repo root (its four programs built, `node_modules` installed — the bootstrap runs `anchor run init-*` there) |
 | `WIRE_CLUSTER_PATH` | *(optional)* cluster data dir; the harness generates a fresh temp dir per run when unset |
 
 ### Option A — the `run-flow.mjs` helper (THE canonical way)
@@ -332,7 +338,7 @@ command comes first).
 |---|---|---|---|
 | `--build-path` | | **(required)** | `wire-sysio` build dir (with `bin/nodeop`) |
 | `--ethereum-path` | | **(required)** | `wire-ethereum` repo root; bootstraps `anvil` + outpost deploy |
-| `--solana-path` | | **(required)** | `wire-solana` repo root; bootstraps `solana-test-validator` + `opp-outpost` |
+| `--solana-path` | | **(required)** | `wire-solana` repo root; bootstraps `solana-test-validator`, loads all four Anchor programs at genesis, runs the `init-*` scripts, then deploys the OPP outpost |
 | `--force` | | `false` | overwrite an existing cluster directory |
 | `--node-count` | `-n` | `1` | producer node **processes** to launch |
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
@@ -341,6 +347,7 @@ command comes first).
 | `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
+| `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |
 | `--terminate-max-consecutive-misses` | | — | consecutive missed-delivery termination threshold |
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |

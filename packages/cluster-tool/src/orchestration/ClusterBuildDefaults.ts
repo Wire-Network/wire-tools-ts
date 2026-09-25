@@ -839,15 +839,32 @@ export namespace ClusterBuildDefaults {
       )
       ClusterBuildPhase.create<C>(
         prerequisites,
-        "SolanaOutpost",
-        "Deploy the Solana outpost"
+        "SolanaValidator",
+        "Start the Solana validator with every wire-solana program at genesis"
       ).push(
         Steps.processes.solanaValidator.planStart<C>(
           Actor.SolanaOutpost,
           "start-validator",
-          "start solana-test-validator + liqsol_core (OPP outpost)",
+          "start solana-test-validator + the four wire-solana programs",
           {}
-        ),
+        )
+      )
+      // The liqsol surface (mint, transfer hook, distribution/stake state,
+      // leaderboard, wire config, reserve pool) comes from wire-solana's own
+      // `init-*` scripts and must exist BEFORE the OPP bootstrap: that is where
+      // `global_config` is created, and `SolanaOutpostBootstrapper` expects to
+      // find it already gating every OPP admin op.
+      Steps.solanaLiqsolSurface.planLiqsolSurface<C>(
+        prerequisites,
+        "SolanaLiqsolSurface",
+        "Stand up the wire-solana liqsol surface (anchor run init-*)",
+        {}
+      )
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "SolanaOutpost",
+        "Deploy the Solana outpost"
+      ).push(
         Steps.solanaOutpost.planDeploy<C>(
           Actor.SolanaOutpost,
           "deploy-solana",

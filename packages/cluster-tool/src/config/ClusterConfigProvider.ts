@@ -10,6 +10,7 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
@@ -252,7 +253,9 @@ export namespace ClusterConfigProvider {
       deploymentKind: ClusterDeploymentKind.local,
       chainStateDbSizeMb:
         options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
-      queryEngine
+      queryEngine,
+      solanaSlotsPerEpoch:
+        options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }
   }
 

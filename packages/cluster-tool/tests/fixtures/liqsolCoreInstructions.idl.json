@@ -1,0 +1,674 @@
+{
+  "address": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH",
+  "metadata": {
+    "name": "liqsol_core",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "inject_bonus_synd_yield",
+      "docs": [
+        "Permissionless bonus yield for the syndicated liqSOL pool, paid in SOL by the",
+        "caller in whole tenths of a SOL (see `inject_bonus_synd_yield_handler`)."
+      ],
+      "discriminator": [
+        45,
+        108,
+        159,
+        213,
+        182,
+        246,
+        235,
+        190
+      ],
+      "accounts": [
+        {
+          "name": "donor",
+          "docs": [
+            "Whoever pays: the SOL leaves this account."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_state",
+          "writable": true
+        },
+        {
+          "name": "distribution_state"
+        },
+        {
+          "name": "liqsol_mint",
+          "writable": true
+        },
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "liqsol_pool_ata",
+          "writable": true
+        },
+        {
+          "name": "reserve_pool",
+          "docs": [
+            "account PDA). Receives the SOL that backs the minted liqSOL."
+          ],
+          "writable": true
+        },
+        {
+          "name": "deposit_authority",
+          "writable": true
+        },
+        {
+          "name": "liqsol_program"
+        },
+        {
+          "name": "liqsol_mint_authority"
+        },
+        {
+          "name": "instructions_sysvar"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "report_liq_yield",
+      "docs": [
+        "Permissionless PostLaunch liq-yield report: claims the pool's pending rewards and",
+        "reports the amount claimed since the previous report as one global `LIQYield`",
+        "attestation; low-priority/margin-gated, and a no-op when the delta is zero."
+      ],
+      "discriminator": [
+        79,
+        18,
+        82,
+        254,
+        185,
+        29,
+        211,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Permissionless cranker / fee payer (unconstrained)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "liqsol_mint",
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "writable": true
+        },
+        {
+          "name": "distribution_state",
+          "writable": true
+        },
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "bucket_authority"
+        },
+        {
+          "name": "bucket_token_account",
+          "writable": true
+        },
+        {
+          "name": "bucket_user_record",
+          "writable": true
+        },
+        {
+          "name": "liqsol_pool_ata",
+          "writable": true
+        },
+        {
+          "name": "pool_user_record",
+          "writable": true
+        },
+        {
+          "name": "extra_account_meta_list"
+        },
+        {
+          "name": "liqsol_core_program"
+        },
+        {
+          "name": "transfer_hook_program"
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "outbound_message_buffer",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_token_address",
+      "discriminator": [
+        231,
+        130,
+        7,
+        149,
+        155,
+        155,
+        110,
+        53
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "config",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "token_code",
+          "type": "u64"
+        },
+        {
+          "name": "mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_wire_state",
+      "discriminator": [
+        62,
+        194,
+        254,
+        126,
+        251,
+        69,
+        35,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "global_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "wire_state",
+          "type": {
+            "defined": {
+              "name": "WireState"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sol_to_liqsol",
+      "discriminator": [
+        250,
+        110,
+        1,
+        100,
+        71,
+        3,
+        235,
+        113
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "deposit_authority",
+          "writable": true
+        },
+        {
+          "name": "system_program"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program"
+        },
+        {
+          "name": "liqsol_program"
+        },
+        {
+          "name": "pay_rate_history"
+        },
+        {
+          "name": "stake_program"
+        },
+        {
+          "name": "liqsol_mint",
+          "writable": true
+        },
+        {
+          "name": "user_ata",
+          "writable": true
+        },
+        {
+          "name": "liqsol_mint_authority"
+        },
+        {
+          "name": "reserve_pool",
+          "writable": true
+        },
+        {
+          "name": "vault"
+        },
+        {
+          "name": "ephemeral_stake",
+          "writable": true
+        },
+        {
+          "name": "controller_state",
+          "writable": true
+        },
+        {
+          "name": "global_config",
+          "docs": [
+            "Global config for deposit settings"
+          ]
+        },
+        {
+          "name": "payout_state",
+          "writable": true
+        },
+        {
+          "name": "bucket_authority"
+        },
+        {
+          "name": "bucket_token_account",
+          "docs": [
+            "The bucket's associated token account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "user_record",
+          "writable": true
+        },
+        {
+          "name": "distribution_state",
+          "writable": true
+        },
+        {
+          "name": "instructions_sysvar"
+        },
+        {
+          "name": "clock"
+        },
+        {
+          "name": "stake_history"
+        },
+        {
+          "name": "rent"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "seed",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "synd",
+      "discriminator": [
+        153,
+        175,
+        231,
+        40,
+        44,
+        65,
+        175,
+        172
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "liqsol_mint",
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "writable": true
+        },
+        {
+          "name": "distribution_state",
+          "writable": true
+        },
+        {
+          "name": "user_ata",
+          "writable": true
+        },
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "bucket_authority"
+        },
+        {
+          "name": "bucket_token_account",
+          "writable": true
+        },
+        {
+          "name": "bucket_user_record",
+          "writable": true
+        },
+        {
+          "name": "sender_user_record",
+          "writable": true
+        },
+        {
+          "name": "receiver_user_record",
+          "writable": true
+        },
+        {
+          "name": "extra_account_meta_list"
+        },
+        {
+          "name": "liqsol_core_program"
+        },
+        {
+          "name": "transfer_hook_program"
+        },
+        {
+          "name": "liqsol_pool_ata",
+          "writable": true
+        },
+        {
+          "name": "outpost_account",
+          "docs": [
+            "The user's pre-launch position record. Required (and created on first use) in",
+            "PreLaunch & Launching, where the pretoken accounting is per-user and lives here.",
+            "",
+            "PostLaunch passes None: a syndicated position becomes OUTPOST PROPERTY the moment",
+            "`SyndicateLIQ` is queued and the DEPOT is its ledger of record, so the outpost keeps",
+            "no per-user syndication state at all -- and must not pay rent to create an account it",
+            "will never read.",
+            "",
+            "`space` is the EXISTING data length whenever the account is already allocated, and only",
+            "falls back to `8 + OutpostAccount::INIT_SPACE` for a first-time create. `init_if_needed`",
+            "asserts `declared space == actual data_len` on EVERY call (ConstraintSpace otherwise), so",
+            "a fixed literal would revert for every staker whose record predates a layout change --",
+            "and this branch shrank `OutpostAccount::INIT_SPACE` by 9 bytes (`last_reward_ref` removed).",
+            "Shrinking is layout-safe for readers: the retained fields are a byte-identical PREFIX of",
+            "the legacy record, so a legacy-sized account deserializes fine (borsh ignores the trailing",
+            "bytes) and re-serializes into the same prefix. Identical expression to",
+            "`desyndicate_liqsol.rs` / `wire_pretokens/purchase_pretoken.rs`."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "pretoken_purchase_history",
+          "docs": [
+            "Legacy pretoken history -- the synd/yield source in PreLaunch & Launching.",
+            "Optional because PostLaunch retires it (and `close_pretoken_singletons` closes it), so",
+            "PostLaunch callers pass None; the handler requires it present in the non-PostLaunch path."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "outbound_message_buffer",
+          "docs": [
+            "OPP outbound buffer the `SyndicateLIQ` is queued on. Zero-copy (`AccountLoader`) so",
+            "this PostLaunch hot path appends without the ~9KB borsh round-trip a",
+            "`Box<Account<_>>` deserialize would cost."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "OPP config for the `SyndicateLIQ`: its `chain_code`, and the `token_code` the liqSOL",
+            "mint is registered under (`token_addresses_by_code`)."
+          ],
+          "optional": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "GlobalState",
+      "discriminator": [
+        163,
+        46,
+        74,
+        168,
+        216,
+        123,
+        133,
+        98
+      ]
+    }
+  ],
+  "events": [],
+  "errors": [],
+  "types": [
+    {
+      "name": "WireState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PreLaunch"
+          },
+          {
+            "name": "PostLaunch"
+          },
+          {
+            "name": "Refund"
+          },
+          {
+            "name": "Launching"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "layout_version",
+            "docs": [
+              "Layout version stored in the legacy `deployed_at` slot."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "yield_index_remainder",
+            "docs": [
+              "Scaled numerator carry, reduced modulo the share supply at each yield update.",
+              "Stored in the legacy `refund_delay_seconds` slot so account size is unchanged."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "Global pause flag - when true, all operations except refunds are disabled"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "total_staked_liqsol",
+            "docs": [
+              "Aggregate liqSOL staked through pretokens (maps to distribution tracked balance)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_purchased_liqsol",
+            "docs": [
+              "Aggregate liqSOL pretoken purchases (part of distribution tracked balance)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_shares",
+            "docs": [
+              "Total shares issued to all users (for share/index yield isolation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocol_shares",
+            "docs": [
+              "Total shares issued to protocol (for share/index yield isolation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "current_index",
+            "docs": [
+              "Current share-to-token exchange rate (scaled by INDEX_SCALE = 1e12)",
+              "Starts at INDEX_SCALE (1.0) and grows as yield accrues"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "expected_pool_balance",
+            "docs": [
+              "Expected liqSOL pool balance (tracked by protocol operations, not read from on-chain balance).",
+              "Any discrepancy vs actual on-chain balance is treated as unsolicited donations, not yield."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "yield_accumulated_liqsol",
+            "docs": [
+              "Accumulated liqSOL yield available for protocol pretoken purchases"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "role_principals",
+            "docs": [
+              "Required principal (liqSOL) per role [YieldOp, BatchOp, Underwriter, PoolOp]"
+            ],
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
+          },
+          {
+            "name": "role_warmup_duration",
+            "docs": [
+              "Warmup duration in seconds (applies when ANY new role is bonded)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "wire_state",
+            "type": {
+              "defined": {
+                "name": "WireState"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "liq_sequence",
+            "docs": [
+              "Per-outpost monotonic sequence shared by `SyndicateLIQ` and `LIQYield`. The depot",
+              "orders and dedupes the two streams on this one counter, so it must never be reset",
+              "while the outpost is live."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "liq_yield_reported",
+            "docs": [
+              "Watermark on `yield_accumulated_liqsol`: the total pool yield already reported to the",
+              "depot as `LIQYield`. `report_liq_yield` emits the delta and then advances this to",
+              "`yield_accumulated_liqsol`. Reset to 0 alongside `yield_accumulated_liqsol` wherever",
+              "that counter is consumed (`init_liqsol_reserve`), so the delta can never go negative."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}
