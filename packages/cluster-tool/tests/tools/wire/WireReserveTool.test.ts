@@ -1,4 +1,4 @@
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 
@@ -21,9 +21,9 @@ const LegacySwapFeeBps = 10
 
 /** A minimal reserves row carrying only the fields swapquote consults. */
 interface QuoteReserveFixture {
-  chain_code: SysioContracts.SysioReservSlugNameType
-  token_code: SysioContracts.SysioReservSlugNameType
-  reserve_code: SysioContracts.SysioReservSlugNameType
+  chain_code: SysioContracts.SysioReservReserveRowType["chain_code"]
+  token_code: SysioContracts.SysioReservReserveRowType["token_code"]
+  reserve_code: SysioContracts.SysioReservReserveRowType["reserve_code"]
   reserve_chain_amount: number
   reserve_wire_amount: number
   connector_weight_bps: number
@@ -31,11 +31,11 @@ interface QuoteReserveFixture {
   owner_fee_bps: number
 }
 
-const EthereumChain = 100,
-  EthToken = 101,
-  SolanaChain = 200,
-  SolToken = 201,
-  PrimaryReserve = 1
+const EthereumChain = SlugName.from("ETHEREUM"),
+  EthToken = SlugName.from("ETH"),
+  SolanaChain = SlugName.from("SOLANA"),
+  SolToken = SlugName.from("SOL"),
+  PrimaryReserve = SlugName.from("PRIMARY")
 
 /** A WireClient stub whose reserv/uwrit typed accessors serve the fixtures. */
 function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
@@ -456,18 +456,18 @@ describe("WireReserveTool", () => {
   describe("swapquote", () => {
     const reserves: QuoteReserveFixture[] = [
       {
-        chain_code: { value: EthereumChain },
-        token_code: { value: EthToken },
-        reserve_code: { value: PrimaryReserve },
+        chain_code: SlugName.toString(EthereumChain),
+        token_code: SlugName.toString(EthToken),
+        reserve_code: SlugName.toString(PrimaryReserve),
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
         connector_weight_bps: SymmetricConnectorWeightBps,
         owner_fee_bps: 0
       },
       {
-        chain_code: { value: SolanaChain },
-        token_code: { value: SolToken },
-        reserve_code: { value: PrimaryReserve },
+        chain_code: SlugName.toString(SolanaChain),
+        token_code: SlugName.toString(SolToken),
+        reserve_code: SlugName.toString(PrimaryReserve),
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
         connector_weight_bps: SymmetricConnectorWeightBps,

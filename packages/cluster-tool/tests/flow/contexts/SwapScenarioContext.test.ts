@@ -1,4 +1,4 @@
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { SwapScenarioContext } from "@wireio/cluster-tool/flow"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
@@ -13,11 +13,11 @@ const {
   SysioUwritUnderwriterequeststatus
 } = SysioContracts
 
-const EthereumChain = 100
-const SolanaChain = 200
-const EthToken = 101
-const SolToken = 201
-const PrimaryReserve = 1
+const EthereumChain = SlugName.from("ETHEREUM")
+const SolanaChain = SlugName.from("SOLANA")
+const EthToken = SlugName.from("ETH")
+const SolToken = SlugName.from("SOL")
+const PrimaryReserve = SlugName.from("PRIMARY")
 const { SymmetricConnectorWeightBps } = WireReserveTool
 
 /** A complete `reserves` row with zero defaults; override the fields under test. */
@@ -25,9 +25,9 @@ function reserveRow(
   overrides: Partial<SysioContracts.SysioReservReserveRowType>
 ): SysioContracts.SysioReservReserveRowType {
   return {
-    chain_code: { value: 0 },
-    token_code: { value: 0 },
-    reserve_code: { value: 0 },
+    chain_code: "",
+    token_code: "",
+    reserve_code: "",
     name: "",
     description: "",
     status: SysioReservReservestatus.RESERVE_STATUS_ACTIVE,
@@ -59,13 +59,13 @@ function uwreqRow(
     id: 0,
     type: SysioUwritAttestationtype.ATTESTATION_TYPE_UNSPECIFIED,
     status: SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_PENDING,
-    src_chain_code: { value: 0 },
-    src_token_code: { value: 0 },
-    src_reserve_code: { value: 0 },
+    src_chain_code: "",
+    src_token_code: "",
+    src_reserve_code: "",
     src_amount: 0,
-    dst_chain_code: { value: 0 },
-    dst_token_code: { value: 0 },
-    dst_reserve_code: { value: 0 },
+    dst_chain_code: "",
+    dst_token_code: "",
+    dst_reserve_code: "",
     dst_amount: 0,
     target_amount: 0,
     variance_tolerance_bps: 0,
@@ -91,9 +91,9 @@ function lockRow(
     lock_id: 0,
     uwreq_id: 0,
     underwriter: "",
-    chain_code: { value: 0 },
-    token_code: { value: 0 },
-    reserve_code: { value: 0 },
+    chain_code: "",
+    token_code: "",
+    reserve_code: "",
     amount: 0,
     created_at_ms: 0,
     expires_at_ms: 0,
@@ -133,16 +133,16 @@ describe("SwapScenarioContext", () => {
   const fixtures: TableFixtures = {
     reserves: [
       reserveRow({
-        chain_code: { value: EthereumChain },
-        token_code: { value: EthToken },
-        reserve_code: { value: PrimaryReserve },
+        chain_code: SlugName.toString(EthereumChain),
+        token_code: SlugName.toString(EthToken),
+        reserve_code: SlugName.toString(PrimaryReserve),
         reserve_chain_amount: 1_000,
         reserve_wire_amount: 2_000
       }),
       reserveRow({
-        chain_code: { value: SolanaChain },
-        token_code: { value: SolToken },
-        reserve_code: { value: PrimaryReserve },
+        chain_code: SlugName.toString(SolanaChain),
+        token_code: SlugName.toString(SolToken),
+        reserve_code: SlugName.toString(PrimaryReserve),
         reserve_chain_amount: 3_000,
         reserve_wire_amount: 4_000,
         // An owned reserve that charges and has already earned.
@@ -155,13 +155,13 @@ describe("SwapScenarioContext", () => {
     uwreqs: [
       uwreqRow({
         id: 7,
-        src_chain_code: { value: EthereumChain },
-        dst_chain_code: { value: SolanaChain }
+        src_chain_code: SlugName.toString(EthereumChain),
+        dst_chain_code: SlugName.toString(SolanaChain)
       })
     ],
     locks: [
-      lockRow({ lock_id: 1, uwreq_id: 7, chain_code: { value: EthereumChain } }),
-      lockRow({ lock_id: 2, uwreq_id: 7, chain_code: { value: SolanaChain } }),
+      lockRow({ lock_id: 1, uwreq_id: 7, chain_code: SlugName.toString(EthereumChain) }),
+      lockRow({ lock_id: 2, uwreq_id: 7, chain_code: SlugName.toString(SolanaChain) }),
       lockRow({ lock_id: 3, uwreq_id: 9 })
     ]
   }

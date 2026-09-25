@@ -65,10 +65,9 @@ export function slugNameToLittleEndianBuffer(value: number | bigint): Buffer {
  *
  * - A **bare string** is a `slug_name`-typed field, and the depot's ABI builtin
  *   renders it as the decoded slug. It is parsed as a SLUG, never as a decimal.
- *   That matters because the slug alphabet contains digits: `"7"` is a real code
- *   whose packed value is `149533581377536`, and `"101"` / `"1E3"` / `"0X10"`
- *   are ordinary codes that JS numeric syntax silently reinterprets. Preferring
- *   the decimal reading mis-decoded every one of them.
+ *   Codes must start with a letter; digits remain legal afterward (`"V1"`).
+ *   Numeric-looking spellings such as `"101"` / `"1E3"` / `"0X10"` are rejected,
+ *   never reinterpreted through JavaScript's numeric syntax.
  * - A **`{ value }` wrapper** is the TRANSITIONAL shape a pre-builtin depot
  *   emits, carrying the packed `u64` directly — so its inner value stays
  *   numeric. This arm goes away once no depot emits the wrapper.

@@ -74,20 +74,15 @@ describe("slugUtils", () => {
       expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
       expect(slugValue("WIRE")).toBe(SlugName.from("WIRE"))
     })
-    it("reads a digit-only code as the slug it is", () => {
-      // The slug alphabet contains digits, so these are real codes whose packed
-      // values are nothing like their decimal readings. The previous decoder
-      // preferred the decimal and mis-decoded every one of them.
-      expect(slugValue("7")).toBe(SlugName.from("7"))
-      expect(slugValue("7")).not.toBe(7)
-      expect(slugValue("101")).toBe(SlugName.from("101"))
-      expect(slugValue("101")).not.toBe(101)
-    })
-    it("does not let JS numeric syntax reinterpret a code", () => {
-      expect(slugValue("1E3")).toBe(SlugName.from("1E3"))
-      expect(slugValue("1E3")).not.toBe(1000)
-      expect(slugValue("0X10")).toBe(SlugName.from("0X10"))
-      expect(slugValue("0X10")).not.toBe(16)
+    it.each(["7", "101", "1E3", "0X10"])(
+      "rejects numeric-looking spelling %s under the leading-letter rule",
+      spelling => {
+        expect(() => slugValue(spelling)).toThrow(/must start with a letter/)
+      }
+    )
+    it("preserves digits after the leading letter", () => {
+      expect(slugValue("V1")).toBe(SlugName.from("V1"))
+      expect(slugValue("USDC1")).toBe(SlugName.from("USDC1"))
     })
     it("reads the empty spelling as the zero sentinel", () => {
       expect(slugValue("")).toBe(0)
