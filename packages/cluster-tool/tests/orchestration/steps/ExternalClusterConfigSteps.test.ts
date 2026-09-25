@@ -12,9 +12,11 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   type ClusterSignatureProviderConfig,
+  ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
   ExternalClusterConfigSchemaCodec,
   type ExternalOutpostConfig,
+  NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { ClusterState, Constants } from "@wireio/cluster-tool"
@@ -28,6 +30,7 @@ import {
   DaemonConfig,
   NodeConfig,
   NodeRole,
+  QueryEngineConfigProvider,
   StartScriptRenderer
 } from "@wireio/cluster-tool/config"
 import {
@@ -40,6 +43,7 @@ import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import {
   keyPairFromPrivate,
+  Localhost,
   toDialAddress,
   toURL
 } from "@wireio/cluster-tool/utils"
@@ -83,6 +87,12 @@ const MaxTransactionTimeFlag = "--max-transaction-time",
 const IniMaxTransactionTimeKey = MaxTransactionTimeFlag.replace("--", "")
 /** The SHARED-31 chain-state DB size flag, exactly as `buildArgs` emits it. */
 const ChainStateDbSizeFlag = "--chain-state-db-size-mb"
+/** The `query-max-groups` ini key, exactly as an API node's query-engine block renders it. */
+const QueryMaxGroupsOption = "query-max-groups"
+/** The producer control plugin (`/v1/producer/*`) an API node never loads. */
+const ProducerApiPlugin = "sysio::producer_api_plugin"
+/** A peer endpoint's ini key — one the Verify mask never introduces. */
+const PeerAddressOption = "p2p-peer-address"
 
 /** A live (non-anvil) EVM chain id — proves the anvil default is not assumed. */
 const ExternalChainId = 11_155_111
@@ -379,6 +389,15 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   function assertBatchOperatorNode(config: ClusterConfig): NodeConfig {
     const node = NodeConfig.plan(config).find(
       planned => planned.role === NodeRole.batch_operator
+    )
+    expect(node).toBeDefined()
+    return node
+  }
+
+  /** The first API node planned by `config` (the chain-read surface under test). */
+  function assertApiNode(config: ClusterConfig): NodeConfig {
+    const node = NodeConfig.plan(config).find(
+      planned => planned.role === NodeRole.api
     )
     expect(node).toBeDefined()
     return node
@@ -912,11 +931,14 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // The Rebind's stamp IS the gate's input — assert it before its effects.
     expect(merged.deploymentKind).toBe(ClusterDeploymentKind.external)
 
-    const publicNodes = NodeConfig.plan(merged).filter(
-      node => !NodeConfig.isOperatorRole(node.role)
+    // API nodes are public too, but they keep trace_api in every deployment
+    // kind (they are the cluster's chain-read surface), so they sit outside
+    // this producing set.
+    const producingNodes = NodeConfig.plan(merged).filter(
+      node => !NodeConfig.isOperatorRole(node.role) && node.role !== NodeRole.api
     )
-    expect(publicNodes.length).toBeGreaterThan(0)
-    publicNodes.forEach(node => {
+    expect(producingNodes.length).toBeGreaterThan(0)
+    producingNodes.forEach(node => {
       expect(argvFor(node)).not.toContain(Constants.TRACE_API_PLUGIN)
       // The probe moves with the plugin: nodeop rejects the flag outright when
       // trace_api_plugin is not loaded. Asserted on the SCRIPT TEXT, since the
@@ -944,6 +966,76 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // …and an operator ini never carried the line in EITHER kind (operators
     // take BASE_PLUGINS only; their daemon args carry the rest).
     expect(iniFor(operator)).not.toContain(Constants.TRACE_API_PLUGIN)
+  })
+
+  // The API node is the cluster's chain-read surface, so the production-shaped
+  // EXTERNAL tree treats it unlike bios / producers: trace_api stays loaded, the
+  // query engine is loaded, producer_api's control endpoints never are, and the
+  // local cluster's query-engine block survives the Rebind's re-render.
+  it("keeps the API node's chain-read posture in the rebound script + ini", async () => {
+    const ctx = runContext(
+      externalBindFile,
+      PersistedFixture.signatureProvider,
+      undefined,
+      null,
+      {
+        queryEngine: {
+          ...QueryEngineConfigProvider.createDefaultOptions(),
+          readMode: NodeopReadMode.irreversible
+        }
+      }
+    )
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+
+    const merged = ctx.outputs.assert(External.MergedConfigKey),
+      apiNode = assertApiNode(merged)
+    // Stamped external — the very stamp that drops trace_api from bios / producers.
+    expect(merged.deploymentKind).toBe(ClusterDeploymentKind.external)
+    const scriptFile = DaemonConfig.startScriptFile(apiNode.nodePath),
+      argv = startScriptArgv(scriptFile),
+      script = Fs.readFileSync(scriptFile, "utf-8"),
+      ini = Fs.readFileSync(
+        Path.join(apiNode.nodePath, ClusterFiles.NodeConfigFilename),
+        "utf-8"
+      )
+
+    // trace_api stays on the argv, and its probe — rendered in the
+    // CONDITIONAL_ARGS block — stays with it.
+    expect(argv).toContain(Constants.TRACE_API_PLUGIN)
+    expect(script).toContain(NodeopProcess.TraceNoAbisFlag)
+    expect(script).toContain(
+      `${StartScriptRenderer.ConditionalArrayName}+=('${NodeopProcess.TraceNoAbisFlag}')`
+    )
+    // The query engine is loaded: once on the argv, and on the ini's plugin list.
+    expect(
+      argv.filter(word => word === Constants.QUERY_ENGINE_PLUGIN)
+    ).toHaveLength(1)
+    expect(ini).toContain(`plugin = ${Constants.QUERY_ENGINE_PLUGIN}`)
+    // No producer control endpoints on the public read surface.
+    expect(argv).not.toContain(ProducerApiPlugin)
+    expect(ini).not.toContain(ProducerApiPlugin)
+    // The POSITIVE control those absences need: a producer node in the SAME
+    // rebound tree loads the plugin on both surfaces — proving the absences
+    // are the API node's role gate, not a plugin that never renders.
+    const producer = NodeConfig.plan(merged).find(
+      node => node.role === NodeRole.producer
+    )
+    expect(producer).toBeDefined()
+    const producerArgv = startScriptArgv(
+        DaemonConfig.startScriptFile(producer.nodePath)
+      ),
+      producerIni = Fs.readFileSync(
+        Path.join(producer.nodePath, ClusterFiles.NodeConfigFilename),
+        "utf-8"
+      )
+    expect(producerArgv).toContain(ProducerApiPlugin)
+    expect(producerIni).toContain(`plugin = ${ProducerApiPlugin}`)
+    // The local cluster's query-engine block survives the re-render.
+    expect(ini).toContain(
+      `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`
+    )
   })
 
   it("persists deploymentKind:external in the rebound cluster-config.json", async () => {
@@ -1115,6 +1207,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       "verify-producer-cardinality",
       "verify-batch-cardinality",
       "verify-underwriter-cardinality",
+      "verify-api-cardinality",
       "verify-node-mapping",
       "verify-operator-accounts",
       "verify-solana-dynamic-range",
@@ -1134,6 +1227,58 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ).rejects.toThrow(/producers has 2 entries but the local cluster has 1/)
   })
 
+  it("verify-api-cardinality passes when the API-node bind entries match the local topology", async () => {
+    const ctx = runContext()
+    await External.runLoadExternalBind(ctx, null, signal)
+    // Falsifiability: there really are API-node entries to count.
+    expect(ctx.config.apiCount).toBeGreaterThan(0)
+    expect(
+      ctx.outputs.assert(External.ExternalBindKey).nodeop.ports.api
+    ).toHaveLength(ctx.config.apiCount)
+    await expect(
+      External.runVerifyApiCardinality(ctx, signal)
+    ).resolves.toBeUndefined()
+  })
+
+  it("verify-api-cardinality rejects an external bind whose API-node cardinality mismatches", async () => {
+    const ctx = runContext(
+      externalBindFile,
+      PersistedFixture.signatureProvider,
+      undefined,
+      null,
+      { apiCount: 0 }
+    )
+    await External.runLoadExternalBind(ctx, null, signal)
+    await expect(External.runVerifyApiCardinality(ctx, signal)).rejects.toThrow(
+      /api has 1 entries but the local cluster has 0/
+    )
+  })
+
+  it("verify-node-mapping maps every cluster-state node, API nodes included, to a bind entry", async () => {
+    const ctx = runContext()
+    await External.runLoadExternalBind(ctx, null, signal)
+    // Falsifiability: the persisted state really carries an API node, so the
+    // bind's api entries are part of the count.
+    expect(
+      ClusterState.load(ctx.config).nodes.map(node => node.role)
+    ).toContain(ClusterStateNodeRole.api)
+    await expect(
+      External.runVerifyNodeMapping(ctx, signal)
+    ).resolves.toBeUndefined()
+  })
+
+  it("verify-node-mapping rejects an external bind that drops the API-node entries", async () => {
+    const bind = structuredClone(externalBind)
+    bind.nodeop.ports.api = []
+    const bindFile = Path.join(root, "no-api-entries.json")
+    Fs.writeFileSync(bindFile, JSON.stringify(bind))
+    const ctx = runContext(bindFile)
+    await External.runLoadExternalBind(ctx, null, signal)
+    await expect(External.runVerifyNodeMapping(ctx, signal)).rejects.toThrow(
+      /cluster-state has 7 nodes but the external bind describes 6/
+    )
+  })
+
   it("verify-no-duplicate-ports rejects an external bind with duplicate ports", async () => {
     const bind = structuredClone(externalBind)
     bind.anvil.port = bind.kiod.port
@@ -1146,71 +1291,187 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ).rejects.toThrow(/binds the same port twice on one host/)
   })
 
-  // SHARED-31: `--chain-state-db-size-mb <N>` now rides EVERY emitted start.sh
-  // (and the rebound cluster-config.json). `N` is an operator-chosen MEGABYTE
-  // count that can legitimately land inside the Linux ephemeral port range —
-  // SHARED-30's own sketch uses 32768 — so it collides with the very numbers
-  // this scan hunts for.
-  describe("Verify — the chain-state DB size is a megabyte count, not a port", () => {
+  describe("Verify — operator-chosen numbers are not ports", () => {
     /** A LOCAL bind port absent from the shifted external bind ⇒ stale. */
     const staleLocalPort = PersistedFixture.bind.nodeop.ports.bios.http
 
-    /**
-     * Load → clone → rebind → emit with the DB size deliberately EQUAL to that
-     * stale port; hands back the context and one emitted script to inspect.
-     */
-    async function emitWithCollidingDbSize() {
-      const ctx = runContext(
-        externalBindFile,
-        PersistedFixture.signatureProvider,
-        undefined,
-        null,
-        { chainStateDbSizeMb: staleLocalPort }
+    // SHARED-31: `--chain-state-db-size-mb <N>` now rides EVERY emitted start.sh
+    // (and the rebound cluster-config.json). `N` is an operator-chosen MEGABYTE
+    // count that can legitimately land inside the Linux ephemeral port range —
+    // SHARED-30's own sketch uses 32768 — so it collides with the very numbers
+    // this scan hunts for.
+    describe("Verify — the chain-state DB size is a megabyte count, not a port", () => {
+      /**
+       * Load → clone → rebind → emit with the DB size deliberately EQUAL to that
+       * stale port; hands back the context and one emitted script to inspect.
+       */
+      async function emitWithCollidingDbSize() {
+        const ctx = runContext(
+          externalBindFile,
+          PersistedFixture.signatureProvider,
+          undefined,
+          null,
+          { chainStateDbSizeMb: staleLocalPort }
+        )
+        await External.runLoadExternalBind(ctx, null, signal)
+        await External.runClone(ctx, null, signal)
+        await External.runRebind(ctx, null, signal)
+        await External.runEmit(ctx, null, signal)
+        const merged = ctx.outputs.assert(External.MergedConfigKey)
+        return {
+          ctx,
+          configFile: ClusterConfigProvider.configFilePath(merged),
+          scriptFile: DaemonConfig.startScriptFile(
+            assertBatchOperatorNode(merged).nodePath
+          )
+        }
+      }
+
+      it("PASSES when a stale local port number occurs only as the DB-size VALUE", async () => {
+        const { ctx, configFile, scriptFile } = await emitWithCollidingDbSize()
+        // Falsifiability: the number really is in the emitted script, and really
+        // is that flag's value — so the scan had something to (wrongly) catch.
+        expect(
+          argvValuesOf(startScriptArgv(scriptFile), ChainStateDbSizeFlag)
+        ).toEqual([String(staleLocalPort)])
+        expect(Fs.readFileSync(scriptFile, "utf-8")).toContain(
+          String(staleLocalPort)
+        )
+        // The rebound cluster-config.json carries the SAME number under the
+        // persisted field — both carriers of this one value are masked, not just
+        // the script (and this file is scanned FIRST, so it fails first).
+        expect(Fs.readFileSync(configFile, "utf-8")).toContain(
+          String(staleLocalPort)
+        )
+        await expect(
+          External.runVerify(ctx, null, signal)
+        ).resolves.toBeUndefined()
+      })
+
+      it("still REJECTS that same number occurring ANYWHERE else in the script", async () => {
+        const { ctx, scriptFile } = await emitWithCollidingDbSize()
+        // The mask is POSITIONAL, not by value: an un-rebound local endpoint
+        // carrying the identical digits must still hard-fail the scan.
+        Fs.appendFileSync(scriptFile, `\n# leftover endpoint: ${staleLocalPort}\n`)
+        await expect(External.runVerify(ctx, null, signal)).rejects.toThrow(
+          new RegExp(`still contains the local bind port ${staleLocalPort}`)
+        )
+      })
+    })
+
+    // A query-engine limit is an operator-chosen COUNT, carried by an API node's
+    // config.ini (`query-<limit> = <N>`) and the rebound cluster-config.json
+    // (under `queryEngine`); like the DB size, a legitimate `N` can equal a stale
+    // local port.
+    describe("Verify — a query-engine limit is a count, not a port", () => {
+      /**
+       * Load → clone → rebind → emit with `query-max-groups` deliberately EQUAL
+       * to the stale port; hands back the context and the limit's two carriers —
+       * the rebound config and the API node's rebound `config.ini`.
+       */
+      async function emitWithCollidingQueryLimit() {
+        const ctx = runContext(
+          externalBindFile,
+          PersistedFixture.signatureProvider,
+          undefined,
+          null,
+          {
+            queryEngine: {
+              ...QueryEngineConfigProvider.createDefaultOptions(),
+              maxGroups: staleLocalPort
+            }
+          }
+        )
+        await External.runLoadExternalBind(ctx, null, signal)
+        await External.runClone(ctx, null, signal)
+        await External.runRebind(ctx, null, signal)
+        await External.runEmit(ctx, null, signal)
+        const merged = ctx.outputs.assert(External.MergedConfigKey),
+          apiNode = assertApiNode(merged)
+        return {
+          ctx,
+          configFile: ClusterConfigProvider.configFilePath(merged),
+          iniFile: Path.join(apiNode.nodePath, ClusterFiles.NodeConfigFilename)
+        }
+      }
+
+      it("PASSES when a stale local port number occurs only as a query-engine limit VALUE", async () => {
+        const { ctx, configFile, iniFile } = await emitWithCollidingQueryLimit()
+        // Falsifiability: the number really is in BOTH carriers, as the limit's
+        // own value — so the scan had something to (wrongly) catch in each.
+        expect(
+          ClusterConfigProvider.loadSync(configFile).queryEngine.maxGroups
+        ).toBe(staleLocalPort)
+        expect(Fs.readFileSync(iniFile, "utf-8").split("\n")).toContain(
+          `${QueryMaxGroupsOption} = ${staleLocalPort}`
+        )
+        await expect(
+          External.runVerify(ctx, null, signal)
+        ).resolves.toBeUndefined()
+      })
+
+      it.each([
+        `${PeerAddressOption} = ${staleLocalPort}`,
+        `${PeerAddressOption} = ${Localhost}:${staleLocalPort}`
+      ])(
+        "still REJECTS that same number under a key the mask does not introduce (%s)",
+        async line => {
+          const { ctx, iniFile } = await emitWithCollidingQueryLimit()
+          // The mask is POSITIONAL, not by value: the identical digits under a
+          // key it does not introduce must still hard-fail the scan — directly
+          // after ` = ` (where a key-blind `key = N` mask would blank them) as
+          // well as inside an un-rebound peer endpoint.
+          Fs.appendFileSync(iniFile, `\n${line}\n`)
+          await expect(External.runVerify(ctx, null, signal)).rejects.toThrow(
+            new RegExp(`still contains the local bind port ${staleLocalPort}`)
+          )
+        }
       )
-      await External.runLoadExternalBind(ctx, null, signal)
-      await External.runClone(ctx, null, signal)
-      await External.runRebind(ctx, null, signal)
-      await External.runEmit(ctx, null, signal)
-      const merged = ctx.outputs.assert(External.MergedConfigKey)
-      return {
-        ctx,
-        configFile: ClusterConfigProvider.configFilePath(merged),
-        scriptFile: DaemonConfig.startScriptFile(
-          assertBatchOperatorNode(merged).nodePath
+    })
+  })
+
+  // A multi-host mesh advertises each nodeop pair on its own host. An address
+  // only the LOCAL bind advertises is stale once the tree is rebound, so a
+  // scanned file that still names it must fail Verify — for the API-node and
+  // ad-hoc pairs exactly as for the others.
+  describe("Verify — a local-only advertise address is a stale bind address", () => {
+    /** An advertise address only the LOCAL bind carries; the external bind never does. */
+    const localAdvertiseAddress = "10.60.7.10"
+
+    it.each(["producers", "batch", "underwriters", "api", "adHoc"] as const)(
+      "flags a leftover advertise address of a nodeop.ports.%s pair",
+      async pairList => {
+        const localBind = structuredClone(PersistedFixture.bind)
+        localBind.nodeop.ports[pairList][0].advertiseAddress =
+          localAdvertiseAddress
+        const ctx = runContext(
+          externalBindFile,
+          PersistedFixture.signatureProvider,
+          undefined,
+          null,
+          { bind: localBind }
+        )
+        await External.runLoadExternalBind(ctx, null, signal)
+        await External.runClone(ctx, null, signal)
+        await External.runRebind(ctx, null, signal)
+        await External.runEmit(ctx, null, signal)
+        // Rebind re-rendered every file from the EXTERNAL bind, so none names
+        // the local-only address…
+        await expect(
+          External.runVerify(ctx, null, signal)
+        ).resolves.toBeUndefined()
+        // …and a scanned file that still does is an un-rebound endpoint.
+        Fs.appendFileSync(
+          ClusterConfigProvider.configFilePath(
+            ctx.outputs.assert(External.MergedConfigKey)
+          ),
+          `\n# leftover advertise address: ${localAdvertiseAddress}\n`
+        )
+        await expect(External.runVerify(ctx, null, signal)).rejects.toThrow(
+          `still contains the local bind address ${localAdvertiseAddress}`
         )
       }
-    }
-
-    it("PASSES when a stale local port number occurs only as the DB-size VALUE", async () => {
-      const { ctx, configFile, scriptFile } = await emitWithCollidingDbSize()
-      // Falsifiability: the number really is in the emitted script, and really
-      // is that flag's value — so the scan had something to (wrongly) catch.
-      expect(
-        argvValuesOf(startScriptArgv(scriptFile), ChainStateDbSizeFlag)
-      ).toEqual([String(staleLocalPort)])
-      expect(Fs.readFileSync(scriptFile, "utf-8")).toContain(
-        String(staleLocalPort)
-      )
-      // The rebound cluster-config.json carries the SAME number under the
-      // persisted field — both carriers of this one value are masked, not just
-      // the script (and this file is scanned FIRST, so it fails first).
-      expect(Fs.readFileSync(configFile, "utf-8")).toContain(
-        String(staleLocalPort)
-      )
-      await expect(
-        External.runVerify(ctx, null, signal)
-      ).resolves.toBeUndefined()
-    })
-
-    it("still REJECTS that same number occurring ANYWHERE else in the script", async () => {
-      const { ctx, scriptFile } = await emitWithCollidingDbSize()
-      // The mask is POSITIONAL, not by value: an un-rebound local endpoint
-      // carrying the identical digits must still hard-fail the scan.
-      Fs.appendFileSync(scriptFile, `\n# leftover endpoint: ${staleLocalPort}\n`)
-      await expect(External.runVerify(ctx, null, signal)).rejects.toThrow(
-        new RegExp(`still contains the local bind port ${staleLocalPort}`)
-      )
-    })
+    )
   })
 
   it("emits KEY providers with inline plaintext private keys (unchanged)", async () => {

@@ -37,7 +37,9 @@ wire-cluster-tool create-api-node \
 ## Flags
 
 Flag names follow **nodeop's own option names** wherever one exists, so the ini
-line and the flag that produced it read the same.
+line and the flag that produced it read the same — except the `--query-engine-*`
+flags, which are the spellings shared with `create` and render as nodeop's
+`read-mode` / `query-<limit>`.
 
 | Flag | Required | Default | Renders as |
 |---|---|---|---|
@@ -51,6 +53,19 @@ line and the flag that produced it read the same.
 | `--http-threads` | no | `4` | `http-threads` |
 | `--agent-name` | no | `wire-api-node` | `agent-name` |
 | `--genesis-json` | no | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
+| `--query-engine-read-mode` | no | nodeop's own (`head`) | `read-mode` (`head` or `irreversible`) — only when set |
+| `--query-engine-worker-threads` | no | plugin default | `query-worker-threads` — only when set |
+| `--query-engine-max-in-flight` | no | plugin default | `query-max-in-flight` — only when set |
+| `--query-engine-max-query-bytes` | no | plugin default | `query-max-query-bytes` — only when set |
+| `--query-engine-timeout-ms` | no | plugin default | `query-timeout-ms` — only when set |
+| `--query-engine-max-capture-ms` | no | plugin default | `query-max-capture-ms` — only when set |
+| `--query-engine-max-abi-bytes` | no | plugin default | `query-max-abi-bytes` — only when set |
+| `--query-engine-max-scan-rows` | no | plugin default | `query-max-scan-rows` — only when set |
+| `--query-engine-max-raw-bytes` | no | plugin default | `query-max-raw-bytes` — only when set |
+| `--query-engine-max-memory-bytes` | no | plugin default | `query-max-memory-bytes` — only when set |
+| `--query-engine-max-groups` | no | plugin default | `query-max-groups` — only when set |
+| `--query-engine-max-result-rows` | no | plugin default | `query-max-result-rows` — only when set |
+| `--query-engine-max-response-bytes` | no | plugin default | `query-max-response-bytes` — only when set |
 
 Notes:
 
@@ -73,8 +88,13 @@ Notes:
 
 Invalid input fails before anything is written: a missing `--output-path`, an
 endpoint that is not `<address>:<port>` (or whose port is outside 1–65535), a
-non-positive `--chain-state-db-size-mb`, or a `--genesis-json` that is not on
-disk.
+non-positive `--chain-state-db-size-mb`, a `--genesis-json` that is not on disk,
+a `--query-engine-<limit>` value that is not a positive safe integer (zero,
+negative, fractional, above `Number.MAX_SAFE_INTEGER`, or not a number), a
+`--query-engine-read-mode` other than `head` / `irreversible`,
+`--query-engine-max-capture-ms` above `--query-engine-timeout-ms` when both are
+set, or `--query-engine-max-raw-bytes` above `--query-engine-max-memory-bytes`
+when both are set.
 
 ## The emitted `config.ini`
 
@@ -92,6 +112,31 @@ p2p-peer-address = peer-b.example:9876
 plugin = sysio::net_plugin
 plugin = sysio::chain_api_plugin
 plugin = sysio::trace_api_plugin
+plugin = sysio::query_engine_plugin
+```
+
+With `--query-engine-read-mode irreversible --query-engine-max-in-flight 8`
+added to the same command, the two set values render right after the peer lines
+(`read-mode` first, then the limits in the plugin's order); every other line is
+unchanged, and an unset `--query-engine-*` flag renders no line at all:
+
+```ini
+chain-state-db-size-mb = 1024
+transaction-finality-status-max-storage-size-gb = 10
+enable-account-queries = true
+http-max-in-flight-requests = 100
+http-threads = 4
+agent-name = wire-api-node
+http-server-address = 0.0.0.0:8888
+p2p-peer-address = peer-a.example:9876
+p2p-peer-address = peer-b.example:9876
+read-mode = irreversible
+query-max-in-flight = 8
+
+plugin = sysio::net_plugin
+plugin = sysio::chain_api_plugin
+plugin = sysio::trace_api_plugin
+plugin = sysio::query_engine_plugin
 ```
 
 ### Why `net_plugin` is in the plugin set
@@ -115,6 +160,10 @@ signs a block — exactly how the harness's own operator nodes run. It does not
 make this a "producer node" for the public-API hardening rules either: an API
 node is that rule's sanctioned non-public exception, which is why it keeps
 `trace_api_plugin` and the elevated finality-status storage.
+
+`query_engine_plugin` is a further addition to the baseline; the artifact
+requires a nodeop built with it. A set `--query-engine-read-mode` makes the
+artifact own `read-mode` — a deployment overlay must not append another.
 
 `database-map-mode` is deliberately **not** emitted here — the API-node baseline
 governs this file, and the cluster commands' `mapped_private` default is scoped

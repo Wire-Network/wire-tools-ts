@@ -5,7 +5,7 @@ import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildStep,
   EthereumLocalReserveStatus,
@@ -285,9 +285,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       .getSysioContract(SysioContractName.reserv)
       .actions.matchreserve.invoke(
         {
-          chain_code: { value: input.chainCode },
-          token_code: { value: input.tokenCode },
-          reserve_code: { value: input.reserveCode },
+          chain_code: SlugName.toString(input.chainCode),
+          token_code: SlugName.toString(input.tokenCode),
+          reserve_code: SlugName.toString(input.reserveCode),
           matcher: input.matcher,
           wire_amount: Number(input.wireAmount)
         },

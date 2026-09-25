@@ -283,7 +283,7 @@ export namespace ClusterManager {
 
   /**
    * Start (or no-op if already running) `node`'s nodeop in RELAUNCH mode — the
-   * shared body for bios / producer / operator nodes in {@link run}. Uses the
+   * shared body for bios / producer / API / operator nodes in {@link run}. Uses the
    * SAME operator resolution as `NodeopProcessSteps` and the SAME option
    * assembly as its `runRestart` ({@link NodeopProcess.createRelaunchOptions}),
    * so `run` and the restart step cannot drift on either flag: `run` only ever
@@ -351,6 +351,7 @@ export namespace ClusterManager {
       nodes = NodeConfig.plan(config),
       biosNode = nodes.find(node => node.role === NodeRole.bios),
       producerNodes = nodes.filter(node => node.role === NodeRole.producer),
+      apiNodes = nodes.filter(node => node.role === NodeRole.api),
       operatorNodes = nodes.filter(node => NodeConfig.isOperatorRole(node.role))
     Assert.ok(biosNode != null, "run: bios node missing from NodeConfig.plan")
 
@@ -365,6 +366,9 @@ export namespace ClusterManager {
 
     log.info(`[cluster] starting ${producerNodes.length} producer node(s)`)
     await Promise.all(producerNodes.map(node => startNode(ctx, node)))
+
+    log.info(`[cluster] starting ${apiNodes.length} API node(s)`)
+    await Promise.all(apiNodes.map(node => startNode(ctx, node)))
 
     log.info("[cluster] resuming production")
     await eachSeries([biosNode, ...producerNodes], node =>

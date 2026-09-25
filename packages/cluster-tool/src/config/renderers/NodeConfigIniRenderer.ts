@@ -1,12 +1,13 @@
+import { NodeopReadMode } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
-import { WireClient } from "../../clients/wire/WireClient.js"
 import type { WireKeyPair } from "../../types/KeyPair.js"
 import { toIniLine } from "../../utils/iniUtils.js"
 import type { Renderer } from "../../utils/Renderer.js"
 import { Localhost } from "../../utils/netUtils.js"
 import { ClusterConfigProvider } from "../ClusterConfigProvider.js"
+import { QueryEngineConfigProvider } from "../QueryEngineConfigProvider.js"
 import { NodeConfig, NodeRole } from "../NodeConfig.js"
 
 /**
@@ -24,18 +25,26 @@ export class NodeConfigIniRenderer implements Renderer {
       listen = node.cluster.bind.nodeop.address,
       isBios = node.role === NodeRole.bios,
       isProducer = node.role === NodeRole.producer && node.producers.length > 0,
-      isApi = node.role === NodeRole.producer && node.producers.length === 0,
+      // A producer-role node hosting no producers (the nodeCount > producerCount shape).
+      isProducerless =
+        node.role === NodeRole.producer && node.producers.length === 0,
+      isApi = node.role === NodeRole.api,
       isOperator = NodeConfig.isOperatorRole(node.role),
       plugins = [
         ...Constants.BASE_PLUGINS,
         ...(isProducer || isBios ? Constants.PRODUCER_PLUGINS : []),
         // The conjunction is LOAD-BEARING. `runsTraceApiPlugin` is true for
-        // operators, but an operator ini has never carried a trace_api line
-        // (operators get BASE_PLUGINS only, and the daemon args add the rest),
-        // and an `isApi` node must not gain one either. Net effect: local is
-        // unchanged; an EXTERNAL producer / bios loses the line (SHARED-25 AC#4).
+        // operators and API nodes, but neither role's ini carries a trace_api
+        // line (their argv loads it), and a producerless node carries none
+        // either: a LOCAL producer / bios carries the line, an EXTERNAL one
+        // does not (SHARED-25 AC#4).
         ...((isProducer || isBios) && NodeConfig.runsTraceApiPlugin(node)
           ? [Constants.TRACE_API_PLUGIN]
+          : []),
+        // The SAME predicate the argv builder reads — the ini and the argv
+        // cannot disagree about which nodes serve /v1/query/execute.
+        ...(NodeConfig.runsQueryEnginePlugin(node)
+          ? [Constants.QUERY_ENGINE_PLUGIN]
           : [])
       ],
       extraArgs = Constants.NODEOP_EXTRA_ARGS,
@@ -61,7 +70,7 @@ export class NodeConfigIniRenderer implements Renderer {
               )
             ]
           : []),
-        ...(isApi || isOperator
+        ...(isProducerless || isApi || isOperator
           ? [toIniLine("transaction-retry-max-storage-size-gb", 100)]
           : []),
         toIniLine("contracts-console", "true"),
@@ -84,7 +93,14 @@ export class NodeConfigIniRenderer implements Renderer {
         // provisioning time, so it rides the daemon CLI args
         // (`OperatorDaemonTool`) resolved from the key store at start.
         ...(isOperator
-          ? [toIniLine("read-mode", WireClient.FinalityType.irreversible)]
+          ? [toIniLine(Constants.READ_MODE_OPTION, NodeopReadMode.irreversible)]
+          : []),
+        // The query-engine block rides the SAME predicate as the plugin line,
+        // and the SAME helper as the standalone API-node ini, so the cluster
+        // and standalone configs cannot spell an option differently. Only SET
+        // members render; an unset one leaves nodeop's / the plugin's default.
+        ...(NodeConfig.runsQueryEnginePlugin(node)
+          ? QueryEngineConfigProvider.toIniLines(node.cluster.queryEngine)
           : []),
         ...NodeConfigIniRenderer.HttpInsecureLines,
         ""

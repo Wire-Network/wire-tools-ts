@@ -1,9 +1,14 @@
-import { DefaultChainStateDbSizeMb } from "@wireio/cluster-tool-shared"
+import {
+  DefaultChainStateDbSizeMb,
+  NodeopReadMode,
+  type QueryEngineOptions
+} from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool"
 import {
   ApiNodeConfig,
   ApiNodeIniRenderer,
-  type ApiNodeOptions
+  type ApiNodeOptions,
+  QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
 
 /** The output path is never rendered into the ini — any value does. */
@@ -36,6 +41,7 @@ describe("ApiNodeIniRenderer", () => {
         "plugin = sysio::net_plugin",
         "plugin = sysio::chain_api_plugin",
         "plugin = sysio::trace_api_plugin",
+        "plugin = sysio::query_engine_plugin",
         ""
       ].join("\n")
     )
@@ -89,7 +95,7 @@ describe("ApiNodeIniRenderer", () => {
     expect(ini).toContain("agent-name = custom-api")
   })
 
-  it("loads chain_api_plugin, trace_api_plugin AND net_plugin", () => {
+  it("loads chain_api_plugin, trace_api_plugin, net_plugin AND query_engine_plugin", () => {
     const plugins = render()
       .split("\n")
       .filter(line => line.startsWith("plugin = "))
@@ -97,6 +103,7 @@ describe("ApiNodeIniRenderer", () => {
     expect(plugins).toEqual([...ApiNodeIniRenderer.Plugins])
     expect(plugins).toContain("sysio::chain_api_plugin")
     expect(plugins).toContain(Constants.TRACE_API_PLUGIN)
+    expect(plugins).toContain(Constants.QUERY_ENGINE_PLUGIN)
     // net_plugin is the DELIBERATE addition to the ticket baseline: it owns the
     // `p2p-peer-address` AND `agent-name` options, which would otherwise be
     // accepted-and-ignored (appbase registers options for every compiled-in
@@ -112,8 +119,44 @@ describe("ApiNodeIniRenderer", () => {
     expect(ApiNodeIniRenderer.Plugins).toEqual([
       Constants.NET_PLUGIN,
       Constants.CHAIN_API_PLUGIN,
-      Constants.TRACE_API_PLUGIN
+      Constants.TRACE_API_PLUGIN,
+      Constants.QUERY_ENGINE_PLUGIN
     ])
+  })
+
+  it("renders the SET query-engine members between the peer lines and the plugins, read-mode exactly once", () => {
+    const queryEngine: QueryEngineOptions = {
+        readMode: NodeopReadMode.irreversible,
+        maxGroups: 50
+      },
+      lines = render({
+        // Any verbatim endpoint serves as a peer here — the suite's own.
+        p2pPeerAddresses: [HttpServerAddress],
+        queryEngine
+      }).split("\n"),
+      readModeLine = `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`,
+      lastPeerIndex = lines.findLastIndex(line =>
+        line.startsWith(ApiNodeIniRenderer.P2pPeerAddressOption)
+      ),
+      readModeIndex = lines.indexOf(readModeLine),
+      maxGroupsIndex = lines.indexOf("query-max-groups = 50"),
+      firstPluginIndex = lines.findIndex(line =>
+        line.startsWith(`${ApiNodeIniRenderer.PluginOption} = `)
+      )
+    expect(lastPeerIndex).toBeGreaterThanOrEqual(0)
+    expect(readModeIndex).toBe(lastPeerIndex + 1)
+    expect(maxGroupsIndex).toBe(readModeIndex + 1)
+    expect(maxGroupsIndex).toBeLessThan(firstPluginIndex)
+    expect(
+      lines.filter(line => line.startsWith(`${Constants.READ_MODE_OPTION} =`))
+    ).toHaveLength(1)
+    // The block IS the shared helper's output — the one the cluster's API-node
+    // ini renders — not a local re-spelling of it.
+    expect(lines.slice(readModeIndex, maxGroupsIndex + 1)).toEqual(
+      QueryEngineConfigProvider.toIniLines(
+        QueryEngineConfigProvider.resolve(queryEngine)
+      )
+    )
   })
 
   it("takes every ini KEY from a named constant (no inline option spellings)", () => {
@@ -130,6 +173,7 @@ describe("ApiNodeIniRenderer", () => {
       `${Constants.CHAIN_STATE_DB_SIZE_MB_OPTION} = ${DefaultChainStateDbSizeMb}`
     )
     expect(ApiNodeIniRenderer.PluginOption).toBe("plugin")
+    expect(Constants.READ_MODE_OPTION).toBe("read-mode")
   })
 
   it("does NOT emit database-map-mode (the ticket baseline governs this file)", () => {

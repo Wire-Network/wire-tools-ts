@@ -1,8 +1,13 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
-import { DefaultChainStateDbSizeMb } from "@wireio/cluster-tool-shared"
+import {
+  DefaultChainStateDbSizeMb,
+  type QueryEngineConfig,
+  type QueryEngineOptions
+} from "@wireio/cluster-tool-shared"
 import { defaults } from "lodash"
 import { assertEndpoint } from "../utils/netUtils.js"
+import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 
 /**
  * Inputs that stay OPTIONAL after resolution — deliberately kept out of the
@@ -38,13 +43,23 @@ export interface ApiNodeTuningOptions {
   agentName?: string
 }
 
+/** The query-engine group: optional as input, always resolved in {@link ApiNodeConfig}. */
+export interface ApiNodeQueryEngineOptions {
+  /**
+   * `--query-engine-*`: the read mode and limits, each optional; an omitted
+   * member leaves nodeop's / the plugin's own default in force.
+   */
+  queryEngine?: QueryEngineOptions
+}
+
 /**
  * Caller input for a STANDALONE (non-cluster) API node — the `create-api-node`
  * surface. Every field is optional per the three-layer options pattern: yargs'
  * `demandOption: true` supplies presence at the CLI, and
  * {@link ApiNodeConfig.resolve} re-asserts it for every other caller.
  */
-export interface ApiNodeOptions extends ApiNodeGenesisOptions {
+export interface ApiNodeOptions
+  extends ApiNodeGenesisOptions, ApiNodeQueryEngineOptions {
   /** Destination directory for the emitted `config.ini` + `start.sh`. */
   outputPath?: string
   /**
@@ -64,12 +79,22 @@ export interface ApiNodeOptions extends ApiNodeGenesisOptions {
 /**
  * What the renderers require: every {@link ApiNodeOptions} field resolved,
  * except the genuinely-optional {@link ApiNodeGenesisOptions} half, which is
- * re-mixed in unchanged.
+ * re-mixed in unchanged. The query-engine group is resolved by its own second
+ * pass ({@link QueryEngineConfigProvider.resolve}) into the full
+ * {@link QueryEngineConfig} shape rather than the optional caller form.
  */
 export interface ApiNodeConfig
   extends
-    Required<Omit<ApiNodeOptions, keyof ApiNodeGenesisOptions>>,
-    ApiNodeGenesisOptions {}
+    Required<
+      Omit<
+        ApiNodeOptions,
+        keyof ApiNodeGenesisOptions | keyof ApiNodeQueryEngineOptions
+      >
+    >,
+    ApiNodeGenesisOptions {
+  /** The resolved query-engine config (read mode + limits; `null` members render nothing). */
+  queryEngine: QueryEngineConfig
+}
 
 /**
  * The resolved defaults for an API node — namespace constants only, never raw
@@ -88,7 +113,8 @@ export function createApiNodeDefaultOptions(): Partial<ApiNodeOptions> {
       httpMaxInFlightRequests: ApiNodeConfig.DefaultHttpMaxInFlightRequests,
       httpThreads: ApiNodeConfig.DefaultHttpThreads,
       agentName: ApiNodeConfig.DefaultAgentName
-    }
+    },
+    queryEngine: QueryEngineConfigProvider.createDefaultOptions()
   }
 }
 
@@ -159,7 +185,9 @@ export namespace ApiNodeConfig {
    *
    * lodash `defaults` is SHALLOW, so a caller-supplied `tuning` would REPLACE
    * the default group wholesale and silently unset every member it omitted —
-   * hence the second, sub-group pass. `defaultsDeep` is deliberately NOT used:
+   * hence the second, sub-group pass. The query-engine group gets the same
+   * second pass through {@link QueryEngineConfigProvider.resolve}, which also
+   * validates every set member. `defaultsDeep` is deliberately NOT used:
    * it also merges ARRAYS index-by-index, which would resurrect default
    * `p2pPeerAddresses` entries underneath a shorter caller list.
    *
@@ -171,7 +199,8 @@ export namespace ApiNodeConfig {
       merged = defaults({ ...options }, defaultOptions) as ApiNodeConfig,
       config: ApiNodeConfig = {
         ...merged,
-        tuning: defaults({ ...merged.tuning }, defaultOptions.tuning)
+        tuning: defaults({ ...merged.tuning }, defaultOptions.tuning),
+        queryEngine: QueryEngineConfigProvider.resolve(merged.queryEngine)
       }
     assertApiNodeConfig(config)
     return config

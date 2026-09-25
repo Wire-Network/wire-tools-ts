@@ -4,6 +4,7 @@ import Path from "node:path"
 import { match } from "ts-pattern"
 import type {
   BindConfig,
+  BindConfigNodeopClusterPorts,
   ClusterConfig,
   ClusterSignatureProviderConfig,
   ExternalClusterConfig,
@@ -167,6 +168,12 @@ export namespace ExternalClusterConfigSteps {
           actor,
           "verify-underwriter-cardinality",
           "underwriter bind entries match the local topology",
+          options
+        ),
+        planVerifyApiCardinality(
+          actor,
+          "verify-api-cardinality",
+          "API-node bind entries match the local topology",
           options
         ),
         planVerifyNodeMapping(
@@ -356,6 +363,53 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /**
+   * Plan the API-node-cardinality verify step.
+   *
+   * @param actor - The Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @returns The verify step.
+   */
+  export function planVerifyApiCardinality<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return verifyStep<C>(
+      actor,
+      name,
+      description,
+      runVerifyApiCardinality,
+      options
+    )
+  }
+
+  /**
+   * Named runner — API-node bind entries match the local API-node count.
+   *
+   * @param ctx - The build context: `ctx.config` is the local cluster, and
+   *   `ctx.outputs` carries the loaded external bind.
+   * @param signal - Abort signal.
+   * @returns Resolves when the counts match; rejects, naming both counts, when
+   *   they do not.
+   */
+  export async function runVerifyApiCardinality<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    assertCount(
+      "api",
+      ctx.outputs.assert(ExternalBindKey).nodeop.ports.api.length,
+      ctx.config.apiCount
+    )
+  }
+
+  /**
    * Plan the node-mapping verify step (every persisted node ↔ a bind entry).
    *
    * @param actor - The Report actor.
@@ -384,7 +438,11 @@ export namespace ExternalClusterConfigSteps {
     const ports = ctx.outputs.assert(ExternalBindKey).nodeop.ports,
       state = ClusterState.load(ctx.config),
       bindNodeCount =
-        1 + ports.producers.length + ports.batch.length + ports.underwriters.length
+        1 +
+        ports.producers.length +
+        ports.batch.length +
+        ports.underwriters.length +
+        ports.api.length
     Assert.ok(
       state.nodes.length === bindNodeCount,
       `create-external-config: cluster-state has ${state.nodes.length} nodes but the external bind describes ${bindNodeCount}`
@@ -531,7 +589,11 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /** Assert a bind role array's cardinality matches the local topology count. */
-  function assertCount(role: string, actual: number, expected: number): void {
+  function assertCount(
+    role: keyof BindConfigNodeopClusterPorts,
+    actual: number,
+    expected: number
+  ): void {
     Assert.ok(
       actual === expected,
       `create-external-config: external bind nodeop.ports.${role} has ${actual} entries but the local cluster has ${expected}`
@@ -1245,7 +1307,9 @@ export namespace ExternalClusterConfigSteps {
         nodeopPorts.bios,
         ...nodeopPorts.producers,
         ...nodeopPorts.batch,
-        ...nodeopPorts.underwriters
+        ...nodeopPorts.underwriters,
+        ...nodeopPorts.api,
+        ...nodeopPorts.adHoc
       ]
         .map(ports => ports.advertiseAddress)
         .filter(address => address != null)
@@ -1274,37 +1338,44 @@ export namespace ExternalClusterConfigSteps {
   const ChainStateDbSizeMbField: keyof ClusterConfig = "chainStateDbSizeMb"
 
   /**
-   * `text` with the chain-state DB SIZE's OWN value blanked out — nothing else.
+   * `text` with the chain-state DB size and every set query-engine limit
+   * blanked out — nothing else.
    *
-   * That size is an operator-chosen MEGABYTE count, not an endpoint, and it now
-   * rides every emitted `start.sh` (as `--chain-state-db-size-mb <N>`) plus the
-   * rebound `cluster-config.json`. A legitimate `N` that happens to equal a
-   * stale local bind port — 32768 sits inside the Linux ephemeral range — would
-   * otherwise hard-fail Verify claiming the file "still contains the local bind
-   * port", about a number that was never a port.
+   * These are the chain-state DB size (a megabyte count, on every emitted
+   * `start.sh` as `--chain-state-db-size-mb <N>` and in `cluster-config.json`)
+   * and each set query-engine limit (`query-<limit> = <N>` in an API node's
+   * `config.ini`, `"<member>": <N>` under `queryEngine` in the rebound config).
+   * A legitimate `N` that happens to equal a stale local bind port — 12000 is
+   * the default solana dynamic-range base, 32768 sits inside the Linux ephemeral
+   * range — would otherwise hard-fail Verify claiming the file "still contains
+   * the local bind port", about a number that was never a port.
    *
-   * The masking is POSITIONAL, not by value: only the digits this setting
-   * introduces are removed, so the very same number occurring anywhere else in
-   * the same file still fails the scan. The separator run covers both carriers —
-   * the renderer puts every argv word on its own quoted continuation line
-   * (`'--chain-state-db-size-mb' \` ⏎ `  '32768' \`), while JSON writes
-   * `"chainStateDbSizeMb": 32768`.
+   * The masking is POSITIONAL, not by value: only the digits these settings
+   * introduce are removed, so the very same number occurring anywhere else in
+   * the same file still fails the scan. The separator run covers every carrier —
+   * the start-script renderer puts each argv word on its own quoted continuation
+   * line, JSON writes `"key": N`, and the ini writes `key = N`.
    *
    * @param text - A scanned file's text, exactly as read.
-   * @returns The same text with that one value removed.
+   * @returns The same text with those values removed.
    */
-  function maskChainStateDbSize(text: string): string {
+  function maskOperatorChosenNumbers(text: string): string {
     const introducers = [
         `--${Constants.CHAIN_STATE_DB_SIZE_MB_OPTION}`,
-        ChainStateDbSizeMbField
+        ChainStateDbSizeMbField,
+        ...Constants.QUERY_ENGINE_LIMIT_OPTIONS.flatMap(
+          ({ member, option }) => [option, member]
+        )
       ]
         .map(escapeRegExp)
         .join("|"),
-      // Quote/whitespace/backslash/colon run between the flag-or-key and its
-      // value — never a digit, so the match cannot slide onto another token.
-      separator = `['"]?[\\s\\\\'":]*`
+      // Quote/whitespace/backslash/colon/equals run between the flag-or-key and
+      // its value — never a digit, so the match cannot slide onto another token.
+      separator = `['"]?[\\s\\\\'":=]*`
+    // The lookbehind anchors an introducer at the start of its token, so it
+    // never matches the tail of a longer name.
     return text.replace(
-      new RegExp(`((?:${introducers})${separator})[0-9]+`, "g"),
+      new RegExp(`((?<![\\w-])(?:${introducers})${separator})[0-9]+`, "g"),
       "$1"
     )
   }
@@ -1348,10 +1419,10 @@ export namespace ExternalClusterConfigSteps {
     configFiles
       .filter(file => Fs.existsSync(file))
       .forEach(file => {
-        // Scanned with the chain-state DB SIZE's own value masked out: it is an
-        // operator-chosen megabyte count, and one that happens to equal a stale
+        // Scanned with every operator-chosen number masked out (chain-state DB
+        // size, set query-engine limits): one that happens to equal a stale
         // local port would otherwise be reported as an un-rebound endpoint.
-        const text = maskChainStateDbSize(Fs.readFileSync(file, "utf-8"))
+        const text = maskOperatorChosenNumbers(Fs.readFileSync(file, "utf-8"))
         stalePorts.forEach(port => {
           // HEX-safe boundary — a local port must not be flagged as a substring
           // of a larger number (8888 ⊄ 18888) NOR inside a hex key (…a8888b…).

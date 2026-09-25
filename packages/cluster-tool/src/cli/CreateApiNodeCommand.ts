@@ -2,7 +2,9 @@ import Fs from "node:fs"
 import Path from "node:path"
 import {
   ClusterFiles,
-  DefaultChainStateDbSizeMb
+  DefaultChainStateDbSizeMb,
+  QueryEngineReadModeSchema,
+  type QueryEngineReadMode
 } from "@wireio/cluster-tool-shared"
 import type { Argv } from "yargs"
 import { Constants } from "../Constants.js"
@@ -14,6 +16,11 @@ import { ApiNodeStartScriptRenderer } from "../config/renderers/ApiNodeStartScri
 import { getLogger } from "../logging/Logger.js"
 import { StartScriptSteps } from "../orchestration/steps/StartScriptSteps.js"
 import { mkdirs } from "../utils/fsUtils.js"
+import {
+  describeQueryEngineLimitFlag,
+  describeQueryEngineReadModeFlag,
+  toQueryEngineFlag
+} from "./ClusterBuildOptionsArgs.js"
 import { ClusterCommand } from "./ClusterCommand.js"
 
 const log = getLogger(__filename)
@@ -46,6 +53,32 @@ export interface CreateApiNodeArgv {
   agentName?: string
   /** `--genesis-json`. */
   genesisJson?: string
+  /** `--query-engine-read-mode`. */
+  queryEngineReadMode?: QueryEngineReadMode
+  /** `--query-engine-worker-threads`. */
+  queryEngineWorkerThreads?: number
+  /** `--query-engine-max-in-flight`. */
+  queryEngineMaxInFlight?: number
+  /** `--query-engine-max-query-bytes`. */
+  queryEngineMaxQueryBytes?: number
+  /** `--query-engine-timeout-ms`. */
+  queryEngineTimeoutMs?: number
+  /** `--query-engine-max-capture-ms`. */
+  queryEngineMaxCaptureMs?: number
+  /** `--query-engine-max-abi-bytes`. */
+  queryEngineMaxAbiBytes?: number
+  /** `--query-engine-max-scan-rows`. */
+  queryEngineMaxScanRows?: number
+  /** `--query-engine-max-raw-bytes`. */
+  queryEngineMaxRawBytes?: number
+  /** `--query-engine-max-memory-bytes`. */
+  queryEngineMaxMemoryBytes?: number
+  /** `--query-engine-max-groups`. */
+  queryEngineMaxGroups?: number
+  /** `--query-engine-max-result-rows`. */
+  queryEngineMaxResultRows?: number
+  /** `--query-engine-max-response-bytes`. */
+  queryEngineMaxResponseBytes?: number
 }
 
 /** The artifacts {@link runCreateApiNode} emitted. */
@@ -65,8 +98,9 @@ export interface CreateApiNodeResult {
  *
  * Named `.option()`s ONLY — deliberately no `.positional()`, which the CLI
  * test recorders (they implement `option()` + `parserConfiguration()`) cannot
- * capture. Every flag is named for nodeop's OWN option where one exists, per the
- * ticket's "align argument names to the underlying nodeop arguments" bullet.
+ * capture. Every flag is named for nodeop's OWN option where one exists (the
+ * `--query-engine-*` flags excepted, see below), per the ticket's "align
+ * argument names to the underlying nodeop arguments" bullet.
  *
  * Defaults live in exactly ONE place — {@link ApiNodeConfig.resolve} — so no
  * yargs `default:` is set; each `describe` INTERPOLATES the resolved constant
@@ -76,12 +110,18 @@ export interface CreateApiNodeResult {
  * Every flag whose value becomes an ini line takes its NAME from the ini
  * renderer's option constant, so the two spellings cannot diverge.
  *
+ * The `--query-engine-*` flags are the one exception to both naming rules
+ * above: they are spelled from the shared `ClusterBuildOptions.queryEngine`
+ * path ({@link toQueryEngineFlag}), so `create` and `create-api-node` accept
+ * identical flags. Their ini keys (`read-mode`, `query-*`) come from
+ * `Constants.READ_MODE_OPTION` / `Constants.QUERY_ENGINE_LIMIT_OPTIONS` through
+ * `QueryEngineConfigProvider.toIniLines` — one table for both commands.
+ *
  * @param builder - The yargs builder for this command.
  * @returns The builder with every `create-api-node` flag registered.
  */
-function applyCreateApiNodeArgs<T>(builder: Argv<T>) {
-  return (
-    builder
+function applyCreateApiNodeArgs(builder: Argv) {
+  const withLocalFlags = builder
       // Keep every boolean an explicit flag rather than letting yargs mint a
       // `--no-enable-account-queries` negation (matching `create-external-config`).
       .parserConfiguration({ "boolean-negation": false })
@@ -132,7 +172,32 @@ function applyCreateApiNodeArgs<T>(builder: Argv<T>) {
         type: "string",
         describe:
           "optional genesis.json to copy into the output dir and pass as --genesis-json"
-      })
+      }),
+    // A computed flag name widens yargs' inferred argv type with an index
+    // signature, after which the next computed registration drops every typed
+    // flag from it. Declaring the result with the local flags' own type keeps
+    // the handler's `CreateApiNodeArgv` compiler-checked against those flags;
+    // the query-engine members are declared on `CreateApiNodeArgv` itself; the
+    // compiler does not check those against their registrations.
+    // `CreateApiNodeCommand.test.ts`'s exact-set and per-flag cases do.
+    withReadMode: typeof withLocalFlags = withLocalFlags.option(
+      toQueryEngineFlag("readMode"),
+      {
+        type: "string",
+        choices: QueryEngineReadModeSchema.options,
+        describe: describeQueryEngineReadModeFlag()
+      }
+    )
+  // One number flag per limit, from the SAME table the ini renderer reads. No
+  // yargs `default:` — an unset limit must stay unset so the plugin's own
+  // default governs.
+  return Constants.QUERY_ENGINE_LIMIT_OPTIONS.reduce(
+    (instance, { member, option }) =>
+      instance.option(toQueryEngineFlag(member), {
+        type: "number",
+        describe: describeQueryEngineLimitFlag(option)
+      }),
+    withReadMode
   )
 }
 
@@ -170,8 +235,10 @@ export function createCreateApiNodeCommand() {
 
 /**
  * Map the parsed argv onto {@link ApiNodeOptions}, nesting the tuning leaves
- * into their own group. An absent flag stays `undefined` so
- * {@link ApiNodeConfig.resolve} supplies its default.
+ * and the query-engine leaves into their own groups. An absent flag stays
+ * `undefined` so {@link ApiNodeConfig.resolve} supplies its default — for a
+ * query-engine member, "unset", which leaves nodeop's / the plugin's own
+ * default in force.
  *
  * @param args - The parsed argv.
  * @returns The caller-options half of the resolution.
@@ -190,6 +257,21 @@ export function toApiNodeOptions(args: CreateApiNodeArgv): ApiNodeOptions {
       httpMaxInFlightRequests: args.httpMaxInFlightRequests,
       httpThreads: args.httpThreads,
       agentName: args.agentName
+    },
+    queryEngine: {
+      readMode: args.queryEngineReadMode,
+      workerThreads: args.queryEngineWorkerThreads,
+      maxInFlight: args.queryEngineMaxInFlight,
+      maxQueryBytes: args.queryEngineMaxQueryBytes,
+      timeoutMs: args.queryEngineTimeoutMs,
+      maxCaptureMs: args.queryEngineMaxCaptureMs,
+      maxAbiBytes: args.queryEngineMaxAbiBytes,
+      maxScanRows: args.queryEngineMaxScanRows,
+      maxRawBytes: args.queryEngineMaxRawBytes,
+      maxMemoryBytes: args.queryEngineMaxMemoryBytes,
+      maxGroups: args.queryEngineMaxGroups,
+      maxResultRows: args.queryEngineMaxResultRows,
+      maxResponseBytes: args.queryEngineMaxResponseBytes
     }
   }
 }
