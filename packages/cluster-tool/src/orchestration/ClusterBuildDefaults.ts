@@ -1317,6 +1317,26 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
+   * Render a collateral code without losing packed bits or changing its identity.
+   * Zero retains the contract's empty-code sentinel; malformed codes fail before
+   * an action is planned instead of becoming a different valid code.
+   * @param value - The configured packed collateral code.
+   * @returns Its canonical ABI string.
+   */
+  function collateralCode(value: number): string {
+    Assert.ok(
+      Number.isSafeInteger(value) && value >= 0,
+      "collateral code must be a canonical packed slug_name"
+    )
+    const code = SlugName.toString(value)
+    Assert.ok(
+      value === 0 || SlugName.from(code) === value,
+      "collateral code must be a canonical packed slug_name"
+    )
+    return code
+  }
+
+  /**
    * The `sysio.opreg::setconfig` data — dev defaults + the config's per-type
    * collateral minimums (a flow's `defaults.requiredBatchOperatorCollateral` etc. flow through
    * here, gating `OPERATOR_STATUS_ACTIVE` on real deposits).
@@ -1327,8 +1347,8 @@ export namespace ClusterBuildDefaults {
     const toChainMinBond = (
       requirement: CollateralRequirement
     ): SysioContracts.SysioOpregChainMinBondType => ({
-      chain_code: SlugName.toString(requirement.chainCode),
-      token_code: SlugName.toString(requirement.tokenCode),
+      chain_code: collateralCode(requirement.chainCode),
+      token_code: collateralCode(requirement.tokenCode),
       min_bond: requirement.minimumBond,
       config_timestamp_ms: 0
     })
