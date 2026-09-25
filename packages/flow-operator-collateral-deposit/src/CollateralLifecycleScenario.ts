@@ -58,7 +58,7 @@ async function readWithdrawQueueRows(
  *    schedule prefers non-bootstrapped operators, and its group must relay).
  * 3. **DepositEthereum** — bond on the ETH outpost → depot credits the balance row.
  * 4. **DepositSolana** — bond on the SOL outpost → all-chain rule met → ACTIVE.
- * 5. **WithdrawRequest** — release half the ETH bond → depot queues it.
+ * 5. **WithdrawRequest** — release half the ETH bond; verify reserved collateral leaves the operator ACTIVE.
  * 6. **WaitAndFlush** — the wait window elapses; `flushwtdw` drains the queue.
  * 7. **ProcessRemit** — WITHDRAW_REMIT lands on the ETH outpost; escrow decrements.
  */
@@ -78,12 +78,12 @@ export class CollateralLifecycleScenario extends FlowScenario {
       {
         chainCode: Constants.EthereumChainCode,
         tokenCode: Constants.EthereumTokenCode,
-        minimumBond: Number(Constants.BondAmount)
+        minimumBond: Number(Constants.MinimumBond)
       },
       {
         chainCode: Constants.SolanaChainCode,
         tokenCode: Constants.SolanaTokenCode,
-        minimumBond: Number(Constants.BondAmount)
+        minimumBond: Number(Constants.MinimumBond)
       }
     ]
   }
@@ -210,11 +210,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
       )
     )
 
-    // ── 5. Withdraw half the ETH bond → depot queues it ──
+    // ── 5. Withdraw excess ETH collateral while retaining relay eligibility ──
     ClusterBuildPhase.create(
       cluster,
       "WithdrawRequest",
-      "Release half the ETH bond; depot enqueues wtdwqueue"
+      "Release half the ETH bond; depot enqueues wtdwqueue and retains eligibility"
     ).push(
       EthereumCollateralTool.planWithdrawal(
         Actor.User,
@@ -244,6 +244,41 @@ export class CollateralLifecycleScenario extends FlowScenario {
             Constants.relayDeadlineMs(),
             Constants.PollIntervalMs
           )
+        },
+        stepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "depot-status-active-after-withdraw",
+        "reserved withdrawal retains the minimum ETH collateral and ACTIVE status",
+        async ctx => {
+          const operator = await readDepositorRow(ctx),
+            requests = await readWithdrawQueueRows(ctx),
+            ethBalance = operator?.balances.find(
+              balance =>
+                slugValue(balance.chain_code) === Constants.EthereumChainCode &&
+                slugValue(balance.token_code) === Constants.EthereumTokenCode
+            ),
+            reservedAmount = requests
+              .filter(
+                request =>
+                  slugValue(request.chain_code) === Constants.EthereumChainCode &&
+                  slugValue(request.token_code) === Constants.EthereumTokenCode
+              )
+              .reduce((sum, request) => sum + BigInt(request.amount), 0n)
+          if (
+            ethBalance == null ||
+            BigInt(ethBalance.balance) - reservedAmount < Constants.MinimumBond ||
+            !matchesProtoEnum(
+              operator.status,
+              SysioOpregOperatorstatus,
+              SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+            )
+          ) {
+            throw new Error(
+              `Withdrawing excess ETH collateral must retain the minimum bond and ACTIVE status; balance=${ethBalance?.balance}, reserved=${reservedAmount}, status=${operator?.status}`
+            )
+          }
         },
         stepOptions
       )

@@ -2,10 +2,9 @@ import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
- * Constants for the collateral-lifecycle flow. Amounts + epoch budgets carry
- * over from the previously-validated flow run (2026-06): the bond is deposited
+ * Constants for the collateral-lifecycle flow. Twice the minimum bond is deposited
  * on BOTH outpost chains (all-chain collateral invariant), half the ETH bond is
- * withdrawn mid-flow, and every poll deadline derives from extension-inclusive
+ * withdrawn while retaining the minimum. Every poll deadline uses extension-inclusive
  * epochs ({@link ProtocolTiming.effectiveEpochSec}) so the flow scales with the
  * epoch duration and survives extended epochs.
  */
@@ -29,9 +28,11 @@ export namespace CollateralLifecycleScenarioConstants {
    */
   export const AdHocDaemonCount = 1
 
+  /** Minimum collateral retained per chain to keep the depositor eligible to relay. */
+  export const MinimumBond = 1_000_000n
   /** Collateral bonded per chain (raw outpost units — wei / lamports). */
   export const BondAmount = 2_000_000n
-  /** ETH bond released mid-flow (half — stays above the minimum on the rest). */
+  /** ETH bond released mid-flow (half — leaves exactly the required minimum). */
   export const WithdrawAmount = 1_000_000n
   /** Escrow expected on the ETH outpost after the withdraw remit. */
   export const ExpectedRemainingBalance = BondAmount - WithdrawAmount
