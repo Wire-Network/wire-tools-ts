@@ -286,6 +286,13 @@ export const ClusterConfigSchema = z.object({
    */
   enableMockReserves: z.boolean().default(false),
   /**
+   * Whether the bootstrap seeds the 2 mock shadow-liq yield pools on
+   * `sysio.swap` (the `--enable-mock-liq-pools` create flag). Schema-defaulted
+   * `false` so pre-existing configs — and every real/external depot — mint no
+   * unbacked shadow unless a caller (or a flow's scenario defaults) opts in.
+   */
+  enableMockLiqPools: z.boolean().default(false),
+  /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every
    * `create`d cluster — keep `trace_api_plugin` on every role.

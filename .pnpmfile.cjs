@@ -14,17 +14,26 @@
 const Path = require("path")
 const Fs = require("node:fs")
 
-// Resolve relative to this file's location
-const wireLibPackagesPath = Path.resolve(
-  __dirname,
-  "..",
-  "wire-libraries-ts",
-  "packages"
+/**
+ * Sibling repo roots. They default to the platform layout — `../wire-libraries-ts`
+ * and `../wire-sysio` beside this repo — and a feature worktree whose siblings are
+ * ALSO worktrees points them at those with `WIRE_LIBRARIES_TS_PATH` and
+ * `WIRE_SYSIO_PATH`, so its `@wireio/*` links resolve to the sibling branches it
+ * is developed against instead of the shared checkouts. The `Linked …` lines
+ * `pnpm install` prints are the record of what resolved.
+ */
+const wireLibrariesPath = Path.resolve(
+  process.env.WIRE_LIBRARIES_TS_PATH ?? Path.resolve(__dirname, "..", "wire-libraries-ts")
 )
+const wireSysioPath = Path.resolve(
+  process.env.WIRE_SYSIO_PATH ?? Path.resolve(__dirname, "..", "wire-sysio")
+)
+
+const wireLibPackagesPath = Path.join(wireLibrariesPath, "packages")
 
 const wireOPPPkgPaths = ["typescript"].map(target => [
   `@wireio/opp-${target}-models`,
-  Path.resolve(__dirname, "..", "wire-sysio", "build", "opp", target)
+  Path.join(wireSysioPath, "build", "opp", target)
 ])
 
 /**

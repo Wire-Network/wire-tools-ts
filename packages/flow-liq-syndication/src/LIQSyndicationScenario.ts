@@ -80,11 +80,13 @@ async function readCirculatedLIQYields(
  * permissionless `report_liq_yield` crank queues `LIQ_YIELD` for the delta
  * above its watermark. Both must reach an outpost → depot envelope.
  *
- * The depot's `sysio.msgch` dispatcher does NOT handle either type yet (unknown
- * types fall through its default), so the assertion is deliberately two-sided:
- * the attestations must circulate, AND the depot must keep advancing its epoch
- * while consuming envelopes that carry them. A depot that choked on an unknown
- * type would stall the epoch — the last phase is what catches that.
+ * This flow proves the OUTPOST side: the two attestations circulate, and the
+ * depot keeps advancing its epoch while consuming envelopes that carry them —
+ * whatever its `sysio.msgch` dispatcher does with them (today it routes both
+ * to `sysio.liq`, where this user's unlinked key leaves the syndication parked;
+ * `flow-liq-yield` follows the credit through to WIRE and back to the outpost).
+ * A depot that choked on either type would stall the epoch — the last phase is
+ * what catches that.
  *
  * 1. **SnapshotDepotEpoch** — record `current_epoch_index` BEFORE any write.
  * 2. **Syndicate** — map the liq token, fund the user, deposit for liqSOL, flip
@@ -93,7 +95,7 @@ async function readCirculatedLIQYields(
  * 3. **ReportLiqYield** — snapshot the on-chain liq-yield accounting, donate
  *    bonus pool yield, crank `report_liq_yield` as a NON-admin, then prove the
  *    circulated `LIQ_YIELD` decodes to exactly the reported delta.
- * 4. **DepotAcceptsUnknownTypes** — `current_epoch_index` advances past the
+ * 4. **DepotKeepsAdvancing** — `current_epoch_index` advances past the
  *    snapshot, so consensus kept closing epochs across both attestations.
  */
 export class LIQSyndicationScenario extends FlowScenario {
@@ -299,11 +301,11 @@ export class LIQSyndicationScenario extends FlowScenario {
       )
     )
 
-    // ── 4. The depot kept advancing while carrying the unknown types ──
+    // ── 4. The depot kept advancing while carrying both liq types ──
     ClusterBuildPhase.create(
       cluster,
-      "DepotAcceptsUnknownTypes",
-      "The depot advances its epoch past the snapshot — envelopes carrying types its dispatcher does not know are accepted, not fatal"
+      "DepotKeepsAdvancing",
+      "The depot advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
     ).push(
       verifyStep(
         Actor.Sysio,

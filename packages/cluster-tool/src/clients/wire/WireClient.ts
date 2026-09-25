@@ -1001,6 +1001,22 @@ export namespace WireClient {
   }
 
   /**
+   * The exact `get_table_rows` range of ONE row of a KV table keyed by a single `symbol_code`
+   * field: the node takes `lower_bound` inclusive and `upper_bound` EXCLUSIVE, so the range is
+   * `[code, code + 1)`. A row whose VALUE carries no identity (`sysio.liq::yieldidx`) can only be
+   * read this way — a lower bound alone hands back the NEXT symbol's row when the one asked for
+   * does not exist. Same JSON-object encoding as {@link nameKeyBound}; a bare code string fails
+   * at parse time exactly like a bare account name does.
+   */
+  export function symbolCodeKeyRange(field: string, code: string): TableQueryArgs {
+    const { value } = Asset.SymbolCode.from(code)
+    return {
+      lowerBound: JSON.stringify({ [field]: value.toString() }),
+      upperBound: JSON.stringify({ [field]: value.adding(1).toString() })
+    }
+  }
+
+  /**
    * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
    * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string
    * once it exceeds the JSON-safe integer range.

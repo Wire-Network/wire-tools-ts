@@ -150,6 +150,27 @@ export function containsLIQYield(
 }
 
 /**
+ * Whether a `DESYNDICATE_LIQ` attestation has circulated on `direction` — the
+ * depot → outpost proof that a holder's `sysio.liq::desyndicate` reached an
+ * envelope the outpost pays from (`flow-liq-yield`).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: depot → Solana,
+ *   the only outpost that redeems syndicated liq today).
+ * @returns Whether any matching envelope carries a DESYNDICATE_LIQ attestation.
+ */
+export function containsDesyndicateLIQ(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.DESYNDICATE_LIQ)
+  )
+}
+
+/**
  * The raw attestation payloads of every `type` attestation carried by any
  * `.data` envelope artifact for `direction`.
  *

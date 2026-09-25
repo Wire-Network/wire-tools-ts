@@ -551,6 +551,10 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
+    enableMockLiqPools: leaf(
+      false,
+      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
+    ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,

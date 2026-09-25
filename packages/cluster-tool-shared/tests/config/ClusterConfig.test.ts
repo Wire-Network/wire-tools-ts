@@ -91,6 +91,7 @@ describe("ClusterConfig shape", () => {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
+    enableMockLiqPools: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
@@ -121,13 +122,14 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
+  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.awsClusterNodeConfig
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
+    delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -141,6 +143,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.enableMockLiqPools).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)
