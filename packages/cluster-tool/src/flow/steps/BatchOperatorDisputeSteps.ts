@@ -1,31 +1,34 @@
 import Assert from "node:assert"
+
 import { ethers } from "ethers"
+
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
+
+import { Constants as TestClusterConstants } from "../../Constants.js"
+import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
-  ClusterBuildContext,
   ClusterBuildStep,
-  Constants as TestClusterConstants,
-  ethereumKeyPairFromWallet,
-  isNotEmpty,
-  matchesProtoEnum,
-  outputKey,
-  pollUntil,
+  type ClusterBuildStepOptions
+} from "../../orchestration/ClusterBuildStep.js"
+import { outputKey } from "../../orchestration/OutputStore.js"
+import { pollUntil } from "../../orchestration/StepTools.js"
+import type { StepInput } from "../../orchestration/StepRunner.js"
+import { Steps } from "../../orchestration/steps/index.js"
+import { Report } from "../../report/Report.js"
+import {
   pushNewNamedUser,
-  pushNodeOwnerReg,
-  Report,
-  Steps,
-  type ClusterBuildStepOptions,
-  type StepInput
-} from "@wireio/cluster-tool"
+  pushNodeOwnerReg
+} from "../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { ethereumKeyPairFromWallet } from "../../utils/keyPairUtils.js"
+import { isNotEmpty, matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
 import {
   InboundTipReader,
-  type OutpostConsensusRow,
   type OutpostInboundTips
 } from "../InboundTipReader.js"
-import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
+import { BatchOperatorDisputeConstants as Constants } from "../BatchOperatorDisputeConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
   SysioContracts
@@ -38,7 +41,7 @@ const ActivePermission = "active"
 const UtcZuluSuffix = "Z"
 
 /**
- * Flow-local step factories + dispute-domain reads for the slashing scenario.
+ * Shared step factories + dispute-domain reads for batch-operator disputes.
  * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
  * `sysio.opreg::processbatch`, and the roa node-owner registration pair have no
  * shared `Steps.*` palette factories yet, so this namespace supplies them in the
@@ -47,12 +50,12 @@ const UtcZuluSuffix = "Z"
  * (the contested epoch, the open dispute's id + canonical checksum) ride
  * `ctx.outputs` via the typed keys below.
  */
-export namespace SlashingScenarioDisputeSteps {
+export namespace BatchOperatorDisputeSteps {
   // ── Cross-step output keys ────────────────────────────────────────────────
 
   /** The frozen, dispute-operators-owned epoch (boundary passed) hosting the divergent split. */
   export const ContestedEpochKey = outputKey<number>(
-    "SlashingScenario.contestedEpoch",
+    "BatchOperatorDisputeScenario.contestedEpoch",
     "the frozen dispute-operators-owned epoch whose boundary has passed"
   )
 
@@ -66,15 +69,14 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** The open dispute's id + the canonical candidate checksum. */
   export const DisputeResolutionKey = outputKey<DisputeResolutionTarget>(
-    "SlashingScenario.disputeResolution",
+    "BatchOperatorDisputeScenario.disputeResolution",
     "the open dispute's id + the canonical candidate checksum the Tier-1 electorate votes for"
   )
 
   // ── Envelope encoding + inbound chain tips ────────────────────────────────
   //
-  // The canonical OPP codec (semantic-header derivation + tagged-envelope encoding) lives in
-  // ../EnvelopeCanonicalCodec.ts and the single-flight tip reader in ../InboundTipReader.ts so
-  // both can be unit-tested without this step module's cluster-tool dependency; see those files
+  // The canonical OPP codec (semantic-header derivation + tagged-envelope encoding) and the
+  // single-flight tip reader live in cluster-tool's shared flow helpers; see those files
   // for why the checksums are computed over a field-complete canonical encoding rather than
   // protobuf-ts `toBinary`, and for why the tip read must be single-flight.
 
@@ -105,13 +107,13 @@ export namespace SlashingScenarioDisputeSteps {
   /** The current `sysio.msgch::outpcons` rows (the tip reader's injected query). */
   async function queryOutpostConsensusRows(
     ctx: ClusterBuildContext
-  ): Promise<OutpostConsensusRow[]> {
+  ): Promise<SysioContracts.SysioMsgchOutpostConsensusEntryType[]> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.msgch)
       .tables.outpcons.query({
         limit: Constants.OutpostConsensusTableReadLimit
       })
-    return rows as OutpostConsensusRow[]
+    return rows
   }
 
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
@@ -156,7 +158,7 @@ export namespace SlashingScenarioDisputeSteps {
    * Whether the ACTIVE batch-operator group is exactly the dispute operators.
    *
    * @param ctx - The build context.
-   * @returns `true` when the ACTIVE group matches {@link SlashingScenarioConstants.DisputeOperators}.
+   * @returns `true` when the ACTIVE group matches {@link BatchOperatorDisputeConstants.DisputeOperators}.
    */
   export async function disputeOperatorsOwnGroup(
     ctx: ClusterBuildContext
@@ -207,7 +209,7 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * The OPEN dispute row for `epochIndex`, if any.
+   * The OPEN dispute row for the contested outpost and `epochIndex`, if any.
    *
    * @param ctx - The build context.
    * @param epochIndex - The contested epoch.
@@ -219,6 +221,7 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<SysioContracts.SysioChalgDisputeEntryType> {
     return (await readDisputes(ctx)).find(
       row =>
+        String(row.chain_code) === String(Constants.ContestedChainCode) &&
         Number(row.epoch_index) === epochIndex &&
         matchesProtoEnum(
           row.status,
@@ -291,7 +294,9 @@ export namespace SlashingScenarioDisputeSteps {
           }
         )
     } catch (error) {
-      log.warn(`[slashing] chkcons crank transient: ${errorMessage(error)}`)
+      log.warn(
+        `[batch-operator-dispute] chkcons crank transient: ${errorMessage(error)}`
+      )
     }
   }
 
@@ -308,13 +313,11 @@ export namespace SlashingScenarioDisputeSteps {
 
   /**
    * Wait until the CHAIN's head-block time is past the current epoch's
-   * `next_epoch_start` (plus a margin). A dispute opens only from a deliver
-   * whose ON-CHAIN block time is ≥ `next_epoch_start` (`chkcons` can't open
-   * one), and the SBP-less dispute group never reaches consensus so the epoch
-   * stays put. Gating on the chain clock rather than the runner's wall clock
-   * avoids the race where the runner is past the boundary but the chain is a
-   * block or two behind, landing the divergent deliver pre-boundary so no
-   * dispute ever opens.
+   * `next_epoch_start` (plus a margin). Although `chkcons` can re-drive
+   * `evalcons` and open a pre-boundary tie after the boundary, this flow waits
+   * first so the terminal divergent delivery opens the dispute inline. Gating
+   * on the chain clock rather than the runner's wall clock avoids landing that
+   * delivery while the chain is still a block or two before the boundary.
    *
    * @param ctx - The build context.
    */
@@ -348,7 +351,7 @@ export namespace SlashingScenarioDisputeSteps {
    * The schedule reshape runs while the genesis epoch is live, whose envelope
    * bucket already holds the bootstrap operators' consistent deliveries (pushed
    * by their cranks before the group swap de-elected them). Those form an
-   * Option-B majority, so a 3-way divergent split injected at the genesis epoch
+   * Option-B majority, so a divergent split injected at the genesis epoch
    * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
    * dispute. After the swap, the bootstrap operators finish driving the genesis
    * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
@@ -384,7 +387,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
     const epoch = await currentEpoch(ctx)
     log.info(
-      `[slashing] settled on frozen dispute-operators-owned epoch ${epoch}`
+      `[batch-operator-dispute] settled on frozen dispute-operators-owned epoch ${epoch}`
     )
     return epoch
   }
@@ -393,7 +396,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planNewnameduser}. */
   export interface NewnameduserInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.NewnameduserInput"
+    readonly kind: "BatchOperatorDisputeSteps.NewnameduserInput"
     readonly account: string
     readonly tier: NodeOwnerTier
   }
@@ -426,7 +429,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.NewnameduserInput", account, tier },
+      { kind: "BatchOperatorDisputeSteps.NewnameduserInput", account, tier },
       runNewnameduser
     )
   }
@@ -450,7 +453,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planNodeownreg}. */
   export interface NodeownregInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.NodeownregInput"
+    readonly kind: "BatchOperatorDisputeSteps.NodeownregInput"
     readonly account: string
     readonly tier: NodeOwnerTier
   }
@@ -484,7 +487,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.NodeownregInput", account, tier },
+      { kind: "BatchOperatorDisputeSteps.NodeownregInput", account, tier },
       runNodeownreg
     )
   }
@@ -496,7 +499,9 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumIdentity = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
+    const ethereumIdentity = ethereumKeyPairFromWallet(
+      ethers.Wallet.createRandom()
+    )
     await pushNodeOwnerReg(
       ctx.wire,
       input.account,
@@ -511,7 +516,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planProcessbatch} — the operator's `label` handle + account-less action data. */
   export interface ProcessbatchInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.ProcessbatchInput"
+    readonly kind: "BatchOperatorDisputeSteps.ProcessbatchInput"
     readonly label: string
     readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
   }
@@ -550,7 +555,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.ProcessbatchInput", label, data },
+      { kind: "BatchOperatorDisputeSteps.ProcessbatchInput", label, data },
       runProcessbatch
     )
   }
@@ -574,7 +579,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planDeliver}. */
   export interface DeliverInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.DeliverInput"
+    readonly kind: "BatchOperatorDisputeSteps.DeliverInput"
     readonly batchOperatorLabel: string
     readonly chainCode: number
     readonly tag: string
@@ -584,8 +589,8 @@ export namespace SlashingScenarioDisputeSteps {
    * `sysio.msgch::deliver` — one operator delivers one tagged envelope for the
    * contested epoch (read from {@link ContestedEpochKey} at run time). The
    * typed `invoke` waits for finality, so the deliver is CONFIRMED to land — a
-   * forked-out/dropped deliver would leave fewer than 3 distinct checksums and
-   * the dispute would never open.
+   * forked-out/dropped deliver would leave fewer than the topology's expected
+   * live candidate count and the dispute would never open.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -614,7 +619,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.DeliverInput",
+        kind: "BatchOperatorDisputeSteps.DeliverInput",
         batchOperatorLabel,
         chainCode,
         tag
@@ -634,9 +639,9 @@ export namespace SlashingScenarioDisputeSteps {
     // Chain the synthetic envelope from the outpost's current inbound tips so the winner (or, for
     // the non-contested outpost, the consensus envelope) passes SEC-102 validation in
     // apply_consensus: `previous_envelope_hash` continues the envelope chain and
-    // `previous_message_id` continues the message chain. The three divergent envelopes for the
-    // contested outpost all read the SAME pre-dispute tips; only the voted winner dispatches and
-    // advances them.
+    // `previous_message_id` continues the message chain. The divergent envelopes for the contested
+    // outpost all read the SAME pre-dispute tips; only the voted winner dispatches and advances
+    // them.
     const tips = await readInboundTips(ctx, input.chainCode, epochIndex)
     const envelope = encodeTaggedEnvelope({
       epochIndex,
@@ -670,7 +675,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planVotedispute}. */
   export interface VotedisputeInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.VotedisputeInput"
+    readonly kind: "BatchOperatorDisputeSteps.VotedisputeInput"
     readonly owner: string
   }
 
@@ -700,7 +705,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.VotedisputeInput", owner },
+      { kind: "BatchOperatorDisputeSteps.VotedisputeInput", owner },
       runVotedispute
     )
   }
@@ -768,21 +773,22 @@ export namespace SlashingScenarioDisputeSteps {
     await waitPastEpochBoundary(ctx)
     const epoch = await currentEpoch(ctx)
     ctx.outputs.set(ContestedEpochKey, epoch)
-    log.info(`[slashing] contested epoch staged: ${epoch}`)
+    log.info(`[batch-operator-dispute] contested epoch staged: ${epoch}`)
   }
 
   // ── Step: await the dispute opening (poll + capture the resolution target) ─
 
   /**
    * Poll until an OPEN dispute row appears for the contested (outpost, epoch),
-   * assert it carries a candidate per dispute operator, resolve the canonical
-   * candidate's checksum, and store the {@link DisputeResolutionTarget} for the
-   * vote + resolve steps.
+   * assert it carries a candidate per live delivering operator, resolve the
+   * canonical candidate's checksum, and store the
+   * {@link DisputeResolutionTarget} for the vote + resolve steps.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
+   * @param expectedCandidateCount - Number of live operators that delivered a candidate.
    * @returns The definition step.
    */
   export function planAwaitDisputeOpened<
@@ -791,22 +797,33 @@ export namespace SlashingScenarioDisputeSteps {
     actor: Report.Actor,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
+    options: ClusterBuildStepOptions,
+    expectedCandidateCount: number
+  ): ClusterBuildStep<C, AwaitDisputeOpenedInput> {
+    return ClusterBuildStep.create<C, AwaitDisputeOpenedInput>(
       actor,
       name,
       description,
       options,
-      null,
+      {
+        kind: "BatchOperatorDisputeSteps.AwaitDisputeOpenedInput",
+        expectedCandidateCount
+      },
       runAwaitDisputeOpened
     )
+  }
+
+  /** Input for {@link planAwaitDisputeOpened}. */
+  export interface AwaitDisputeOpenedInput extends StepInput {
+    readonly kind: "BatchOperatorDisputeSteps.AwaitDisputeOpenedInput"
+    /** Number of distinct live delivery candidates expected on the open dispute. */
+    readonly expectedCandidateCount: number
   }
 
   /** Named runner — poll for the OPEN dispute, assert candidates, store the target. */
   export async function runAwaitDisputeOpened<C extends ClusterBuildContext>(
     ctx: C,
-    _input: null,
+    input: AwaitDisputeOpenedInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
@@ -820,8 +837,8 @@ export namespace SlashingScenarioDisputeSteps {
     const dispute = await findOpenDispute(ctx, epoch)
     Assert.ok(dispute != null, `no OPEN dispute row for epoch ${epoch}`)
     Assert.ok(
-      dispute.candidates.length >= Constants.DisputeOperators.length,
-      `expected >= ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
+      dispute.candidates.length === input.expectedCandidateCount,
+      `expected exactly ${input.expectedCandidateCount} dispute candidates, got ${dispute.candidates.length}`
     )
     const canonicalAccount = ctx.keyStore.assertOperator(
       Constants.CanonicalOperator
@@ -839,7 +856,7 @@ export namespace SlashingScenarioDisputeSteps {
       canonicalChecksum
     })
     log.info(
-      `[slashing] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`
+      `[batch-operator-dispute] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`
     )
   }
 
@@ -908,7 +925,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput"
+    readonly kind: "BatchOperatorDisputeSteps.AwaitOperatorSlashedInput"
     readonly label: string
   }
 
@@ -941,7 +958,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput",
+        kind: "BatchOperatorDisputeSteps.AwaitOperatorSlashedInput",
         label
       },
       runAwaitOperatorSlashed
@@ -978,7 +995,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planAwaitOperatorActive}. */
   export interface AwaitOperatorActiveInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorActiveInput"
+    readonly kind: "BatchOperatorDisputeSteps.AwaitOperatorActiveInput"
     readonly label: string
   }
 
@@ -1008,7 +1025,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.AwaitOperatorActiveInput",
+        kind: "BatchOperatorDisputeSteps.AwaitOperatorActiveInput",
         label
       },
       runAwaitOperatorActive

@@ -1,4 +1,5 @@
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -18,7 +19,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::setconfig` — availability caps, termination thresholds, collateral minimums. */
-  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -54,7 +57,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::regoperator` — register a batch operator / underwriter / producer. */
-  export function planRegoperator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegoperator<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -81,5 +86,67 @@ export namespace OpregContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .actions.regoperator.invoke(input.data)
+  }
+
+  /** Input for {@link planTerminate} — a harness operator label and audit reason. */
+  export interface TerminateInput extends StepInput {
+    readonly kind: "OpregContractSteps.TerminateInput"
+    /** Harness label resolved to the generated WIRE account during execution. */
+    readonly label: string
+    /** Human-readable reason stored on the operator row. */
+    readonly reason: string
+  }
+
+  /**
+   * Plan `sysio.opreg::terminate` to administratively remove an operator from eligibility.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @param label - Harness operator label resolved at execution time.
+   * @param reason - Human-readable audit reason stored by the contract.
+   * @returns The definition step.
+   */
+  export function planTerminate<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    reason: string
+  ): ClusterBuildStep<C, TerminateInput> {
+    return ClusterBuildStep.create<C, TerminateInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "OpregContractSteps.TerminateInput", label, reason },
+      runTerminate
+    )
+  }
+
+  /**
+   * Resolve the harness operator label and invoke `sysio.opreg::terminate`.
+   *
+   * @param ctx - The build context.
+   * @param input - Operator label and audit reason from the definition step.
+   * @param signal - Abort signal checked before resolving or invoking.
+   * @returns A promise that resolves after the action reaches finality.
+   */
+  export async function runTerminate<C extends ClusterBuildContext>(
+    ctx: C,
+    input: TerminateInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .actions.terminate.invoke({
+        account: ctx.keyStore.assertOperator(input.label).account,
+        reason: input.reason
+      })
   }
 }
