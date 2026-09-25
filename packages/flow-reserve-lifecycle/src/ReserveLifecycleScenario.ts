@@ -1,5 +1,5 @@
 import Assert from "node:assert"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
   ClusterBuildPhase,
@@ -422,9 +422,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
               .getSysioContract(SysioContractName.reserv)
               .actions.matchreserve.invoke(
                 {
-                  chain_code: { value: Constants.EthereumChainCode },
-                  token_code: { value: Constants.EthereumTokenCode },
-                  reserve_code: { value: Constants.PrivateReserveCode },
+                  chain_code: SlugName.toString(Constants.EthereumChainCode),
+                  token_code: SlugName.toString(Constants.EthereumTokenCode),
+                  reserve_code: SlugName.toString(Constants.PrivateReserveCode),
                   matcher: Constants.WrongMatcherAccount,
                   wire_amount: Number(Constants.RequestedWireAmount)
                 },
@@ -616,9 +616,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
                 {
                   user: Constants.MatcherAccount,
                   wire_amount: Number(Constants.FromWireProbeWireAmount),
-                  dst_chain_code: { value: Constants.EthereumChainCode },
-                  dst_token_code: { value: Constants.EthereumTokenCode },
-                  dst_reserve_code: { value: Constants.PrivateReserveCode },
+                  dst_chain_code: SlugName.toString(Constants.EthereumChainCode),
+                  dst_token_code: SlugName.toString(Constants.EthereumTokenCode),
+                  dst_reserve_code: SlugName.toString(Constants.PrivateReserveCode),
                   target_amount: Number(Constants.FromWireProbeTargetAmount),
                   target_tolerance_bps: Constants.FromWireProbeToleranceBps,
                   recipient_kind: SysioUwritChainkind.CHAIN_KIND_EVM,

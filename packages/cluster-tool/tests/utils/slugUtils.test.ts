@@ -74,15 +74,19 @@ describe("slugUtils", () => {
       expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
       expect(slugValue("WIRE")).toBe(SlugName.from("WIRE"))
     })
-    it.each(["7", "101", "1E3", "0X10"])(
-      "rejects numeric-looking spelling %s under the leading-letter rule",
-      spelling => {
-        expect(() => slugValue(spelling)).toThrow(/must start with a letter/)
-      }
-    )
-    it("preserves digits after the leading letter", () => {
+    it("refuses a digit-leading string, so a decimal is never read as a slug", () => {
+      // A code must start with a letter, which is what makes the bare-string
+      // carrier unambiguous: no legal spelling can also be read as a number, so
+      // neither a decimal nor JS numeric syntax can collide with a code.
+      const leadingLetter = /must start with a letter/
+      expect(() => slugValue("7")).toThrow(leadingLetter)
+      expect(() => slugValue("101")).toThrow(leadingLetter)
+      expect(() => slugValue("1E3")).toThrow(leadingLetter)
+      expect(() => slugValue("0X10")).toThrow(leadingLetter)
+    })
+    it("reads digits after the leading letter as part of the code", () => {
+      expect(slugValue("Z1234567")).toBe(SlugName.from("Z1234567"))
       expect(slugValue("V1")).toBe(SlugName.from("V1"))
-      expect(slugValue("USDC1")).toBe(SlugName.from("USDC1"))
     })
     it("reads the empty spelling as the zero sentinel", () => {
       expect(slugValue("")).toBe(0)

@@ -13,11 +13,18 @@ const {
   SysioUwritUnderwriterequeststatus
 } = SysioContracts
 
-const EthereumChain = SlugName.from("ETHEREUM")
-const SolanaChain = SlugName.from("SOLANA")
-const EthToken = SlugName.from("ETH")
-const SolToken = SlugName.from("SOL")
-const PrimaryReserve = SlugName.from("PRIMARY")
+/** Code cells as the depot's ABI renders them: `slug_name` is a builtin, so a code is its canonical spelling. */
+const EthereumChainSlug = "ETHEREUM",
+  SolanaChainSlug = "SOLANA",
+  EthTokenSlug = "ETH",
+  SolTokenSlug = "SOL",
+  PrimaryReserveSlug = "PRIMARY"
+/** The same codes packed, as the context's lookups take them. */
+const EthereumChain = SlugName.from(EthereumChainSlug),
+  SolanaChain = SlugName.from(SolanaChainSlug),
+  EthToken = SlugName.from(EthTokenSlug),
+  SolToken = SlugName.from(SolTokenSlug),
+  PrimaryReserve = SlugName.from(PrimaryReserveSlug)
 const { SymmetricConnectorWeightBps } = WireReserveTool
 
 /** A complete `reserves` row with zero defaults; override the fields under test. */
@@ -133,16 +140,16 @@ describe("SwapScenarioContext", () => {
   const fixtures: TableFixtures = {
     reserves: [
       reserveRow({
-        chain_code: SlugName.toString(EthereumChain),
-        token_code: SlugName.toString(EthToken),
-        reserve_code: SlugName.toString(PrimaryReserve),
+        chain_code: EthereumChainSlug,
+        token_code: EthTokenSlug,
+        reserve_code: PrimaryReserveSlug,
         reserve_chain_amount: 1_000,
         reserve_wire_amount: 2_000
       }),
       reserveRow({
-        chain_code: SlugName.toString(SolanaChain),
-        token_code: SlugName.toString(SolToken),
-        reserve_code: SlugName.toString(PrimaryReserve),
+        chain_code: SolanaChainSlug,
+        token_code: SolTokenSlug,
+        reserve_code: PrimaryReserveSlug,
         reserve_chain_amount: 3_000,
         reserve_wire_amount: 4_000,
         // An owned reserve that charges and has already earned.
@@ -155,13 +162,13 @@ describe("SwapScenarioContext", () => {
     uwreqs: [
       uwreqRow({
         id: 7,
-        src_chain_code: SlugName.toString(EthereumChain),
-        dst_chain_code: SlugName.toString(SolanaChain)
+        src_chain_code: EthereumChainSlug,
+        dst_chain_code: SolanaChainSlug
       })
     ],
     locks: [
-      lockRow({ lock_id: 1, uwreq_id: 7, chain_code: SlugName.toString(EthereumChain) }),
-      lockRow({ lock_id: 2, uwreq_id: 7, chain_code: SlugName.toString(SolanaChain) }),
+      lockRow({ lock_id: 1, uwreq_id: 7, chain_code: EthereumChainSlug }),
+      lockRow({ lock_id: 2, uwreq_id: 7, chain_code: SolanaChainSlug }),
       lockRow({ lock_id: 3, uwreq_id: 9 })
     ]
   }

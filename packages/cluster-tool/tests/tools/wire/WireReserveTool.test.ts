@@ -19,11 +19,18 @@ const {
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
 const LegacySwapFeeBps = 10
 
+/**
+ * A code cell as the depot's ABI renders it. Indexed off the generated row so it
+ * tracks the ABI: `slug_name` is a builtin now, so a code arrives as its canonical
+ * spelling and no per-contract `Sysio*SlugNameType` wrapper is generated.
+ */
+type ReserveSlugCode = SysioContracts.SysioReservReserveRowType["chain_code"]
+
 /** A minimal reserves row carrying only the fields swapquote consults. */
 interface QuoteReserveFixture {
-  chain_code: SysioContracts.SysioReservReserveRowType["chain_code"]
-  token_code: SysioContracts.SysioReservReserveRowType["token_code"]
-  reserve_code: SysioContracts.SysioReservReserveRowType["reserve_code"]
+  chain_code: ReserveSlugCode
+  token_code: ReserveSlugCode
+  reserve_code: ReserveSlugCode
   reserve_chain_amount: number
   reserve_wire_amount: number
   connector_weight_bps: number
@@ -31,11 +38,16 @@ interface QuoteReserveFixture {
   owner_fee_bps: number
 }
 
-const EthereumChain = SlugName.from("ETHEREUM"),
-  EthToken = SlugName.from("ETH"),
-  SolanaChain = SlugName.from("SOLANA"),
-  SolToken = SlugName.from("SOL"),
-  PrimaryReserve = SlugName.from("PRIMARY")
+const EthereumChainSlug = "ETHEREUM",
+  EthTokenSlug = "ETH",
+  SolanaChainSlug = "SOLANA",
+  SolTokenSlug = "SOL",
+  PrimaryReserveSlug = "PRIMARY",
+  EthereumChain = SlugName.from(EthereumChainSlug),
+  EthToken = SlugName.from(EthTokenSlug),
+  SolanaChain = SlugName.from(SolanaChainSlug),
+  SolToken = SlugName.from(SolTokenSlug),
+  PrimaryReserve = SlugName.from(PrimaryReserveSlug)
 
 /** A WireClient stub whose reserv/uwrit typed accessors serve the fixtures. */
 function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
@@ -456,18 +468,18 @@ describe("WireReserveTool", () => {
   describe("swapquote", () => {
     const reserves: QuoteReserveFixture[] = [
       {
-        chain_code: SlugName.toString(EthereumChain),
-        token_code: SlugName.toString(EthToken),
-        reserve_code: SlugName.toString(PrimaryReserve),
+        chain_code: EthereumChainSlug,
+        token_code: EthTokenSlug,
+        reserve_code: PrimaryReserveSlug,
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
         connector_weight_bps: SymmetricConnectorWeightBps,
         owner_fee_bps: 0
       },
       {
-        chain_code: SlugName.toString(SolanaChain),
-        token_code: SlugName.toString(SolToken),
-        reserve_code: SlugName.toString(PrimaryReserve),
+        chain_code: SolanaChainSlug,
+        token_code: SolTokenSlug,
+        reserve_code: PrimaryReserveSlug,
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
         connector_weight_bps: SymmetricConnectorWeightBps,
