@@ -8,7 +8,7 @@ import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
@@ -1327,8 +1327,8 @@ export namespace ClusterBuildDefaults {
     const toChainMinBond = (
       requirement: CollateralRequirement
     ): SysioContracts.SysioOpregChainMinBondType => ({
-      chain_code: { value: requirement.chainCode },
-      token_code: { value: requirement.tokenCode },
+      chain_code: SlugName.toString(requirement.chainCode),
+      token_code: SlugName.toString(requirement.tokenCode),
       min_bond: requirement.minimumBond,
       config_timestamp_ms: 0
     })
