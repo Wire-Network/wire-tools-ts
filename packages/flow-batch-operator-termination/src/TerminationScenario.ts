@@ -150,6 +150,7 @@ interface EthereumInboundView {
   nextEpochIndex(): Promise<bigint>
 }
 
+/** Read-only projection of the Solana outpost configuration's inbound epoch cursor. */
 interface SolanaOutpostConfigAccount {
   nextEpochIndex: number
 }
