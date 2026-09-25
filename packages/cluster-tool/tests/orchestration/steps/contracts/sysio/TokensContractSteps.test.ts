@@ -1,12 +1,12 @@
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 
 describe("Steps.contracts.sysio.tokens", () => {
   it("regtoken carries the tokens::regtoken data", () => {
     const data: SysioContracts.SysioTokensRegtokenAction = {
       kind: SysioContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
-      code: { value: SlugName.from("WIRE") },
+      code: "WIRE",
       symbol_name: "Wire",
       description: "WIRE chain native asset",
       precision: 9,
@@ -31,8 +31,8 @@ describe("Steps.contracts.sysio.tokens", () => {
 
   it("regctok carries the tokens::regctok chain-token binding", () => {
     const data: SysioContracts.SysioTokensRegctokAction = {
-      chain_code: { value: SlugName.from("ETHEREUM") },
-      token_code: { value: SlugName.from("ETH") },
+      chain_code: "ETHEREUM",
+      token_code: "ETH",
       contract_addr: "",
       is_native: true
     }

@@ -150,7 +150,7 @@ export namespace RegistrySteps {
       }
 
     await chains.actions.setoutpost.invoke({
-      code: { value: SlugName.from("ETHEREUM") },
+      code: "ETHEREUM",
       outpost: {
         opp_addr: ethAddress("OPP"),
         opp_inbound_addr: ethAddress("OPPInbound"),
@@ -161,7 +161,7 @@ export namespace RegistrySteps {
     // One Solana program serves every role, so it goes in `opp_addr` alone —
     // `sysio.chains` rejects an SVM row that fills the role-specific fields.
     await chains.actions.setoutpost.invoke({
-      code: { value: SlugName.from("SOLANA") },
+      code: "SOLANA",
       outpost: {
         opp_addr: artifacts.solanaProgramId,
         opp_inbound_addr: "",
@@ -267,7 +267,7 @@ export namespace RegistrySteps {
     const chainRegistrations: SysioContracts.SysioChainsRegchainAction[] = [
       {
         kind: SysioChainsChainkind.CHAIN_KIND_WIRE,
-        code: { value: SlugName.from("WIRE") },
+        code: "WIRE",
         external_chain_id: 0,
         name: "Wire (depot)",
         description: "The WIRE depot chain itself",
@@ -275,7 +275,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
-        code: { value: SlugName.from("ETHEREUM") },
+        code: "ETHEREUM",
         // External-outpost mode registers the REAL remote chain id so the
         // depot's chains row matches what the daemons dial (networkFromConfig).
         external_chain_id:
@@ -287,7 +287,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_SVM,
-        code: { value: SlugName.from("SOLANA") },
+        code: "SOLANA",
         external_chain_id: 0,
         name: "Solana (test-validator)",
         description: "Local solana-test-validator (test cluster)",
@@ -395,9 +395,9 @@ export namespace RegistrySteps {
   ): SysioContracts.SysioReservRegreserveAction {
     const stable = StableCodenames.includes(tokenCodename)
     return {
-      chain_code: { value: SlugName.from(chainCodename) },
-      token_code: { value: SlugName.from(tokenCodename) },
-      reserve_code: { value: SlugName.from(PrimaryReserveCodename) },
+      chain_code: chainCodename,
+      token_code: tokenCodename,
+      reserve_code: PrimaryReserveCodename,
       name: `${chainCodename}-${tokenCodename}/WIRE primary reserve`,
       description: `Bootstrap-seeded ${label} ↔ WIRE reserve`,
       initial_chain_amount: stable
@@ -422,7 +422,7 @@ export namespace RegistrySteps {
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_NATIVE,
-      code: { value: SlugName.from(codename) },
+      code: codename,
       symbol_name: symbolName,
       description,
       precision: 9,
@@ -438,7 +438,7 @@ export namespace RegistrySteps {
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_LIQ,
-      code: { value: SlugName.from(codename) },
+      code: codename,
       symbol_name: symbolName,
       description,
       precision: 9,
@@ -454,7 +454,7 @@ export namespace RegistrySteps {
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_ERC20,
-      code: { value: SlugName.from(codename) },
+      code: codename,
       symbol_name: symbolName,
       description,
       precision: 6,
@@ -470,7 +470,7 @@ export namespace RegistrySteps {
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_SPL,
-      code: { value: SlugName.from(codename) },
+      code: codename,
       symbol_name: symbolName,
       description,
       precision: 6,
@@ -485,8 +485,8 @@ export namespace RegistrySteps {
     isNative: boolean
   ): SysioContracts.SysioTokensRegctokAction {
     return {
-      chain_code: { value: SlugName.from(chainCodename) },
-      token_code: { value: SlugName.from(tokenCodename) },
+      chain_code: chainCodename,
+      token_code: tokenCodename,
       contract_addr: contractAddress,
       is_native: isNative
     }
