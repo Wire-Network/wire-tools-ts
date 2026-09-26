@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { SlugName } from "@wireio/sdk-core"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { OperatorDaemonArtifactsKey } from "@wireio/cluster-tool/orchestration/outputs"
@@ -140,13 +141,30 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
   })
 
   describe("outbound-envelope bootstrap gate", () => {
-    const EthereumChainCode = 101,
-      SolanaChainCode = 202,
-      DepotChainCode = 1
+    const EthereumCode = "ETH",
+      SolanaCode = "SOL",
+      DepotCode = "WIRE"
 
-    /** A `sysio.chains::chains` row, wrapped exactly as the typed accessor yields it. */
-    function chainRow(code: number, isDepot: boolean) {
-      return { code: { value: code }, is_depot: isDepot }
+    /**
+     * Which carrier a `slug_name` cell arrives in. The depot renders the
+     * canonical spelling once it registers the ABI builtin; before that a slug
+     * reflects as the `{value}` wrapper. Both occur during the rollout, so the
+     * gate is exercised against each.
+     */
+    enum SlugCarrier {
+      spelling = "spelling",
+      wrapper = "wrapper"
+    }
+
+    /** A `sysio.chains::chains` row in the given carrier. */
+    function chainRow(code: string, isDepot: boolean, carrier: SlugCarrier) {
+      return {
+        code:
+          carrier === SlugCarrier.spelling
+            ? code
+            : { value: SlugName.from(code) },
+        is_depot: isDepot
+      }
     }
 
     /**
@@ -154,18 +172,22 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
      * `getEnvelopes` from the supplied rows — installed as an OWN accessor on a
      * throwaway context, never a prototype spy.
      */
-    function gateContext(outboundChainCodes: number[]) {
+    function gateContext(outboundCodes: string[], carrier: SlugCarrier) {
       const ctx = externalContext(),
         wireStub = {
           getChains: async () => ({
             rows: [
-              chainRow(DepotChainCode, true),
-              chainRow(EthereumChainCode, false),
-              chainRow(SolanaChainCode, false)
+              chainRow(DepotCode, true, carrier),
+              chainRow(EthereumCode, false, carrier),
+              chainRow(SolanaCode, false, carrier)
             ]
           }),
+          // `outenvelopes.chain_code` is declared `uint64`, so it always
+          // carries the PACKED value — never a spelling, in either carrier.
           getOutboundEnvelopes: async () => ({
-            rows: outboundChainCodes.map(chain_code => ({ chain_code }))
+            rows: outboundCodes.map(code => ({
+              chain_code: SlugName.from(code)
+            }))
           }),
           getEnvelopes: async () => ({ rows: [] })
         }
@@ -176,14 +198,21 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       return ctx
     }
 
-    it("passes once EVERY registered (non-depot) chain has a queued outbound envelope", async () => {
-      await expect(
-        Steps.externalOutpost.runOutboundEnvelopesQueued(
-          gateContext([EthereumChainCode, SolanaChainCode]),
-          signal
-        )
-      ).resolves.toBeUndefined()
-    })
+    // Both carriers, because the gate must hold on either side of the depot
+    // registering the `slug_name` ABI builtin. Reading the spelling carrier
+    // with `String(code.value)` yielded "undefined" for every chain, so the
+    // gate could never match and external bootstrap timed out.
+    it.each([SlugCarrier.spelling, SlugCarrier.wrapper])(
+      "passes once EVERY registered (non-depot) chain has a queued outbound envelope (%s carrier)",
+      async carrier => {
+        await expect(
+          Steps.externalOutpost.runOutboundEnvelopesQueued(
+            gateContext([EthereumCode, SolanaCode], carrier),
+            signal
+          )
+        ).resolves.toBeUndefined()
+      }
+    )
 
     it("enriches a failed gate with the expected outposts, preserving the cause", async () => {
       // A rejecting `outenvelopes` read propagates straight out of the poll —
@@ -194,8 +223,8 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         get: () => ({
           getChains: async () => ({
             rows: [
-              chainRow(DepotChainCode, true),
-              chainRow(EthereumChainCode, false)
+              chainRow(DepotCode, true, SlugCarrier.spelling),
+              chainRow(EthereumCode, false, SlugCarrier.spelling)
             ]
           }),
           getOutboundEnvelopes: async () => {
@@ -214,7 +243,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         Steps.externalOutpost
           .runOutboundEnvelopesQueued(ctx, signal)
           .catch((error: Error) => error.message)
-      ).resolves.toContain(String(EthereumChainCode))
+      ).resolves.toContain(EthereumCode)
     })
 
     it("fails fast when the chains registry names no outpost at all", async () => {

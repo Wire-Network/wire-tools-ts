@@ -190,6 +190,11 @@ export namespace BindConfigProvider {
   export const DefaultAdHocCount = 0
   export const DefaultBatchCount = 3
   export const DefaultUnderwriterCount = 1
+  /**
+   * API-node pairs claimed when a caller names no count — none. Raising it
+   * makes every cluster and flow that omits `apiCount` plan that many API nodes.
+   */
+  export const DefaultApiCount = 0
 
   /**
    * Resolve a complete `BindConfig` from caller options. Addresses come from
@@ -294,6 +299,7 @@ export namespace BindConfigProvider {
         producerCount = DefaultProducerCount,
         batchOperatorCount: batchCount = DefaultBatchCount,
         underwriterCount: uwCount = DefaultUnderwriterCount,
+        apiCount = DefaultApiCount,
         adHocCount = DefaultAdHocCount
       } = topology
 
@@ -332,6 +338,7 @@ export namespace BindConfigProvider {
             uwCount,
             "underwriter"
           ),
+          api: await pairs(nodeopPorts?.api, apiCount, "api"),
           // Claimed with every planned node, under the one lock this resolve holds, so the pairs
           // land in the registration below rather than being picked when a flow spawns the node
           // — by which point a parallel resolver has already read the registry without them.
@@ -402,6 +409,7 @@ export namespace BindConfigProvider {
       ...flat(np.producers),
       ...flat(np.batch),
       ...flat(np.underwriters),
+      ...flat(np.api),
       ...flat(np.adHoc),
       config.anvil.port,
       config.solana.ports.http,
@@ -455,6 +463,8 @@ export namespace BindConfigProvider {
       ...flat(np.producers),
       ...flat(np.batch),
       ...flat(np.underwriters),
+      ...flat(np.api),
+      ...flat(np.adHoc),
       at(config.anvil.address, config.anvil.port),
       ...[
         config.solana.ports.http,

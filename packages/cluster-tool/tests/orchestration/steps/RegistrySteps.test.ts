@@ -1,4 +1,3 @@
-import { SlugName } from "@wireio/sdk-core"
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -30,9 +29,9 @@ describe("Steps.registry", () => {
   })
 
   describe("planMockReserves", () => {
-    const PrimaryCode = SlugName.from("PRIMARY")
-    const StableCode = SlugName.from("USDC")
-    const NativeCode = SlugName.from("ETH")
+    const PrimaryCode = "PRIMARY"
+    const StableCode = "USDC"
+    const NativeCode = "ETH"
     // ReserveSeedAmount 10_000_000_000; stablecoins ÷1000 at precision 6, others precision 9.
     const FullChainSeed = 10_000_000_000
     const StableChainSeed = 10_000_000
@@ -74,7 +73,7 @@ describe("Steps.registry", () => {
       )
       phase.steps.forEach(step => {
         expect(step.input.kind).toBe("ReservContractSteps.RegreserveInput")
-        expect(step.input.data.reserve_code.value).toBe(PrimaryCode)
+        expect(step.input.data.reserve_code).toBe(PrimaryCode)
         expect(step.input.data.connector_weight_bps).toBe(ConnectorWeightBps)
         expect(step.input.data.is_private).toBe(false)
       })
@@ -83,8 +82,8 @@ describe("Steps.registry", () => {
     it("seeds stablecoins at precision 6 with a ÷1000 chain seed, others at full/9", () => {
       const rows = Steps.registry.MockReserveRegistrations
       expect(rows).toHaveLength(8)
-      const stable = rows.find(row => row.token_code.value === StableCode)
-      const native = rows.find(row => row.token_code.value === NativeCode)
+      const stable = rows.find(row => row.token_code === StableCode)
+      const native = rows.find(row => row.token_code === NativeCode)
       expect(stable?.source_token_precision).toBe(6)
       expect(stable?.initial_chain_amount).toBe(StableChainSeed)
       expect(stable?.initial_wire_amount).toBe(FullChainSeed)

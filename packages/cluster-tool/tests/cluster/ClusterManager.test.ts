@@ -6,16 +6,25 @@ import {
   AWSAccountName,
   ClusterFiles,
   SignatureProviderType,
-  type ClusterConfig
+  type ClusterConfig,
+  type ExternalOutpostConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
-import { ClusterManager } from "@wireio/cluster-tool"
-import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
+import { ClusterManager, ClusterState } from "@wireio/cluster-tool"
+import { WireWallet } from "@wireio/cluster-tool/clients/wire"
 import {
+  NodeopProcess,
+  ProcessSignalName
+} from "@wireio/cluster-tool/cluster/processes"
+import {
+  BindConfigProvider,
   ClusterConfigProvider,
+  NodeConfig,
+  NodeRole,
   SSMClientProvider
 } from "@wireio/cluster-tool/config"
+import { Steps } from "@wireio/cluster-tool/orchestration"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 
 const mockSend = jest.fn()
@@ -197,40 +206,43 @@ describe("ClusterManager.prepareClusterPath", () => {
   })
 })
 
-describe("ClusterManager.destroy", () => {
-  // ProcessManager.setClusterPath is once-per-process (idempotent for the same
-  // value), so every destroy() in this file must target the SAME cluster root.
-  const destroyRoot = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cluster-manager-destroy-"))
+// ProcessManager.setClusterPath is once-per-process (idempotent for the same
+// value), so every destroy() and run() in this file must target the SAME
+// cluster root.
+const pinnedClusterRoot = Fs.mkdtempSync(
+  Path.join(Os.tmpdir(), "cluster-manager-pinned-")
+)
 
+describe("ClusterManager.destroy", () => {
   /** The shared-root `ClusterConfig`, its dataPath laid out like a real cluster. */
   function destroyConfig() {
     return fixtureConfig({
-      clusterPath: destroyRoot,
-      dataPath: Path.join(destroyRoot, "data")
+      clusterPath: pinnedClusterRoot,
+      dataPath: Path.join(pinnedClusterRoot, "data")
     })
   }
 
   beforeEach(() => {
-    Fs.mkdirSync(Path.join(destroyRoot, "data", "node_bios"), { recursive: true })
+    Fs.mkdirSync(Path.join(pinnedClusterRoot, "data", "node_bios"), { recursive: true })
   })
 
   afterAll(() => {
-    Fs.rmSync(destroyRoot, { recursive: true, force: true })
+    Fs.rmSync(pinnedClusterRoot, { recursive: true, force: true })
   })
 
   it("sets the process-manager cluster path itself and removes the cluster directory", async () => {
     await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
-    expect(Fs.existsSync(destroyRoot)).toBe(false)
+    expect(Fs.existsSync(pinnedClusterRoot)).toBe(false)
   })
 
   it("prunes a stale pidfile via the orphan sweep and still removes the directory", async () => {
     // A pid number far past any real pid — guaranteed not alive (ESRCH).
     Fs.writeFileSync(
-      Path.join(destroyRoot, "data", "node_bios", "node_bios.pid"),
+      Path.join(pinnedClusterRoot, "data", "node_bios", "node_bios.pid"),
       "987654321"
     )
     await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
-    expect(Fs.existsSync(destroyRoot)).toBe(false)
+    expect(Fs.existsSync(pinnedClusterRoot)).toBe(false)
   })
 
   describe("D21 — destroy NEVER deletes an SSM secret", () => {
@@ -240,8 +252,8 @@ describe("ClusterManager.destroy", () => {
     /** The shared-root config, resolved under an SSM signature provider. */
     function ssmDestroyConfig(overrides: Partial<ClusterConfig> = {}) {
       return fixtureConfig({
-        clusterPath: destroyRoot,
-        dataPath: Path.join(destroyRoot, "data"),
+        clusterPath: pinnedClusterRoot,
+        dataPath: Path.join(pinnedClusterRoot, "data"),
         signatureProvider: {
           type: SignatureProviderType.SSM,
           ssm: {
@@ -270,7 +282,7 @@ describe("ClusterManager.destroy", () => {
       // Nothing was constructed, and nothing was sent to AWS at all.
       expect(mockDeleteParameterCommand).not.toHaveBeenCalled()
       expect(mockSend).not.toHaveBeenCalled()
-      expect(Fs.existsSync(destroyRoot)).toBe(false)
+      expect(Fs.existsSync(pinnedClusterRoot)).toBe(false)
     })
 
     it("the provider exposes no delete surface for a regression to reach for", () => {
@@ -279,12 +291,12 @@ describe("ClusterManager.destroy", () => {
 
     it("removes the cluster directory even with NO cluster-keys.json", async () => {
       expect(
-        Fs.existsSync(Path.join(destroyRoot, ClusterFiles.KeysFilename))
+        Fs.existsSync(Path.join(pinnedClusterRoot, ClusterFiles.KeysFilename))
       ).toBe(false)
       await expect(
         ClusterManager.destroy(ssmDestroyConfig())
       ).resolves.toBeUndefined()
-      expect(Fs.existsSync(destroyRoot)).toBe(false)
+      expect(Fs.existsSync(pinnedClusterRoot)).toBe(false)
     })
 
     it("removes the cluster directory even when the ids cannot be rendered", async () => {
@@ -294,7 +306,107 @@ describe("ClusterManager.destroy", () => {
       await expect(
         ClusterManager.destroy(ssmDestroyConfig({ awsClusterNodeConfig: null }))
       ).resolves.toBeUndefined()
-      expect(Fs.existsSync(destroyRoot)).toBe(false)
+      expect(Fs.existsSync(pinnedClusterRoot)).toBe(false)
     })
+  })
+})
+
+describe("ClusterManager.run", () => {
+  /**
+   * The call-log entry each `resumeProduction` records — a node start records
+   * that node's name instead.
+   */
+  const ResumeProductionEvent = "resume-production"
+
+  /**
+   * An already-deployed outpost description. Only its presence matters: it
+   * selects external-outpost mode, and every reader of the files it names is
+   * stubbed below.
+   */
+  const ExternalOutposts: ExternalOutpostConfig = {
+    ethereum: {
+      addressFile: "/ext/outpost-addrs.json",
+      abiFiles: ["/ext/eth-abis/OPP.json"],
+      chainId: 11_155_111
+    },
+    solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  afterAll(() => {
+    Fs.rmSync(pinnedClusterRoot, { recursive: true, force: true })
+  })
+
+  it("starts API nodes after every producer and before production resumes, operators after it resumes", async () => {
+    // External-outpost mode with the debugging server off narrows the relaunch
+    // to its nodeop waves: no local anvil / validator, no epoch-advance gate.
+    const config = fixtureConfig({
+        clusterPath: pinnedClusterRoot,
+        dataPath: Path.join(pinnedClusterRoot, "data"),
+        externalOutposts: ExternalOutposts,
+        debuggingServerEnabled: false
+      }),
+      order: string[] = []
+    // `run` reloads the keys `create` persisted; an empty set suffices because
+    // operator resolution is stubbed below.
+    Fs.mkdirSync(pinnedClusterRoot, { recursive: true })
+    ClusterState.saveKeys(config, { nodes: [], operators: [] })
+    // Every other seam would probe host ports, spawn a daemon, or dial a
+    // chain; the start + resume spies record the call order under test.
+    jest.spyOn(BindConfigProvider, "validate").mockResolvedValue(true)
+    jest
+      .spyOn(BindConfigProvider, "registerResolved")
+      .mockReturnValue(undefined)
+    jest.spyOn(Steps.processes.kiod, "runStart").mockResolvedValue(undefined)
+    jest.spyOn(WireWallet.prototype, "unlock").mockResolvedValue(undefined)
+    jest.spyOn(Steps.processes.nodeop, "resolveOperators").mockReturnValue([])
+    jest
+      .spyOn(Steps.processes.nodeop, "resolveOperatorDaemonArgs")
+      .mockReturnValue([])
+    jest
+      .spyOn(NodeopProcess, "startWithRecovery")
+      .mockImplementation(async (_manager, options) => {
+        order.push(options.node.name)
+        // strictNullChecks is off — `run` never reads the resolved process.
+        return undefined
+      })
+    jest
+      .spyOn(NodeopProcess, "resumeProduction")
+      .mockImplementation(async () => {
+        order.push(ResumeProductionEvent)
+      })
+    jest
+      .spyOn(Steps.externalOutpost, "runHeadBlockAdvance")
+      .mockResolvedValue(undefined)
+    jest
+      .spyOn(Steps.externalOutpost, "runPublishArtifacts")
+      .mockResolvedValue(undefined)
+
+    await ClusterManager.run(config)
+
+    const nodes = NodeConfig.plan(config),
+      startsOf = (predicate: (node: NodeConfig) => boolean) =>
+        nodes.filter(predicate).map(node => order.indexOf(node.name)),
+      producerStarts = startsOf(node => node.role === NodeRole.producer),
+      apiStarts = startsOf(node => node.role === NodeRole.api),
+      operatorStarts = startsOf(node => NodeConfig.isOperatorRole(node.role))
+    // Positive controls: every planned node started, production resumed, and
+    // no compared wave is empty — otherwise the orderings hold vacuously.
+    expect(order).toEqual(expect.arrayContaining(nodes.map(node => node.name)))
+    expect(order).toContain(ResumeProductionEvent)
+    expect(producerStarts).not.toHaveLength(0)
+    expect(apiStarts).not.toHaveLength(0)
+    expect(operatorStarts).not.toHaveLength(0)
+
+    expect(Math.min(...apiStarts)).toBeGreaterThan(Math.max(...producerStarts))
+    expect(Math.max(...apiStarts)).toBeLessThan(
+      order.indexOf(ResumeProductionEvent)
+    )
+    expect(Math.min(...operatorStarts)).toBeGreaterThan(
+      order.lastIndexOf(ResumeProductionEvent)
+    )
   })
 })

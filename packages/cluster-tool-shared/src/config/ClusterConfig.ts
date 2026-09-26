@@ -7,6 +7,7 @@ import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
+import { QueryEngineConfigSchema } from "./QueryEngineConfig.js"
 
 /**
  * Report output format — value matches the file extension. THE one
@@ -138,6 +139,12 @@ export const ClusterConfigSchema = z.object({
   batchOperatorCount: z.number(),
   /** Number of underwriter nodes. */
   underwriterCount: z.number(),
+  /**
+   * Number of API nodes — non-producing nodeops that serve the chain HTTP API
+   * and `/v1/query/execute` (`sysio::query_engine_plugin`) and join the
+   * producing set's p2p mesh.
+   */
+  apiCount: z.number(),
   /** Depot epoch duration, seconds (global — see the epoch-duration rule). */
   epochDurationSec: z.number(),
   /**
@@ -261,7 +268,13 @@ export const ClusterConfigSchema = z.object({
    * nodeop's own stock value, i.e. no behavior change until an operator
    * overrides it.
    */
-  chainStateDbSizeMb: z.number().default(DefaultChainStateDbSizeMb)
+  chainStateDbSizeMb: z.number().default(DefaultChainStateDbSizeMb),
+  /**
+   * The API nodes' query-engine config (`--query-engine-*`): the `read-mode`
+   * and `query-*` limits rendered into every API node's `config.ini` — each
+   * only when set. Cluster-wide, like `chainStateDbSizeMb`.
+   */
+  queryEngine: QueryEngineConfigSchema
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

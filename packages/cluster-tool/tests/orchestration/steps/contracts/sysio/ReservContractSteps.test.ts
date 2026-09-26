@@ -1,13 +1,13 @@
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 
 describe("Steps.contracts.sysio.reserv", () => {
   it("regreserve carries the reserv::regreserve data", () => {
     const data: SysioContracts.SysioReservRegreserveAction = {
-      chain_code: { value: SlugName.from("ETHEREUM") },
-      token_code: { value: SlugName.from("ETH") },
-      reserve_code: { value: SlugName.from("PRIMARY") },
+      chain_code: "ETHEREUM",
+      token_code: "ETH",
+      reserve_code: "PRIMARY",
       name: "ETHEREUM-ETH/WIRE primary reserve",
       description: "Bootstrap-seeded native ETH ↔ WIRE reserve",
       initial_chain_amount: 10_000_000_000,
@@ -64,9 +64,9 @@ describe("Steps.contracts.sysio.reserv", () => {
 
   /** The reserve triple both owner-fee actions address. */
   const reserveTriple = {
-    chain_code: { value: SlugName.from("ETHEREUM") },
-    token_code: { value: SlugName.from("ETH") },
-    reserve_code: { value: SlugName.from("PRIVATE") }
+    chain_code: "ETHEREUM",
+    token_code: "ETH",
+    reserve_code: "PRIVATE"
   }
 
   it("setrsvfee carries the rate AND the owner, who is the required signer", () => {

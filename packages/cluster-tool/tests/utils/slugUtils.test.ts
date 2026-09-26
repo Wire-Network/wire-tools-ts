@@ -74,20 +74,19 @@ describe("slugUtils", () => {
       expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
       expect(slugValue("WIRE")).toBe(SlugName.from("WIRE"))
     })
-    it("reads a digit-only code as the slug it is", () => {
-      // The slug alphabet contains digits, so these are real codes whose packed
-      // values are nothing like their decimal readings. The previous decoder
-      // preferred the decimal and mis-decoded every one of them.
-      expect(slugValue("7")).toBe(SlugName.from("7"))
-      expect(slugValue("7")).not.toBe(7)
-      expect(slugValue("101")).toBe(SlugName.from("101"))
-      expect(slugValue("101")).not.toBe(101)
+    it("refuses a digit-leading string, so a decimal is never read as a slug", () => {
+      // A code must start with a letter, which is what makes the bare-string
+      // carrier unambiguous: no legal spelling can also be read as a number, so
+      // neither a decimal nor JS numeric syntax can collide with a code.
+      const leadingLetter = /must start with a letter/
+      expect(() => slugValue("7")).toThrow(leadingLetter)
+      expect(() => slugValue("101")).toThrow(leadingLetter)
+      expect(() => slugValue("1E3")).toThrow(leadingLetter)
+      expect(() => slugValue("0X10")).toThrow(leadingLetter)
     })
-    it("does not let JS numeric syntax reinterpret a code", () => {
-      expect(slugValue("1E3")).toBe(SlugName.from("1E3"))
-      expect(slugValue("1E3")).not.toBe(1000)
-      expect(slugValue("0X10")).toBe(SlugName.from("0X10"))
-      expect(slugValue("0X10")).not.toBe(16)
+    it("reads digits after the leading letter as part of the code", () => {
+      expect(slugValue("Z1234567")).toBe(SlugName.from("Z1234567"))
+      expect(slugValue("V1")).toBe(SlugName.from("V1"))
     })
     it("reads the empty spelling as the zero sentinel", () => {
       expect(slugValue("")).toBe(0)

@@ -50,7 +50,7 @@ const BiosOperator: OperatorAccount = {
   }
 }
 
-/** Steps that start the cluster's nodeop instances (bios / producer / operator). */
+/** Steps that start the cluster's nodeop instances (bios / producer / operator / API). */
 export namespace NodeopProcessSteps {
   /** Input for {@link planStart} — which planned node to planStart (by its `NodeConfig.name`). */
   export interface StartInput extends StepInput {
@@ -64,7 +64,7 @@ export namespace NodeopProcessSteps {
    * {@link OperatorAccount} from `ctx.keyStore` by role (bios → the genesis
    * producer with dev keys; producer node → its node-shared signing set; batch /
    * underwriter → the provisioned operator, whose OPP daemon args ride
-   * `extraArgs`). One step per node.
+   * `extraArgs`; api → none). One step per node.
    */
   export function planStart<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -216,8 +216,8 @@ export namespace NodeopProcessSteps {
    * directory written before that seeding existed. A producer node yields ONE ENTRY PER HOSTED
    * PRODUCER — they share the node's block-signing K1 but each owns its own finalizer key, which
    * `regfinkey`'s global uniqueness check requires; operator nodes resolve the single provisioned
-   * account itself. Exported so `ClusterManager.run` (the relaunch path) reuses the SAME
-   * resolution logic — no duplication.
+   * account itself; an API node acts for no account and resolves none. Exported so
+   * `ClusterManager.run` (the relaunch path) reuses the SAME resolution logic — no duplication.
    */
   export function resolveOperators(
     ctx: ClusterBuildContext,
@@ -231,6 +231,8 @@ export namespace NodeopProcessSteps {
       .with(NodeRole.batch_operator, NodeRole.underwriter, () => [
         ctx.keyStore.assertOperator(assertOperatorLabel(node))
       ])
+      // An API node acts for no account: nothing to sign, nothing to resolve.
+      .with(NodeRole.api, () => [])
       .exhaustive()
   }
 
@@ -270,7 +272,7 @@ export namespace NodeopProcessSteps {
   /**
    * The OPP daemon extra args for an OPERATOR node (batch operator / underwriter),
    * built from the operator's {@link OperatorAccount} + the prepared
-   * {@link OperatorDaemonArtifactsKey} artifacts; empty for bios/producer nodes.
+   * {@link OperatorDaemonArtifactsKey} artifacts; empty for every non-operator node.
    * Exported so `ClusterManager.run` reuses the SAME resolution logic — no
    * duplication.
    */

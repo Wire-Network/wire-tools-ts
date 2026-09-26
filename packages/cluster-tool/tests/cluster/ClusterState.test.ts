@@ -114,6 +114,9 @@ describe("ClusterState", () => {
       expect(persistedRoleOf(NodeRole.underwriter)).toBe(
         ClusterStateNodeRole.operator
       )
+      // An API node keeps its OWN persisted kind: it is neither a producer (no
+      // keys, no `resumeProduction`) nor an operator (no daemon args).
+      expect(persistedRoleOf(NodeRole.api)).toBe(ClusterStateNodeRole.api)
     })
 
     it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
@@ -142,6 +145,23 @@ describe("ClusterState", () => {
         state = ClusterState.capture(ctx)
       ClusterState.save(ctx.config, state)
       expect(ClusterState.load(ctx.config)).toEqual(state)
+    })
+
+    it("keeps the api node row through the round-trip", () => {
+      const ctx = seededContext()
+      ClusterState.save(ctx.config, ClusterState.capture(ctx))
+      const apiRows = ClusterState.load(ctx.config).nodes.filter(
+        node => node.role === ClusterStateNodeRole.api
+      )
+      // The fixture plans one API node: no producers, no operator identity.
+      expect(apiRows).toHaveLength(1)
+      expect(apiRows[0].producers).toEqual([])
+      expect(apiRows[0].batchOperatorLabel).toBeNull()
+      expect(apiRows[0].underwriterLabel).toBeNull()
+      expect(apiRows[0].ports).toEqual({
+        http: ctx.config.bind.nodeop.ports.api[0].http,
+        p2p: ctx.config.bind.nodeop.ports.api[0].p2p
+      })
     })
 
     it("the on-disk file carries no private key material", () => {

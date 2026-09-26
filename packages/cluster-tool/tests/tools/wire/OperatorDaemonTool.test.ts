@@ -5,6 +5,7 @@ import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Constants } from "@wireio/cluster-tool"
 import {
   NodeopProcess,
   ProcessManager
@@ -14,6 +15,7 @@ import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
 import {
   AWSAccountName,
+  NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
@@ -321,7 +323,9 @@ describe("OperatorDaemonTool", () => {
     const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
 
     it("loads the batch plugin set at irreversible read-mode", () => {
-      expect(valuesOf(args, "--read-mode")).toEqual(["irreversible"])
+      expect(valuesOf(args, `--${Constants.READ_MODE_OPTION}`)).toEqual([
+        NodeopReadMode.irreversible
+      ])
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.BatchOperatorPlugins])
     })
 
@@ -463,6 +467,12 @@ describe("OperatorDaemonTool", () => {
       } finally {
         delete process.env.WIRE_FLOW_TIMEOUT_SCALE
       }
+    })
+
+    it("runs the underwriter daemon at irreversible read-mode", () => {
+      expect(valuesOf(args, `--${Constants.READ_MODE_OPTION}`)).toEqual([
+        NodeopReadMode.irreversible
+      ])
     })
 
     it("loads the underwriter plugin set + source-deposit verification targets", () => {

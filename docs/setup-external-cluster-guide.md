@@ -91,7 +91,9 @@ static-IP) deployment, use **static IPv4 addresses in one subnet**:
       "bios":         { "http": 8788, "p2p": 8776 },
       "producers":    [{ "http": 8888, "p2p": 8887 }],
       "batch":        [{ "http": 8811, "p2p": 8812 }, { "http": 8813, "p2p": 8814 }, { "http": 8815, "p2p": 8816 }],
-      "underwriters": [{ "http": 8817, "p2p": 8818 }]
+      "underwriters": [{ "http": 8817, "p2p": 8818 }],
+      "api":          [],
+      "adHoc":        []
     }
   },
   "anvil":           { "address": "192.168.219.20", "port": 8545 },
@@ -116,9 +118,10 @@ static-IP) deployment, use **static IPv4 addresses in one subnet**:
   ```
 
 - **Cardinality must match the local topology**: `nodeop.ports.producers` /
-  `batch` / `underwriters` lengths must equal the local cluster's producer /
-  batch-operator / underwriter counts. `create-external-config` validates this and
-  fails fast with a precise error otherwise.
+  `batch` / `underwriters` / `api` lengths must equal the local cluster's
+  producer / batch-operator / underwriter / API-node counts.
+  `create-external-config` validates this and fails fast with a precise error
+  otherwise.
 
 ## Step 3 — create-external-config
 
@@ -144,8 +147,9 @@ Runs a five-stage pipeline (each stage a validated Report step):
    are emitted WITHOUT `sysio::trace_api_plugin`** (and therefore without its
    `--trace-no-abis` probe), while batch-operator / underwriter nodes retain it —
    an operator's HTTP surface is non-public, serving only its own co-located OPP
-   daemon. Base plugins (`net_plugin`, `chain_api_plugin`), the producer plugins,
-   and the per-operator OPP plugins are unchanged from the local tree.
+   daemon. API nodes retain it too: they are the cluster's chain-read surface.
+   Base plugins (`net_plugin`, `chain_api_plugin`), the producer plugins, and the
+   per-operator OPP plugins are unchanged from the local tree.
 4. **Emit** — write `external-cluster-config.json` (self-described: `bindings`,
    `accounts` + per-key-type key providers, `wire.epochDurationSec`, and the
    ethereum/solana outpost references).

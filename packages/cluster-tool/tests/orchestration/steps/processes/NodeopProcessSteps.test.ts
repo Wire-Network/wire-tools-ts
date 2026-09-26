@@ -181,6 +181,26 @@ describe("Steps.processes.nodeop", () => {
     )
   })
 
+  it("start launches an api node with NO operator accounts and NO daemon args", async () => {
+    const ctx = fixtureContext(sandbox()),
+      apiNode = NodeConfig.plan(ctx.config).find(
+        planned => planned.role === NodeRole.api
+      ),
+      recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined)
+    await Steps.processes.nodeop.runStart(
+      ctx,
+      { kind: "NodeopProcessSteps.StartInput", nodeName: apiNode.name },
+      new AbortController().signal
+    )
+    expect(recoverySpy).toHaveBeenCalledWith(ctx.processManager, {
+      node: expect.objectContaining({ name: apiNode.name, role: NodeRole.api }),
+      operators: [],
+      extraArgs: []
+    })
+  })
+
   it("start leaves the launch form at BOOTSTRAP (SHARED-25 rules not yet armed)", async () => {
     // The create-path spawn runs DURING bootstrap, so it must not carry the
     // post-bootstrap deadlines — the author's directive is that none of the
@@ -347,6 +367,16 @@ describe("Steps.processes.nodeop", () => {
       )
     })
 
+    it("resolves NO operator account for an api node", () => {
+      // An API node acts for no account — nothing signs on it — so the key
+      // store is never consulted, and an empty one must not throw.
+      const ctx = fixtureContext(),
+        apiNode = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.api
+        )
+      expect(Steps.processes.nodeop.resolveOperators(ctx, apiNode)).toEqual([])
+    })
+
     it("throws when the named operator label has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.batch_operator, 5, "node_05", [], "unprovisioned")
@@ -377,6 +407,22 @@ describe("Steps.processes.nodeop", () => {
           ctx,
           node,
           fixtureOperatorAccount("defproducera", OperatorType.PRODUCER)
+        )
+      ).toEqual([])
+    })
+
+    it("returns [] for an api node — no operator account, no daemon artifacts needed", () => {
+      // `runStart` hands `resolveOperators(...)[0]` straight through — absent for
+      // an api node — and no daemon artifacts are prepared here; neither is read.
+      const ctx = fixtureContext(),
+        apiNode = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.api
+        )
+      expect(
+        Steps.processes.nodeop.resolveOperatorDaemonArgs(
+          ctx,
+          apiNode,
+          Steps.processes.nodeop.resolveOperators(ctx, apiNode)[0]
         )
       ).toEqual([])
     })

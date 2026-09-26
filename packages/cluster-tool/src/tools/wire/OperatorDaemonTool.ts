@@ -15,12 +15,12 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { type ClusterConfig } from "@wireio/cluster-tool-shared"
+import { type ClusterConfig, NodeopReadMode } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
+import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
-import { WireClient } from "../../clients/wire/WireClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
@@ -405,7 +405,7 @@ export namespace OperatorDaemonTool {
     )
     assertOutpostKeys(operator)
     return [
-      ...pair("--read-mode", WireClient.FinalityType.irreversible),
+      ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
       ...pluginArgs(debuggingGatedPlugins(BatchOperatorPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",
@@ -455,7 +455,7 @@ export namespace OperatorDaemonTool {
     )
     assertOutpostKeys(operator)
     return [
-      ...pair("--read-mode", WireClient.FinalityType.irreversible),
+      ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
       ...pluginArgs(debuggingGatedPlugins(UnderwriterPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",

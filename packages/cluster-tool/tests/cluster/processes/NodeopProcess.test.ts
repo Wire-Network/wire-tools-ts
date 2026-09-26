@@ -49,7 +49,8 @@ const RoleProducers: Record<NodeRole, string[]> = {
   [NodeRole.bios]: [NodeConfig.BiosProducer],
   [NodeRole.producer]: ["sysio"],
   [NodeRole.batch_operator]: [],
-  [NodeRole.underwriter]: []
+  [NodeRole.underwriter]: [],
+  [NodeRole.api]: []
 }
 
 describe("NodeopProcess", () => {
@@ -66,7 +67,8 @@ describe("NodeopProcess", () => {
     manager = ProcessManager.get()
     // Fixture ClusterConfig aimed at this test's sandbox — NodeopProcess
     // derives node dirs + `genesisFile` from `clusterPath`/`dataPath`, and
-    // the fixture's node counts (1/3/1) match the planning assertions below.
+    // the fixture's node counts (1/3/1, plus one API node) match the planning
+    // assertions below.
     cluster = fixtureConfig({
       clusterPath: dir,
       dataPath: Path.join(dir, "data"),
@@ -282,6 +284,29 @@ describe("NodeopProcess", () => {
         "--batch-operator-account",
         "wireno.batchopaaaa"
       ])
+    )
+  })
+
+  it("accepts a non-producing api node with no operator accounts", async () => {
+    // The hosted-producer assertions key on `node.producers`, which an api
+    // node leaves empty — so no account is required, and none is rendered.
+    const nodeop = await NodeopProcess.create(manager, {
+      node: new NodeConfig(
+        cluster,
+        NodeRole.api,
+        0,
+        "api-node",
+        // Replayed from the fixture's ALREADY-RESOLVED api pair (the sanctioned
+        // carve-out) — nothing binds here, and no port is invented.
+        cluster.bind.nodeop.ports.api[0],
+        [],
+        []
+      ),
+      operators: []
+    })
+    expect(nodeop.args).not.toContain("--producer-name")
+    expect(valuesOf(nodeop.args, NodeopProcess.PluginFlag)).toContain(
+      Constants.QUERY_ENGINE_PLUGIN
     )
   })
 
@@ -554,8 +579,8 @@ describe("NodeopProcess", () => {
     it.each(Object.values(NodeRole))(
       "keeps the permissive bootstrap values on a %s node (postBootstrap UNSET)",
       async role => {
-        // Author directive: the rules apply only AFTER a complete bootstrap —
-        // until then none of them, on any role.
+        // The rules apply only AFTER a complete bootstrap — until then none of
+        // them, on any role.
         expect(deadlines(await argsFor(role))).toEqual({
           maxTransactionTime: [
             String(NodeopProcess.BootstrapMaxTransactionTime)
@@ -596,7 +621,7 @@ describe("NodeopProcess", () => {
       }
     )
 
-    it.each([NodeRole.bios, NodeRole.producer])(
+    it.each([NodeRole.bios, NodeRole.producer, NodeRole.api])(
       "OMITS BOTH timeout flags on a post-bootstrap %s node",
       async role => {
         // AC#3 tightens the serializer / response deadlines for the
@@ -736,7 +761,7 @@ describe("NodeopProcess", () => {
     })
   })
 
-  describe("trace_api plugin gating (SHARED-25 AC#4 / the author's D3 carve-out)", () => {
+  describe("role-gated plugins", () => {
     /** The `--plugin` values of an argv (never a stray matching token). */
     function pluginsOf(args: string[]): string[] {
       return valuesOf(args, NodeopProcess.PluginFlag)
@@ -748,7 +773,7 @@ describe("NodeopProcess", () => {
      * probe shells `<nodeop> --help` (here `/bin/true`, which prints nothing),
      * so a live probe would hide the flag for an unrelated reason.
      */
-    function argsFor(
+    function gatedArgsFor(
       deploymentKind: ClusterDeploymentKind,
       role: NodeRole
     ): string[] {
@@ -762,7 +787,7 @@ describe("NodeopProcess", () => {
           clusterOfKind,
           role,
           0,
-          `trace-${deploymentKind}-${role}`,
+          `gate-${deploymentKind}-${role}`,
           // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
           // carve-out) — nothing binds here, and no port is invented.
           clusterOfKind.bind.nodeop.ports.producers[0],
@@ -784,49 +809,90 @@ describe("NodeopProcess", () => {
       )
     }
 
-    // The D3 regression pin: a LOCAL cluster keeps the plugin on EVERY role,
-    // because the harness's WireClient reads traces off producer[0].
-    it.each(Object.values(NodeRole))(
-      "keeps trace_api + --trace-no-abis on a LOCAL %s node",
-      role => {
-        const args = argsFor(ClusterDeploymentKind.local, role)
-        expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
-        expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
-      }
-    )
+    describe("trace_api plugin gating (SHARED-25 AC#4: public nodes of an external tree drop it)", () => {
+      // Regression pin: a LOCAL cluster keeps the plugin on EVERY role, because
+      // the harness's WireClient reads traces off producer[0].
+      it.each(Object.values(NodeRole))(
+        "keeps trace_api + --trace-no-abis on a LOCAL %s node",
+        role => {
+          const args = gatedArgsFor(ClusterDeploymentKind.local, role)
+          expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
+          expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
+        }
+      )
 
-    it.each([NodeRole.bios, NodeRole.producer])(
-      "drops trace_api AND --trace-no-abis from an EXTERNAL %s node",
-      role => {
-        // The flag belongs to the plugin: nodeop rejects it outright when
-        // trace_api_plugin is not loaded, so the two must move together.
-        const args = argsFor(ClusterDeploymentKind.external, role)
-        expect(pluginsOf(args)).not.toContain(Constants.TRACE_API_PLUGIN)
-        expect(args).not.toContain(NodeopProcess.TraceNoAbisFlag)
-      }
-    )
+      it.each([NodeRole.bios, NodeRole.producer])(
+        "drops trace_api AND --trace-no-abis from an EXTERNAL %s node",
+        role => {
+          // The flag belongs to the plugin: nodeop rejects it outright when
+          // trace_api_plugin is not loaded, so the two must move together.
+          const args = gatedArgsFor(ClusterDeploymentKind.external, role)
+          expect(pluginsOf(args)).not.toContain(Constants.TRACE_API_PLUGIN)
+          expect(args).not.toContain(NodeopProcess.TraceNoAbisFlag)
+        }
+      )
 
-    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
-      "keeps trace_api + --trace-no-abis on an EXTERNAL %s node (non-public)",
-      role => {
-        const args = argsFor(ClusterDeploymentKind.external, role)
-        expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
-        expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
-      }
-    )
+      it.each([NodeRole.batch_operator, NodeRole.underwriter, NodeRole.api])(
+        "keeps trace_api + --trace-no-abis on an EXTERNAL %s node (operators are non-public; API nodes are the chain-read surface)",
+        role => {
+          const args = gatedArgsFor(ClusterDeploymentKind.external, role)
+          expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
+          expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
+        }
+      )
 
-    it.each(Object.values(NodeRole))(
-      "keeps producer_api UNCONDITIONAL on a %s node of either kind",
-      role => {
-        // Only trace_api left the trailing set; producer_api is load-bearing on
-        // bios / producers (the resume endpoint) and role-blind by design.
-        Object.values(ClusterDeploymentKind).forEach(deploymentKind =>
-          expect(pluginsOf(argsFor(deploymentKind, role))).toContain(
-            "sysio::producer_api_plugin"
+      it.each(Object.values(NodeRole).filter(role => role !== NodeRole.api))(
+        "keeps producer_api on a %s node of either kind (every non-API role)",
+        role => {
+          // producer_api is load-bearing on bios / producers (the resume
+          // endpoint) and stays on the operator roles.
+          Object.values(ClusterDeploymentKind).forEach(deploymentKind =>
+            expect(pluginsOf(gatedArgsFor(deploymentKind, role))).toContain(
+              "sysio::producer_api_plugin"
+            )
           )
-        )
-      }
-    )
+        }
+      )
+    })
+
+    describe("query engine plugin gating", () => {
+      it.each(Object.values(ClusterDeploymentKind))(
+        "loads it on an api node of a %s cluster",
+        deploymentKind => {
+          const args = gatedArgsFor(deploymentKind, NodeRole.api)
+          expect(pluginsOf(args)).toContain(Constants.QUERY_ENGINE_PLUGIN)
+          // The plugin requires a node with no configured producer…
+          expect(args).not.toContain("--producer-name")
+          expect(pluginsOf(args)).not.toContain("sysio::producer_plugin")
+          // …and the public chain-read surface exposes no producer control
+          // endpoints, while keeping trace_api in every deployment kind.
+          expect(pluginsOf(args)).not.toContain("sysio::producer_api_plugin")
+          expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
+        }
+      )
+
+      it.each(Object.values(NodeRole).filter(role => role !== NodeRole.api))(
+        "keeps it OFF a %s node of either kind",
+        role => {
+          Object.values(ClusterDeploymentKind).forEach(deploymentKind =>
+            expect(pluginsOf(gatedArgsFor(deploymentKind, role))).not.toContain(
+              Constants.QUERY_ENGINE_PLUGIN
+            )
+          )
+        }
+      )
+
+      it.each(Object.values(ClusterDeploymentKind))(
+        "emits the plugin exactly once on an api node of a %s cluster",
+        deploymentKind => {
+          expect(
+            pluginsOf(gatedArgsFor(deploymentKind, NodeRole.api)).filter(
+              plugin => plugin === Constants.QUERY_ENGINE_PLUGIN
+            )
+          ).toHaveLength(1)
+        }
+      )
+    })
   })
 
   describe("createNodeopTuningDefaultOptions", () => {
@@ -881,7 +947,7 @@ describe("NodeopProcess", () => {
       }
     )
 
-    it.each([NodeRole.bios, NodeRole.producer])(
+    it.each([NodeRole.bios, NodeRole.producer, NodeRole.api])(
       "leaves ALL THREE deadlines absent for a post-bootstrap %s node",
       role => {
         const tuning = createNodeopTuningDefaultOptions(
@@ -1068,9 +1134,15 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("peered", NodeRole.batch_operator)
     })
-    // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
+    // 1 producer node + 3 batch ops + 1 underwriter + 1 API node + bios +
+    // ad-hoc headroom
     const allowance =
-      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+      1 +
+      3 +
+      1 +
+      1 +
+      NodeConfig.BiosNodeCount +
+      NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
     )
@@ -1082,8 +1154,15 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("meshed", NodeRole.batch_operator)
     })
+    // 1 producer node + 3 batch ops + 1 underwriter + 1 API node + bios +
+    // ad-hoc headroom
     const allowance =
-      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+      1 +
+      3 +
+      1 +
+      1 +
+      NodeConfig.BiosNodeCount +
+      NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--max-clients", String(allowance)])
     )

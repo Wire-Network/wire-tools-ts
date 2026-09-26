@@ -49,6 +49,8 @@ interface ReferenceBindNodeopClusterPortsOptions {
   producers?: ReferenceBindNodeopPortsOptions[]
   batch?: ReferenceBindNodeopPortsOptions[]
   underwriters?: ReferenceBindNodeopPortsOptions[]
+  api?: ReferenceBindNodeopPortsOptions[]
+  adHoc?: ReferenceBindNodeopPortsOptions[]
 }
 
 /** The checkpoint's hand-written nodeop options. */
@@ -159,6 +161,7 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
         producers: [{ http: 8988, p2p: 9976 }],
         batch: [],
         underwriters: [],
+        api: [],
         adHoc: []
       }
     },
@@ -194,6 +197,16 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
     expect(BindOptionsSchema.safeParse({}).success).toBe(true)
   })
 
+  it("BindOptionsSchema keeps a partial api pair and validates its fields", () => {
+    const pin = { http: bind.nodeop.ports.bios.http },
+      parsed = BindOptionsSchema.safeParse({ nodeop: { ports: { api: [pin] } } })
+    expect(parsed.success).toBe(true)
+    expect(parsed.data.nodeop.ports.api).toEqual([pin])
+    expect(
+      BindOptionsSchema.safeParse({ nodeop: { ports: { api: [{ http: "nope" }] } } }).success
+    ).toBe(false)
+  })
+
   it("BindOptionsSchema rejects a wrong-typed field", () => {
     expect(BindOptionsSchema.safeParse({ anvil: { port: "nope" } }).success).toBe(false)
   })
@@ -220,6 +233,32 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
         AdvertiseAddress
       )
       expect(BindConfigSchemaCodec.check(meshed)).toBe(true)
+    })
+
+    it("round-trips an api pair that pins its advertiseAddress, and check() accepts it", () => {
+      const withApi: BindConfig = {
+        ...bind,
+        nodeop: {
+          ...bind.nodeop,
+          ports: {
+            ...bind.nodeop.ports,
+            api: [
+              {
+                ...bind.nodeop.ports.producers[0],
+                advertiseAddress: AdvertiseAddress
+              }
+            ]
+          }
+        }
+      }
+      expect(BindConfigSchemaCodec.check(withApi)).toBe(true)
+      const roundTripped = BindConfigSchemaCodec.deserialize(
+        BindConfigSchemaCodec.serialize(withApi)
+      )
+      expect(roundTripped).toEqual(withApi)
+      expect(roundTripped.nodeop.ports.api[0].advertiseAddress).toBe(
+        AdvertiseAddress
+      )
     })
 
     it("a legacy config without advertiseAddress parses with the field absent", () => {

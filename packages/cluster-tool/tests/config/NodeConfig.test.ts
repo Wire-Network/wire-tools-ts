@@ -1,6 +1,7 @@
 import {
   AWSAccountName,
   ClusterDeploymentKind,
+  NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
@@ -13,9 +14,9 @@ import {
   NodeRole,
   producerName,
   BindConfigProvider,
-  ClusterConfigProvider
+  ClusterConfigProvider,
+  QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
-import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Localhost } from "@wireio/cluster-tool/utils"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
@@ -28,6 +29,13 @@ interface RenderedLogger {
   level: string
 }
 
+/** The planned node of `role` (the fixture topology plans at least one of every role). */
+function nodeOfRole(nodes: NodeConfig[], role: NodeRole): NodeConfig {
+  const found = nodes.find(node => node.role === role)
+  expect(found).toBeDefined()
+  return found
+}
+
 describe("NodeConfig", () => {
   describe("NodeRole", () => {
     it("is identity-mapped — every value equals its key", () => {
@@ -35,6 +43,7 @@ describe("NodeConfig", () => {
       expect(NodeRole.producer).toBe("producer")
       expect(NodeRole.batch_operator).toBe("batch_operator")
       expect(NodeRole.underwriter).toBe("underwriter")
+      expect(NodeRole.api).toBe("api")
     })
   })
 
@@ -44,9 +53,10 @@ describe("NodeConfig", () => {
       expect(NodeConfig.isOperatorRole(NodeRole.underwriter)).toBe(true)
     })
 
-    it("is false for the block-producing roles", () => {
+    it("is false for the bios, producer, and API roles", () => {
       expect(NodeConfig.isOperatorRole(NodeRole.bios)).toBe(false)
       expect(NodeConfig.isOperatorRole(NodeRole.producer)).toBe(false)
+      expect(NodeConfig.isOperatorRole(NodeRole.api)).toBe(false)
     })
 
     it("covers exactly the OperatorRoles set", () => {
@@ -67,13 +77,6 @@ describe("NodeConfig", () => {
       externalNodes = NodeConfig.plan(
         fixtureConfig({ deploymentKind: ClusterDeploymentKind.external })
       )
-
-    /** The planned node of `role` (the fixture topology plans at least one). */
-    function nodeOfRole(nodes: NodeConfig[], role: NodeRole): NodeConfig {
-      const found = nodes.find(node => node.role === role)
-      expect(found).toBeDefined()
-      return found
-    }
 
     // Driven off `NodeRole` so a new role is covered by construction. LOCAL is
     // the regression pin: the harness's WireClient reads traces off producer[0],
@@ -96,8 +99,8 @@ describe("NodeConfig", () => {
       }
     )
 
-    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
-      "keeps it on an EXTERNAL cluster's %s node (non-public)",
+    it.each([NodeRole.batch_operator, NodeRole.underwriter, NodeRole.api])(
+      "keeps it on an EXTERNAL cluster's %s node (operators are non-public; API nodes are the chain-read surface)",
       role => {
         expect(
           NodeConfig.runsTraceApiPlugin(nodeOfRole(externalNodes, role))
@@ -110,6 +113,30 @@ describe("NodeConfig", () => {
       // and every `create`d cluster — keeps the plugin on every role.
       expect(fixtureConfig().deploymentKind).toBe(ClusterDeploymentKind.local)
     })
+  })
+
+  describe("runsQueryEnginePlugin / runsProducerApiPlugin", () => {
+    const local = NodeConfig.plan(fixtureConfig()),
+      external = NodeConfig.plan(
+        fixtureConfig({ deploymentKind: ClusterDeploymentKind.external })
+      )
+
+    it.each(Object.values(NodeRole))("answers for a %s node", role => {
+      const node = nodeOfRole(local, role)
+      expect(NodeConfig.runsQueryEnginePlugin(node)).toBe(role === NodeRole.api)
+      expect(NodeConfig.runsProducerApiPlugin(node)).toBe(role !== NodeRole.api)
+    })
+
+    // Unlike the trace-api gate, neither predicate reads the deployment kind:
+    // an EXTERNAL tree answers exactly as a local one.
+    it.each(Object.values(NodeRole))(
+      "answers the same for an EXTERNAL cluster's %s node",
+      role => {
+        const node = nodeOfRole(external, role)
+        expect(NodeConfig.runsQueryEnginePlugin(node)).toBe(role === NodeRole.api)
+        expect(NodeConfig.runsProducerApiPlugin(node)).toBe(role !== NodeRole.api)
+      }
+    )
   })
 
   describe("producerName", () => {
@@ -128,13 +155,34 @@ describe("NodeConfig", () => {
         fixtureConfig({
           nodeCount: 21,
           batchOperatorCount: 21,
-          underwriterCount: 1
+          underwriterCount: 1,
+          apiCount: 1
         })
       )
       expect(capacity).toBe(
         21 +
           21 +
           1 +
+          1 +
+          NodeConfig.BiosNodeCount +
+          NodeConfig.AdHocDaemonPeerHeadroom
+      )
+    })
+
+    it("counts every API node — each is a mesh member", () => {
+      const capacity = NodeConfig.peerCapacity(
+        fixtureConfig({
+          nodeCount: 21,
+          batchOperatorCount: 21,
+          underwriterCount: 1,
+          apiCount: 2
+        })
+      )
+      expect(capacity).toBe(
+        21 +
+          21 +
+          1 +
+          2 +
           NodeConfig.BiosNodeCount +
           NodeConfig.AdHocDaemonPeerHeadroom
       )
@@ -147,12 +195,14 @@ describe("NodeConfig", () => {
       const config = fixtureConfig({
         nodeCount: 21,
         batchOperatorCount: 21,
-        underwriterCount: 1
+        underwriterCount: 1,
+        apiCount: 1
       })
       const totalNodes =
         config.nodeCount +
         config.batchOperatorCount +
         config.underwriterCount +
+        config.apiCount +
         NodeConfig.BiosNodeCount
       expect(NodeConfig.peerCapacity(config)).toBeGreaterThanOrEqual(
         totalNodes - 1
@@ -165,11 +215,17 @@ describe("NodeConfig", () => {
           fixtureConfig({
             nodeCount: 1,
             batchOperatorCount: 3,
-            underwriterCount: 1
+            underwriterCount: 1,
+            apiCount: 0
           })
         )
       ).toBe(
-        1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+        1 +
+          3 +
+          1 +
+          0 +
+          NodeConfig.BiosNodeCount +
+          NodeConfig.AdHocDaemonPeerHeadroom
       )
     })
   })
@@ -177,8 +233,8 @@ describe("NodeConfig", () => {
   describe("plan", () => {
     const nodes = NodeConfig.plan(fixtureConfig())
 
-    it("plans bios + producer + operator nodes from the bind topology", () => {
-      expect(nodes).toHaveLength(6) // 1 bios + 1 producer + 3 batch + 1 underwriter
+    it("plans bios + producer + operator + api nodes from the bind topology", () => {
+      expect(nodes).toHaveLength(7) // 1 bios + 1 producer + 3 batch + 1 underwriter + 1 api
       expect(nodes[0].role).toBe(NodeRole.bios)
       expect(nodes[0].name).toBe(NodeConfig.BiosName)
       const operators = nodes.filter(n => NodeConfig.isOperatorRole(n.role))
@@ -210,7 +266,7 @@ describe("NodeConfig", () => {
       })
     })
 
-    it("meshes ONLY the producing set — bios + producers peer with each other", () => {
+    it("meshes the non-operator set — bios + producers + api nodes peer with each other", () => {
       const mesh = nodes.filter(n => !NodeConfig.isOperatorRole(n.role))
       mesh.forEach(n =>
         expect(n.peerEndpoints).toHaveLength(mesh.length - 1)
@@ -258,6 +314,62 @@ describe("NodeConfig", () => {
       expect(
         nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
       ).toBe("uwrit.a")
+    })
+
+    describe("api nodes", () => {
+      it("appends api nodes AFTER the underwriters, continuing the node_NN numbering", () => {
+        const api = nodes.filter(n => n.role === NodeRole.api)
+        expect(api).toHaveLength(1)
+        expect(api[0].name).toBe("node_05") // bios, node_00 producer, 01-03 batch, 04 underwriter
+        expect(api[0].index).toBe(5)
+        expect(api[0].producers).toEqual([])
+        expect(api[0].batchOperatorLabel).toBeNull()
+        expect(api[0].underwriterLabel).toBeNull()
+        expect(api[0].ports).toEqual(PersistedFixture.bind.nodeop.ports.api[0])
+      })
+
+      it("puts api nodes IN the mesh: bios + producers dial them, and they dial the mesh", () => {
+        const api = nodeOfRole(nodes, NodeRole.api),
+          apiEndpoint = NodeConfig.peerEndpointFor(api.cluster, api.ports),
+          mesh = nodes.filter(n => !NodeConfig.isOperatorRole(n.role))
+        mesh
+          .filter(n => n.name !== api.name)
+          .forEach(n => expect(n.peerEndpoints).toContain(apiEndpoint))
+        expect(api.peerEndpoints).toHaveLength(mesh.length - 1)
+        expect(api.peerEndpoints).toContain(
+          NodeConfig.peerEndpointFor(
+            api.cluster,
+            PersistedFixture.bind.nodeop.ports.bios
+          )
+        )
+      })
+
+      it("keeps operators on their single producer uplink when api nodes exist", () => {
+        const api = nodeOfRole(nodes, NodeRole.api),
+          apiEndpoint = NodeConfig.peerEndpointFor(api.cluster, api.ports)
+        nodes
+          .filter(n => NodeConfig.isOperatorRole(n.role))
+          .forEach(operator => {
+            expect(operator.peerEndpoints).toHaveLength(1)
+            expect(operator.peerEndpoints).not.toContain(apiEndpoint)
+          })
+      })
+
+      it("plans no api node when the bind has no api pairs", () => {
+        const bare = fixtureConfig({
+          apiCount: 0,
+          bind: {
+            ...PersistedFixture.bind,
+            nodeop: {
+              ...PersistedFixture.bind.nodeop,
+              ports: { ...PersistedFixture.bind.nodeop.ports, api: [] }
+            }
+          }
+        })
+        expect(NodeConfig.plan(bare).some(n => n.role === NodeRole.api)).toBe(
+          false
+        )
+      })
     })
   })
 
@@ -376,7 +488,7 @@ describe("NodeConfig", () => {
       const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
       expect(ini).toContain(
-        `read-mode = ${WireClient.FinalityType.irreversible}`
+        `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`
       )
       expect(ini).not.toContain("batch-operator-account")
       expect(ini).not.toContain("underwriter-account")
@@ -447,30 +559,141 @@ describe("NodeConfig", () => {
       }
     )
 
-    it("renders NO trace_api plugin line on an isApi node, though runsTraceApiPlugin is TRUE", () => {
+    it("renders NO trace_api plugin line on a producerless node, though runsTraceApiPlugin is TRUE", () => {
       // The OTHER load-bearing reason for the `(isProducer || isBios) &&`
-      // conjunct: an `isApi` node is producer-ROLE with an EMPTY producer list,
-      // so `runsTraceApiPlugin` says yes (it is a LOCAL cluster and the gate is
-      // deployment/role-based) while the ini must still not load the plugin.
-      const apiNode = new NodeConfig(
+      // conjunct: a producerless node is producer-ROLE with an EMPTY producer
+      // list, so `runsTraceApiPlugin` says yes (it is a LOCAL cluster and the
+      // gate is deployment/role-based) while the ini must still not load the
+      // plugin. It is the `nodeCount > producerCount` shape, and it deliberately
+      // does NOT load the query engine: `NodeRole.api` is the API-node concept.
+      const producerlessNode = new NodeConfig(
         fixtureConfig(),
         NodeRole.producer,
         0,
-        "node_api",
+        "node_producerless",
         // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
         // carve-out) — nothing binds here, and no port is invented.
         PersistedFixture.bind.nodeop.ports.producers[0],
         [],
         []
       )
-      expect(NodeConfig.runsTraceApiPlugin(apiNode)).toBe(true)
-      expect(apiNode.ini.render()).not.toContain(Constants.TRACE_API_PLUGIN)
-      // …and it is genuinely the isApi arm — that arm is what adds the retry
-      // storage line, and the producer plugins stay off a producerless node.
-      expect(apiNode.ini.render()).toContain(
+      expect(NodeConfig.runsTraceApiPlugin(producerlessNode)).toBe(true)
+      expect(producerlessNode.ini.render()).not.toContain(
+        Constants.TRACE_API_PLUGIN
+      )
+      expect(NodeConfig.runsQueryEnginePlugin(producerlessNode)).toBe(false)
+      expect(producerlessNode.ini.render()).not.toContain(
+        Constants.QUERY_ENGINE_PLUGIN
+      )
+      // …and it is genuinely the producerless arm — that arm is what adds the
+      // retry storage line, and the producer plugins stay off a producerless node.
+      expect(producerlessNode.ini.render()).toContain(
         "transaction-retry-max-storage-size-gb = 100"
       )
-      expect(apiNode.ini.render()).not.toContain("plugin = sysio::producer_plugin")
+      expect(producerlessNode.ini.render()).not.toContain(
+        "plugin = sysio::producer_plugin"
+      )
+    })
+
+    it("renders the api node ini: query engine plugin, NO read-mode or query-* line when nothing is set, retry storage, no producer plugins", () => {
+      const ini = nodeOfRole(nodes, NodeRole.api).ini.render()
+      expect(ini).toContain(`plugin = ${Constants.QUERY_ENGINE_PLUGIN}`)
+      // The fixture's queryEngine is all-unset: nodeop's read mode and the
+      // plugin's limits govern, so the ini pins none of them.
+      expect(ini).not.toContain(Constants.READ_MODE_OPTION)
+      expect(ini).not.toContain("query-")
+      expect(ini).toContain("transaction-retry-max-storage-size-gb = 100")
+      expect(ini).toContain(`plugin = ${Constants.NET_PLUGIN}`)
+      expect(ini).toContain(`plugin = ${Constants.CHAIN_API_PLUGIN}`)
+      expect(ini).not.toContain("plugin = sysio::producer_plugin")
+      expect(ini).not.toContain("plugin = sysio::producer_api_plugin")
+      expect(ini).not.toContain("producer-name")
+      // The ini never carries trace_api off producers / bios — the api node's
+      // argv loads it.
+      expect(ini).not.toContain(Constants.TRACE_API_PLUGIN)
+    })
+
+    it.each(Object.values(ClusterDeploymentKind))(
+      "renders the query engine plugin line on the api node of a %s cluster",
+      deploymentKind => {
+        const api = nodeOfRole(
+          NodeConfig.plan(fixtureConfig({ deploymentKind })),
+          NodeRole.api
+        )
+        expect(api.ini.render()).toContain(
+          `plugin = ${Constants.QUERY_ENGINE_PLUGIN}`
+        )
+      }
+    )
+
+    it("renders the set query-engine members on the api node only, read-mode exactly once", () => {
+      const configured = NodeConfig.plan(
+          fixtureConfig({
+            queryEngine: {
+              ...QueryEngineConfigProvider.createDefaultOptions(),
+              readMode: NodeopReadMode.irreversible,
+              workerThreads: 4,
+              maxResultRows: 500
+            }
+          })
+        ),
+        api = nodeOfRole(configured, NodeRole.api).ini.render()
+      expect(api).toContain(
+        `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`
+      )
+      expect(
+        api
+          .split("\n")
+          .filter(line => line.startsWith(`${Constants.READ_MODE_OPTION} =`))
+      ).toHaveLength(1)
+      expect(api).toContain("query-worker-threads = 4")
+      expect(api).toContain("query-max-result-rows = 500")
+      // An unset member renders nothing, even beside set ones.
+      expect(api).not.toContain("query-max-in-flight")
+      // Every other node carries no query-engine line at all, and only its
+      // OWN read-mode: the operators' irreversible one, nobody else's.
+      configured
+        .filter(n => n.role !== NodeRole.api)
+        .forEach(n => {
+          const ini = n.ini.render(),
+            readModeLines = ini
+              .split("\n")
+              .filter(line =>
+                line.startsWith(`${Constants.READ_MODE_OPTION} =`)
+              )
+          expect(ini).not.toContain("query-")
+          expect(readModeLines).toEqual(
+            NodeConfig.isOperatorRole(n.role)
+              ? [
+                  `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`
+                ]
+              : []
+          )
+        })
+    })
+
+    it.each(Object.values(NodeRole).filter(role => role !== NodeRole.api))(
+      "keeps the query engine plugin OFF a %s node's ini",
+      role => {
+        expect(nodeOfRole(nodes, role).ini.render()).not.toContain(
+          Constants.QUERY_ENGINE_PLUGIN
+        )
+      }
+    )
+
+    it("keeps read-mode explicit on operators (irreversible) and absent on bios / producer / api nodes", () => {
+      const operators = nodes.filter(n => NodeConfig.isOperatorRole(n.role))
+      expect(operators.length).toBeGreaterThan(0)
+      operators.forEach(n =>
+        expect(n.ini.render()).toContain(
+          `${Constants.READ_MODE_OPTION} = ${NodeopReadMode.irreversible}`
+        )
+      )
+      ;[NodeRole.bios, NodeRole.producer, NodeRole.api].forEach(role =>
+        expect(nodeOfRole(nodes, role).ini.render()).not.toContain(
+          Constants.READ_MODE_OPTION
+        )
+      )
     })
 
     it("still renders the phase-independent nodeop extras", () => {
@@ -495,6 +718,12 @@ describe("NodeConfig", () => {
         parsed.loggers.some(
           (logger: RenderedLogger) => logger.name === "producer_plugin"
         )
+      ).toBe(true)
+      // The query engine logs under `query`; pinned on the list AND on the
+      // rendered document, since the document is built by mapping the list.
+      expect(NodeConfigLoggingRenderer.Loggers).toContain("query")
+      expect(
+        parsed.loggers.some((logger: RenderedLogger) => logger.name === "query")
       ).toBe(true)
     })
 

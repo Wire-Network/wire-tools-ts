@@ -131,6 +131,7 @@ itself — flows/tools provision users and non-bootstrapped operators with them 
 | `nodeCount` | `1` **(cluster)** | producer nodes hosting the producers |
 | `batchOperatorCount` | `3` **(cluster)** | labels `batchop.a/b/c` (chain accounts are `wireno.<suffix>`, node-owner-generated) |
 | `underwriterCount` | `1` **(cluster)** | label `uwrit.a` (chain account likewise generated) |
+| `apiCount` | `0` **(cluster)** | non-producing API nodes serving the chain API + `/v1/query/execute` |
 | `epochDurationSec` | `90` **(cluster; production: real cadence)** | |
 | `EnvelopeLogRetentionEpochs` | `10` | `sysio.epoch::setconfig.epoch_retention_envelope_log_count` |
 
@@ -450,7 +451,9 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   loosened for local tooling (`access-control-allow-origin/headers = *`, `verbose-http-errors = true`,
   `http-validate-host = false`), and dev clusters set
   `resource-monitor-not-shutdown-on-threshold-exceeded = true` (workstations routinely sit above the 90%
-  disk threshold).
+  disk threshold). API nodes carry the cluster-wide query-engine block (any set `read-mode` / `query-*`
+  member of `ClusterConfig.queryEngine`) in their ini; nothing set means nodeop's and the plugin's own
+  defaults.
 - Deadlines are PHASE-SPLIT, and ride the nodeop argv rather than the ini (a CLI flag only wins when it is
   actually emitted, so an ini kv would resurrect a value the post-bootstrap form deliberately omits). The
   bootstrap spawn is permissive on every role — `max-transaction-time = -1`, `abi-serializer-max-time-ms =
@@ -458,7 +461,7 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   of heavy setup through nodes that are also syncing. Post-bootstrap launches (`run`, and every emitted
   `start.sh`) drop `max-transaction-time` outright; only the non-public operator nodes (batch operators /
   underwriters, whose HTTP surface serves their own co-located OPP daemon) retain the two `990000` timeouts —
-  bios and producer nodes get neither, and nodeop's own defaults apply.
+  the public nodes (bios, producer, and API nodes) get neither, and nodeop's own defaults apply.
 - Plugins — base: `net_plugin`, `chain_api_plugin`; producers add `producer_plugin`, `producer_api_plugin`;
   batch operators add `batch_operator_plugin`, `external_debugging_plugin`,
   `outpost_ethereum_client_plugin`, `outpost_solana_client_plugin`, `cron_plugin`; underwriters add
@@ -466,7 +469,9 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   `external_debugging_plugin`, `cron_plugin`. `trace_api_plugin` is CONDITIONAL: a LOCAL cluster keeps it on
   every role (the harness reads traces off `producer[0]`), while the production-shaped
   `create-external-config` tree drops it from the bios / producer nodes — operator nodes are non-public and
-  retain it everywhere.
+  retain it everywhere. API nodes: base + `query_engine_plugin`, plus `trace_api_plugin` in every deployment
+  kind (they are the chain-read surface, like the standalone `create-api-node` artifact); never
+  `producer_api_plugin`.
 - Ports: every daemon default is a PREFERENCE — the bind resolver claims it only when free, otherwise an
   ephemeral free port (parallel-run safe; the resolved set persists in `cluster-config.json::bind`). Defaults
   live in `10500–11999`, above agave's reserved `8000–10000` band (a solana-test-validator binds implicit

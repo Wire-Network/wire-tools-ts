@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { ChainKind, TokenAmount } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
@@ -403,9 +403,9 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         `owner charges ${Constants.ReserveOwnerFees.EthereumBps} bps on the private ETH reserve`,
         writeOptions,
         {
-          chain_code: { value: Constants.Reserves.Ethereum.ChainCode },
-          token_code: { value: Constants.Reserves.Ethereum.TokenCode },
-          reserve_code: { value: Constants.Reserves.PrivateReserveCode },
+          chain_code: SlugName.toString(Constants.Reserves.Ethereum.ChainCode),
+          token_code: SlugName.toString(Constants.Reserves.Ethereum.TokenCode),
+          reserve_code: SlugName.toString(Constants.Reserves.PrivateReserveCode),
           owner_fee_bps: Constants.ReserveOwnerFees.EthereumBps
         },
         Constants.Accounts.Owner
@@ -416,9 +416,9 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         `owner charges ${Constants.ReserveOwnerFees.SolanaBps} bps on the private SOL reserve`,
         writeOptions,
         {
-          chain_code: { value: Constants.Reserves.Solana.ChainCode },
-          token_code: { value: Constants.Reserves.Solana.TokenCode },
-          reserve_code: { value: Constants.Reserves.PrivateReserveCode },
+          chain_code: SlugName.toString(Constants.Reserves.Solana.ChainCode),
+          token_code: SlugName.toString(Constants.Reserves.Solana.TokenCode),
+          reserve_code: SlugName.toString(Constants.Reserves.PrivateReserveCode),
           owner_fee_bps: Constants.ReserveOwnerFees.SolanaBps
         },
         Constants.Accounts.Owner
@@ -581,9 +581,9 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         "owner claims the private ETH reserve's accrued owner fee",
         writeOptions,
         {
-          chain_code: { value: Constants.Reserves.Ethereum.ChainCode },
-          token_code: { value: Constants.Reserves.Ethereum.TokenCode },
-          reserve_code: { value: Constants.Reserves.PrivateReserveCode }
+          chain_code: SlugName.toString(Constants.Reserves.Ethereum.ChainCode),
+          token_code: SlugName.toString(Constants.Reserves.Ethereum.TokenCode),
+          reserve_code: SlugName.toString(Constants.Reserves.PrivateReserveCode)
         },
         Constants.Accounts.Owner
       ),
@@ -593,9 +593,9 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         "owner claims the private SOL reserve's accrued owner fee",
         writeOptions,
         {
-          chain_code: { value: Constants.Reserves.Solana.ChainCode },
-          token_code: { value: Constants.Reserves.Solana.TokenCode },
-          reserve_code: { value: Constants.Reserves.PrivateReserveCode }
+          chain_code: SlugName.toString(Constants.Reserves.Solana.ChainCode),
+          token_code: SlugName.toString(Constants.Reserves.Solana.TokenCode),
+          reserve_code: SlugName.toString(Constants.Reserves.PrivateReserveCode)
         },
         Constants.Accounts.Owner
       ),

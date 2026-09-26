@@ -51,10 +51,11 @@ describe("Constants", () => {
   })
 
   describe("plugin sets", () => {
-    // SHARED-25 AC#4 (D3): trace_api is the ONE role plugin whose presence is
-    // gated (NodeConfig.runsTraceApiPlugin), so it cannot ride the
-    // unconditional producer set — an entry here would re-arm it on the
-    // production-shaped external tree's producer / bios nodes.
+    // SHARED-25 AC#4: trace_api's presence is role-gated
+    // (`NodeConfig.runsTraceApiPlugin`), like producer_api and the query
+    // engine; `TRACE_API_PLUGIN` is the one spelling every surface reads. It
+    // cannot ride the unconditional producer set — an entry here would re-arm
+    // it on the production-shaped external tree's producer / bios nodes.
     it("keeps trace_api OUT of PRODUCER_PLUGINS", () => {
       expect([...Constants.PRODUCER_PLUGINS]).toEqual([
         "sysio::producer_plugin",
@@ -104,6 +105,51 @@ describe("Constants", () => {
       expect([...Constants.PRODUCER_PLUGINS]).toContain(
         "sysio::producer_api_plugin"
       )
+    })
+
+    it("carries the ONE producer-api plugin spelling both surfaces read", () => {
+      expect(Constants.PRODUCER_API_PLUGIN).toBe("sysio::producer_api_plugin")
+    })
+
+    it("carries the ONE query-engine plugin spelling, outside every unconditional set", () => {
+      // The query engine is role-gated (API nodes only), so neither the base
+      // set every node loads nor the producer set may carry it.
+      expect(Constants.QUERY_ENGINE_PLUGIN).toBe("sysio::query_engine_plugin")
+      expect([...Constants.BASE_PLUGINS]).not.toContain(
+        Constants.QUERY_ENGINE_PLUGIN
+      )
+      expect([...Constants.PRODUCER_PLUGINS]).not.toContain(
+        Constants.QUERY_ENGINE_PLUGIN
+      )
+    })
+
+    it("carries the ONE read-mode option spelling (bare — an ini key and a --flag stem)", () => {
+      expect(Constants.READ_MODE_OPTION).toBe("read-mode")
+      expect(Constants.READ_MODE_OPTION.startsWith("--")).toBe(false)
+    })
+
+    it("spells the twelve query-* limit options in the plugin's own order, one per unique member", () => {
+      // Independent oracle for the spellings every surface reads off this table.
+      expect(
+        Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ option }) => option)
+      ).toEqual([
+        "query-worker-threads",
+        "query-max-in-flight",
+        "query-max-query-bytes",
+        "query-timeout-ms",
+        "query-max-capture-ms",
+        "query-max-abi-bytes",
+        "query-max-scan-rows",
+        "query-max-raw-bytes",
+        "query-max-memory-bytes",
+        "query-max-groups",
+        "query-max-result-rows",
+        "query-max-response-bytes"
+      ])
+      const members = Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(
+        ({ member }) => member
+      )
+      expect(new Set(members).size).toBe(members.length)
     })
   })
 

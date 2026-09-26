@@ -1,4 +1,4 @@
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildStep,
   swapUserOutputKey,
@@ -102,9 +102,9 @@ export namespace SwapFromWireScenarioUwritSteps {
       data: SysioContracts.SysioUwritSwapfromwireAction = {
         user: input.user,
         wire_amount: Number(input.wireAmount),
-        dst_chain_code: { value: input.destinationChainCode },
-        dst_token_code: { value: input.destinationTokenCode },
-        dst_reserve_code: { value: input.destinationReserveCode },
+        dst_chain_code: SlugName.toString(input.destinationChainCode),
+        dst_token_code: SlugName.toString(input.destinationTokenCode),
+        dst_reserve_code: SlugName.toString(input.destinationReserveCode),
         target_amount: Number(targetAmount),
         target_tolerance_bps: input.targetToleranceBps,
         recipient_kind: SysioUwritChainkind.CHAIN_KIND_SVM,

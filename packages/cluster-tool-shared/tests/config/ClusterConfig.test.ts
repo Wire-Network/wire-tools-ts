@@ -5,6 +5,7 @@ import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
   SignatureProviderType,
+  createUnsetQueryEngineConfig,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
@@ -19,6 +20,7 @@ describe("ClusterConfig shape", () => {
     nodeCount: 1,
     batchOperatorCount: 3,
     underwriterCount: 1,
+    apiCount: 0,
     epochDurationSec: 60,
     operatorsPerEpoch: null,
     batchOpGroups: null,
@@ -39,6 +41,7 @@ describe("ClusterConfig shape", () => {
           producers: [{ http: 8988, p2p: 9976 }],
           batch: [],
           underwriters: [],
+          api: [],
           adHoc: []
         }
       },
@@ -88,7 +91,8 @@ describe("ClusterConfig shape", () => {
     debuggingServerEnabled: true,
     enableMockReserves: false,
     deploymentKind: ClusterDeploymentKind.local,
-    chainStateDbSizeMb: DefaultChainStateDbSizeMb
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+    queryEngine: createUnsetQueryEngineConfig()
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {

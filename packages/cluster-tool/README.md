@@ -40,7 +40,7 @@ config and re-derives the node topology deterministically via
 ### What gets spawned
 
 - `kiod` — WIRE wallet daemon.
-- One `nodeop` per bios / producer / batch-operator / underwriter node.
+- One `nodeop` per bios / producer / batch-operator / underwriter / API node.
 - `anvil` — the local Ethereum outpost (omitted in external-outpost mode).
 - `solana-test-validator` — the local Solana outpost (omitted in
   external-outpost mode; each cluster gets a disjoint `--dynamic-port-range`).
@@ -92,10 +92,13 @@ the path flags.
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
+| `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
+| `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
+| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
 | `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (requires `--underwriter-count 0`) |
-| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig` |
+| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
@@ -181,11 +184,17 @@ passing a genesis.
 | `--http-threads` | | `4` | `http-threads` |
 | `--agent-name` | | `wire-api-node` | `agent-name` |
 | `--genesis-json` | | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
+| `--query-engine-read-mode` | | nodeop's own (`head`) | `read-mode` (`head` or `irreversible`) — only when set |
+| `--query-engine-<limit>` | | plugin default | `query-<limit>` — only when set; one flag per limit: `worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes` |
 
 Flag names follow **nodeop's own option names**, so the ini line and the flag
-that produced it read the same. No flag carries a yargs `default:` — every
-default is applied by `ApiNodeConfig.resolve` (one home), and each `--help` line
-interpolates the constant it will apply.
+that produced it read the same — except the `--query-engine-*` flags, which are
+the spellings shared with `create` and render as nodeop's `read-mode` /
+`query-<limit>`. No flag carries a yargs `default:` — every default is applied
+by `ApiNodeConfig.resolve` (one home). Each `--help` line interpolates the
+constant it will apply, except on the thirteen `--query-engine-*` flags, which
+apply none: their `--help` says that omitting one leaves nodeop's (read mode)
+or the plugin's (limits) own default in force.
 
 Notes specific to this command:
 
@@ -193,9 +202,16 @@ Notes specific to this command:
   `--p2p-peer-address` name an arbitrary deployment host. Nothing is bound,
   probed, or claimed against the bind registry — that registry keeps concurrent
   clusters on *this* host from colliding, and this command starts no listener.
-- **`net_plugin` is in the emitted plugin set** alongside `chain_api_plugin` and
-  `trace_api_plugin`: it owns `p2p-peer-address` AND `agent-name`, which would
-  otherwise be accepted-and-ignored and the node would never sync.
+- **`net_plugin` is in the emitted plugin set** alongside `chain_api_plugin`,
+  `trace_api_plugin` and `query_engine_plugin`: it owns `p2p-peer-address` AND
+  `agent-name`, which would otherwise be accepted-and-ignored and the node would
+  never sync.
+- **`query_engine_plugin` settings render only when set.** With no
+  `--query-engine-*` flag the artifact carries no `read-mode` line (nodeop's
+  default `head` applies) and no `query-*` line; a set flag renders its line,
+  and a deployment overlay that appends its own `read-mode` must then drop it
+  (nodeop refuses a key set twice). The artifact requires a nodeop built with
+  the plugin.
 - **`start.sh` capability-probes `--trace-no-abis` at run time.** Newer nodeop
   generations hard-fail `trace_api_plugin` init without it and older ones reject
   the unknown option, so the answer is computed on the host that RUNS the

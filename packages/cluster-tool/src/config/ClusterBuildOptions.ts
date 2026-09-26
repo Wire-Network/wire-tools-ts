@@ -5,7 +5,8 @@ import type {
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
-  CollateralRequirement
+  CollateralRequirement,
+  QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
 
@@ -32,6 +33,12 @@ export interface ClusterBuildOptions {
   nodeCount?: number
   batchOperatorCount?: number
   underwriterCount?: number
+  /**
+   * API nodes to plan — non-producing nodeops serving the chain HTTP API and
+   * `/v1/query/execute` (`sysio::query_engine_plugin`), meshed with bios + the
+   * producer nodes. Default 0 (`--api-count`).
+   */
+  apiCount?: number
   /**
    * Port pairs to reserve for nodes this run starts itself, outside `NodeConfig.plan`.
    *
@@ -68,6 +75,13 @@ export interface ClusterBuildOptions {
    * value, so the always-emitted flag is a no-op until it is overridden).
    */
   chainStateDbSizeMb?: number
+  /**
+   * The API nodes' query engine (`--query-engine-read-mode`,
+   * `--query-engine-<limit>`): every member optional; an omitted one leaves
+   * nodeop's / the plugin's own default in force. Any SET member is rejected
+   * when `apiCount` is 0.
+   */
+  queryEngine?: QueryEngineOptions
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

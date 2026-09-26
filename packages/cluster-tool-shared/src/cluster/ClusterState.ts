@@ -5,12 +5,14 @@ import { SchemaCodec } from "../schema/index.js"
 /**
  * Role a cluster node plays in the persisted snapshot — its PROCESS kind.
  * Identity-mapped string enum; `cluster-tool`'s finer-grained `NodeRole` is
- * bridged onto it by value, with every operator kind landing on `operator`.
+ * bridged onto it by value, with every operator kind landing on `operator` and
+ * API nodes (non-producing chain-API + query-engine nodes) on `api`.
  */
 export enum ClusterStateNodeRole {
   bios = "bios",
   producer = "producer",
-  operator = "operator"
+  operator = "operator",
+  api = "api"
 }
 
 /** One `nodeop` instance's `{ http, p2p }` listen ports. */
@@ -38,7 +40,7 @@ export const ClusterStateNodeSchema = z.object({
   nodePath: z.string(),
   /** This node's `{ http, p2p }` listen ports. */
   ports: ClusterStateNodePortsSchema,
-  /** Producer account names scheduled on this node (empty for pure operator nodes). */
+  /** Producer account names scheduled on this node (empty for operator and API nodes). */
   producers: z.array(z.string()),
   /** Durable batch-operator `label` handle this node acts for, when `role === operator`. */
   batchOperatorLabel: z.string().nullable(),
@@ -59,7 +61,7 @@ export type ClusterStateNode = z.infer<typeof ClusterStateNodeSchema>
 export const ClusterStateSchema = z.object({
   /** ISO-8601 timestamp of when this snapshot was written. */
   createdAt: z.string(),
-  /** Every node in the cluster — bios, producers, and operator nodes alike. */
+  /** Every node in the cluster — bios, producers, operator nodes, and API nodes alike. */
   nodes: z.array(ClusterStateNodeSchema),
   /** Absolute path of the cluster's `kiod` wallet directory. */
   walletPath: z.string(),

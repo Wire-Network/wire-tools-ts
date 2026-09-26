@@ -8,7 +8,7 @@ import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
@@ -150,11 +150,12 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  * Builds a {@link ClusterBuild} pre-loaded with the full bootstrap, organized into
  * two top-level phase groups: **Cluster Prerequisites** (processes, keys, system +
  * OPP contracts, registry, outposts, and PRODUCER operators) and **Cluster Post
- * Contract Deployment** (batch operators + underwriters, operator nodes, first
- * epoch). Every operator — producer, batch, underwriter — is provisioned through the
- * ONE {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism into per-account
- * {@link OperatorAccount}s. Composed entirely from the {@link Steps} palette. The CLI
- * `create` command runs `create(options).build()`.
+ * Contract Deployment** (batch operators + underwriters, API nodes when planned,
+ * operator nodes, first epoch). Every operator — producer, batch, underwriter — is
+ * provisioned through the ONE
+ * {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism
+ * into per-account {@link OperatorAccount}s. Composed entirely from the
+ * {@link Steps} palette. The CLI `create` command runs `create(options).build()`.
  */
 export namespace ClusterBuildDefaults {
   /** Resolve config + context, compose the bootstrap phases, return the build. */
@@ -188,9 +189,9 @@ export namespace ClusterBuildDefaults {
       underwriters = range(config.underwriterCount).map(index =>
         Constants.underwriterLabel(index)
       ),
-      producerNodes = NodeConfig.plan(config).filter(
-        node => node.role === NodeRole.producer
-      ),
+      plannedNodes = NodeConfig.plan(config),
+      producerNodes = plannedNodes.filter(node => node.role === NodeRole.producer),
+      apiNodes = plannedNodes.filter(node => node.role === NodeRole.api),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
@@ -299,26 +300,12 @@ export namespace ClusterBuildDefaults {
         NodeConfig.BiosName
       )
     )
-    const producerNodeGroup = ClusterBuildPhaseGroup.create<C>(
+    planNodeStartGroup<C>(
       prerequisites,
       "ProducerNodes",
       "Start producer nodes",
-      { parallel: true, concurrency: NodeStartConcurrency }
-    )
-    producerNodes.forEach(node =>
-      ClusterBuildPhase.create<C>(
-        producerNodeGroup,
-        node.name,
-        `Start ${node.name}`
-      ).push(
-        Steps.processes.nodeop.planStart<C>(
-          Actor.Producer,
-          `start-${node.name}`,
-          `start ${node.name}`,
-          {},
-          node.name
-        )
-      )
+      producerNodes,
+      () => Actor.Producer
     )
 
     // ── bios contract + features + finality ──
@@ -934,7 +921,7 @@ export namespace ClusterBuildDefaults {
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
       cluster,
       "Cluster Post Contract Deployment",
-      "Provision batch operators + underwriters, start operator nodes, bootstrap the first epoch"
+      "Provision batch operators + underwriters, start API nodes (when planned) + operator nodes, bootstrap the first epoch"
     )
 
     // The operator daemons' shared prerequisites: the in-process OPP debugging
@@ -1029,33 +1016,28 @@ export namespace ClusterBuildDefaults {
       )
     }
 
-    const operatorNodeGroup = ClusterBuildPhaseGroup.create<C>(
+    // API nodes are mesh members that no bootstrap step reads, so they start
+    // outside the bootstrap's finality-sensitive window, right before the
+    // operators. Composed ONLY when planned, so a cluster without API nodes
+    // gains no empty "ApiNodes" group in its Report (the same gating the SSM
+    // key-publication phases use).
+    if (apiNodes.length > 0) {
+      planNodeStartGroup<C>(
+        postContractDeployment,
+        "ApiNodes",
+        "Start API nodes",
+        apiNodes,
+        () => Actor.Sysio
+      )
+    }
+    planNodeStartGroup<C>(
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      { parallel: true, concurrency: NodeStartConcurrency }
+      plannedNodes.filter(node => NodeConfig.isOperatorRole(node.role)),
+      node =>
+        node.batchOperatorLabel != null ? Actor.BatchOperator : Actor.Underwriter
     )
-    NodeConfig.plan(config)
-      .filter(node => NodeConfig.isOperatorRole(node.role))
-      .forEach(node => {
-        const actor =
-          node.batchOperatorLabel != null
-            ? Actor.BatchOperator
-            : Actor.Underwriter
-        ClusterBuildPhase.create<C>(
-          operatorNodeGroup,
-          node.name,
-          `Start ${node.name}`
-        ).push(
-          Steps.processes.nodeop.planStart<C>(
-            actor,
-            `start-${node.name}`,
-            `start ${node.name}`,
-            {},
-            node.name
-          )
-        )
-      })
 
     // The underwriter_plugin defers its startup preflight until the chain
     // plugin reports the node synced (head within `sync_recency_ms` of now,
@@ -1213,6 +1195,42 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
+   * One parallel node-start group: a phase per node, each holding that node's
+   * single start step — the shape every role's start group shares.
+   *
+   * @param parent - The phase group to register the group on.
+   * @param name - Group name (the Report heading).
+   * @param description - Group description.
+   * @param nodes - The planned nodes to start.
+   * @param actorFor - The Report actor of a node's start step.
+   * @returns The registered group.
+   */
+  function planNodeStartGroup<C extends ClusterBuildContext>(
+    parent: ClusterBuildPhaseGroup<C>,
+    name: string,
+    description: string,
+    nodes: readonly NodeConfig[],
+    actorFor: (node: NodeConfig) => Report.Actor
+  ): ClusterBuildPhaseGroup<C> {
+    const group = ClusterBuildPhaseGroup.create<C>(parent, name, description, {
+      parallel: true,
+      concurrency: NodeStartConcurrency
+    })
+    nodes.forEach(node =>
+      ClusterBuildPhase.create<C>(group, node.name, `Start ${node.name}`).push(
+        Steps.processes.nodeop.planStart<C>(
+          actorFor(node),
+          `start-${node.name}`,
+          `start ${node.name}`,
+          {},
+          node.name
+        )
+      )
+    )
+    return group
+  }
+
+  /**
    * The epoch-advance gate's budget — {@link ProtocolTiming.EpochVerifyEpochCount}
    * effective-epoch windows, the SAME envelope `ClusterManager.run`'s post-relaunch
    * liveness check uses (one constant, two call sites; no new literal).
@@ -1309,8 +1327,8 @@ export namespace ClusterBuildDefaults {
     const toChainMinBond = (
       requirement: CollateralRequirement
     ): SysioContracts.SysioOpregChainMinBondType => ({
-      chain_code: { value: requirement.chainCode },
-      token_code: { value: requirement.tokenCode },
+      chain_code: SlugName.toString(requirement.chainCode),
+      token_code: SlugName.toString(requirement.tokenCode),
       min_bond: requirement.minimumBond,
       config_timestamp_ms: 0
     })

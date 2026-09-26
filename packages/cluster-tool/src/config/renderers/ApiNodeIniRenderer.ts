@@ -2,16 +2,23 @@ import { Constants } from "../../Constants.js"
 import { toIniLine } from "../../utils/iniUtils.js"
 import type { Renderer } from "../../utils/Renderer.js"
 import type { ApiNodeConfig } from "../ApiNodeConfig.js"
+import { QueryEngineConfigProvider } from "../QueryEngineConfigProvider.js"
 
 /**
  * Renders a STANDALONE API node's nodeop `config.ini` — the `create-api-node`
  * artifact. Unlike {@link NodeConfigIniRenderer} it derives from no
  * `ClusterConfig`: every value is either supplied on the command line or
- * defaulted by {@link ApiNodeConfig.resolve}.
+ * defaulted by {@link ApiNodeConfig.resolve} or, for the query-engine block,
+ * left unset (an unset member renders no line).
  *
  * Every ini KEY it emits is a named constant in the companion namespace below,
  * and `CreateApiNodeCommand` registers its `--flags` from those same constants —
- * so a flag name and the ini key it produces cannot drift apart.
+ * so a flag name and the ini key it produces cannot drift apart. The
+ * query-engine block is a further exception (as is
+ * `Constants.CHAIN_STATE_DB_SIZE_MB_OPTION`): its keys come from
+ * `Constants.READ_MODE_OPTION` / `Constants.QUERY_ENGINE_LIMIT_OPTIONS`, and its
+ * flags are the `--query-engine-*` spellings shared with `create`
+ * (`toQueryEngineFlag`), not the bare nodeop names.
  *
  * **Why `net_plugin` is in the emitted plugin set even though the ticket's
  * baseline omits it** — two independent reasons, either sufficient:
@@ -72,6 +79,7 @@ export class ApiNodeIniRenderer implements Renderer {
         ...config.p2pPeerAddresses.map(peer =>
           toIniLine(ApiNodeIniRenderer.P2pPeerAddressOption, peer)
         ),
+        ...QueryEngineConfigProvider.toIniLines(config.queryEngine),
         "",
         ...ApiNodeIniRenderer.Plugins.map(plugin =>
           toIniLine(ApiNodeIniRenderer.PluginOption, plugin)
@@ -95,13 +103,26 @@ export namespace ApiNodeIniRenderer {
    * spelling of the trace plugin, shared with the cluster ini renderer and the
    * nodeop argv builder.
    *
+   * `Constants.QUERY_ENGINE_PLUGIN` is a further addition to the baseline: it
+   * serves `/v1/query/execute` on the node's `http-server-address`. Its
+   * `read-mode` and `query-*` limits are rendered by
+   * `QueryEngineConfigProvider.toIniLines` from `ApiNodeConfig.queryEngine`
+   * (`--query-engine-*`) — each only when set, the same helper the cluster's
+   * API-node ini uses. With nothing set the ini carries no read-mode line and
+   * nodeop's default (`head`) applies; a deployment overlay that appends its own
+   * `read-mode` line therefore keeps working until an operator sets
+   * `--query-engine-read-mode`, at which point the overlay line must go (nodeop
+   * refuses a key set twice). The artifact requires a nodeop built with the
+   * plugin.
+   *
    * See the class JSDoc for why `net_plugin` is present despite the ticket's
    * baseline omitting it.
    */
   export const Plugins: readonly string[] = [
     Constants.NET_PLUGIN,
     Constants.CHAIN_API_PLUGIN,
-    Constants.TRACE_API_PLUGIN
+    Constants.TRACE_API_PLUGIN,
+    Constants.QUERY_ENGINE_PLUGIN
   ] as const
 
   /** The repeated `plugin` ini key — one line per {@link Plugins} entry. */

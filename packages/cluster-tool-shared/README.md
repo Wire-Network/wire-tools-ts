@@ -22,9 +22,11 @@ typed against these declarations.
 | Path | Contents |
 |---|---|
 | `src/cluster/ClusterFiles.ts` | `ClusterFiles` — the on-disk filenames (`cluster-config.json`, `cluster-state.json`, `cluster-keys.json`) |
-| `src/cluster/ClusterState.ts` | `ClusterState` / `ClusterStateNode` / `ClusterStateNodePorts` / `ClusterStateNodeRole` — the secret-free post-bootstrap snapshot (`cluster-state.json`) |
-| `src/config/BindConfig.ts` | `BindConfig` + the `BindConfig*` shape family, `BindOverrides<T>` (the derived caller-options projection), `Bind*Options`, `ClusterTopologyOptions` |
+| `src/cluster/ClusterState.ts` | `ClusterState` / `ClusterStateNode` / `ClusterStateNodePorts` / `ClusterStateNodeRole` (`bios` / `producer` / `operator` / `api`) — the secret-free post-bootstrap snapshot (`cluster-state.json`) |
+| `src/config/BindConfig.ts` | `BindConfig` + the `BindConfig*` shape family (including the `nodeop.ports.api` list — one port pair per API node), `BindOverrides<T>` (the derived caller-options projection), `Bind*Options`, `ClusterTopologyOptions` |
 | `src/config/ClusterConfig.ts` | `ClusterConfig` (the `cluster-config.json` shape) + `ClusterConfig*` nested family, `CollateralRequirement`, `ClusterExecutablePaths` |
+| `src/config/NodeopReadMode.ts` | `NodeopReadMode` — nodeop's `read-mode` values (`head` / `irreversible` / `speculative`) |
+| `src/config/QueryEngineConfig.ts` | `QueryEngineConfig` / `QueryEngineReadMode` / `QueryEngineLimits` — the query-engine config of a cluster's API nodes (persisted as `ClusterConfig.queryEngine`) and of a standalone `create-api-node` artifact: the read mode plus the twelve `query-*` limits, every member `null` unless set |
 | `src/types/ChainTokenAmount.ts` | `ChainTokenAmount` — harness-local (chain, token) amount tuple |
 
 ## Design rules
