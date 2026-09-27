@@ -188,6 +188,34 @@ describe("SolanaFundingTool step factories", () => {
     expect(step.input.amount).toBe(9n)
   })
 
+  it("mintSplToSwapUser builds a Step carrying tokenCode + amount", () => {
+    const step = SolanaFundingTool.planSplMintToSwapUser(
+      Report.Actor.User,
+      "swap-user-usdcsol-mint",
+      "mint usdcsol to swap user",
+      {},
+      123n,
+      9n
+    )
+    expect(step.input.kind).toBe("SolanaFundingTool.MintSplToSwapUserInput")
+    expect(step.input.tokenCode).toBe(123n)
+    expect(step.input.amount).toBe(9n)
+  })
+
+  it("mintSplToSwapUser rejects a non-positive amount", async () => {
+    await expect(
+      SolanaFundingTool.runSplMintToSwapUser(
+        null as never,
+        {
+          kind: "SolanaFundingTool.MintSplToSwapUserInput",
+          tokenCode: 123n,
+          amount: 0n
+        },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/amount must be positive/)
+  })
+
   it("loadDeployerKeypair throws when the persisted keypair is absent", () => {
     expect(() =>
       SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")

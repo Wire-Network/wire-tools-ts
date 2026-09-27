@@ -233,6 +233,9 @@ export namespace ClioRunner {
   export const ErrorFragment = {
     /** `sysio::newaccount` rejecting a name that is taken. */
     AccountAlreadyExists: "already exists",
+    /** `sysio.roa::addpolicy` rejecting an already-provisioned owner/issuer pair. */
+    ResourcePolicyAlreadyExists:
+      "A policy for this owner already exists from this issuer",
     /** kiod refusing to unlock a wallet that is already unlocked. */
     WalletAlreadyUnlocked: "Already unlocked"
   } as const
