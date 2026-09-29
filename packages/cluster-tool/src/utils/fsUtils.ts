@@ -10,23 +10,21 @@ const log = getLogger(__filename)
 /**
  * proper-lockfile options for the short critical sections {@link withFileLock}
  * guards: bounded exponential-backoff retries so a contending process waits
- * rather than fails, plus a 10s stale-lock steal so a crashed holder can't
- * wedge the resource. `realpath: false` lets the lock target not pre-exist.
+ * rather than fails, plus a 30s stale-lock steal so a crashed holder can't
+ * wedge the resource without risking a live holder during the documented
+ * ~15s loaded-host port-probing critical section. `realpath: false` lets the
+ * lock target not pre-exist.
  *
  * Changing these tunes how long a contending process blocks before giving up
  * (retries) and how long a dead holder's lock survives (stale). The ~25s
  * cumulative retry budget (`retries: 8`) is sized for the WORST short-section
  * holder under contention: a solana dynamic-range pick TCP+UDP-probes a
- * 64-port window while holding the port lock (seconds on a loaded host), and
- * the full jest run puts all 8 projects' port-resolving tests behind the SAME
- * host-global lock — the previous ~6s budget failed a rotating victim test
- * with `Lock file is already being held` (e2e gate run 30399635199 + local
- * pre-commit runs).
+ * 64-port window while holding the port lock (~15s on a loaded host).
  */
 const FileLockOptions: LockOptions = {
   realpath: false,
   retries: { retries: 8, factor: 2, minTimeout: 100 },
-  stale: 10_000
+  stale: 30_000
 }
 
 /**
