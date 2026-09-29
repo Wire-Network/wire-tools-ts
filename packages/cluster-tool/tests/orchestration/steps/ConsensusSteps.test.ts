@@ -1,4 +1,15 @@
-import { SysioContracts } from "@wireio/sdk-core"
+import {
+  KeyType,
+  PrivateKey,
+  PublicKey,
+  Signature,
+  SysioContracts
+} from "@wireio/sdk-core"
+import {
+  createFinalizerRegistrationProof,
+  finalizerRegistrationMessage
+} from "@wireio/cluster-tool/utils/finalizerRegistrationUtils"
+import { keyPairFromPrivate } from "@wireio/cluster-tool/utils/keyPairUtils"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
@@ -28,21 +39,24 @@ describe("Steps.consensus", () => {
     it.each([
       ["planRegisterProducer", "runRegisterProducer"],
       ["planRegisterFinalizerKey", "runRegisterFinalizerKey"]
-    ] as const)("%s carries the handle as its typed input and wires %s", (factoryName, runnerName) => {
-      const step = Steps.consensus[factoryName](
-        Report.Actor.Producer,
-        factoryName,
-        `consensus step ${factoryName}`,
-        {},
-        "flowprod"
-      )
-      expect(step.actor).toBe(Report.Actor.Producer)
-      expect(step.input).toEqual({
-        kind: "ConsensusSteps.ProducerRegistrationInput",
-        label: "flowprod"
-      })
-      expect(step.runner).toBe(Steps.consensus[runnerName])
-    })
+    ] as const)(
+      "%s carries the handle as its typed input and wires %s",
+      (factoryName, runnerName) => {
+        const step = Steps.consensus[factoryName](
+          Report.Actor.Producer,
+          factoryName,
+          `consensus step ${factoryName}`,
+          {},
+          "flowprod"
+        )
+        expect(step.actor).toBe(Report.Actor.Producer)
+        expect(step.input).toEqual({
+          kind: "ConsensusSteps.ProducerRegistrationInput",
+          label: "flowprod"
+        })
+        expect(step.runner).toBe(Steps.consensus[runnerName])
+      }
+    )
   })
 
   /**
@@ -64,7 +78,10 @@ describe("Steps.consensus", () => {
 
       await Steps.consensus.runRegisterProducer(
         ctx,
-        { kind: "ConsensusSteps.ProducerRegistrationInput", label: producer.label },
+        {
+          kind: "ConsensusSteps.ProducerRegistrationInput",
+          label: producer.label
+        },
         signal
       )
       expect(invoke).toHaveBeenCalledWith(
@@ -86,7 +103,10 @@ describe("Steps.consensus", () => {
           .mockResolvedValue(undefined)
       await Steps.consensus.runRegisterProducer(
         ctx,
-        { kind: "ConsensusSteps.ProducerRegistrationInput", label: producer.label },
+        {
+          kind: "ConsensusSteps.ProducerRegistrationInput",
+          label: producer.label
+        },
         signal
       )
       expect(delegate).toHaveBeenCalledWith(
@@ -117,20 +137,46 @@ describe("Steps.consensus", () => {
 
       // Distinct keys per account is the whole point — `regfinkey` enforces a GLOBAL uniqueness
       // check, so siblings sharing their node's one key means only the first can register.
-      expect(new Set(seeded.map(entry => entry.wireFinalizer.publicKey)).size).toBe(
-        seeded.length
-      )
-      const [producer] = seeded
+      expect(
+        new Set(seeded.map(entry => entry.wireFinalizer.publicKey)).size
+      ).toBe(seeded.length)
+      const producer = {
+        ...seeded[0],
+        wireFinalizer: keyPairFromPrivate(
+          KeyType.BLS,
+          PrivateKey.generate(KeyType.BLS).toString()
+        )
+      }
+      ctx.keyStore.setOperator(producer)
       await Steps.consensus.runRegisterFinalizerKey(
         ctx,
-        { kind: "ConsensusSteps.ProducerRegistrationInput", label: producer.label },
+        {
+          kind: "ConsensusSteps.ProducerRegistrationInput",
+          label: producer.label
+        },
         signal
       )
+      const [, pop, signature] =
+        invoke.mock.calls[0][0].proof_of_possession.split(":")
+      expect(pop).toBe(producer.wireFinalizer.proofOfPossession)
+      const message = finalizerRegistrationMessage(
+        producer.account,
+        producer.wireFinalizer.publicKey
+      )
+      expect(
+        Signature.from(signature).verifyMessage(
+          message,
+          PublicKey.from(producer.wireFinalizer.publicKey)
+        )
+      ).toBe(true)
       expect(invoke).toHaveBeenCalledWith(
         {
           finalizer_name: producer.account,
           finalizer_key: producer.wireFinalizer.publicKey,
-          proof_of_possession: producer.wireFinalizer.proofOfPossession
+          proof_of_possession: createFinalizerRegistrationProof(
+            producer.account,
+            producer.wireFinalizer
+          )
         },
         {
           authorization: [{ actor: producer.account, permission: "active" }]
@@ -140,13 +186,24 @@ describe("Steps.consensus", () => {
 
     it("regfinkey delegates the write to Steps.contracts.sysio.system.runRegfinkey", async () => {
       const ctx = fixtureContext(),
-        [producer] = seedProducerOperators(ctx),
+        [seeded] = seedProducerOperators(ctx),
+        producer = {
+          ...seeded,
+          wireFinalizer: keyPairFromPrivate(
+            KeyType.BLS,
+            PrivateKey.generate(KeyType.BLS).toString()
+          )
+        },
         delegate = jest
           .spyOn(Steps.contracts.sysio.system, "runRegfinkey")
           .mockResolvedValue(undefined)
+      ctx.keyStore.setOperator(producer)
       await Steps.consensus.runRegisterFinalizerKey(
         ctx,
-        { kind: "ConsensusSteps.ProducerRegistrationInput", label: producer.label },
+        {
+          kind: "ConsensusSteps.ProducerRegistrationInput",
+          label: producer.label
+        },
         signal
       )
       expect(delegate).toHaveBeenCalledWith(
@@ -156,7 +213,10 @@ describe("Steps.consensus", () => {
           data: {
             finalizer_name: producer.account,
             finalizer_key: producer.wireFinalizer.publicKey,
-            proof_of_possession: producer.wireFinalizer.proofOfPossession
+            proof_of_possession: createFinalizerRegistrationProof(
+              producer.account,
+              producer.wireFinalizer
+            )
           }
         },
         signal

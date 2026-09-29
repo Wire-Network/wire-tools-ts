@@ -3,6 +3,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../report/Report.js"
 import { sleep } from "../../utils/asyncUtils.js"
+import { createFinalizerRegistrationProof } from "../../utils/finalizerRegistrationUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -222,7 +223,7 @@ export namespace ConsensusSteps {
   }
 
   /**
-   * Named runner — resolve the account's OWN BLS key + proof of possession from the key store,
+   * Named runner — bind the account's OWN BLS key to its on-chain account using both proofs,
    * then delegate the write to `SystemContractSteps.runRegfinkey` (signed by the finalizer).
    */
   export async function runRegisterFinalizerKey<C extends ClusterBuildContext>(
@@ -243,7 +244,7 @@ export namespace ConsensusSteps {
         data: {
           finalizer_name: producer.account,
           finalizer_key: producer.wireFinalizer.publicKey,
-          proof_of_possession: producer.wireFinalizer.proofOfPossession
+          proof_of_possession: createFinalizerRegistrationProof(producer.account, producer.wireFinalizer)
         }
       },
       signal
