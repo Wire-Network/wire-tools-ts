@@ -15,9 +15,10 @@ const config: Config = {
   // An undershot ceiling does NOT fail cleanly here, which is why this is
   // sized generously rather than trimmed: a test killed mid-`withFileLock`
   // leaves `proper-lockfile`'s refresh timer holding the port lock while the
-  // suite's fixture removes its temp registry dir, and the `onCompromised`
-  // hook then throws `ENOENT … wire-cluster-ports.lock.lock` — a second,
-  // unrelated-looking failure class produced entirely by the first.
+  // suite's fixture removes its temp registry dir. `withFileLock`'s
+  // `onCompromised` then rejects that call with an `ENOENT …
+  // wire-cluster-ports.lock.lock` cause — a second, unrelated-looking failure
+  // produced entirely by the first.
   //
   // A generous ceiling adds no wall clock to a healthy run: a passing test
   // returns the moment it finishes.
