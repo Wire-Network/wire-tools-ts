@@ -8,9 +8,18 @@ const config: Config = {
   // Sized to the LOADED-HOST worst case for a port-resolving test, per
   // STYLE.md "Timing Budgets". The cost is real probing, not waiting:
   // `ClusterConfigProvider.resolve` claims every daemon port (each TCP-probed,
-  // UDP-role ones probed twice) and `findAvailableRange` sweeps a 64-port
-  // window — ~15s per test even with the suite running ALONE. Under the full
-  // 8-project run that comfortably exceeds a 30s ceiling.
+  // UDP-role ones probed twice) and `findAvailableRange` sweeps 64-port
+  // windows. The first resolve in a process makes about 795 binds, a later one
+  // in the same process about 1,500.
+  //
+  // A host can serialize `bind()`, so the worst case is set by how many
+  // port-resolving processes bind AT ONCE. On WSL2 with mirrored networking a
+  // bind costs about 10 ms alone and the cost grows linearly with concurrent
+  // binders: about 135 ms each with 13 (the port-resolving suites of a full
+  // run, which start together) and about 324 ms each with 31 (the worker
+  // bound, cores - 1). Measured: with 13 binding, a process's first resolve
+  // took 120-135 s. 360s covers that FIRST concurrent resolve of a process up
+  // to the 31-binder bound. Source: the H1 debug measurements (2026-09-29).
   //
   // An undershot ceiling does NOT fail cleanly here, which is why this is
   // sized generously rather than trimmed: a test killed mid-`withFileLock`
@@ -21,7 +30,7 @@ const config: Config = {
   //
   // A generous ceiling adds no wall clock to a healthy run: a passing test
   // returns the moment it finishes.
-  testTimeout: 120_000,
+  testTimeout: 360_000,
   projects: [
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
