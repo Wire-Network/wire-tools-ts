@@ -21,7 +21,11 @@ export interface AnvilOptions {
   binary?: string
   /** Additional CLI flags. */
   extraArgs?: string[]
-  /** `--slots-in-an-epoch` (run-phase finality emulation; omit during deploy). */
+  /**
+   * `--slots-in-an-epoch` (finality emulation: `finalized` trails `latest` by two
+   * epochs of this many blocks). Spawn-time only — anvil exposes no RPC to change
+   * it, so the run-time anvil sets it even though it starts in instamine mode.
+   */
   slotsInAnEpoch?: number
   /** `--block-time` seconds (run-phase interval mining; omit during deploy). */
   blockTimeSec?: number
@@ -178,7 +182,11 @@ export namespace AnvilProcess {
 
   /** Default EVM chain id (Foundry's standard). */
   export const DefaultChainId = 31_337
-  /** `--slots-in-an-epoch` value for the run-phase anvil (finalize after 2 blocks). */
+  /**
+   * `--slots-in-an-epoch` value for the run-time anvil: finality two blocks behind
+   * `latest`. Raising it stretches every `finalized`-tag read the batch operators
+   * make against the outpost by two blocks per slot.
+   */
   export const SlotsInAnEpoch = 1
   /** `--block-time` seconds for the run-phase anvil. */
   export const BlockTimeSec = 1
