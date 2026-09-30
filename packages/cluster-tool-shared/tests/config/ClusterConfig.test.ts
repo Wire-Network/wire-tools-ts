@@ -4,6 +4,7 @@ import {
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   createUnsetQueryEngineConfig,
   type ClusterConfig
@@ -91,9 +92,11 @@ describe("ClusterConfig shape", () => {
     debuggingServerEnabled: true,
     enableMockReserves: false,
     enableLaunchWithheldOperations: false,
+    enableMockLiqPools: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
-    queryEngine: createUnsetQueryEngineConfig()
+    queryEngine: createUnsetQueryEngineConfig(),
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -120,7 +123,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
+  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.awsClusterNodeConfig
@@ -128,6 +131,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
     delete parsed.enableLaunchWithheldOperations
+    delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -142,6 +146,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
     expect(rehydrated.enableLaunchWithheldOperations).toBe(false)
+    expect(rehydrated.enableMockLiqPools).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)
@@ -163,6 +168,15 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {
+    const tuned: ClusterConfig = { ...config, solanaSlotsPerEpoch: 64 },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(tuned)
+      )
+    expect(rehydrated.solanaSlotsPerEpoch).toBe(64)
+    expect(rehydrated).toEqual(tuned)
   })
 
   it("persists deploymentKind as its identity-mapped wire spelling", () => {

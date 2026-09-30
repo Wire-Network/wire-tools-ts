@@ -1,31 +1,33 @@
+import { Report } from "../../report/Report.js"
+import { provisionWireUser } from "../../tools/wire/WireUserTool.js"
+import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
   ClusterBuildStep,
-  provisionWireUser,
-  type ClusterBuildContext,
-  type ClusterBuildStepOptions,
-  type Report,
-  type StepInput
-} from "@wireio/cluster-tool"
+  type ClusterBuildStepOptions
+} from "../ClusterBuildStep.js"
+import type { StepInput } from "../StepRunner.js"
 
 /**
- * Flow-local user Steps — WIRE-side depositor provisioning. The harness ships
- * {@link provisionWireUser} as flow-layer plumbing (create account + resource
- * policy + optional treasury funding); this factory lifts it into ONE
- * Report-validated `ClusterBuildStep` per the plan's `Steps.user.provisionWire`
- * shape.
+ * Steps that provision the WIRE-side user identities a flow scenario acts
+ * as: a swap depositor, a swap-to-WIRE recipient, a reserve owner, a liq
+ * holder. The harness ships {@link provisionWireUser} as the flow-layer
+ * plumbing (create the account under the dev key, attach the resource
+ * policy, optionally fund it from the treasury); these factories lift it
+ * into ONE Report-validated step per user.
  */
-export namespace SwapFromWireScenarioUserSteps {
+export namespace UserSteps {
   /** Input for {@link planProvisionWire}. */
   export interface ProvisionWireInput extends StepInput {
-    readonly kind: "SwapFromWireScenarioUserSteps.ProvisionWireInput"
+    readonly kind: "UserSteps.ProvisionWireInput"
     /** WIRE account name to provision. */
     readonly account: string
-    /** Raw 9-dec WIRE base units funded from the `sysio` treasury. */
+    /** Raw 9-dec WIRE base units funded from the `sysio` treasury; `0n` creates the account unfunded. */
     readonly fundWireAmount: bigint
   }
 
   /**
-   * Provision a WIRE user account and fund it from the treasury.
+   * Provision a WIRE user account, funded from the treasury when
+   * `fundWireAmount` is positive.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -50,11 +52,7 @@ export namespace SwapFromWireScenarioUserSteps {
       name,
       description,
       options,
-      {
-        kind: "SwapFromWireScenarioUserSteps.ProvisionWireInput",
-        account,
-        fundWireAmount
-      },
+      { kind: "UserSteps.ProvisionWireInput", account, fundWireAmount },
       runProvisionWire
     )
   }

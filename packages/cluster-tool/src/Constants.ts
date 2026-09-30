@@ -117,6 +117,8 @@ export namespace Constants {
     "sysio.reserv",
     "sysio.chalg",
     "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"
@@ -320,7 +322,9 @@ export namespace Constants {
     "sysio.uwrit": "contracts/sysio.uwrit",
     "sysio.reserv": "contracts/sysio.reserv",
     "sysio.chalg": "contracts/sysio.chalg",
-    "sysio.dclaim": "contracts/sysio.dclaim"
+    "sysio.dclaim": "contracts/sysio.dclaim",
+    "sysio.swap": "contracts/sysio.swap",
+    "sysio.liq": "contracts/sysio.liq"
   } as const
 
   export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
@@ -335,7 +339,9 @@ export namespace Constants {
     "sysio.uwrit",
     "sysio.reserv",
     "sysio.chalg",
-    "sysio.dclaim"
+    "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq"
   ] as const
 
   /** Plugins loaded on a batch-operator node. */
@@ -556,6 +562,14 @@ export namespace ProtocolTiming {
 
   /** Double hop — outpost → depot → outpost (ms) — 14-minute envelope top. */
   export const DoubleHopBudgetMs = 840_000
+
+  /**
+   * One outpost WRITE step's ceiling (ms): a local anvil / test-validator
+   * transaction and its confirmation. A loaded-host local-operation ceiling,
+   * not a protocol hop — the depot-side effect of that write is a
+   * {@link CollateralVerifyBudgetMs} / {@link SingleHopBudgetMs} wait.
+   */
+  export const OutpostWriteBudgetMs = 60_000
 
   /**
    * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),

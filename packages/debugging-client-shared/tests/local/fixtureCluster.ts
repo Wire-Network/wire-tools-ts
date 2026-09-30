@@ -8,6 +8,7 @@ import {
   ClusterFiles,
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
@@ -94,6 +95,7 @@ export function makeFixtureCluster(): FixtureCluster {
     underwriterCount: 1,
     apiCount: 0,
     epochDurationSec: 60,
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
     operatorsPerEpoch: null,
     batchOpGroups: null,
     epochRetentionEnvelopeLogCount: null,
@@ -157,6 +159,7 @@ export function makeFixtureCluster(): FixtureCluster {
     debuggingServerEnabled: true,
     enableMockReserves: false,
     enableLaunchWithheldOperations: false,
+    enableMockLiqPools: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig()

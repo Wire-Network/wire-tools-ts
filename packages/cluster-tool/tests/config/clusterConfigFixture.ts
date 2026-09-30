@@ -1,6 +1,7 @@
 import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -119,10 +120,12 @@ export const PersistedFixture: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockReserves: false,
   enableLaunchWithheldOperations: false,
+  enableMockLiqPools: false,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   // Nothing set: nodeop's read mode, the plugin's limits.
-  queryEngine: QueryEngineConfigProvider.createDefaultOptions()
+  queryEngine: QueryEngineConfigProvider.createDefaultOptions(),
+  solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

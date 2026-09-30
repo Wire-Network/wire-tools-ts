@@ -183,4 +183,28 @@ describe("SolanaValidatorProcess", () => {
       expect.arrayContaining(["--limit-ledger-size", "250000"])
     )
   })
+
+  it("defaults --slots-per-epoch to a schedule that leaves Solana epoch 0 (the liqsol init underflows there)", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--slots-per-epoch",
+        String(SolanaValidatorProcess.DefaultSlotsPerEpoch)
+      ])
+    )
+    // agave's own default is what keeps a fresh validator at epoch 0 for days.
+    expect(SolanaValidatorProcess.DefaultSlotsPerEpoch).toBeLessThan(432_000)
+  })
+
+  it("passes an explicit --slots-per-epoch verbatim", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      slotsPerEpoch: 64
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining(["--slots-per-epoch", "64"])
+    )
+  })
 })

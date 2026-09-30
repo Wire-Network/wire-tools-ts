@@ -4,6 +4,7 @@ import {
   ClusterDeploymentKind,
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
@@ -34,6 +35,7 @@ const stubConfig: ClusterConfig = {
   underwriterCount: 0,
   apiCount: 0,
   epochDurationSec: 60,
+  solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
   operatorsPerEpoch: null,
   batchOpGroups: null,
   epochRetentionEnvelopeLogCount: null,
@@ -101,6 +103,7 @@ const stubConfig: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockReserves: false,
   enableLaunchWithheldOperations: false,
+  enableMockLiqPools: false,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   queryEngine: createUnsetQueryEngineConfig()

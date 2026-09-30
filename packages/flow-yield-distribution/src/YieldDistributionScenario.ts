@@ -158,7 +158,7 @@ async function runProvisionUnlinkedStaker(
 
 /**
  * Yield distribution — synthetic STAKING_REWARD attestations driven through
- * both outposts into the depot's reward-distribution path
+ * the ETHEREUM outpost into the depot's reward-distribution path
  * (`sysio.dclaim::onreward` → `sysio.system::fundclaim` → `sysio.token`),
  * porting the old jest suite's four tests 1:1:
  *
@@ -172,13 +172,11 @@ async function runProvisionUnlinkedStaker(
  * 4. **DedupReplay** — snapshot the linked `pclaims` count, re-emit the SAME
  *    `external_epoch_ref` (the emitter's monotonic check reverts), and after a
  *    settle window the count is unchanged.
- * 5. **EmitSolanaReward** — `opp_outpost::add_attestation` mirrors the flow on
- *    the SOL side for a new unlinked staker; the `unmapped` count grows.
  */
 export class YieldDistributionScenario extends FlowScenario {
   readonly name = "flow-yield-distribution"
   readonly description =
-    "Fake STAKING_REWARD emissions on both outposts: pclaims credit (linked), unmapped park (unlinked), and external_epoch_ref replay dedupe"
+    "Fake STAKING_REWARD emissions on the Ethereum outpost: pclaims credit (linked), unmapped park (unlinked), and external_epoch_ref replay dedupe"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -409,55 +407,6 @@ export class YieldDistributionScenario extends FlowScenario {
         dedupeStepOptions
       )
     )
-
-    // ── 5. EmitSolanaReward — add_attestation mirrors the flow on SOL ──
-    ClusterBuildPhase.create(
-      cluster,
-      "EmitSolanaReward",
-      "opp_outpost::add_attestation drives a SOL-side STAKING_REWARD to the depot (unlinked park)"
-    ).push(
-      verifyStep(
-        Actor.Sysio,
-        "snapshot-unmapped-solana",
-        "record the unmapped row count before the SOL emission",
-        async ctx => {
-          ctx.outputs.set(
-            YieldDistributionScenario.SolanaUnmappedCountBeforeKey,
-            (await readUnmappedRows(ctx)).length
-          )
-        }
-      ),
-      EmitSteps.planSolanaEmit(
-        Actor.SolanaOutpost,
-        "emit-solana-reward",
-        `emit ${Constants.SolanaRewardPerStaker} lamports STAKING_REWARD for a new unlinked SOL staker`,
-        emitStepOptions,
-        Constants.UnlinkedWireAccount,
-        Constants.SolanaRewardPerStaker,
-        Constants.FullShareBps,
-        BigInt(Constants.SolanaChainCode),
-        BigInt(Constants.SolanaTokenCode),
-        Constants.SolanaStakerExternalEpochRef,
-        Constants.RewardEpochIndex
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "unmapped-count-grew-solana",
-        "the unmapped row count grew past the snapshot",
-        async ctx => {
-          const before = ctx.outputs.assert(
-            YieldDistributionScenario.SolanaUnmappedCountBeforeKey
-          )
-          await pollUntil(
-            "unmapped row for the unlinked SOL staker",
-            async () => (await readUnmappedRows(ctx)).length > before,
-            Constants.PropagationTimeoutMs,
-            Constants.PropagationPollMs
-          )
-        },
-        propagationStepOptions
-      )
-    )
   }
 }
 
@@ -482,11 +431,6 @@ export namespace YieldDistributionScenario {
   export const EthereumUnmappedCountBeforeKey = outputKey<number>(
     "yieldDistribution.ethereumUnmappedCountBefore",
     "unmapped row count before the unlinked ETH emission"
-  )
-  /** `unmapped` row count snapshotted before the SOL emission. */
-  export const SolanaUnmappedCountBeforeKey = outputKey<number>(
-    "yieldDistribution.solanaUnmappedCountBefore",
-    "unmapped row count before the SOL emission"
   )
   /** The linked staker's `pclaims` row count snapshotted before the replay. */
   export const ReplayPclaimsCountBeforeKey = outputKey<number>(

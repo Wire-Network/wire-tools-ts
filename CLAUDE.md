@@ -89,7 +89,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (17 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, liq syndication, liq yield, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -298,7 +298,9 @@ depot leaves these unseeded), `--enable-launch-withheld-operations` (default
 off — run the Solana outpost bootstrap calls the launch build of the program
 withholds with `OperationDisabled`: `init_reserve`, `create_reserve_native` and the
 mock SPL reserve provisioning that writes `sol-mock-mints.json`; a default cluster
-skips them), `--api-count <N>` (default 0 — plan N API nodes:
+skips them), `--enable-mock-liq-pools` (default off — seed the
+2 mock shadow-liq yield pools on `sysio.swap`, minting the pool shadow from
+nothing; a real / external depot never does), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -346,12 +348,17 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
-**Flow authoring — mock reserves.** A flow that reads the mock (chain, token)
-PRIMARY reserves sets `enableMockReserves: true` in its `Scenario.defaults` (the
-same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan()`.
-The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
-`EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
-so `regreserve` can never be called from a flow phase.
+**Flow authoring — mock reserves and liq pools.** A flow that reads the mock
+(chain, token) PRIMARY reserves sets `enableMockReserves: true` in its
+`Scenario.defaults` (the same mechanism it uses for `operatorsPerEpoch` /
+collateral) — never in `plan()`. The bootstrap seeds them during epoch 0; a
+flow's `plan()` phases always run AFTER `EpochBootstrap` advances epoch 0→1, and
+the depot gates `regreserve` to epoch 0, so `regreserve` can never be called from
+a flow phase. The mock shadow-liq yield pools (`enableMockLiqPools: true`,
+`sysio.liq::regliqpool`) follow the same rule for the same reason. The shadow
+symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
+`setconfig` and the kicker are registry setup a real depot performs too, so the
+bootstrap does those unconditionally.
 
 **Flow authoring — launch-withheld operations.** `enableLaunchWithheldOperations:
 true` makes the bootstrap RUN the Solana outpost calls the launch build of the
@@ -380,7 +387,12 @@ the `ApiNodes` group right before `OperatorNodes`.
   (clients + `outputs` + `keyStore` + typed events), `OutputStore`,
   `ClusterBuildDefaults` (bootstrap phases), `steps/` palette, per-chain
   outpost bootstrappers, `outputs/` (typed cross-step values incl.
-  `OperatorAccount`, `ClusterKeyStore`).
+  `OperatorAccount`, `ClusterKeyStore`). On the Solana side the validator loads
+  ALL FOUR wire-solana programs at genesis and
+  `solana/SolanaLiqsolSurfaceSteps` runs wire-solana's own `anchor run init-*`
+  scripts (one Step each, via `SolanaAnchorScriptTool`) BEFORE the OPP outpost
+  bootstrap — `init-global-config` is what creates the `global_config` every
+  OPP admin op is gated on.
 - **`cluster/`** — slim `ClusterManager` (dirs/launch/destroy) +
   `processes/`: construction-safe `ManagedProcess` base (self-registers,
   graceful stop with cleared escalation timer) and
@@ -407,7 +419,10 @@ the `ApiNodes` group right before `OperatorNodes`.
 `.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos
 (`../wire-libraries-ts/packages/` → `sdk-core`/`shared`/`shared-node`;
 `wire-sysio/build/opp/typescript` → `@wireio/opp-typescript-models`). They
-link automatically on `pnpm install` when the siblings exist.
+link automatically on `pnpm install` when the siblings exist. A feature
+worktree developed against sibling WORKTREES points the hook at them —
+`WIRE_LIBRARIES_TS_PATH=<libs-worktree> WIRE_SYSIO_PATH=<sysio-worktree> pnpm install`
+— and the `Linked …` lines it prints are the record of what resolved.
 
 > **Never depend on `@wireio/opp-solidity-models` here** — it is
 > `wire-ethereum`-only (`opp-models-packages.md`).

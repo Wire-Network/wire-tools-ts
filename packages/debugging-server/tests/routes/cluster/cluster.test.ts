@@ -4,7 +4,8 @@ import * as Path from "node:path"
 
 import {
   ClusterFiles,
-  createUnsetQueryEngineConfig
+  createUnsetQueryEngineConfig,
+  DefaultSolanaSlotsPerEpoch
 } from "@wireio/cluster-tool-shared"
 import {
   ApiPaths,
@@ -48,6 +49,7 @@ function fullConfig(clusterPath: string) {
     underwriterCount: 0,
     apiCount: 0,
     epochDurationSec: 60,
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
     warmupEpochs: 1,
     cooldownEpochs: 1,
     ethereumPath: "/eth",

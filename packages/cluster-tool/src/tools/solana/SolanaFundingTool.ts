@@ -229,43 +229,167 @@ export namespace SolanaFundingTool {
     }
   }
 
+  /** Filename prefix of every persisted per-cluster SOL keypair. */
+  export const KeypairFilePrefix = "sol-"
+  /** Filename suffix of every persisted per-cluster SOL keypair. */
+  export const KeypairFileSuffix = "-keypair.json"
+  /**
+   * Handle of the per-cluster deployer keypair — the ONE identity that is the
+   * wire-solana programs' upgrade authority (set at validator launch), the
+   * liqsol `global_config.admin`, and the mock-SPL mint authority.
+   */
+  export const DeployerKeypairName = "deployer"
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
-  export const DeployerKeypairFilename = "sol-deployer-keypair.json"
+  export const DeployerKeypairFilename = `${KeypairFilePrefix}${DeployerKeypairName}${KeypairFileSuffix}`
+
+  /**
+   * Absolute path to a per-cluster SOL keypair file
+   * (`<dataPath>/sol-<name>-keypair.json`). Every consumer resolves the path
+   * through this function so they load the SAME keypair for a given handle.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The keypair's durable handle (e.g. {@link DeployerKeypairName}).
+   * @return Absolute path to the keypair JSON file.
+   */
+  export function keypairFile(dataPath: string, name: string): string {
+    return Path.join(
+      dataPath,
+      `${KeypairFilePrefix}${name}${KeypairFileSuffix}`
+    )
+  }
 
   /**
    * Absolute path to the per-cluster SOL deployer keypair file
-   * (`<dataPath>/{@link DeployerKeypairFilename}`). This ONE identity is the
-   * `liqsol_core` program's upgrade authority (set at validator launch), the
-   * liqsol `global_config.admin`, and the mock-SPL mint authority — every
-   * consumer resolves the path through this function so they load the SAME
-   * keypair.
+   * (`<dataPath>/{@link DeployerKeypairFilename}`).
    *
    * @param dataPath - The cluster data directory.
    * @return Absolute path to the deployer keypair JSON file.
    */
   export function deployerKeypairFile(dataPath: string): string {
-    return Path.join(dataPath, DeployerKeypairFilename)
+    return keypairFile(dataPath, DeployerKeypairName)
   }
 
   /**
-   * Get-or-create the per-cluster SOL deployer keypair. Generates + persists
-   * the keypair on the first call; afterwards the persisted file is read back
-   * verbatim, so every caller (validator launch, outpost bootstrap, flow
-   * runners) resolves the identical identity. Idempotent.
+   * Get-or-create a per-cluster SOL keypair by handle. Generates + persists it
+   * on the first call; afterwards the persisted file is read back verbatim, so
+   * every caller resolves the identical identity. Idempotent.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The keypair's durable handle.
+   * @return The keypair.
+   */
+  export function createKeypair(dataPath: string, name: string): Keypair {
+    const file = keypairFile(dataPath, name)
+    if (!Fs.existsSync(file)) {
+      mkdirs(Path.dirname(file))
+      Fs.writeFileSync(
+        file,
+        JSON.stringify(Array.from(Keypair.generate().secretKey))
+      )
+    }
+    return loadKeypair(dataPath, name)
+  }
+
+  /**
+   * Load a persisted per-cluster SOL keypair by handle.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The keypair's durable handle.
+   * @return The keypair.
+   * @throws If the keypair has not been created yet.
+   */
+  export function loadKeypair(dataPath: string, name: string): Keypair {
+    const file = keypairFile(dataPath, name)
+    Assert.ok(
+      Fs.existsSync(file),
+      `SolanaFundingTool: SOL keypair "${name}" not found at ${file}`
+    )
+    return Keypair.fromSecretKey(
+      Uint8Array.from(JSON.parse(Fs.readFileSync(file, "utf8")))
+    )
+  }
+
+  /**
+   * Get-or-create the per-cluster SOL deployer keypair. Idempotent — see
+   * {@link createKeypair}.
    *
    * @param dataPath - The cluster data directory.
    * @return The deployer keypair.
    */
   export function createDeployerKeypair(dataPath: string): Keypair {
-    const keypairFile = deployerKeypairFile(dataPath)
-    if (!Fs.existsSync(keypairFile)) {
-      mkdirs(Path.dirname(keypairFile))
-      Fs.writeFileSync(
-        keypairFile,
-        JSON.stringify(Array.from(Keypair.generate().secretKey))
-      )
-    }
-    return loadDeployerKeypair(dataPath)
+    return createKeypair(dataPath, DeployerKeypairName)
+  }
+
+  // ── Step: airdrop SOL to a persisted per-cluster keypair (write) ─────────
+
+  /** Input for {@link planKeypairAirdrop} — top a named keypair up to a floor. */
+  export interface KeypairAirdropInput extends StepInput {
+    readonly kind: "SolanaFundingTool.KeypairAirdropInput"
+    /** Durable handle of the persisted keypair (see {@link createKeypair}). */
+    readonly keypairName: string
+    /** Ensure the keypair holds at least this many lamports. */
+    readonly floorLamports: bigint
+  }
+
+  /**
+   * A single `requestAirdrop` that tops a persisted per-cluster keypair up to
+   * `floorLamports`, get-or-creating the keypair first. Idempotent — a keypair
+   * already at/above the floor no-ops. This is the operator-free counterpart of
+   * {@link planAirdrop}: the deployer (which signs every `anchor run` init
+   * script and every liqsol admin op) and flow-owned user wallets have no
+   * `ctx.keyStore` operator identity to resolve from.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param keypairName - The keypair's durable handle.
+   * @param floorLamports - The lamport floor to top up to.
+   * @returns The definition step.
+   */
+  export function planKeypairAirdrop<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    keypairName: string,
+    floorLamports: bigint
+  ): ClusterBuildStep<C, KeypairAirdropInput> {
+    return ClusterBuildStep.create<C, KeypairAirdropInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SolanaFundingTool.KeypairAirdropInput",
+        keypairName,
+        floorLamports
+      },
+      runKeypairAirdrop
+    )
+  }
+
+  /** Named runner — read the balance (a read), then ONE `requestAirdrop` if below floor. */
+  export async function runKeypairAirdrop<C extends ClusterBuildContext>(
+    ctx: C,
+    input: KeypairAirdropInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const { publicKey } = createKeypair(ctx.config.dataPath, input.keypairName)
+    const current = BigInt(await ctx.solana.getLamports(publicKey))
+    if (current >= input.floorLamports) return
+    const signature = await ctx.solana.connection.requestAirdrop(
+      publicKey,
+      Number(input.floorLamports - current)
+    )
+    await confirmSignature(
+      ctx.solana.connection,
+      signature,
+      `SolanaFundingTool.planKeypairAirdrop ${input.keypairName}`
+    )
   }
 
   // ── Step: airdrop SOL to an operator keypair (write) ─────────────────────
@@ -447,16 +571,13 @@ export namespace SolanaFundingTool {
    * Load the persisted mint-authority (deployer) keypair from the cluster data
    * dir — the keypair `SolanaOutpostBootstrapper` writes when it provisions the
    * mock SPL mints (a value helper used inside {@link runSplMint}).
+   *
+   * @param dataPath - The cluster data directory.
+   * @return The deployer keypair.
+   * @throws If the deployer keypair has not been created yet.
    */
   export function loadDeployerKeypair(dataPath: string): Keypair {
-    const keypairFile = deployerKeypairFile(dataPath)
-    Assert.ok(
-      Fs.existsSync(keypairFile),
-      `SolanaFundingTool.planSplMint: deployer keypair not found at ${keypairFile}`
-    )
-    return Keypair.fromSecretKey(
-      Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8")))
-    )
+    return loadKeypair(dataPath, DeployerKeypairName)
   }
 
   /**

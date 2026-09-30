@@ -281,6 +281,34 @@ describe("WireClient", () => {
     })
   })
 
+  describe("symbolCodeKeyRange", () => {
+    // sysio.liq's symbol-keyed KV tables (stat, liqpending, yieldidx) key on ONE uint64
+    // `symbol_code`. The node takes `lower_bound` inclusive and `upper_bound` EXCLUSIVE, and a
+    // bare code string fails at parse time (`Unexpected char '76' in "LIQSOL"`) exactly like a
+    // bare account name does — which is what took flow-liq-yield's first yield read down.
+    it("spans exactly [code, code + 1) as JSON objects keyed by the ABI key field", () => {
+      const { lowerBound, upperBound } = WireClient.symbolCodeKeyRange("symbol_code", "LIQSOL"),
+        lower = JSON.parse(lowerBound),
+        upper = JSON.parse(upperBound)
+      expect(Object.keys(lower)).toEqual(["symbol_code"])
+      expect(Object.keys(upper)).toEqual(["symbol_code"])
+      expect(typeof lower.symbol_code).toBe("string")
+      expect(BigInt(upper.symbol_code)).toBe(BigInt(lower.symbol_code) + 1n)
+    })
+
+    it("carries the code's raw uint64, so two codes' ranges never overlap", () => {
+      const at = (bound: string): bigint => BigInt(JSON.parse(bound).symbol_code),
+        sol = WireClient.symbolCodeKeyRange("symbol_code", "LIQSOL"),
+        eth = WireClient.symbolCodeKeyRange("symbol_code", "LIQETH")
+      expect(at(sol.lowerBound)).not.toBe(at(eth.lowerBound))
+      expect(at(sol.lowerBound) >= at(eth.upperBound) || at(sol.upperBound) <= at(eth.lowerBound)).toBe(true)
+    })
+
+    it("refuses a code that is not a symbol code", () => {
+      expect(() => WireClient.symbolCodeKeyRange("symbol_code", "liqsol")).toThrow()
+    })
+  })
+
   describe("transaction expiration", () => {
     it("pins an expiration well above clio's 30s default", () => {
       // clio's default is the SIGN->INCLUSION window, not execution. On a large
