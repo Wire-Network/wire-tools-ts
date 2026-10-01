@@ -13,7 +13,12 @@ export namespace AnvilProcessSteps {
    * Start the run-time anvil (get-or-create from `ctx.processManager`). It starts
    * in **instamine** mode (no `--block-time`) so the Hardhat outpost deploy — which
    * depends on instant mining — succeeds; {@link planEnableIntervalMining} switches it
-   * to interval mining afterward. Idempotent: a no-op if the anvil is already up.
+   * to interval mining afterward. `--slots-in-an-epoch` rides the spawn, though:
+   * anvil has no RPC that changes it later, and without it the default 32-slot
+   * epoch leaves the `finalized` tag 64 blocks behind `latest` — the tag every
+   * batch operator reads the outpost's outbound envelope at, so each ETH→depot
+   * hop waited out a full minute of interval mining. Idempotent: a no-op if the
+   * anvil is already up.
    */
   export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -40,7 +45,8 @@ export namespace AnvilProcessSteps {
         ctx.config.dataPath,
         AnvilProcess.StateSubpath,
         AnvilProcess.StateFilename
-      )
+      ),
+      slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch
     })
     await anvil.start()
   }
