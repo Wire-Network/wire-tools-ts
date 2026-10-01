@@ -7,8 +7,8 @@
     "build": "tsc -b tsconfig.json",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "lint": "eslint .",
-    "test": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:ci": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest --reporters=default --reporters=jest-junit",
+    "test": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest && pnpm -r --if-present run test:unit",
+    "test:ci": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest --reporters=default --reporters=jest-junit && pnpm -r --if-present run test:unit",
     "clean": "./scripts/clean.sh && pnpm -r run clean",
     "prepare": "husky"
   },

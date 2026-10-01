@@ -224,6 +224,13 @@ deadline. It self-concludes when the flow exits. `--interval-seconds` /
 `--epoch-duration-seconds` are the only tuning knobs; everything else derives
 from the cluster's `cluster-config.json`.
 
+OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
+by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
+when deliberately exercising paused outposts; it counts and quotes those exact
+refusals as NOISE, while preserving unrelated failures and all liveness bails.
+The liquidity flows run without this flag. It is distinct from
+`--expect-epoch-freeze`, which permits a deliberate epoch stall.
+
 Rules of the road (binding for sessions/automation; see
 `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
 `…/cluster-state-active-probing.md`):

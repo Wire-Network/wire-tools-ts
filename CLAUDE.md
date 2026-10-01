@@ -142,7 +142,8 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   ts-jest; `NODE_OPTIONS=--experimental-vm-modules` is wired into the test
   scripts for the ESM dynamic imports). Root `jest.config.ts` is
   multi-project.
-- **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
+- **Live flows use their `test` script; unit tests are separate** (Jest projects
+  or `test:unit`, both included by root `pnpm test`). A flow is verified by RUNNING its built
   `lib/index.js` against a live cluster (its `test` script does exactly that) —
   launched via `scripts/run-flow.mjs` and watched via
   `scripts/flow-heartbeat-monitor.mjs`, never invoked directly (see "Live flow
@@ -224,6 +225,13 @@ Running a flow means exactly two scripts, per
    `wire-platform-manifest/.claude/rules/cluster-state-active-probing.md` —
    armed DIRECTLY via a background Monitor, one instance per run; its stdout is
    the event stream and it self-concludes on flow exit or bail.
+
+OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
+by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
+when deliberately exercising paused outposts; it counts and quotes those exact
+refusals as NOISE, while preserving unrelated failures and all liveness bails.
+The liquidity flows run without this flag. It is distinct from
+`--expect-epoch-freeze`, which permits a deliberate epoch stall.
 
 NEVER wrap either script in session-local launchers/watchers, never invoke
 `lib/index.js` or `pnpm --filter <pkg> test` directly in a session, and extend
