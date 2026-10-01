@@ -112,6 +112,7 @@ describe("createCreateCommand", () => {
     expect(options.has("build-path")).toBe(true)
     expect(options.has("epoch-duration-sec")).toBe(true)
     expect(options.has("enable-mock-reserves")).toBe(true)
+    expect(options.has("enable-launch-withheld-operations")).toBe(true)
     expect(options.has("api-count")).toBe(true)
     expect(options.has(toQueryEngineFlag("readMode"))).toBe(true)
     // out-of-shape flags — registered so `.strict()` accepts them + `--help` lists them

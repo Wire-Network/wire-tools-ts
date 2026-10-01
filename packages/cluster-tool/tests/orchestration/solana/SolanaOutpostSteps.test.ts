@@ -1,8 +1,11 @@
+import { BN } from "@coral-xyz/anchor"
+import { Keypair, PublicKey } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaOutpostBootstrapper, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { solanaNativePublicKey } from "@wireio/cluster-tool/utils"
 
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
 /** A batch `OperatorAccount` under an explicit chain account name. */
@@ -20,6 +23,43 @@ describe("Steps.solanaOutpost.deploy", () => {
     expect(step.actor).toBe(Report.Actor.SolanaOutpost)
     expect(step.input).toBeNull()
     expect(typeof step.runner).toBe("function")
+  })
+
+  describe("runDeploy forwards the cluster's launch-withheld opt-in to the bootstrapper", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    /** Run `runDeploy` with `bootstrap` stubbed; return the bootstrapper it constructed. */
+    async function deployedBootstrapper(enabled: boolean): Promise<SolanaOutpostBootstrapper> {
+      const constructed: SolanaOutpostBootstrapper[] = []
+      jest
+        .spyOn(SolanaOutpostBootstrapper.prototype, "bootstrap")
+        .mockImplementation(async function (this: SolanaOutpostBootstrapper) {
+          constructed.push(this)
+        })
+      await Steps.solanaOutpost.runDeploy(
+        fixtureContext({ enableLaunchWithheldOperations: enabled }),
+        null,
+        new AbortController().signal
+      )
+      expect(constructed).toHaveLength(1)
+      return constructed[0]
+    }
+
+    // Both gate paths return before the program is used: closed returns false, open asserts
+    // the programId (absent without a program keypair) first — so no program is needed.
+    it("opens the withheld-operations gate when the cluster opts in", async () => {
+      const bootstrapper = await deployedBootstrapper(true)
+      await expect(
+        bootstrapper.seedWithheldOperations(Keypair.generate(), null, PublicKey.default, new BN(1))
+      ).rejects.toThrow(/programId required/)
+    })
+
+    it("keeps the gate closed when the cluster does not opt in", async () => {
+      const bootstrapper = await deployedBootstrapper(false)
+      await expect(
+        bootstrapper.seedWithheldOperations(Keypair.generate(), null, PublicKey.default, new BN(1))
+      ).resolves.toBe(false)
+    })
   })
 })
 

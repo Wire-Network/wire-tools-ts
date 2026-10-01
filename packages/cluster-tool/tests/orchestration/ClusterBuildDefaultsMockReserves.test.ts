@@ -32,15 +32,21 @@ describe("ClusterBuildDefaults — mock-reserve gating", () => {
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("Registry")
     expect(names).not.toContain("MockReserves")
+    // the launch-policy flag resolves false by default too (asserted on THIS build:
+    // every extra `create` lengthens the host-global bind-registry lock queue)
+    expect(cluster.config.enableLaunchWithheldOperations).toBe(false)
   })
 
   it("adds MockReserves immediately after Registry when enableMockReserves is set", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      enableMockReserves: true
+      enableMockReserves: true,
+      enableLaunchWithheldOperations: true
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MockReserves")
+    // …and an opt-in reaches the resolved config (the flag the swap/reserve flows set)
+    expect(cluster.config.enableLaunchWithheldOperations).toBe(true)
     // gated phase is registered directly after the Registry phase, pre-EpochBootstrap
     expect(names.indexOf("MockReserves")).toBe(names.indexOf("Registry") + 1)
   })

@@ -68,6 +68,18 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Run the Solana outpost bootstrap calls the launch policy withholds
+   * (`--enable-launch-withheld-operations`): `init_reserve`,
+   * `create_reserve_native`, and the mock SPL reserve provisioning
+   * (`create_reserve_spl_authority` / `init_liqsol_reserve` + `sol-mock-mints.json`).
+   * The launch build of the program answers each with `OperationDisabled`, so
+   * the default `false` (at every layer) bootstraps a cluster that never calls
+   * them. A flow whose scenario needs the bootstrap-seeded Solana reserves or the
+   * mock SPL mints opts in through its scenario `defaults`, and then requires a
+   * Solana program build without the launch restrictions.
+   */
+  enableLaunchWithheldOperations?: boolean
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit

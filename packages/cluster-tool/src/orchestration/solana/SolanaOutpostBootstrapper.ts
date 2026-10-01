@@ -38,6 +38,13 @@ export interface SolanaOutpostBootstrapperOptions {
    * When `null`, SPL provisioning is skipped (native SOL still works).
    */
   clusterDataPath?: string | null
+  /**
+   * Run the launch-withheld calls (`init_reserve`, `create_reserve_native`, mock
+   * SPL reserve provisioning). Default `false`: the launch build of the program
+   * answers each with `OperationDisabled`. Sourced from
+   * `ClusterConfig.enableLaunchWithheldOperations` — never a second setting.
+   */
+  enableLaunchWithheldOperations?: boolean
 }
 
 /** Resolved {@link SolanaOutpostBootstrapper} config (derived defaults filled in). */
@@ -46,16 +53,19 @@ export interface SolanaOutpostBootstrapperConfig {
   rpcUrl: string
   deployerKeypairFile: string
   clusterDataPath: string | null
+  enableLaunchWithheldOperations: boolean
 }
 
 /**
  * Bootstrap the Solana (test-validator) outpost: airdrop SOL to a deployer,
  * initialize the `OutpostConfig` / `OutboundMessageBuffer` / `OperatorRegistry`
- * (+ envelope-log + reserve) PDAs against the already-loaded `liqsol_core`
- * program (which hosts the OPP outpost interface), seed the native-SOL
- * reserve, and (when a cluster data path is given) provision mock SPL
- * reserves. The program is deployed upgradeable at validator launch (its
- * upgrade authority == the outpost `admin`); per-epoch `EpochDeliveries` PDAs
+ * (+ envelope-log) PDAs against the already-loaded `liqsol_core` program
+ * (which hosts the OPP outpost interface) and, when
+ * `enableLaunchWithheldOperations` is set, seed the native-SOL reserve and
+ * (given a cluster data path) provision mock SPL reserves — which requires a
+ * program build without the launch restrictions. The program is deployed
+ * upgradeable at validator launch (its upgrade authority == the outpost
+ * `admin`); per-epoch `EpochDeliveries` PDAs
  * are allocated lazily by the batch operator on first delivery.
  *
  * Test-cluster custody priming (`provisionSplReserves`) lives HERE in the
@@ -83,7 +93,9 @@ export class SolanaOutpostBootstrapper {
         (options.clusterDataPath != null
           ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
           : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
-      clusterDataPath: options.clusterDataPath ?? null
+      clusterDataPath: options.clusterDataPath ?? null,
+      enableLaunchWithheldOperations:
+        options.enableLaunchWithheldOperations ?? false
     }
     this.connection = new Connection(
       options.rpcUrl,
@@ -367,8 +379,37 @@ export class SolanaOutpostBootstrapper {
     )
     log.info("SOL native-token precision registered")
 
-    // Initialize the ReserveAggregate PDA — `epoch_in` declares it as a writable
-    // account, so without it every inbound delivery fails at simulation.
+    await this.seedWithheldOperations(deployer, program, configPda, solTokenCode)
+  }
+
+  /**
+   * Run the launch-withheld outpost bootstrap calls — `init_reserve`,
+   * `create_reserve_native`, and the mock SPL reserve provisioning — when
+   * `enableLaunchWithheldOperations` is set; otherwise skip them and log the
+   * policy. The launch build of the program answers each with
+   * `OperationDisabled`, and the inbound path does not need them: `epoch_in`
+   * declares `reserve_aggregate` as an `UncheckedAccount` with a seeds check
+   * only, so an uninitialised PDA passes.
+   *
+   * @param deployer - outpost admin / payer keypair.
+   * @param program - the loaded `liqsol_core` Anchor program.
+   * @param configPda - the `OutpostConfig` PDA.
+   * @param solTokenCode - the native-SOL token slug code.
+   * @return `true` when the withheld calls ran, `false` when the policy skipped them.
+   */
+  async seedWithheldOperations(
+    deployer: Keypair,
+    program: anchor.Program<anchor.Idl>,
+    configPda: PublicKey,
+    solTokenCode: anchor.BN
+  ): Promise<boolean> {
+    if (!this.config.enableLaunchWithheldOperations) {
+      log.info(SolanaOutpostBootstrapper.LaunchWithheldOperationsSkippedMessage)
+      return false
+    }
+    const programId = this.programId
+    Assert.ok(programId != null, "seedWithheldOperations: programId required")
+    // Initialize the ReserveAggregate PDA (`init_reserve`).
     const reserveAggregatePda = this.deriveProgramAddress(
       programId,
       SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
@@ -439,6 +480,7 @@ export class SolanaOutpostBootstrapper {
 
     if (this.config.clusterDataPath != null)
       await this.provisionSplReserves(deployer, program, configPda)
+    return true
   }
 
   /**
@@ -782,6 +824,9 @@ export class SolanaOutpostBootstrapper {
 }
 
 export namespace SolanaOutpostBootstrapper {
+  /** Logged when the launch policy skips the withheld outpost operations. */
+  export const LaunchWithheldOperationsSkippedMessage =
+    "launch policy: skipping init_reserve, create_reserve_native and mock SPL reserve provisioning (enable with --enable-launch-withheld-operations)"
   /** Total attempts allowed for each airdrop / RPC retry block. */
   export const AirdropRetryAttempts = 3
   /** Delay between airdrop / RPC retries (ms). */

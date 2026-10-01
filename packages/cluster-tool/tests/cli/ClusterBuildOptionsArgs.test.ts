@@ -538,6 +538,14 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(
       toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
     ).toBe(false)
+    expect(
+      toClusterBuildOptions({ "enable-launch-withheld-operations": true })
+        .enableLaunchWithheldOperations
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-launch-withheld-operations": false })
+        .enableLaunchWithheldOperations
+    ).toBe(false)
   })
 
   it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
@@ -590,6 +598,8 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     // no opt-in ⇒ the default-false mock-reserves flag survives as false
     expect(options.enableMockReserves).toBe(false)
+    // …and so does the default-false launch-policy opt-in
+    expect(options.enableLaunchWithheldOperations).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
@@ -615,6 +625,7 @@ describe("register → parse round-trip", () => {
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
         enableMockReserves: true,
+        enableLaunchWithheldOperations: true,
         chainStateDbSizeMb: 8_192,
         apiCount: 2,
         queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
@@ -633,6 +644,8 @@ describe("register → parse round-trip", () => {
     expect(options.terminateWindowMs).toBe(3_600_000)
     // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
     expect(options.enableMockReserves).toBe(true)
+    // …and the launch-policy opt-in the swap and reserve flows rely on
+    expect(options.enableLaunchWithheldOperations).toBe(true)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
     // …and a flow's API nodes + their query engine

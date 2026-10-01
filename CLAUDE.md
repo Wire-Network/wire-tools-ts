@@ -294,7 +294,11 @@ against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config`), `--enable-mock-reserves` (default off —
 seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real / external
-depot leaves these unseeded), `--api-count <N>` (default 0 — plan N API nodes:
+depot leaves these unseeded), `--enable-launch-withheld-operations` (default
+off — run the Solana outpost bootstrap calls the launch build of the program
+withholds with `OperationDisabled`: `init_reserve`, `create_reserve_native` and the
+mock SPL reserve provisioning that writes `sol-mock-mints.json`; a default cluster
+skips them), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -348,6 +352,23 @@ same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan(
 The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
 `EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
 so `regreserve` can never be called from a flow phase.
+
+**Flow authoring — launch-withheld operations.** `enableLaunchWithheldOperations:
+true` makes the bootstrap RUN the Solana outpost calls the launch build of the
+program withholds (`init_reserve`, `create_reserve_native`, the mock SPL reserve
+provisioning), so a flow that sets it requires a Solana program build without the
+launch restrictions; against the launch build those calls return
+`OperationDisabled` (6086). A flow sets it in its `Scenario.defaults` — never in
+`plan()` — when its scenario needs the bootstrap-seeded Solana reserves or the mock
+SPL mints. The flag does not decide which flows the launch program can run: the
+eight that set it (`flow-reserve-lifecycle`, `flow-swap-from-wire`,
+`flow-swap-non-native-tokens`, `flow-swap-private-reserves`, `flow-swap-to-wire`,
+`flow-swap-variance-revert`, `flow-swap-with-underwriting`,
+`flow-underwriter-slashing`) need Solana operations the launch build withholds, and
+`flow-yield-distribution` injects attestations through the withheld
+`add_attestation` instruction — it does not set the flag, which governs only
+bootstrap calls. The collateral, producer-registration and batch-operator-termination
+flows bond on the depot, do not set the flag, and run against the launch program.
 
 **Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
 (and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in

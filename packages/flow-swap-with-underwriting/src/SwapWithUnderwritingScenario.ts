@@ -97,6 +97,9 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
     // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
     enableMockReserves: true,
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Constants.EpochDurationSec,
     // The depot's `meets_role_min` rejects non-bootstrapped underwriters when
     // the config is empty — `uwrit.a` must flip ACTIVE for the race to land

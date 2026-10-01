@@ -156,6 +156,7 @@ export function makeFixtureCluster(): FixtureCluster {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
+    enableLaunchWithheldOperations: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig()

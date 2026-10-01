@@ -254,6 +254,16 @@ export const ClusterConfigSchema = z.object({
    */
   enableMockReserves: z.boolean().default(false),
   /**
+   * Whether the Solana outpost bootstrap runs the calls the launch policy
+   * withholds (the `--enable-launch-withheld-operations` create flag):
+   * `init_reserve`, `create_reserve_native` and the mock SPL reserve
+   * provisioning. Schema-defaulted `false` so pre-existing configs — and every
+   * default cluster — never call them (the launch build of the program answers
+   * each with `OperationDisabled`) unless a flow's scenario defaults opt in — which
+   * requires a Solana program build without the launch restrictions.
+   */
+  enableLaunchWithheldOperations: z.boolean().default(false),
+  /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every
    * `create`d cluster — keep `trace_api_plugin` on every role.

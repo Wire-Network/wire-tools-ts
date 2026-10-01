@@ -542,6 +542,11 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
+    // ── launch policy (default false → the Solana outpost bootstrap skips the calls the launch build withholds) ──
+    enableLaunchWithheldOperations: leaf(
+      false,
+      "run the Solana outpost bootstrap calls the launch policy withholds (init_reserve, create_reserve_native, mock SPL reserves)"
+    ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,

@@ -501,7 +501,7 @@ export namespace RegistrySteps {
    * Read `sol-mock-mints.json` (array of `{code, mint, decimals}`) into a
    * codename → base58-mint map, reverse-mapping the persisted numeric slug code.
    */
-  function readSolanaMints(file: string): Record<string, string> {
+  export function readSolanaMints(file: string): Record<string, string> {
     if (!Fs.existsSync(file)) return {}
     const rows = JSON.parse(
       Fs.readFileSync(file, "utf-8")
