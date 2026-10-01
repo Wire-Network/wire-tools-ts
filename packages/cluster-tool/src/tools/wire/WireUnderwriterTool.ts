@@ -47,6 +47,7 @@ import { EthereumCollateralTool } from "../ethereum/EthereumCollateralTool.js"
 import { EthereumFundingTool } from "../ethereum/EthereumFundingTool.js"
 import { SolanaCollateralTool } from "../solana/SolanaCollateralTool.js"
 import { SolanaFundingTool } from "../solana/SolanaFundingTool.js"
+import { WireCollateralTool } from "./WireCollateralTool.js"
 
 const log = getLogger(__filename)
 
@@ -129,9 +130,10 @@ export namespace WireUnderwriterTool {
 
   /**
    * Extra lamports (on top of the deposit amount) an underwriter's SOL keypair is
-   * topped up to before a SOL deposit — covers tx fees + PDA/ATA rent headroom.
-   * Matches the magnitude flow-batch-operator-termination's batch-op deposit airdrop
-   * uses; generous enough that runs never stall on under-funded operator wallets.
+   * topped up to before a SOL deposit — covers the deposit's transaction fees and
+   * the rent of the PDAs and ATAs it creates, with enough headroom that a run never
+   * stalls on an under-funded operator wallet. Raising it only costs faucet lamports;
+   * lowering it risks a deposit failing on insufficient funds.
    */
   export const SolAirdropHeadroomLamports: bigint = 5_000_000_000n
 
@@ -299,7 +301,10 @@ export namespace WireUnderwriterTool {
    *     {@link SolanaCollateralTool.planDeposit}.
    *   * SVM non-native (SPL) → {@link SolanaFundingTool.planAirdrop} +
    *     {@link SolanaFundingTool.planSplMint} + {@link SolanaCollateralTool.planNonNativeDeposit}.
-   *   * WIRE → skipped (no outpost deposit path today).
+   *   * WIRE native → {@link WireCollateralTool.planDeposit} (fund the operator with
+   *     WIRE, then bond it on the depot).
+   *   * WIRE non-native (a shadow LIQ symbol) → skipped with a warning: the harness has no
+   *     funding path for shadow tokens.
    *
    * The deposit Steps resolve the operator identity from `ctx.keyStore` by its
    * durable `label` handle ({@link ClusterKeyStore.assertOperator}); the
@@ -502,12 +507,20 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
         amount
       )
     )
+    .with({ chainKind: ChainKind.WIRE, tokenKind: TokenKind.NATIVE }, () =>
+      WireCollateralTool.planDeposit<C>(
+        Report.Actor.Underwriter,
+        `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
+        `bond ${amount} ${tokenName} on the depot (sysio.opreg::deposit)`,
+        options,
+        underwriterLabel,
+        entry
+      )
+    )
     .with({ chainKind: ChainKind.WIRE }, () => {
-      // WIRE collateral has no outpost-side deposit path today — the
-      // OPP-attestation deposit credits live on external chains by construction.
-      log.info(
+      log.warn(
         `[WireUnderwriterTool] ${underwriterLabel}: skipping WIRE/${tokenName} entry — ` +
-          `no WIRE-native underwriter collateral deposit path yet`
+          `the harness has no funding path for shadow tokens, so it cannot bond one`
       )
       return [] as ClusterBuildStep.Any<C>[]
     })

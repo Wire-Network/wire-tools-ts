@@ -4,6 +4,7 @@ import Path from "node:path"
 import type { ChainTokenAmount } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
+import { Logger } from "@wireio/shared"
 
 import {
   ClusterBuild,
@@ -198,7 +199,7 @@ describe("WireUnderwriterTool", () => {
       ])
     })
 
-    it("emits ETH-native deposit + SOL airdrop/deposit and skips WIRE for the default plan", () => {
+    it("emits WIRE fund/bond + ETH-native deposit + SOL airdrop/deposit for the default plan", () => {
       const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
@@ -207,8 +208,10 @@ describe("WireUnderwriterTool", () => {
         ["uwa"],
         [WireUnderwriterTool.buildDefault()]
       )
-      // WIRE → skipped; ETH native → 1 deposit; SOL native → airdrop + deposit.
+      // WIRE → fund + depot bond; ETH native → 1 deposit; SOL native → airdrop + deposit.
       expect(stepKinds(group, 0)).toEqual([
+        "WireCollateralTool.FundingInput",
+        "WireCollateralTool.DepositInput",
         "EthereumCollateralTool.DepositInput",
         "SolanaFundingTool.AirdropInput",
         "SolanaCollateralTool.DepositInput"
@@ -232,7 +235,7 @@ describe("WireUnderwriterTool", () => {
       )
     })
 
-    it("emits an empty Phase for a WIRE-only underwriter (no outpost deposit path)", () => {
+    it("bonds a WIRE entry on the depot through WireCollateralTool (fund, then deposit)", () => {
       const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
@@ -241,7 +244,37 @@ describe("WireUnderwriterTool", () => {
         ["uwc"],
         [[entry(WireChain, WireChain, WireUnderwriterTool.DefaultAmount)]]
       )
-      expect(stepKinds(group, 0)).toEqual([])
+      const steps = (group.children[0] as ClusterBuildPhase).steps
+      expect(stepKinds(group, 0)).toEqual([
+        "WireCollateralTool.FundingInput",
+        "WireCollateralTool.DepositInput"
+      ])
+      expect(steps.map(step => step.name)).toEqual([
+        "uwc-WIRE-WIRE-deposit-fund",
+        "uwc-WIRE-WIRE-deposit"
+      ])
+      expect(steps.every(step => step.actor === Report.Actor.Underwriter)).toBe(true)
+    })
+
+    it("emits no Step for a non-native token on the WIRE chain (no harness funding path)", () => {
+      const logged = jest.spyOn(Logger.prototype, "log")
+      try {
+        const group = WireUnderwriterTool.planCollateralDeposit(
+          newBuild(),
+          "uw-collateral",
+          "d",
+          {},
+          ["uwe"],
+          [[entry(WireChain, SlugName.from("LIQETH"), WireUnderwriterTool.DefaultAmount)]]
+        )
+        expect(stepKinds(group, 0)).toEqual([])
+        expect(logged).toHaveBeenCalledWith(
+          "warn",
+          expect.stringMatching(/uwe: skipping WIRE\/LIQETH entry — the harness has no funding path for shadow tokens/)
+        )
+      } finally {
+        logged.mockRestore()
+      }
     })
 
     it("emits the non-native ETH steps from config alone — deploy artifacts resolve at RUN time", () => {

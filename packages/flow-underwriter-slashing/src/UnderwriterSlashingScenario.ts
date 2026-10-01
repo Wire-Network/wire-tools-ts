@@ -151,11 +151,12 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         timeoutMs: Constants.ResolveDeadlineMs + Constants.PollDeadlineBufferMs
       }
 
-    // ── 1. Underwriter collateral on both outposts (flips the winner ACTIVE) ──
+    // ── 1. Underwriter collateral on both outposts (flips the winner ACTIVE),
+    //       plus the WIRE the default plan funds and bonds on the depot ──
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
-      "Bond every underwriter's collateral on the Ethereum + Solana outposts",
+      "Bond every underwriter's collateral: WIRE on the depot, ETH and SOL on the outposts",
       requestStepOptions,
       underwriterLabels,
       config.underwriterCollateral ??

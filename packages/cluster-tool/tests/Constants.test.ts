@@ -310,11 +310,10 @@ describe("Constants — schedule bounds", () => {
   })
 })
 
-describe("ProtocolTiming — producer rounds + outpost writes", () => {
-  it("pins the chain's slot + round constants and the outpost write ceiling", () => {
+describe("ProtocolTiming — producer rounds", () => {
+  it("pins the chain's slot + round constants", () => {
     expect(ProtocolTiming.BlockIntervalMs).toBe(500)
     expect(ProtocolTiming.ProducerRepetitions).toBe(12)
-    expect(ProtocolTiming.OutpostWriteBudgetMs).toBe(60_000)
   })
 
   it("pins the ranked-schedule rebuild throttle: 120 slots of the block interval", () => {
@@ -333,11 +332,5 @@ describe("ProtocolTiming — producer rounds + outpost writes", () => {
     const [one, two, three] = [1, 2, 3].map(ProtocolTiming.producerRotationMs)
     expect(two - one).toBe(one)
     expect(three - two).toBe(one)
-  })
-
-  it("keeps the outpost write ceiling a local-operation budget, under every protocol hop", () => {
-    expect(ProtocolTiming.OutpostWriteBudgetMs).toBeLessThan(
-      ProtocolTiming.CollateralVerifyBudgetMs
-    )
   })
 })

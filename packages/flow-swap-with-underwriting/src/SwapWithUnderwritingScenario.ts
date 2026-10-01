@@ -101,9 +101,11 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     // The depot's `meets_role_min` rejects non-bootstrapped underwriters when
     // the config is empty — `uwrit.a` must flip ACTIVE for the race to land
     // any commits. The UnderwriterCollateral phase bonds
-    // `WireUnderwriterTool.DefaultAmount` on both chains, so configuring the
-    // requirement at the same threshold lets `reevaluate_eligibility` call
-    // `processuw` to set status=ACTIVE on the second deposit round-trip.
+    // `WireUnderwriterTool.DefaultAmount` on both outpost chains, so configuring
+    // the requirement at the same threshold lets `reevaluate_eligibility` call
+    // `processuw` to set status=ACTIVE on the second deposit round-trip. The
+    // phase also funds and bonds the same amount of WIRE on the depot; that bond
+    // is not one of these requirements.
     requiredUnderwriterCollateral: [
       {
         chainCode: Constants.EthereumChainCode,
@@ -154,7 +156,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
-      "Bond every underwriter's collateral on the Ethereum + Solana outposts",
+      "Bond every underwriter's collateral: WIRE on the depot, ETH and SOL on the outposts",
       requestStepOptions,
       underwriterLabels,
       config.underwriterCollateral ??

@@ -126,7 +126,9 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     // ACTIVE gates on real bonds on EVERY registered outpost chain, so the
-    // flow's underwriter-activation assertion is meaningful.
+    // flow's underwriter-activation assertion is meaningful. The default
+    // collateral plan also funds and bonds WIRE on the depot; that bond is not
+    // one of these requirements.
     requiredUnderwriterCollateral: [
       {
         chainCode: Constants.EthereumChainCode,
@@ -203,10 +205,12 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 2. Underwriter bonds on both outposts → ACTIVE (deposits credit) ──
+    //       The default plan also funds the underwriter with WIRE from `sysio`
+    //       and bonds it on the depot through `sysio.opreg::deposit`.
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
-      "Bond the default underwriter collateral on both outposts",
+      "Bond the default underwriter collateral: WIRE on the depot, ETH and SOL on the outposts",
       writeStepOptions,
       underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)

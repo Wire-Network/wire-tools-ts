@@ -1,4 +1,4 @@
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
@@ -7,8 +7,9 @@ import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
  * Every deadline derives from {@link ProtocolTiming.effectiveEpochSec} (epochs) or from
  * {@link ProtocolTiming.producerRotationMs} (rounds) — never a stopwatch constant. The
  * distinction matters here more than in most flows: a producer's miss is only observable once
- * its slot comes round again, so the demotion phases are budgeted in ROUNDS while the collateral
- * phases are budgeted in EPOCHS.
+ * its slot comes round again, so the demotion phases are budgeted in ROUNDS while the score and
+ * bond-return phases are budgeted in EPOCHS. Collateral is WIRE bonded on the depot through
+ * `sysio.opreg::deposit`, in depot atomic units (WIRE has 9 decimals).
  */
 export namespace ProducerRegistrationScenarioConstants {
   /** The flow's NON-bootstrapped producer's durable harness handle. */
@@ -16,10 +17,8 @@ export namespace ProducerRegistrationScenarioConstants {
   /** Contract assertion proving a producer has not reached collateral admission. */
   export const ProducerAdmissionErrorPattern =
     /producer operator is not eligible for admission/
-  /** Anvil-mnemonic HD index for its ETH wallet (past every bootstrap slot). */
+  /** Anvil-mnemonic HD index for its ETH identity, which backs its Ethereum authex link (past every bootstrap slot). */
   export const ProducerEthereumHdIndex = 36
-  /** Lamports airdropped to its SOL keypair (bond + fees headroom). */
-  export const ProducerAirdropLamports = 5_000_000_000n
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
@@ -51,17 +50,10 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const AdHocNodeCount = 1
 
-  /** Collateral bonded per chain (raw outpost units — wei / lamports). */
-  export const BondAmount = 2_000_000n
-  /** Per-chain minimum the depot requires of a producer (equal to the bond: exactly sufficient). */
+  /** WIRE bonded on the depot — 2 WIRE. */
+  export const BondAmount = 2_000_000_000n
+  /** The `(WIRE, WIRE)` minimum the depot requires of a producer (equal to the bond: exactly sufficient). */
   export const MinimumBond = BondAmount
-
-  /** Registered chain slug codes (must match the bootstrap registry seed). */
-  export const EthereumChainCode = SlugName.from("ETHEREUM")
-  export const SolanaChainCode = SlugName.from("SOLANA")
-  /** Registered token slug codes. */
-  export const EthereumTokenCode = SlugName.from("ETH")
-  export const SolanaTokenCode = SlugName.from("SOL")
 
   /**
    * Consecutive missed rounds that demote a producer — INSTALLED by the flow's `setscorecfg`
@@ -105,26 +97,26 @@ export namespace ProducerRegistrationScenarioConstants {
   }
 
   /**
-   * Withdrawn from the ETH bond in the removal phase — the WHOLE of it.
+   * Withdrawn from the bond in the removal phase — the WHOLE of it.
    *
    * Partial would leave the operator above the minimum and change nothing; the assertion is that
-   * dropping BELOW the per-chain minimum takes a producer out of the schedule.
+   * dropping BELOW the minimum takes a producer out of the schedule.
    */
   export const WithdrawAmount = BondAmount
 
-  /** Epochs budgeted for a deposit to relay through OPP and settle on the depot. */
-  export const RelayEpochBudget = 9
+  /** Epochs budgeted for registration's score to land in the healthy tier. */
+  export const ScoreEpochBudget = 9
   /** Rounds budgeted on top of the misses themselves, for the rebuild to publish. */
   export const ScheduleRebuildRoundBudget = 3
 
   /** Interval for long-running chain-state polls (ms). */
   export const PollIntervalMs = 3_000
 
-  /** Deadline for depot-side relay effects (balance row, status flip). */
-  export function relayDeadlineMs(): number {
+  /** Deadline for registration's score to land in the healthy tier (ms). */
+  export function scoreDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RelayEpochBudget *
+      ScoreEpochBudget *
       ProtocolTiming.MsPerSecond
     )
   }

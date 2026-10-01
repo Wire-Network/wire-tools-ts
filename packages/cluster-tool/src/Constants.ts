@@ -558,14 +558,6 @@ export namespace ProtocolTiming {
   export const DoubleHopBudgetMs = 840_000
 
   /**
-   * One outpost WRITE step's ceiling (ms): a local anvil / test-validator
-   * transaction and its confirmation. A loaded-host local-operation ceiling,
-   * not a protocol hop — the depot-side effect of that write is a
-   * {@link CollateralVerifyBudgetMs} / {@link SingleHopBudgetMs} wait.
-   */
-  export const OutpostWriteBudgetMs = 60_000
-
-  /**
    * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),
    * so the step's own timeout never races the poll it wraps (finality waits +
    * the final post-poll reads fit inside the margin). Shared by every flow

@@ -1,25 +1,20 @@
 import Assert from "node:assert"
-import { PublicKey } from "@solana/web3.js"
-import type { BN } from "@coral-xyz/anchor"
 import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
   EthereumCollateralTool,
   FlowScenario,
+  ProtocolTiming,
   Report,
-  SolanaCollateralTool,
-  SolanaOutpostBootstrapper,
-  SolanaOutpostProgramTool,
   Steps,
+  WireCollateralTool,
   WireOperatorProvisioningTool,
+  WireReserveTool,
   getLogger,
   matchesProtoEnum,
-  outputKey,
   packedSlugValue,
   pollUntil,
-  slugValue,
-  solanaKeypair,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
@@ -29,59 +24,13 @@ import { TerminationScenarioConstants as Constants } from "./TerminationScenario
 
 const log = getLogger(__filename)
 
-const { SysioContractName, SysioOpregActiontype, SysioOpregOperatorstatus } =
-  SysioContracts
+const { SysioOpregActiontype, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
-/**
- * Post-deposit snapshot of the doomed operator's ETH wallet balance (wei),
- * captured after BOTH bonds landed but BEFORE termination begins. The remit
- * assertion compares against this to enforce the exact "remit credits the bond
- * amount" invariant — the operator signs zero transactions between deposit and
- * remit (the cranker pays gas on its own wallet), so the post-remit balance
- * MUST equal `baseline + EthereumBondAmount` to the wei.
- */
-const PostDepositEthereumWeiKey = outputKey<bigint>(
-  "TerminationScenario.postDepositEthereumWei",
-  `${Constants.DoomedOperatorLabel}'s ETH wallet balance (wei) after both bonds landed`
-)
-
-/** The SOL counterpart of {@link PostDepositEthereumWeiKey} (lamports). */
-const PostDepositSolanaLamportsKey = outputKey<number>(
-  "TerminationScenario.postDepositSolanaLamports",
-  `${Constants.DoomedOperatorLabel}'s SOL wallet balance (lamports) after both bonds landed`
-)
-
-/**
- * Rent held by the operator's `CollateralPosition` PDA while the bond is open.
- *
- * SOL-379 made collateral a per-`(operator, token_code)` PDA that the DEPOSITOR
- * rent-funds and that auto-closes once its balance reaches zero — refunding
- * that rent to the operator. So a WITHDRAW_REMIT credits the wallet with the
- * bond AND this rent, and the remit-exactness check has to know both halves.
- * Captured from the live account rather than hardcoded, so it tracks
- * `CollateralPosition::SIZE` instead of silently drifting when the struct
- * changes. Must be read BEFORE the remit — the account is gone afterwards.
- */
-const PostDepositSolanaPositionRentKey = outputKey<number>(
-  "TerminationScenario.postDepositSolanaPositionRent",
-  `${Constants.DoomedOperatorLabel}'s SOL CollateralPosition rent (lamports), refunded when the remit empties it`
-)
 
 /** The doomed operator's node-owner-generated WIRE account, resolved from the key store by its label. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
-}
-
-/** The doomed operator's row on `sysio.opreg::operators` (a read). */
-async function readDoomedOperatorRow(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const account = doomedOperatorAccount(ctx),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
-  return rows.find(row => row.account === account)
 }
 
 /**
@@ -97,15 +46,14 @@ async function readScheduleGroups(
 
 /**
  * Chain codes (slug numerics) of the doomed operator's success-true
- * WITHDRAW_REMIT audit entries (a read). `sysio.opreg::flushwtdw` queues the
- * remit on msgch (transient — drained when `buildenv` packs the outbound
- * envelope) AND appends a PERMANENT entry to the operator's `recent_actions`
- * ring buffer; the ring buffer is therefore the source of truth here.
+ * WITHDRAW_REMIT audit entries (a read). Termination credits each remitted
+ * balance to the operator's claim row and appends a PERMANENT entry to its
+ * `recent_actions` ring buffer, so the ring buffer is the audit trail here.
  */
 async function readWithdrawRemitChainCodes(
   ctx: ClusterBuildContext
 ): Promise<Set<number>> {
-  const operator = await readDoomedOperatorRow(ctx)
+  const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
   const remits = (operator?.recent_actions ?? []).filter(
     entry =>
       matchesProtoEnum(
@@ -120,50 +68,11 @@ async function readWithdrawRemitChainCodes(
   return new Set(remits.map(entry => packedSlugValue(entry.action.chain_code)))
 }
 
-/** One SOL outpost `collateral_by_code` ledger entry as Anchor decodes it (camelCased IDL fields, u64s as BN). */
-interface SolanaCollateralLedgerEntry {
-  depositor: PublicKey
-  tokenCode: BN
-  amount: BN
-}
-
-/** The slice of the SOL outpost's `OperatorRegistry` PDA account this flow reads. */
-interface SolanaOperatorRegistryAccount {
-  collateralByCode: SolanaCollateralLedgerEntry[]
-}
-
-/** Anchor account-client surface for a runtime-loaded IDL (untyped `Program<Idl>` namespace). */
-interface SolanaAccountClient {
-  fetch(address: PublicKey): Promise<unknown>
-}
-
-/** The SOL outpost's on-chain collateral ledger from the `OperatorRegistry` PDA (a read). */
-async function readSolanaCollateralLedger(
-  ctx: ClusterBuildContext
-): Promise<SolanaCollateralLedgerEntry[]> {
-  const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
-  const program = SolanaCollateralTool.loadOppOutpostProgram(
-    ctx,
-    solanaKeypair(operator.solana)
-  )
-  const [registryAddress] = PublicKey.findProgramAddressSync(
-    [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry)],
-    program.programId
-  )
-  // Anchor types `Program<Idl>.account` per-IDL; for a runtime-loaded IDL the
-  // account clients are reached by name — one assertion to the string-keyed view.
-  const accounts: Record<string, SolanaAccountClient> = program.account
-  const registryAccount = (await accounts[
-    Constants.SolanaOperatorRegistryAccountName
-  ].fetch(registryAddress)) as SolanaOperatorRegistryAccount
-  return registryAccount.collateralByCode ?? []
-}
-
 /**
  * Batch Operator Termination via Delivery Underperformance — verifies the full
- * protocol promise that a non-bootstrapped operator becomes ACTIVE only after
- * posting required collateral on EVERY active outpost, and that on termination
- * the bonded collateral is remitted back from every outpost's vault:
+ * protocol promise that a non-bootstrapped operator becomes ACTIVE only once its
+ * depot-native bond meets the required minimum, and that on termination the
+ * whole bond is credited back to it and paid out on `claimremit`:
  *
  * 1. **ChainHealth** — WIRE produces blocks; anvil's `OperatorRegistry` has
  *    code; the SOL test-validator answers.
@@ -173,71 +82,51 @@ async function readSolanaCollateralLedger(
  *    termination machinery, so non-bootstrapped is the point.
  * 3. **VerifyRegistration** — the row exists, non-bootstrapped, status UNKNOWN
  *    (no deposits yet — every `available(...)` in `meets_role_min` is 0).
- * 4. **DepositEthereum** — bond on the ETH outpost → depot credits the ETH
- *    balance row; status STAYS UNKNOWN while the SOL requirement is unmet.
- * 5. **DepositSolana** — bond on the SOL outpost → all-chain rule met → ACTIVE;
- *    snapshot both wallet balances as remit-exactness baselines.
+ * 4. **DepositBelowMinimum** — `sysio` funds the operator and it bonds half the
+ *    `(WIRE, WIRE)` minimum through `opreg::deposit`; the balance row holds it
+ *    and the status STAYS UNKNOWN.
+ * 5. **DepositToMinimum** — the rest of the bond crosses the minimum and the
+ *    operator flips ACTIVE in the same transaction.
  * 6. **AccumulateMisses** — `advance`'s new-tail computation folds the operator
  *    into `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never
  *    started, so every scheduled epoch records `recorddel(delivered=false)`.
  * 7. **Terminate** — after ≥ `terminateMaxConsecutiveMisses` consecutive missed
  *    epochs, `termcheck` flips TERMINATED with `terminated_at > 0` and a
  *    populated `status_reason`.
- * 8. **RemitBonds** — the depot auto-remits the full bond on termination:
- *    success-true WITHDRAW_REMIT audit entries land for BOTH chains, each
- *    outpost's escrow ledger returns to 0, and each wallet is credited the
- *    exact bond amount (wei/lamport-exact — any drift means the outpost decoded
- *    a different amount than the depot encoded).
+ * 8. **ClaimBond** — termination remits the whole bond inside `termcheck`: a
+ *    success-true WITHDRAW_REMIT audit entry lands for the WIRE chain, the
+ *    balance row is emptied, and `remitclaims{operator, WIRE}` holds exactly the
+ *    bond. `opreg::claimremit` then pays it out: the operator's liquid WIRE
+ *    rises by exactly the bond and the claim row is gone.
  */
 export class TerminationScenario extends FlowScenario {
   readonly name = "flow-batch-operator-termination"
   readonly description =
-    "Non-bootstrapped batch operator bonds ETH + SOL, misses its scheduled deliveries, is terminated, and both bonds are remitted back"
+    "Non-bootstrapped batch operator bonds WIRE on the depot, misses its scheduled deliveries, is terminated, and claims its bond back"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
     batchOperatorCount: Constants.BatchOperatorCount,
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
-    // Depot must enforce "ACTIVE requires the minimum on EVERY registered
-    // outpost chain" — otherwise the operator flips ACTIVE on an empty
-    // requirement check and the flow greens on incomplete config (the false
-    // positive that motivated the non-bootstrapped rewrite).
-    requiredBatchOperatorCollateral: [
-      {
-        chainCode: Constants.EthereumChainCode,
-        tokenCode: Constants.EthereumTokenCode,
-        minimumBond: Constants.RequiredEthereumMinimumBond
-      },
-      {
-        chainCode: Constants.SolanaChainCode,
-        tokenCode: Constants.SolanaTokenCode,
-        minimumBond: Constants.RequiredSolanaMinimumBond
-      }
-    ]
+    // Without a requirement `meets_role_min` refuses every non-bootstrapped
+    // batch operator, so the UNKNOWN → ACTIVE assertions are meaningful only
+    // against a minimum the flow installs.
+    requiredBatchOperatorCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)]
   }
 
   plan(cluster: ClusterBuild): void {
     const quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
-      depositStepOptions = { timeoutMs: Constants.DepositStepTimeoutMs },
-      ethereumDepositStepOptions = {
-        timeoutMs:
-          Constants.ethereumDepositDeadlineMs() + Constants.PollDeadlineBufferMs
-      },
-      solanaActivationStepOptions = {
-        timeoutMs:
-          Constants.solanaActivationDeadlineMs() +
-          Constants.PollDeadlineBufferMs
-      },
       scheduleWindowStepOptions = {
         timeoutMs:
-          Constants.scheduleWindowDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.scheduleWindowDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       terminationStepOptions = {
         timeoutMs:
-          Constants.terminationDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.terminationDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
-      remitStepOptions = {
-        timeoutMs: Constants.remitDeadlineMs() + Constants.PollDeadlineBufferMs
+      // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`).
+      remitClaimStepOptions = {
+        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(cluster.context.config.epochDurationSec)
       }
 
     // ── 1. Substrate health (WIRE / ETH outpost / SOL validator) ──
@@ -306,8 +195,7 @@ export class TerminationScenario extends FlowScenario {
           label: Constants.DoomedOperatorLabel,
           type: OperatorType.BATCH,
           ethereumHdIndex: Constants.DoomedOperatorEthereumHdIndex,
-          isBootstrapped: false,
-          airdropSolanaLamports: Constants.DoomedOperatorAirdropLamports
+          isBootstrapped: false
         }
       ]
     )
@@ -323,7 +211,7 @@ export class TerminationScenario extends FlowScenario {
         "registered-status-unknown",
         "operator registered non-bootstrapped with status UNKNOWN (no deposits yet)",
         async ctx => {
-          const operator = await readDoomedOperatorRow(ctx)
+          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
           Assert.ok(
             operator != null,
             `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
@@ -345,51 +233,34 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 4. ETH bond → depot balance row; status stays UNKNOWN ──
+    // ── 4. Bond half the minimum → balance row; status stays UNKNOWN ──
     ClusterBuildPhase.create(
       cluster,
-      "DepositEthereum",
-      "Bond ETH collateral; depot credits the balance row; status stays UNKNOWN"
+      "DepositBelowMinimum",
+      "Bond half the minimum on the depot; the balance row holds it and the status stays UNKNOWN"
     ).push(
-      EthereumCollateralTool.planDeposit(
-        Actor.User,
-        "deposit-ethereum",
-        `deposit ${Constants.EthereumBondAmount} wei ETH collateral`,
-        depositStepOptions,
+      ...WireCollateralTool.planDeposit(
+        Actor.BatchOperator,
+        "deposit-below-minimum",
+        `bond ${Constants.FirstDepositAmount} WIRE units through sysio.opreg::deposit`,
+        {},
         Constants.DoomedOperatorLabel,
-        OperatorType.BATCH,
-        BigInt(Constants.EthereumTokenCode),
-        Constants.EthereumBondAmount
+        WireCollateralTool.createWireCollateral(Constants.FirstDepositAmount)
+      ),
+      WireCollateralTool.planVerifyBalanceRow(
+        Actor.Sysio,
+        "depot-balance-below-minimum",
+        `the (WIRE, WIRE) balance row holds exactly ${Constants.FirstDepositAmount}`,
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireCollateral(Constants.FirstDepositAmount)
       ),
       verifyStep(
         Actor.Sysio,
-        "depot-credits-ethereum",
-        "operator's ETH balance row reaches the required minimum on sysio.opreg",
+        "below-minimum-stays-unknown",
+        "status stays UNKNOWN while the bond is under the minimum",
         async ctx => {
-          await pollUntil(
-            "depot ETH balance row ≥ required minimum",
-            async () => {
-              const operator = await readDoomedOperatorRow(ctx)
-              return (operator?.balances ?? []).some(
-                balance =>
-                  slugValue(balance.chain_code) ===
-                    Constants.EthereumChainCode &&
-                  Number(balance.balance) >=
-                    Constants.RequiredEthereumMinimumBond
-              )
-            },
-            Constants.ethereumDepositDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        ethereumDepositStepOptions
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "ethereum-only-stays-unknown",
-        "status stays UNKNOWN while the SOL requirement is unmet",
-        async ctx => {
-          const operator = await readDoomedOperatorRow(ctx)
+          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
           Assert.ok(
             operator != null &&
               matchesProtoEnum(
@@ -397,86 +268,51 @@ export class TerminationScenario extends FlowScenario {
                 SysioOpregOperatorstatus,
                 SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
               ),
-            `${Constants.DoomedOperatorLabel} flipped past UNKNOWN on the ETH bond alone (got ${operator?.status})`
+            `${Constants.DoomedOperatorLabel} flipped past UNKNOWN below the minimum (got ${operator?.status})`
           )
         },
         quickStepOptions
       )
     )
 
-    // ── 5. SOL bond → all-chain rule met → ACTIVE; snapshot remit baselines ──
+    // ── 5. Bond the rest → minimum met → ACTIVE ──
     ClusterBuildPhase.create(
       cluster,
-      "DepositSolana",
-      "Bond SOL collateral; operator flips ACTIVE; snapshot wallet baselines"
+      "DepositToMinimum",
+      "Bond the rest; the minimum is met and the operator flips ACTIVE"
     ).push(
-      SolanaCollateralTool.planDeposit(
-        Actor.User,
-        "deposit-solana",
-        `deposit ${Constants.SolanaBondAmount} lamports SOL collateral`,
-        depositStepOptions,
+      ...WireCollateralTool.planDeposit(
+        Actor.BatchOperator,
+        "deposit-to-minimum",
+        `bond ${Constants.SecondDepositAmount} more WIRE units through sysio.opreg::deposit`,
+        {},
         Constants.DoomedOperatorLabel,
-        OperatorType.BATCH,
-        BigInt(Constants.SolanaTokenCode),
-        Constants.SolanaBondAmount
+        WireCollateralTool.createWireCollateral(Constants.SecondDepositAmount)
+      ),
+      WireCollateralTool.planVerifyBalanceRow(
+        Actor.Sysio,
+        "depot-balance-holds-bond",
+        `the (WIRE, WIRE) balance row holds exactly ${Constants.BondAmount}`,
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireCollateral(Constants.BondAmount)
       ),
       verifyStep(
         Actor.Sysio,
         "depot-status-active",
-        "both balance rows satisfied → status flips OPERATOR_STATUS_ACTIVE",
+        "the bond meets the minimum → status is OPERATOR_STATUS_ACTIVE",
         async ctx => {
-          await pollUntil(
-            "depot operator status = ACTIVE after the SOL deposit lands",
-            async () => {
-              const operator = await readDoomedOperatorRow(ctx)
-              return (
-                operator != null &&
-                matchesProtoEnum(
-                  operator.status,
-                  SysioOpregOperatorstatus,
-                  SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-                )
-              )
-            },
-            Constants.solanaActivationDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        solanaActivationStepOptions
-      ),
-      verifyStep(
-        Actor.User,
-        "snapshot-post-deposit-balances",
-        "capture the operator's post-deposit ETH + SOL wallet balances and SOL position rent (remit-exactness baselines)",
-        async ctx => {
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
-          const operatorKeypair = solanaKeypair(operator.solana)
-          const operatorPublicKey = operatorKeypair.publicKey
-          const wei = await ctx.ethereum.getBalance(operator.ethereum.address)
-          const lamports = await ctx.solana.getLamports(operatorPublicKey)
-          // Read the position's rent while the account still exists — the
-          // remit empties it and the program closes it, refunding this to the
-          // operator's wallet (see PostDepositSolanaPositionRentKey).
-          const programId = SolanaOutpostProgramTool.assertProgramId(
-              ctx.config.solanaPath
-            ),
-            positionPda = SolanaCollateralTool.collateralPositionPda(
-              programId,
-              operatorPublicKey,
-              BigInt(Constants.SolanaTokenCode)
-            ),
-            positionRent = await ctx.solana.getLamports(positionPda)
+          // `deposit` re-evaluates eligibility inline, so one read after its Step is final.
+          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
           Assert.ok(
-            positionRent > 0,
-            `CollateralPosition PDA ${positionPda.toBase58()} is missing ` +
-              `(rent=0) for program ${programId.toBase58()}`
+            operator != null &&
+              matchesProtoEnum(
+                operator.status,
+                SysioOpregOperatorstatus,
+                SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+              ),
+            `${Constants.DoomedOperatorLabel} is not ACTIVE with the minimum bonded (got ${operator?.status})`
           )
-          ctx.outputs
-            .set(PostDepositEthereumWeiKey, wei)
-            .set(PostDepositSolanaLamportsKey, lamports)
-            .set(PostDepositSolanaPositionRentKey, positionRent)
         },
         quickStepOptions
       )
@@ -532,7 +368,7 @@ export class TerminationScenario extends FlowScenario {
           await pollUntil(
             `${Constants.DoomedOperatorLabel} status flips to TERMINATED`,
             async () => {
-              const operator = await readDoomedOperatorRow(ctx)
+              const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
               return (
                 operator != null &&
                 matchesProtoEnum(
@@ -553,7 +389,7 @@ export class TerminationScenario extends FlowScenario {
         "termination-row-populated",
         "terminated_at > 0 and status_reason non-empty on the operator row",
         async ctx => {
-          const operator = await readDoomedOperatorRow(ctx)
+          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
           Assert.ok(
             operator != null,
             `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
@@ -580,133 +416,71 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 8. Depot auto-remits the full bond on termination — both outposts ──
+    // ── 8. Termination credited the whole bond to the WIRE claim; claimremit pays it ──
     ClusterBuildPhase.create(
       cluster,
-      "RemitBonds",
-      "The depot remits both bonds; each outpost zeroes escrow and credits the wallet"
+      "ClaimBond",
+      "Termination credits the bond to remitclaims; claimremit pays it to the operator"
     ).push(
       verifyStep(
         Actor.Sysio,
-        "depot-emits-withdraw-remits",
-        "recent_actions carries success-true WITHDRAW_REMIT audit entries for BOTH chains",
+        "depot-records-withdraw-remit",
+        "recent_actions carries a success-true WITHDRAW_REMIT audit entry for the WIRE chain",
         async ctx => {
-          await pollUntil(
-            "success-true WITHDRAW_REMIT for both ETH and SOL in recent_actions",
-            async () => {
-              const chainCodes = await readWithdrawRemitChainCodes(ctx)
-              return (
-                chainCodes.has(Constants.EthereumChainCode) &&
-                chainCodes.has(Constants.SolanaChainCode)
-              )
-            },
-            Constants.remitDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        remitStepOptions
-      ),
-      verifyStep(
-        Actor.EthereumOutpost,
-        "ethereum-escrow-zeroed",
-        "depositedByCode(operator, ETH) returns to 0 after the inbound WITHDRAW_REMIT",
-        async ctx => {
-          await pollUntil(
-            "ETH OperatorRegistry escrow returns to 0",
-            async () =>
-              (await EthereumCollateralTool.readDepositedByCode(
-                ctx,
-                Constants.DoomedOperatorLabel,
-                BigInt(Constants.EthereumTokenCode)
-              )) === 0n,
-            Constants.remitDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        remitStepOptions
-      ),
-      verifyStep(
-        Actor.EthereumOutpost,
-        "ethereum-wallet-credited-exact",
-        `operator ETH wallet balance rises by exactly ${Constants.EthereumBondAmount} wei`,
-        async ctx => {
-          // The operator signs zero transactions between the snapshot and the
-          // remit, so the delta is purely `_transferOut(amount)` from
-          // `_handleWithdrawRemit` — any drift means the outpost applied a
-          // different amount than the depot encoded into the attestation.
-          const baseline = ctx.outputs.assert(PostDepositEthereumWeiKey)
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
-          await pollUntil(
-            `operator ETH wallet credited exactly ${Constants.EthereumBondAmount} wei`,
-            async () =>
-              (await ctx.ethereum.getBalance(operator.ethereum.address)) -
-                baseline ===
-              Constants.EthereumBondAmount,
-            Constants.remitDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        remitStepOptions
-      ),
-      verifyStep(
-        Actor.SolanaOutpost,
-        "solana-wallet-credited-exact",
-        `operator SOL wallet balance rises by exactly the ${Constants.SolanaBondAmount}-lamport bond plus the refunded position rent`,
-        async ctx => {
-          // The cranker pays the `epoch_in` fees on its own keypair and the
-          // on-chain handler signed-CPI transfers vault → operator, so the
-          // operator's lamport delta is the bond PLUS the rent refunded when
-          // the emptied `CollateralPosition` PDA auto-closes (SOL-379 — the
-          // depositor funded that rent at deposit time). Both halves are
-          // exact: the rent is the account's live balance, snapshotted before
-          // the remit destroys the account.
-          const baseline = ctx.outputs.assert(PostDepositSolanaLamportsKey)
-          const positionRent = ctx.outputs.assert(
-            PostDepositSolanaPositionRentKey
-          )
-          const expected = Constants.SolanaBondAmount + BigInt(positionRent)
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
-          const operatorPublicKey = solanaKeypair(operator.solana).publicKey
-          await pollUntil(
-            `operator SOL wallet credited exactly ${expected} lamports (${Constants.SolanaBondAmount} bond + ${positionRent} position rent)`,
-            async () =>
-              BigInt(
-                (await ctx.solana.getLamports(operatorPublicKey)) - baseline
-              ) === expected,
-            Constants.remitDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
-        remitStepOptions
-      ),
-      verifyStep(
-        Actor.SolanaOutpost,
-        "solana-ledger-zeroed",
-        "the outpost's collateral_by_code ledger row for the operator is pruned or 0",
-        async ctx => {
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
-          const operatorPublicKey = solanaKeypair(operator.solana).publicKey
-          const solanaTokenCode = BigInt(Constants.SolanaTokenCode)
-          const ledger = await readSolanaCollateralLedger(ctx)
-          const row = ledger.find(
-            entry =>
-              entry.depositor.equals(operatorPublicKey) &&
-              BigInt(entry.tokenCode.toString()) === solanaTokenCode
-          )
-          // The row may be retained at 0 or pruned — either is a valid remit
-          // outcome; only a non-zero residue is a failure.
+          const chainCodes = await readWithdrawRemitChainCodes(ctx)
           Assert.ok(
-            row == null || BigInt(row.amount.toString()) === 0n,
-            `SOL collateral ledger row not zeroed (amount=${row?.amount?.toString()})`
+            chainCodes.has(WireReserveTool.WireChainCode),
+            `${Constants.DoomedOperatorLabel} has no success-true WITHDRAW_REMIT for the WIRE chain`
           )
         },
         quickStepOptions
+      ),
+      WireCollateralTool.planVerifyBalanceRow(
+        Actor.Sysio,
+        "depot-balance-emptied",
+        "the (WIRE, WIRE) balance row is empty after termination",
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireCollateral(0n)
+      ),
+      WireCollateralTool.planVerifyRemitClaim(
+        Actor.Sysio,
+        "termination-credits-remit-claim",
+        `remitclaims{operator, WIRE} holds exactly the ${Constants.BondAmount} bond`,
+        remitClaimStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireClaim(Constants.BondAmount)
+      ),
+      WireCollateralTool.planRecordWireBalance(
+        Actor.BatchOperator,
+        "record-wire-before-claim",
+        "record the terminated operator's liquid WIRE before the claim",
+        {},
+        Constants.DoomedOperatorLabel
+      ),
+      WireCollateralTool.planClaimremit(
+        Actor.BatchOperator,
+        "claimremit-wire",
+        "claim the remitted bond through sysio.opreg::claimremit",
+        {},
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.WireTokenCode
+      ),
+      WireCollateralTool.planVerifyWireBalanceIncrease(
+        Actor.BatchOperator,
+        "claim-pays-bond",
+        `the operator's liquid WIRE rises by exactly the ${Constants.BondAmount} bond`,
+        {},
+        Constants.DoomedOperatorLabel,
+        Constants.BondAmount
+      ),
+      WireCollateralTool.planVerifyRemitClaim(
+        Actor.Sysio,
+        "claim-row-cleared",
+        "remitclaims{operator, WIRE} is gone after the payout",
+        remitClaimStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireClaim(0n)
       )
     )
   }

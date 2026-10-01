@@ -69,7 +69,8 @@ export namespace SwapFromWireScenarioConstants {
   /**
    * Per-(chain, token) `req_uw_collat` minimum gating `OPERATOR_STATUS_ACTIVE` —
    * equals {@link WireUnderwriterTool.DefaultAmount} so the default deposit plan
-   * satisfies it exactly on both outposts.
+   * satisfies it exactly on both outposts. The plan also funds and bonds that
+   * amount of WIRE on the depot, which no requirement here names.
    */
   export const UnderwriterMinimumBond = 1_000_000_000n
 

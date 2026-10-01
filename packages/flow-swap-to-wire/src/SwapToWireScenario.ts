@@ -411,12 +411,13 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    // ── 4. Underwriter bonds on both outposts → roster flips ACTIVE ──
+    // ── 4. Underwriter bonds on both outposts → roster flips ACTIVE; the default
+    //       plan also funds and bonds WIRE on the depot ──
     // (The old harness bonded these during bootstrap; the scenario owns them now.)
     WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
       cluster,
       "UnderwriterCollateral",
-      "Bond default underwriter collateral on both outpost chains",
+      "Bond default underwriter collateral: WIRE on the depot, ETH and SOL on the outposts",
       writeOptions,
       underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)
