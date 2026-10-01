@@ -6,7 +6,7 @@
   "description": "Flow: gated reserve create→match lifecycle + private-reserve exclusions",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {

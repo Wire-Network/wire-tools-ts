@@ -131,17 +131,39 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 |---|---|---|
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
-| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
-| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
+| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | **Disabled at launch (reserves/swaps withheld)** — Bidirectional SWAP (ETH ↔ SOL) with underwriting |
+| `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | **Disabled at launch (reserves/swaps withheld)** — SWAP of non-native tokens (USDC / USDT / LIQ) |
+| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | **Disabled at launch (reserves/swaps withheld)** — Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real `synd` / `report_liq_yield` emit `SYNDICATE_LIQ` / `LIQ_YIELD`; depot keeps advancing |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
+| `flow-reserve-lifecycle` | `@wireio/test-flow-reserve-lifecycle` | **Disabled at launch (reserves/swaps withheld)** |
+| `flow-swap-from-wire` | `@wireio/test-flow-swap-from-wire` | **Disabled at launch (reserves/swaps withheld)** |
+| `flow-swap-to-wire` | `@wireio/test-flow-swap-to-wire` | **Disabled at launch (reserves/swaps withheld)** |
+| `flow-swap-private-reserves` | `@wireio/test-flow-swap-private-reserves` | **Disabled at launch (reserves/swaps withheld)** |
+| `flow-underwriter-slashing` | `@wireio/test-flow-underwriter-slashing` | **Disabled at launch (reserves/swaps withheld)** |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
+
+### Disabled reserve and swap flows
+
+Each of the eight disabled flows opts into `enableLaunchWithheldOperations: true`
+and exercises
+reserves/swaps, which the launch Solana program refuses: wire-solana `89565920`
+("Disable unaudited reserve and swap operations") returns `OperationDisabled`
+6086 at `InitReserve` during bootstrap. There is no launch replacement for these
+operations; they return when reserves/swaps are enabled after audit.
+
+Their `package.json` live-flow script is named `test:disabled` instead of `test`.
+Both local `scripts/run-flow.mjs` discovery (including exact names, short names,
+regex and the picker) and CI's `run-flows.mjs` require a `test` script, so these
+packages are skipped. To re-enable a flow after audit, rename `test:disabled`
+back to `test` in its `package.json` (one line per flow). All packages remain in
+`pnpm build`; root `pnpm test` still runs Jest and every `test:unit` script.
+These eight packages currently have no unit tests.
 
 ## Running flows
 
@@ -157,7 +179,7 @@ flags to the helper script below):
 
 ### Option A — the `run-flow.mjs` helper (THE canonical way)
 
-[`scripts/run-flow.mjs`](scripts/run-flow.mjs) discovers the flow packages
+[`scripts/run-flow.mjs`](scripts/run-flow.mjs) discovers flow packages with a `test` script
 dynamically, lets you pick one by name / regex (or interactively), validates the
 sibling-repo paths, wires the env vars, and drives the matching package's `test`
 script. **This is the canonical flow runner** — sessions/automation MUST use it
@@ -168,18 +190,18 @@ and every live run is paired with the heartbeat monitor (see
 ```bash
 # Usage: ./scripts/run-flow.mjs [name-or-pattern] [options]
 
-# Interactive picker over every packages/flow-* (no argument):
+# Interactive picker over enabled packages/flow-* (no argument):
 ./scripts/run-flow.mjs \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path   ../wire-ethereum \
   --solana-path     ../wire-solana
 
 # Exact name (full or short form):
-./scripts/run-flow.mjs flow-swap-with-underwriting --wire-build-path … --ethereum-path … --solana-path …
-./scripts/run-flow.mjs swap-with-underwriting       --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs flow-operator-collateral-deposit --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs operator-collateral-deposit       --wire-build-path … --ethereum-path … --solana-path …
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
-./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs collateral --wire-build-path … --ethereum-path … --solana-path …
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
@@ -198,9 +220,8 @@ export WIRE_ETH_PATH=../wire-ethereum
 export WIRE_SOLANA_PATH=../wire-solana
 
 pnpm --filter @wireio/test-flow-operator-collateral-deposit test
-pnpm --filter @wireio/test-flow-swap-with-underwriting       test
 
-# Every flow at once (long — builds first):
+# Unit tests only (builds first; no live flows):
 pnpm test
 ```
 

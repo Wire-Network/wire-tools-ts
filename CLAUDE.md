@@ -48,7 +48,7 @@ resolves the flow name, validates the three sibling-repo paths, wires the
 `WIRE_*` env vars, and drives the package's `test` script (which executes the
 built `lib/index.js`). The e2e gate
 (`wire-platform-build-system` → `run-flows.mjs`) discovers every `flow-*`
-package dynamically and runs them through a work-stealing pool
+package with a `test` script dynamically and runs them through a work-stealing pool
 (`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there —
 and never hand-invoke that pool locally.
 
@@ -89,7 +89,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (17 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, liq syndication, liq yield, and the six swap variants |
+| `flow-*` (21 packages; 13 enabled, 8 disabled at launch) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, liq syndication, liq yield, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -409,7 +409,7 @@ launch restrictions; against the launch build those calls return
 `OperationDisabled` (6086). A flow sets it in its `Scenario.defaults` — never in
 `plan()` — when its scenario needs the bootstrap-seeded Solana reserves or the mock
 SPL mints. The flag does not decide which flows the launch program can run: the
-eight that set it (`flow-reserve-lifecycle`, `flow-swap-from-wire`,
+eight that set it are **disabled at launch** (`flow-reserve-lifecycle`, `flow-swap-from-wire`,
 `flow-swap-non-native-tokens`, `flow-swap-private-reserves`, `flow-swap-to-wire`,
 `flow-swap-variance-revert`, `flow-swap-with-underwriting`,
 `flow-underwriter-slashing`) need Solana operations the launch build withholds, and
@@ -417,6 +417,21 @@ eight that set it (`flow-reserve-lifecycle`, `flow-swap-from-wire`,
 `add_attestation` instruction — it does not set the flag, which governs only
 bootstrap calls. The collateral, producer-registration and batch-operator-termination
 flows bond on the depot, do not set the flag, and run against the launch program.
+
+Each of the eight disabled flows opts into `enableLaunchWithheldOperations: true`
+and exercises
+reserves/swaps, which the launch Solana program refuses: wire-solana `89565920`
+("Disable unaudited reserve and swap operations") returns `OperationDisabled`
+6086 at `InitReserve` during bootstrap. There is no launch replacement for these
+operations; they return when reserves/swaps are enabled after audit.
+
+Their `package.json` live-flow script is named `test:disabled` instead of `test`.
+Both local `scripts/run-flow.mjs` discovery (including exact names, short names,
+regex and the picker) and CI's `run-flows.mjs` require a `test` script, so these
+packages are skipped. To re-enable a flow after audit, rename `test:disabled`
+back to `test` in its `package.json` (one line per flow). All packages remain in
+`pnpm build`; root `pnpm test` still runs Jest and every `test:unit` script.
+These eight packages currently have no unit tests.
 
 **Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
 (and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in

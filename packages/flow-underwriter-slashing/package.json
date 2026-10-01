@@ -6,7 +6,7 @@
   "description": "Flow: Underwriter slashing via the bonded Tier-1 challenge vote (WIRE-297)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {

@@ -6,7 +6,7 @@
   "description": "Flow: bidirectional swaps through a same-owner PRIVATE reserve pair (native × non-native) + private→WIRE exclusion",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {

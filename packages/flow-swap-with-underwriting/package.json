@@ -6,7 +6,7 @@
   "description": "Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {

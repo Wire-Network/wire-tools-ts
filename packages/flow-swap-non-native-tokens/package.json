@@ -6,7 +6,7 @@
   "description": "Flow: SWAP with non-native tokens (USDC / USDT / LIQ on ETH + SOL)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {

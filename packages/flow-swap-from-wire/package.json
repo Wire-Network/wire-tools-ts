@@ -6,7 +6,7 @@
   "description": "Flow: Swap FROM WIRE (WIRE depot → Solana, queued escrow + single-leg underwriting)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
