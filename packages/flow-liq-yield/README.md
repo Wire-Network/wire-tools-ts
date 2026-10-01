@@ -1,73 +1,45 @@
 # flow-liq-yield
 
-The LIQ reward flow end to end, on the REAL `liqsol_core` paths and the real
-depot contracts — nothing injected, nothing cranked by hand:
+Exercises the liqSOL reward and redemption path through `sysio.synd` underwriting.
+Every write is a Report Step; depot confirmations wait for irreversibility.
 
-```
-liqsol_core::sol_to_liqsol            (SOL outpost — the user deposits SOL, gets liqSOL 1:1)
-liqsol_core::set_wire_state           (admin — Launching, then PostLaunch)
-liqsol_core::synd                     (user — syndicates liqSOL into the pool)
-  → SYNDICATE_LIQ ferried to the depot
-  → sysio.msgch → sysio.liq::park       (the key is not linked yet: PARKED)
-sysio.authex::createlink              (user — links the same Solana key)
-  → sysio.liq::linkswept               (inline: the parked shadow becomes the user's row)
-liqsol_core::inject_bonus_synd_yield  (permissionless — SOL-funded pool yield)
-liqsol_core::report_liq_yield         (permissionless crank — non-admin signer)
-  → LIQ_YIELD ferried to the depot
-  → sysio.msgch → sysio.liq::mintyield  (lands in liqpending, outside supply)
-batch_operator_plugin → sysio.liq::queueyield   (mints it, funds the swap's reservoir)
-batch_operator_plugin → sysio.swap::tickyield   (sells the reservoir through the pool)
-  → sysio.liq::addyield                (the WIRE proceeds bump the cumulative index)
-sysio.liq::claim                      (user — paid exactly owed(row, index) in WIRE)
-sysio.liq::desyndicate                (user — settles, burns, queues DESYNDICATE_LIQ)
-  → DESYNDICATE_LIQ ferried to the outpost
-  → liqsol_core handle_desyndicate_liq (pays the user's liqSOL ATA inline)
-```
+1. Provision the user and bonder accounts with separate create and resource-policy
+   Steps. Link the imported bonder's Solana key through `createlink`; the inline
+   `sysio.synd::linkswept` delivers its parked shadow as liquid bonding capacity.
+2. Deposit SOL for liqSOL, transition the outpost to PostLaunch and call `synd`
+   through the strict account map, including `globalConfig`.
+3. Verify `SYNDICATE_LIQ` circulates and its closed depot envelope holds the full
+   item. Before bonding, neither parked nor user shadow is credited.
+4. Bond that envelope using `WireSyndicationTool.planBondEnvelope` with its
+   runtime epoch output. Crank `sysio.synd`, verify the unlinked credit is parked,
+   then link the user's key and verify delivery. Wait out the challenge window,
+   approve and claim the bond through `planApproveAndClaim`.
+5. Donate bonus pool yield and call permissionless `report_liq_yield`. Verify the
+   reported delta circulates and stays held outside `liqpending` and supply.
+   Bond and crank its envelope, then approve and claim after its window.
+6. Verify the operators' `queueyield` and `tickyield` cranks mint and sell the
+   reported yield. Claim exactly the WIRE owed by the cumulative index and
+   verify the pot falls by the payout.
+7. Call `sysio.synd::desyndicate`. Verify the outbound attestation and the user's
+   liqSOL payout equal the burned amount minus the floor-rounded
+   `desynd_fee_bps` read from `syndconfig`.
+8. Verify epochs advanced, the emergency cord is clear and `mismatch` is empty.
 
-Asserts, in order:
+## Bootstrap defaults
 
-1. **The depot parks the syndication.** After `synd`, `SYNDICATE_LIQ` circulates
-   and `sysio.liq::parked` holds exactly the syndicated amount against the
-   user's (unlinked) Solana key; the user holds no shadow row.
-2. **The link delivers it.** After `createlink`, the user's own row holds the
-   amount and nothing stays parked — the inline sweep, no permissionless `sweep`.
-3. **Reported yield lands outside supply.** `report_liq_yield` advances the
-   watermark by at least the donation, `LIQ_YIELD` circulates, and `liqpending`
-   holds exactly the reported delta.
-4. **The queue crank mints it.** `liqpending` empties and the shadow supply grows
-   by exactly the reported yield — the batch operators' `queueyield`.
-5. **The tick crank sells it.** The cumulative index moves off zero and the
-   reservoir sells out — the batch operators' `tickyield` — so the ledger is
-   stable for an exact claim.
-6. **The claim is exact.** The user's WIRE balance equals `owed(row, index)`
-   computed from the row and the index before the claim, the row is settled at
-   the index, and the pot fell by the payout.
-7. **The redemption is paid on the outpost.** `DESYNDICATE_LIQ` reaches a
-   `DEPOT_OUTPOST_SOLANA` envelope carrying the user's key, the amount and a
-   non-zero request id, and the user's liqSOL ATA grows by the burned amount.
-8. **The depot keeps advancing** across every attestation.
+The scenario opts into `enableMockLiqPools` and `enableMockSyndicationImport` in
+`defaults`. These epoch-zero seeds are backed by custody on both outposts;
+Ethereum principal is reconciled by the bootstrap. No seed runs from `plan()`
+and no per-flow environment override is required. The bond, syndication and
+emergency-stop contracts are deployed and configured by the normal bootstrap.
 
-## What the bootstrap provides
-
-Everything `flow-liq-syndication` relies on (the four wire-solana programs at
-genesis, the liqsol surface), plus the depot's shadow-liq system: `sysio.swap`
-and `sysio.liq` deployed, the swap configured, one shadow symbol per registered
-liq token (`LIQETH`, `LIQSOL`), the kicker — and, because this scenario opts in
-through `enableMockLiqPools`, the two mock yield pools `regliqpool` seeds inside
-the epoch-0 window (the pool's shadow is minted from nothing, which is why the
-seeding is opt-in and a real depot never sets it). The pools' tick pacing (a 30 s
-horizon, a 30 % depth cap) is what makes assertion 5 converge in one tick.
-
-The batch operators' `queueyield` and `tickyield` cranks are `nodeop`'s own
-(`batch_operator_plugin`, `--batch-yield-tick-interval-ms`); the flow only waits
-for their effects.
+The operators drive `queueyield` and `tickyield`; the flow explicitly drives
+bond acceptance, release cranks, approval and claims as separate Steps.
 
 ## Single-shot per cluster
 
-Like `flow-liq-syndication`, the scenario drives the outpost
-`PreLaunch -> Launching -> PostLaunch`, which is TERMINAL; the FIRST step of the
-Syndicate phase refuses a cluster that is not `PreLaunch`, before any write.
-Give every run a fresh `--cluster-path` (what `run-flow.mjs` does by default).
+The scenario transitions `PreLaunch -> Launching -> PostLaunch`. Use a fresh
+cluster directory for every run; the first Syndicate Step checks PreLaunch.
 
 ## Running
 
@@ -87,6 +59,6 @@ node scripts/run-flow.mjs flow-liq-yield \
 node scripts/flow-heartbeat-monitor.mjs --cluster-path /tmp/wire-flow-liq-yield
 ```
 
-The `--wire-build-path` build must carry `sysio.swap` and `sysio.liq` (the
-bootstrap deploys both) and a `nodeop` whose `batch_operator_plugin` cranks the
+The `--wire-build-path` build must carry `sysio.swap`, `sysio.liq`, `sysio.synd`,
+`sysio.bond` and `sysio.andon` and a `nodeop` whose `batch_operator_plugin` cranks the
 yield path; the `--solana-path` requirements are `flow-liq-syndication`'s.

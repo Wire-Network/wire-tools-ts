@@ -55,6 +55,11 @@ const WireSymbol = "9,WIRE"
  * default, so a cluster pays yield the way the network will.
  */
 const LiqKickerBps = 200
+/**
+ * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
+ * and `clear`, which move no funds; its resource policy pays for them.
+ */
+const PanicAccountWireFunding = 0n
 /** WIRE-leg swap fee (bps) + collateral-lock challenge window (dev). */
 const SwapFeeBps = 30
 const CollateralLockDurationMs = 600_000
@@ -550,6 +555,12 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── OPP contracts + sysio.code grants ──
+    // In the order `docs/contract-upgrade-order.md` gives: `sysio.andon` before the
+    // four contracts that read its cord (swap, liq, bond, synd), `sysio.bond` before
+    // or with `sysio.synd`, and `sysio.synd` before any liq token is registered (the
+    // `Registry` phase below). Every one deploys privileged through `setsyscode`,
+    // which `sysio.andon` and `sysio.synd` need: both bill their rows to the `sysio`
+    // RAM pool.
     const oppContracts = [
       SysioContractName.chains,
       SysioContractName.tokens,
@@ -560,8 +571,11 @@ export namespace ClusterBuildDefaults {
       SysioContractName.reserv,
       SysioContractName.chalg,
       SysioContractName.dclaim,
+      SysioContractName.andon,
       SysioContractName.swap,
-      SysioContractName.liq
+      SysioContractName.liq,
+      SysioContractName.bond,
+      SysioContractName.synd
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -793,6 +807,46 @@ export namespace ClusterBuildDefaults {
       )
     )
 
+    // ── the depot's emergency stop ──
+    // `setpanic` needs an existing account, so the panic account is provisioned first,
+    // through the user path (the dev key, a policy from the bootstrap node owner above).
+    // The cord is armed before any cord reader carries traffic, and `sysio.synd` is a
+    // registered puller before its first envelope, so a custody shortfall pulls it.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "PanicAccount",
+      "Create the sysio.andon panic account"
+    ).push(
+      Steps.user.planProvisionWire<C>(
+        Actor.Sysio,
+        "create-panic-account",
+        `create ${Constants.PANIC_ACCOUNT}, the account that may pull and clear the cord`,
+        {},
+        Constants.PANIC_ACCOUNT,
+        PanicAccountWireFunding
+      )
+    )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "EmergencyStop",
+      "Arm sysio.andon: the panic account and the sysio.synd puller"
+    ).push(
+      Steps.contracts.sysio.andon.planSetpanic<C>(
+        Actor.Sysio,
+        "set-panic-account",
+        `name ${Constants.PANIC_ACCOUNT} the panic account`,
+        {},
+        { account: Constants.PANIC_ACCOUNT }
+      ),
+      Steps.contracts.sysio.andon.planAddpuller<C>(
+        Actor.Sysio,
+        "add-synd-puller",
+        "register sysio.synd as a puller, so a custody shortfall pulls the cord",
+        {},
+        { contract: SysioContractAccount[SysioContractName.synd] }
+      )
+    )
+
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
     //    verify the already-running remote outpost endpoints instead ──
     if (isExternalOutpost) {
@@ -839,6 +893,13 @@ export namespace ClusterBuildDefaults {
           "deploy-ethereum",
           "deploy + seed the Ethereum outpost",
           { timeoutMs: 900_000 }
+        ),
+        verifyStep<C>(
+          Actor.EthereumOutpost,
+          "verify-syndication-pool",
+          "SyndicationPool carries the deploy config's maximum, deadband and liq token, " +
+            "and the panic account may pause and unpause it",
+          Steps.ethereumOutpost.assertSyndicationPoolConfigured
         ),
         Steps.processes.anvil.planEnableIntervalMining<C>(
           Actor.EthereumOutpost,
@@ -951,6 +1012,16 @@ export namespace ClusterBuildDefaults {
         { bps: LiqKickerBps }
       )
     )
+    // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
+    // sysio.synd rules, and the verify of the syndication preconditions. A pair with
+    // no syndconfig row releases nothing, so a real depot configures it too —
+    // unconditional.
+    Steps.registry.planSyndicationConfig<C>(
+      prerequisites,
+      "SyndicationConfig",
+      "Configure sysio.bond + each shadow pair on sysio.synd",
+      {}
+    )
     // Mock shadow-liq yield pools — opt-in via `--enable-mock-liq-pools` (default
     // off, so a real / external depot never mints unbacked shadow). Seeded HERE,
     // pre-EpochBootstrap, because the contract gates `regliqpool` to the epoch-0
@@ -962,6 +1033,18 @@ export namespace ClusterBuildDefaults {
         "Seed the 2 mock shadow-liq yield pools on sysio.swap",
         {}
       )
+    }
+    if (config.enableMockSyndicationImport) {
+      Steps.registry.planMockSyndicationImport<C>(
+        prerequisites,
+        "MockSyndicationImport",
+        "Import the mock bonder positions during epoch zero",
+        {}
+      )
+    }
+    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
+      Steps.mockShadowBacking.planSolana<C>(prerequisites)
+      Steps.mockShadowBacking.planEthereum<C>(prerequisites)
     }
     ClusterBuildPhase.create<C>(
       prerequisites,

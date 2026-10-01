@@ -528,17 +528,26 @@ describe("OperatorDaemonTool", () => {
         dataPath = Path.join(dir, "cluster", "data"),
         ethereumDeploymentsPath = Path.join(dataPath, "ethereum-deployments")
       // ETH fixtures: outpost-addrs.json (in the per-cluster deployments dir)
-      // + one hardhat artifact (OPP only).
+      // + hardhat artifacts (BAR uses the compiled BARV2 name).
       Fs.mkdirSync(ethereumDeploymentsPath, { recursive: true })
       Fs.writeFileSync(
         Path.join(ethereumDeploymentsPath, "outpost-addrs.json"),
-        JSON.stringify({ OPP: "0xaaa0000000000000000000000000000000000aaa" })
+        JSON.stringify({
+          OPP: "0xaaa0000000000000000000000000000000000aaa",
+          BAR: "0xbbb0000000000000000000000000000000000bbb"
+        })
       )
       const oppArtifactDir = Path.join(ethereumPath, "artifacts", "contracts", "outpost", "OPP.sol")
       Fs.mkdirSync(oppArtifactDir, { recursive: true })
       Fs.writeFileSync(
         Path.join(oppArtifactDir, "OPP.json"),
         JSON.stringify({ abi: [{ type: "event", name: "OPPEnvelope" }] })
+      )
+      const barArtifactDir = Path.join(ethereumPath, "artifacts", "contracts", "outpost", "BAR.sol")
+      Fs.mkdirSync(barArtifactDir, { recursive: true })
+      Fs.writeFileSync(
+        Path.join(barArtifactDir, "BARV2.json"),
+        JSON.stringify({ contractName: "BARV2", abi: [{ type: "event", name: "NodeCommitted" }] })
       )
       // SOL fixtures: committed liqsol_core program keypair + generated IDL
       // (metadata.name = liqsol_core; instructions cover the daemon-invoked
@@ -577,12 +586,19 @@ describe("OperatorDaemonTool", () => {
       expect(Path.basename(prepared.solanaIdlFile)).toBe(OperatorDaemonTool.SolanaIdlFilename)
       const copiedIdl = JSON.parse(Fs.readFileSync(prepared.solanaIdlFile, "utf-8"))
       expect(copiedIdl.metadata.name).toBe(SolanaOutpostProgramTool.ProgramName)
-      expect(prepared.ethereumAbiFiles.length).toBe(1)
+      expect(prepared.ethereumAbiFiles.length).toBe(2)
       const abi = JSON.parse(Fs.readFileSync(prepared.ethereumAbiFiles[0], "utf-8"))
       expect(abi).toEqual({
         contractName: "OPP",
         address: "0xaaa0000000000000000000000000000000000aaa",
         abi: [{ type: "event", name: "OPPEnvelope" }]
+      })
+      const barFile = prepared.ethereumAbiFiles[1]
+      expect(Path.basename(barFile)).toBe("BAR.json")
+      expect(JSON.parse(Fs.readFileSync(barFile, "utf-8"))).toEqual({
+        contractName: "BAR",
+        address: "0xbbb0000000000000000000000000000000000bbb",
+        abi: [{ type: "event", name: "NodeCommitted" }]
       })
     })
 

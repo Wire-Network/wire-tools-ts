@@ -9,7 +9,14 @@
  * {@link SolanaLiqSyndicationTool.planInjectBonusSyndYield} (the permissionless
  * SOL-funded donation that credits the syndicated pool) and
  * {@link SolanaLiqSyndicationTool.planReportLiqYield} (the permissionless crank
- * that queues `LIQ_YIELD` for the delta above the watermark).
+ * that queues `LIQ_YIELD` for the delta above the watermark). The emergency
+ * stop has its own three: {@link SolanaLiqSyndicationTool.planSetPanic} (the
+ * admin naming the panic account), {@link SolanaLiqSyndicationTool.planSetFrozen}
+ * (the panic account or the admin setting / clearing `GlobalState.frozen`) and
+ * {@link SolanaLiqSyndicationTool.planPayPendingDesyndication} (the
+ * permissionless crank that pays a `DESYNDICATE_LIQ` a frozen outpost stored).
+ * {@link SolanaLiqSyndicationTool.planDonateToPool} is a plain liqSOL transfer
+ * into the pool — custody the depot never credited.
  *
  * Nothing here injects an attestation: each step drives the same instruction a
  * real user / admin / cranker drives, and the outbound `SYNDICATE_LIQ` /
@@ -26,6 +33,8 @@ import Assert from "node:assert"
 import { Either } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
 import {
+  type AccountMeta,
+  type Commitment,
   ComputeBudgetProgram,
   Keypair,
   PublicKey,
@@ -39,18 +48,20 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  createTransferCheckedWithTransferHookInstruction,
   getAccount,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 
 import {
+  PendingPayoutReason,
   WireState,
   WireStateTransitions,
   canTransitionWireState,
   wireStateVariant,
   type AnchorEnumVariant
 } from "./SolanaAnchorEnumTool.js"
-import { LiqsolPdaSeed } from "./LiqsolPdaSeed.js"
+import { LiqsolPdaSeed, pendingPayoutAddress } from "./LiqsolPdaSeed.js"
 import { getLogger } from "../../logging/Logger.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
@@ -82,6 +93,21 @@ export namespace SolanaLiqSyndicationTool {
   export const DepositComputeUnitLimit = 1_000_000
   /** Compute-unit ceiling for the Token-2022 + transfer-hook syndication instructions. */
   export const SyndicationComputeUnitLimit = 800_000
+  /**
+   * Heap frame a `DESYNDICATE_LIQ` settlement is given — the relay's
+   * `SOLANA_DISPATCH_HEAP_FRAME_BYTES` (wire-sysio
+   * `outpost_solana_client.hpp`) and the emergency-stop playbook's
+   * `DISPATCH_HEAP_FRAME_BYTES`. `pay_pending_desyndication` runs the same
+   * settlement, so it needs the same heap.
+   */
+  export const DispatchHeapFrameBytes = 256_000
+  /**
+   * Compute-unit ceiling for `pay_pending_desyndication` — the playbook's
+   * `SETTLEMENT_CU_LIMIT`, the per-transaction maximum.
+   */
+  export const SettlementComputeUnitLimit = 1_400_000
+  /** Decimals of the liqSOL Token-2022 mint (`liqsol-token`). */
+  export const LiqsolDecimals = 9
 
   // ── value helpers (PDA derivation / program loading — run INSIDE runners) ──
 
@@ -236,7 +262,7 @@ export namespace SolanaLiqSyndicationTool {
 
   /**
    * An instruction's account map — the exact object a runner hands to Anchor's
-   * `.accounts()` / `.accountsStrict()`.
+   * `.accountsStrict()`.
    *
    * Every builder below is PURE (PDAs + signer pubkeys in, a map out) for one
    * reason: with `resolution = false` in wire-solana's `Anchor.toml` nothing is
@@ -255,7 +281,7 @@ export namespace SolanaLiqSyndicationTool {
   export interface InstructionAccountMap {
     /** The instruction's name as Anchor's camelCased IDL spells it. */
     readonly instruction: string
-    /** The map the runner hands `.accounts()`. */
+    /** The map the runner hands `.accountsStrict()`. */
     readonly accounts: InstructionAccounts
   }
 
@@ -298,9 +324,36 @@ export namespace SolanaLiqSyndicationTool {
       {
         instruction: "reportLiqYield",
         accounts: reportLiqYieldAccounts(base, placeholder)
+      },
+      {
+        instruction: "setPanic",
+        accounts: setPanicAccounts(base, placeholder, placeholder)
+      },
+      {
+        instruction: "setFrozen",
+        accounts: setFrozenAccounts(base, placeholder)
+      },
+      {
+        instruction: "payPendingDesyndication",
+        accounts: payPendingDesyndicationAccounts(
+          base,
+          placeholder,
+          pendingPayoutAddress(
+            base.liqsolCoreProgram,
+            PlaceholderPendingRequestId
+          ),
+          placeholder
+        )
       }
     ]
   }
+
+  /**
+   * The request id {@link instructionAccountMaps} derives its placeholder
+   * pending-payout address from — any positive id does, since only the map's
+   * KEYS are compared.
+   */
+  export const PlaceholderPendingRequestId = 1n
 
   /**
    * Assert every exported account map names exactly the accounts the DEPLOYED
@@ -401,6 +454,7 @@ export namespace SolanaLiqSyndicationTool {
     liqYieldReported: anchor.BN
     liqSequence: anchor.BN
     wireState: AnchorEnumVariant
+    frozen: boolean
   }
 
   /**
@@ -500,19 +554,252 @@ export namespace SolanaLiqSyndicationTool {
   async function readGlobalState<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<GlobalStateAccount> {
-    const pdas = deriveBasePdas(ctx.config.solanaPath),
-      account = await ctx.solana.connection.getAccountInfo(pdas.globalState)
+    return readSingleton<C, GlobalStateAccount>(
+      ctx,
+      deriveBasePdas(ctx.config.solanaPath).globalState,
+      GlobalStateAccountName
+    )
+  }
+
+  /**
+   * Decode one liqsol singleton through the program's OWN Anchor coder.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param address - The singleton's PDA.
+   * @param accountName - The account's camelCased coder name.
+   * @returns The decoded account.
+   * @throws If the account does not exist (the liqsol surface was never initialized).
+   */
+  async function readSingleton<C extends ClusterBuildContext, T>(
+    ctx: C,
+    address: PublicKey,
+    accountName: string
+  ): Promise<T> {
+    const account = await ctx.solana.connection.getAccountInfo(address)
     Assert.ok(
       account != null,
-      `SolanaLiqSyndicationTool.readGlobalState: GlobalState ${pdas.globalState.toBase58()} ` +
-        "does not exist — the liqsol surface was never initialized"
+      `SolanaLiqSyndicationTool: ${accountName} ${address.toBase58()} does not exist — ` +
+        "the liqsol surface was never initialized"
     )
     return SolanaOutpostProgramTool.loadReadOnlyProgram(
       ctx.solana.connection,
       ctx.config.solanaPath
-    ).coder.accounts.decode<GlobalStateAccount>(
-      GlobalStateAccountName,
-      account.data
+    ).coder.accounts.decode<T>(accountName, account.data)
+  }
+
+  /**
+   * Whether the outpost's emergency stop is set (`GlobalState.frozen`). A READ.
+   * While it is set `synd` refuses with `OutpostFrozen` and every inbound
+   * `DESYNDICATE_LIQ` is stored as a `PendingPayout` rather than paid.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @returns The flag.
+   */
+  export async function readGlobalStateFrozen<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<boolean> {
+    return (await readGlobalState(ctx)).frozen
+  }
+
+  /** Name of the `GlobalConfig` account as the camelCased Anchor coder keys it. */
+  export const GlobalConfigAccountName = "globalConfig"
+
+  /** The `GlobalConfig` fields this tool consumes, as the Anchor coder decodes them. */
+  interface GlobalConfigAccount {
+    admin: PublicKey
+    panic: PublicKey
+    maxSyndicationPerTransfer: anchor.BN
+  }
+
+  /** The emergency-stop fields of the liqsol `GlobalConfig`. */
+  export interface GlobalConfigState {
+    /** The admin — every configuration instruction's signer. */
+    admin: PublicKey
+    /** The panic account (`set_panic`); the all-zero key means none is configured. */
+    panic: PublicKey
+    /** The per-transfer syndication maximum `synd` enforces (liqSOL base units; 0 refuses all). */
+    maxSyndicationPerTransfer: bigint
+  }
+
+  /**
+   * Read the liqsol `GlobalConfig`'s admin, panic account and per-transfer
+   * syndication maximum. A READ.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @returns The decoded fields.
+   * @throws If `global_config` has not been initialized (`anchor run init-global-config`).
+   */
+  export async function readGlobalConfig<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<GlobalConfigState> {
+    const { admin, panic, maxSyndicationPerTransfer } = await readSingleton<
+      C,
+      GlobalConfigAccount
+    >(
+      ctx,
+      deriveBasePdas(ctx.config.solanaPath).globalConfig,
+      GlobalConfigAccountName
+    )
+    return {
+      admin,
+      panic,
+      maxSyndicationPerTransfer: BigInt(maxSyndicationPerTransfer.toString())
+    }
+  }
+
+  /**
+   * The syndicated pool's custody — the liqSOL balance of the pool ATA, in
+   * base units. A READ: the solvency check compares exactly this against the
+   * depot's outstanding shadow.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @returns The pool ATA's raw liqSOL amount.
+   */
+  export async function readPoolBalance<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<bigint> {
+    const { liqsolPoolAta } = deriveBasePdas(ctx.config.solanaPath)
+    return (
+      await getAccount(
+        ctx.solana.connection,
+        liqsolPoolAta,
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      )
+    ).amount
+  }
+
+  /** Name of the `PendingPayout` account as the camelCased Anchor coder keys it. */
+  export const PendingPayoutAccountName = "pendingPayout"
+
+  /** The balances a `CustodyShortfall` record carries as evidence. */
+  export interface CustodyShortfallEvidence {
+    /** The pool ATA's liqSOL balance when the payout arrived. */
+    poolBalance: bigint
+    /** The depot's outstanding shadow after its burn (`DesyndicateLIQ.total_syndicated`). */
+    depotOutstanding: bigint
+  }
+
+  /** One stored `DESYNDICATE_LIQ` (`PendingPayout`), decoded. */
+  export interface PendingPayoutRecord {
+    /** The record's PDA ({@link pendingPayoutAddress} of `requestId`). */
+    address: PublicKey
+    /** The depot's `DesyndicateLIQ.request_id`. */
+    requestId: bigint
+    /** The holder the depot ordered paid. */
+    user: PublicKey
+    /** The depot token code the payout is denominated in. */
+    tokenCode: bigint
+    /** liqSOL base units to pay. */
+    amount: bigint
+    /** Who funded the record's rent; refunded when it is paid. */
+    rentPayer: PublicKey
+    /** Why the payout was stored. */
+    reason: PendingPayoutReason
+    /** The shortfall's evidence — present only when `reason` is `custodyShortfall`. */
+    custodyShortfall?: CustodyShortfallEvidence
+  }
+
+  /** The `CustodyShortfall` variant's fields, as the Anchor coder decodes them. */
+  interface CustodyShortfallFields {
+    poolBalance: anchor.BN
+    depotOutstanding: anchor.BN
+  }
+
+  /** `PendingPayout` as the Anchor coder decodes it. */
+  export interface PendingPayoutAccount {
+    requestId: anchor.BN
+    user: PublicKey
+    tokenCode: anchor.BN
+    amount: anchor.BN
+    rentPayer: PublicKey
+    /** Single-key tagged union keyed by the camelCased variant. */
+    reason: Readonly<Record<string, Partial<CustodyShortfallFields>>>
+    bump: number
+  }
+
+  /**
+   * Map a decoded `PendingPayout` onto {@link PendingPayoutRecord}. A pure
+   * value helper.
+   *
+   * @param address - The record's PDA.
+   * @param account - The decoded account.
+   * @returns The record.
+   * @throws If the reason decodes to a variant {@link PendingPayoutReason} does not name.
+   */
+  export function toPendingPayoutRecord(
+    address: PublicKey,
+    account: PendingPayoutAccount
+  ): PendingPayoutRecord {
+    const [variant] = Object.keys(account.reason ?? {})
+    Assert.ok(
+      variant != null && variant in PendingPayoutReason,
+      "SolanaLiqSyndicationTool: PendingPayout.reason decoded to " +
+        `${JSON.stringify(account.reason)}, which names no PendingPayoutReason member`
+    )
+    const reason = variant as PendingPayoutReason,
+      { poolBalance, depotOutstanding } = account.reason[variant]
+    return {
+      address,
+      requestId: BigInt(account.requestId.toString()),
+      user: account.user,
+      tokenCode: BigInt(account.tokenCode.toString()),
+      amount: BigInt(account.amount.toString()),
+      rentPayer: account.rentPayer,
+      reason,
+      ...(reason === PendingPayoutReason.custodyShortfall && {
+        custodyShortfall: {
+          poolBalance: BigInt(poolBalance.toString()),
+          depotOutstanding: BigInt(depotOutstanding.toString())
+        }
+      })
+    }
+  }
+
+  /**
+   * Every stored `DESYNDICATE_LIQ` on the outpost. A READ
+   * (`getProgramAccounts` filtered by the `PendingPayout` discriminator).
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @returns The records, in the RPC's order.
+   */
+  export async function readPendingPayouts<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PendingPayoutRecord[]> {
+    const accounts = await SolanaOutpostProgramTool.loadReadOnlyProgram(
+      ctx.solana.connection,
+      ctx.config.solanaPath
+    ).account[PendingPayoutAccountName].all()
+    return accounts.map(({ publicKey, account }) =>
+      toPendingPayoutRecord(publicKey, account as PendingPayoutAccount)
+    )
+  }
+
+  /**
+   * The stored `DESYNDICATE_LIQ` of `requestId`, or `undefined` when none is
+   * stored (never deferred, or already paid — paying closes the account). A READ.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param requestId - The depot's request id.
+   * @returns The record, or `undefined`.
+   */
+  export async function readPendingPayout<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint
+  ): Promise<PendingPayoutRecord> {
+    const { liqsolCoreProgram } = deriveBasePdas(ctx.config.solanaPath),
+      address = pendingPayoutAddress(liqsolCoreProgram, requestId),
+      account = await ctx.solana.connection.getAccountInfo(address)
+    if (account == null) return undefined
+    return toPendingPayoutRecord(
+      address,
+      SolanaOutpostProgramTool.loadReadOnlyProgram(
+        ctx.solana.connection,
+        ctx.config.solanaPath
+      ).coder.accounts.decode<PendingPayoutAccount>(
+        PendingPayoutAccountName,
+        account.data
+      )
     )
   }
 
@@ -619,7 +906,7 @@ export namespace SolanaLiqSyndicationTool {
   }
 
   /**
-   * `synd`'s 22 accounts, in its PostLaunch form: the outbound buffer + config
+   * `synd`'s 23 accounts, in its PostLaunch form: the outbound buffer + config
    * are REQUIRED and both `Option` accounts (`outpost_account`,
    * `pretoken_purchase_history`) are `None`.
    *
@@ -634,6 +921,9 @@ export namespace SolanaLiqSyndicationTool {
       outboundMessageBuffer: pdas.outboundMessageBuffer,
       config: pdas.outpostConfig,
       user: pdas.user,
+      // `synd` reads the per-transfer maximum off `global_config`
+      // (`StakeLiqsolContext.global_config`).
+      globalConfig: pdas.globalConfig,
       liqsolMint: pdas.liqsolMint,
       globalState: pdas.globalState,
       distributionState: pdas.distributionState,
@@ -720,6 +1010,113 @@ export namespace SolanaLiqSyndicationTool {
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId
     }
+  }
+
+  /**
+   * `set_panic`'s admin-gated accounts (`UpdateGlobalConfigRole`): the admin
+   * names `newAuthority` the panic account, which may call `set_frozen` and
+   * nothing else.
+   *
+   * @param pdas - The outpost's derived liqsol addresses.
+   * @param admin - The liqsol `global_config.admin` signer.
+   * @param newAuthority - The account to name the panic account.
+   * @returns The account map.
+   */
+  export function setPanicAccounts(
+    pdas: BasePdas,
+    admin: PublicKey,
+    newAuthority: PublicKey
+  ): InstructionAccounts {
+    return {
+      globalConfig: pdas.globalConfig,
+      admin,
+      newAuthority
+    }
+  }
+
+  /**
+   * `set_frozen`'s accounts (`SetFrozenContext`): signed by the panic account
+   * or the admin.
+   *
+   * @param pdas - The outpost's derived liqsol addresses.
+   * @param authority - The panic account or the admin.
+   * @returns The account map.
+   */
+  export function setFrozenAccounts(
+    pdas: BasePdas,
+    authority: PublicKey
+  ): InstructionAccounts {
+    return {
+      authority,
+      globalConfig: pdas.globalConfig,
+      globalState: pdas.globalState
+    }
+  }
+
+  /**
+   * `pay_pending_desyndication`'s six named accounts
+   * (`PayPendingDesyndication`). The payment itself needs the
+   * {@link payPendingDesyndicationManifest} as remaining accounts.
+   *
+   * @param pdas - The outpost's derived liqsol addresses.
+   * @param caller - The permissionless signer (pays the fee only).
+   * @param pendingPayout - The stored payout's PDA ({@link pendingPayoutAddress}).
+   * @param rentPayer - The record's `rent_payer`, which the closed account's rent returns to.
+   * @returns The account map.
+   */
+  export function payPendingDesyndicationAccounts(
+    pdas: BasePdas,
+    caller: PublicKey,
+    pendingPayout: PublicKey,
+    rentPayer: PublicKey
+  ): InstructionAccounts {
+    return {
+      caller,
+      config: pdas.outpostConfig,
+      pendingPayout,
+      rentPayer,
+      globalState: pdas.globalState,
+      distributionState: pdas.distributionState
+    }
+  }
+
+  /**
+   * The payment manifest a `DESYNDICATE_LIQ` to `pdas.user` needs, in the
+   * order and with the writability the emergency-stop playbook's
+   * `paymentManifest` (wire-sysio `docs/emergency-stop-playbook.md`) and the
+   * relay's dispatch manifest pass it: the two singletons, the pool side, the
+   * holder side, the distribution bucket, the mint, Token-2022, the transfer
+   * hook with its extra metas, and `liqsol_core` itself. None signs.
+   *
+   * A pure value helper — the ONE manifest the crank runner and its test use.
+   *
+   * @param pdas - The HOLDER's derived liqsol addresses (the payout's `user`).
+   * @returns The remaining accounts, in order.
+   */
+  export function payPendingDesyndicationManifest(
+    pdas: UserPdas
+  ): AccountMeta[] {
+    const meta = (pubkey: PublicKey, isWritable: boolean): AccountMeta => ({
+      pubkey,
+      isWritable,
+      isSigner: false
+    })
+    return [
+      meta(pdas.globalState, true),
+      meta(pdas.distributionState, true),
+      meta(pdas.poolAuthority, false),
+      meta(pdas.liqsolPoolAta, true),
+      meta(pdas.userAta, true),
+      meta(pdas.liqsolPoolUserRecord, true),
+      meta(pdas.userUserRecord, true),
+      meta(pdas.bucketAuthority, false),
+      meta(pdas.bucketTokenAccount, true),
+      meta(pdas.liqsolMint, false),
+      meta(TOKEN_2022_PROGRAM_ID, false),
+      meta(pdas.extraAccountMetaList, false),
+      meta(pdas.transferHookProgram, false),
+      meta(pdas.liqsolCoreProgram, false)
+    ]
   }
 
   // ── Step: SOL → liqSOL deposit (`liqsol_core::sol_to_liqsol`) ────────────
@@ -1053,7 +1450,7 @@ export namespace SolanaLiqSyndicationTool {
       ),
       transaction = await program.methods
         .solToLiqsol(new anchor.BN(input.lamports.toString()), seed)
-        .accounts(depositForLiqsolAccounts(pdas, ephemeralStake))
+        .accountsStrict(depositForLiqsolAccounts(pdas, ephemeralStake))
         .preInstructions([
           ComputeBudgetProgram.setComputeUnitLimit({
             units: DepositComputeUnitLimit
@@ -1132,7 +1529,7 @@ export namespace SolanaLiqSyndicationTool {
       program = loadLiqsolProgram(ctx, admin),
       transaction = await program.methods
         .setWireState(wireStateVariant(input.wireState))
-        .accounts(setWireStateAccounts(pdas, admin.publicKey))
+        .accountsStrict(setWireStateAccounts(pdas, admin.publicKey))
         .transaction()
     await submit(
       ctx,
@@ -1274,7 +1671,7 @@ export namespace SolanaLiqSyndicationTool {
       program = loadLiqsolProgram(ctx, user),
       transaction = await program.methods
         .synd(new anchor.BN(input.amount.toString()))
-        .accounts(syndAccounts(pdas))
+        .accountsStrict(syndAccounts(pdas))
         .preInstructions([
           ComputeBudgetProgram.setComputeUnitLimit({
             units: SyndicationComputeUnitLimit
@@ -1366,7 +1763,7 @@ export namespace SolanaLiqSyndicationTool {
       program = loadLiqsolProgram(ctx, donor),
       transaction = await program.methods
         .injectBonusSyndYield(new anchor.BN(input.lamports.toString()))
-        .accounts(injectBonusSyndYieldAccounts(pdas, donor.publicKey))
+        .accountsStrict(injectBonusSyndYieldAccounts(pdas, donor.publicKey))
         .preInstructions([
           ComputeBudgetProgram.setComputeUnitLimit({
             units: SyndicationComputeUnitLimit
@@ -1450,6 +1847,340 @@ export namespace SolanaLiqSyndicationTool {
       transaction,
       cranker,
       `SolanaLiqSyndicationTool.planReportLiqYield ${input.crankerName}`
+    )
+  }
+
+  // ── Step: name the panic account (`liqsol_core::set_panic`) ──────────────
+
+  /** Input for {@link planSetPanic} — one admin-signed `set_panic` write. */
+  export interface SetPanicInput extends StepInput {
+    readonly kind: "SolanaLiqSyndicationTool.SetPanicInput"
+    /** Durable handle of the persisted keypair to name the panic account. */
+    readonly panicKeypairName: string
+  }
+
+  /**
+   * A single `set_panic` write, signed by the deployer (the liqsol
+   * `global_config.admin`), naming the persisted keypair `panicKeypairName`
+   * the outpost's panic account — the one account besides the admin that may
+   * call `set_frozen`, and the only thing it may call.
+   *
+   * @param actor - The narrative subject (the Solana outpost admin).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param panicKeypairName - Durable handle of the panic account's keypair.
+   * @returns The definition step.
+   */
+  export function planSetPanic<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    panicKeypairName: string
+  ): ClusterBuildStep<C, SetPanicInput> {
+    return ClusterBuildStep.create<C, SetPanicInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SolanaLiqSyndicationTool.SetPanicInput", panicKeypairName },
+      runSetPanic
+    )
+  }
+
+  /** Named runner — ONE `set_panic` ix, signed by the deployer/admin. */
+  export async function runSetPanic<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SetPanicInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
+      panic = SolanaFundingTool.loadKeypair(
+        ctx.config.dataPath,
+        input.panicKeypairName
+      ),
+      pdas = deriveBasePdas(ctx.config.solanaPath),
+      program = loadLiqsolProgram(ctx, admin),
+      transaction = await program.methods
+        .setPanic()
+        .accountsStrict(
+          setPanicAccounts(pdas, admin.publicKey, panic.publicKey)
+        )
+        .transaction()
+    await submit(
+      ctx,
+      transaction,
+      admin,
+      `SolanaLiqSyndicationTool.planSetPanic ${input.panicKeypairName}`
+    )
+  }
+
+  // ── Step: set / clear the emergency stop (`liqsol_core::set_frozen`) ─────
+
+  /** Input for {@link planSetFrozen} — one `set_frozen` write. */
+  export interface SetFrozenInput extends StepInput {
+    readonly kind: "SolanaLiqSyndicationTool.SetFrozenInput"
+    /**
+     * Durable handle of the signer's persisted keypair — the panic account's,
+     * or {@link SolanaFundingTool.DeployerKeypairName} for the admin.
+     */
+    readonly signerName: string
+    /** `true` sets the emergency stop, `false` clears it. */
+    readonly frozen: boolean
+  }
+
+  /**
+   * A single `set_frozen(frozen)` write. While `GlobalState.frozen` is set,
+   * `synd` refuses with `OutpostFrozen` and every inbound `DESYNDICATE_LIQ` is
+   * stored as a `PendingPayout`; clearing it is what makes those payable.
+   *
+   * @param actor - The narrative subject (the panic account or the admin).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param signerName - Durable handle of the signing keypair (panic or deployer).
+   * @param frozen - Whether to set or clear the stop.
+   * @returns The definition step.
+   */
+  export function planSetFrozen<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    signerName: string,
+    frozen: boolean
+  ): ClusterBuildStep<C, SetFrozenInput> {
+    return ClusterBuildStep.create<C, SetFrozenInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SolanaLiqSyndicationTool.SetFrozenInput", signerName, frozen },
+      runSetFrozen
+    )
+  }
+
+  /** Named runner — ONE `set_frozen` ix, signed by the named keypair. */
+  export async function runSetFrozen<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SetFrozenInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const signer = SolanaFundingTool.loadKeypair(
+        ctx.config.dataPath,
+        input.signerName
+      ),
+      pdas = deriveBasePdas(ctx.config.solanaPath),
+      program = loadLiqsolProgram(ctx, signer),
+      transaction = await program.methods
+        .setFrozen(input.frozen)
+        .accountsStrict(setFrozenAccounts(pdas, signer.publicKey))
+        .transaction()
+    await submit(
+      ctx,
+      transaction,
+      signer,
+      `SolanaLiqSyndicationTool.planSetFrozen ${input.signerName} ${input.frozen}`
+    )
+  }
+
+  // ── Step: pay a stored payout (`liqsol_core::pay_pending_desyndication`) ─
+
+  /** Input for {@link planPayPendingDesyndication} — one permissionless crank write. */
+  export interface PayPendingDesyndicationInput extends StepInput {
+    readonly kind: "SolanaLiqSyndicationTool.PayPendingDesyndicationInput"
+    /** Durable handle of the caller's persisted keypair (pays the fee only). */
+    readonly callerName: string
+    /** The depot's `DesyndicateLIQ.request_id` the payout was stored under. */
+    readonly requestId: bigint
+  }
+
+  /**
+   * A single permissionless `pay_pending_desyndication(requestId)` crank. It
+   * pays the stored payout to its holder and CLOSES the record (rent back to
+   * its `rent_payer`), so each stored payout is paid exactly once; while the
+   * cause of the deferral stands (the outpost still frozen, …) the program
+   * refuses and the record is kept.
+   *
+   * The runner reads the record first — the holder and `rent_payer` it names
+   * pick the payment manifest and the rent destination — and addresses it by
+   * the SAME seed the relay uses ({@link LiqsolPdaSeed.PendingDesyndication}).
+   *
+   * @param actor - The narrative subject (the cranker).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param callerName - Durable handle of the caller's persisted keypair.
+   * @param requestId - The stored payout's depot request id.
+   * @returns The definition step.
+   */
+  export function planPayPendingDesyndication<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    callerName: string,
+    requestId: bigint
+  ): ClusterBuildStep<C, PayPendingDesyndicationInput> {
+    return ClusterBuildStep.create<C, PayPendingDesyndicationInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SolanaLiqSyndicationTool.PayPendingDesyndicationInput",
+        callerName,
+        requestId
+      },
+      runPayPendingDesyndication
+    )
+  }
+
+  /** Named runner — read the record, then ONE `pay_pending_desyndication` ix. */
+  export async function runPayPendingDesyndication<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    input: PayPendingDesyndicationInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const record = await readPendingPayout(ctx, input.requestId)
+    Assert.ok(
+      record != null,
+      `SolanaLiqSyndicationTool.planPayPendingDesyndication: no PendingPayout is stored for ` +
+        `request ${input.requestId} — it was never deferred, or it has already been paid`
+    )
+    const caller = SolanaFundingTool.loadKeypair(
+        ctx.config.dataPath,
+        input.callerName
+      ),
+      pdas = deriveBasePdas(ctx.config.solanaPath),
+      holder = deriveUserPdas(ctx.config.solanaPath, record.user),
+      program = loadLiqsolProgram(ctx, caller),
+      transaction = await program.methods
+        .payPendingDesyndication(new anchor.BN(input.requestId.toString()))
+        .accountsStrict(
+          payPendingDesyndicationAccounts(
+            pdas,
+            caller.publicKey,
+            record.address,
+            record.rentPayer
+          )
+        )
+        .remainingAccounts(payPendingDesyndicationManifest(holder))
+        .preInstructions([
+          ComputeBudgetProgram.requestHeapFrame({
+            bytes: DispatchHeapFrameBytes
+          }),
+          ComputeBudgetProgram.setComputeUnitLimit({
+            units: SettlementComputeUnitLimit
+          })
+        ])
+        .transaction()
+    await submit(
+      ctx,
+      transaction,
+      caller,
+      `SolanaLiqSyndicationTool.planPayPendingDesyndication ${input.requestId}`
+    )
+  }
+
+  // ── Step: donate liqSOL to the pool (a Token-2022 transfer) ──────────────
+
+  /** Input for {@link planDonateToPool} — one liqSOL transfer into the pool ATA. */
+  export interface DonateToPoolInput extends StepInput {
+    readonly kind: "SolanaLiqSyndicationTool.DonateToPoolInput"
+    /** Durable handle of the donor's persisted keypair (the source ATA's owner). */
+    readonly donorName: string
+    /** liqSOL base units to transfer. */
+    readonly amount: bigint
+  }
+
+  /**
+   * Commitment the transfer-hook helper reads the mint's
+   * `ExtraAccountMetaList` at while building the donation.
+   */
+  export const TransferHookResolutionCommitment: Commitment = "confirmed"
+
+  /**
+   * A single Token-2022 `transfer_checked` of `amount` liqSOL from the donor's
+   * ATA into the pool ATA, with the transfer hook's extra accounts resolved —
+   * the shape of wire-solana's `tests/opp/syndication-freeze.test.ts`
+   * donation. The hook lets it through without a share move, so it is custody
+   * the depot never credited: the pool then holds MORE than the depot's
+   * outstanding shadow.
+   *
+   * @param actor - The narrative subject (the donor).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param donorName - Durable handle of the donor's persisted keypair.
+   * @param amount - liqSOL base units to transfer.
+   * @returns The definition step.
+   */
+  export function planDonateToPool<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    donorName: string,
+    amount: bigint
+  ): ClusterBuildStep<C, DonateToPoolInput> {
+    return ClusterBuildStep.create<C, DonateToPoolInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SolanaLiqSyndicationTool.DonateToPoolInput", donorName, amount },
+      runDonateToPool
+    )
+  }
+
+  /** Named runner — ONE hooked `transfer_checked`, signed by the donor keypair. */
+  export async function runDonateToPool<C extends ClusterBuildContext>(
+    ctx: C,
+    input: DonateToPoolInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.ok(
+      input.amount > 0n,
+      "SolanaLiqSyndicationTool.planDonateToPool: amount must be positive"
+    )
+    const donor = SolanaFundingTool.loadKeypair(
+        ctx.config.dataPath,
+        input.donorName
+      ),
+      pdas = deriveUserPdas(ctx.config.solanaPath, donor.publicKey),
+      transfer = await createTransferCheckedWithTransferHookInstruction(
+        ctx.solana.connection,
+        pdas.userAta,
+        pdas.liqsolMint,
+        pdas.liqsolPoolAta,
+        donor.publicKey,
+        input.amount,
+        LiqsolDecimals,
+        [],
+        TransferHookResolutionCommitment,
+        TOKEN_2022_PROGRAM_ID
+      )
+    await submit(
+      ctx,
+      new anchor.web3.Transaction().add(transfer),
+      donor,
+      `SolanaLiqSyndicationTool.planDonateToPool ${input.donorName}`
     )
   }
 }

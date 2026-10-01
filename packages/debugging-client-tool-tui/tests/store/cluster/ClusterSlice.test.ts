@@ -104,6 +104,7 @@ const stubConfig: ClusterConfig = {
   enableMockReserves: false,
   enableLaunchWithheldOperations: false,
   enableMockLiqPools: false,
+  enableMockSyndicationImport: false,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   queryEngine: createUnsetQueryEngineConfig()

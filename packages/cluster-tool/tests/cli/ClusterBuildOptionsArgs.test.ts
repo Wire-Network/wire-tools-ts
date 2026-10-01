@@ -554,6 +554,15 @@ describe("toClusterBuildOptions reverse parse", () => {
     ).toBe(false)
   })
 
+  it("round trips the mock syndication import leaf", () => {
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": true }).enableMockSyndicationImport
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": false }).enableMockSyndicationImport
+    ).toBe(false)
+  })
+
   it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
     // Registration is MANDATORY: this reverse parse reads argv ONLY through
     // flattenOptionLeaves(buildOptionShape(...)), so an unregistered field is
@@ -607,6 +616,7 @@ describe("register → parse round-trip", () => {
     // …and so does the default-false launch-policy opt-in
     expect(options.enableLaunchWithheldOperations).toBe(false)
     expect(options.enableMockLiqPools).toBe(false)
+    expect(options.enableMockSyndicationImport).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
@@ -634,6 +644,7 @@ describe("register → parse round-trip", () => {
         enableMockReserves: true,
         enableLaunchWithheldOperations: true,
         enableMockLiqPools: true,
+        enableMockSyndicationImport: true,
         chainStateDbSizeMb: 8_192,
         apiCount: 2,
         queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
@@ -656,6 +667,7 @@ describe("register → parse round-trip", () => {
     expect(options.enableLaunchWithheldOperations).toBe(true)
     // …and the one the liq-yield flow's pools ride
     expect(options.enableMockLiqPools).toBe(true)
+    expect(options.enableMockSyndicationImport).toBe(true)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
     // …and a flow's API nodes + their query engine

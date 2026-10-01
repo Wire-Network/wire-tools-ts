@@ -6,6 +6,7 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
+import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
 /** A fresh build root (a `ClusterBuildParent`) for the reserve phase to register on. */
@@ -173,6 +174,114 @@ describe("Steps.registry", () => {
       expect(liqsol?.depth_cap_bps).toBe(DepthCapBps)
       expect(liqsol?.clip_floor).toBe(ClipFloor)
       expect(rows.find(row => row.pair_symbol === "9,LIQETHP")).toBeDefined()
+    })
+  })
+})
+
+describe("Steps.registry — underwriting and syndication configuration", () => {
+  describe("SyndicationConfigRegistrations", () => {
+    const rows = Steps.registry.SyndicationConfigRegistrations
+
+    it("configures every shadow pair: ETHEREUM/LIQETH and SOLANA/LIQSOL", () => {
+      expect(rows.map(row => [row.chain_code, row.token_code])).toEqual([
+        ["ETHEREUM", "LIQETH"],
+        ["SOLANA", "LIQSOL"]
+      ])
+    })
+
+    it("charges no bootstrap fee and posts no bounty", () => {
+      rows.forEach(row => {
+        expect(row.synd_fee_bps).toBe(0)
+        expect(row.desynd_fee_bps).toBe(0)
+        expect(row.bounty).toBe(0)
+      })
+    })
+
+    it("sets both buckets far above any flow's amount, refilling in full each epoch", () => {
+      rows.forEach(row => {
+        expect(row.synd_burst).toBe(Steps.registry.SyndicationBucketSize)
+        expect(row.synd_refill).toBe(Steps.registry.SyndicationBucketSize)
+        expect(row.desynd_burst).toBe(Steps.registry.SyndicationBucketSize)
+        expect(row.desynd_refill).toBe(Steps.registry.SyndicationBucketSize)
+        expect(Number(row.synd_burst)).toBeGreaterThan(0)
+      })
+    })
+
+    it("takes the challenge window from ProtocolTiming and a non-zero challenge charge", () => {
+      rows.forEach(row => {
+        expect(row.window_sec).toBe(ProtocolTiming.SyndicationChallengeWindowSec)
+        expect(Number(row.challenge_extra)).toBeGreaterThan(0)
+      })
+    })
+
+    it("keeps every amount within an asset's range", () => {
+      const AssetAmountMax = 2n ** 62n - 1n
+      rows.forEach(row => {
+        ;[row.synd_burst, row.synd_refill, row.desynd_burst, row.desynd_refill, row.challenge_extra].forEach(
+          amount => expect(BigInt(amount)).toBeLessThanOrEqual(AssetAmountMax)
+        )
+      })
+    })
+  })
+
+  describe("planSyndicationConfig", () => {
+    const phase = Steps.registry.planSyndicationConfig(
+      newBuild(),
+      "SyndicationConfig",
+      "configure sysio.bond + sysio.synd",
+      {}
+    )
+
+    it("returns one Sysio phase: bond config, one synd config per pair, then the verifies", () => {
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "configure-bond",
+        "configure-syndication-ethereum-liqeth",
+        "configure-syndication-solana-liqsol",
+        "verify-shadow-precision",
+        "verify-liq-token-ethereum-liqeth",
+        "verify-liq-token-solana-liqsol"
+      ])
+      expect(phase.steps.every(step => step.actor === Report.Actor.Sysio)).toBe(true)
+    })
+
+    it("sets sysio.bond's hold bond to the contract default", () => {
+      const [bond] = phase.steps
+      expect(bond.input).toEqual({
+        kind: "BondContractSteps.SetconfigInput",
+        data: { hold_bps: Steps.registry.BondHoldBps }
+      })
+      expect(Steps.registry.BondHoldBps).toBe(1000)
+    })
+
+    it("writes each pair's row from SyndicationConfigRegistrations", () => {
+      const [, ethereum, solana] = phase.steps
+      expect(ethereum.input).toEqual({
+        kind: "SyndContractSteps.SetconfigInput",
+        data: Steps.registry.SyndicationConfigRegistrations[0]
+      })
+      expect(solana.input).toEqual({
+        kind: "SyndContractSteps.SetconfigInput",
+        data: Steps.registry.SyndicationConfigRegistrations[1]
+      })
+    })
+
+    it("verifies both shadows' precision and both liq tokens' registration", () => {
+      const [, , , precision, liqeth, liqsol] = phase.steps
+      expect(precision.input).toEqual({
+        kind: "WireSyndicationTool.VerifyShadowPrecisionInput",
+        symbolCodes: ["LIQETH", "LIQSOL"]
+      })
+      expect(liqeth.input).toEqual({
+        kind: "WireSyndicationTool.VerifyLiqTokenActiveInput",
+        chainCode: "ETHEREUM",
+        tokenCode: "LIQETH"
+      })
+      expect(liqsol.input).toEqual({
+        kind: "WireSyndicationTool.VerifyLiqTokenActiveInput",
+        chainCode: "SOLANA",
+        tokenCode: "LIQSOL"
+      })
     })
   })
 })

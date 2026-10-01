@@ -8,6 +8,12 @@
  * declaration, imported by both — never a second copy on either side.
  */
 
+import Assert from "node:assert"
+
+import type { PublicKey } from "@solana/web3.js"
+
+import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
+
 /**
  * PDA seeds of the liqsol surface, mirroring
  * `wire-solana/programs/liqsol-core/src` (plus `liqsol-token` /
@@ -54,4 +60,44 @@ export namespace LiqsolPdaSeed {
   export const LiqsolMintAuthority = "mint_authority"
   /** `transfer-hook` — the liqSOL mint's `ExtraAccountMetaList` (`+ mint`). */
   export const ExtraAccountMetaList = "extra-account-metas"
+  /**
+   * `liqsol-core` — a stored `DESYNDICATE_LIQ` payout (`PendingPayout`,
+   * `+ request_id` as 8 little-endian bytes): `states/pending_payout.rs`
+   * `PENDING_PAYOUT_SEED`, and the wire-sysio relay's
+   * `PENDING_DESYNDICATION_SEED`, which derives the same account for the
+   * dispatch manifest. A rename here is a rename in both.
+   */
+  export const PendingDesyndication = "pending_desyndication"
+}
+
+/** Byte width of the `request_id` seed leg (`u64::to_le_bytes`). */
+export const PendingPayoutRequestIdBytes = 8
+
+/**
+ * The `PendingPayout` PDA holding the stored `DESYNDICATE_LIQ` of `requestId`
+ * — `["pending_desyndication", request_id.to_le_bytes()]` under
+ * `liqsol_core`, the derivation of `PendingPayout::find_address` and of the
+ * relay's `derive_pending_desyndication_pda`. A pure value helper.
+ *
+ * @param programId - The deployed `liqsol_core` program id.
+ * @param requestId - The depot's `DesyndicateLIQ.request_id` (a `u64`, never 0).
+ * @returns The pending-payout account address.
+ * @throws If `requestId` is not a positive `u64` — 0 means "no id" and keys no
+ *   PDA on chain.
+ */
+export function pendingPayoutAddress(
+  programId: PublicKey,
+  requestId: bigint
+): PublicKey {
+  Assert.ok(
+    requestId > 0n && requestId < 1n << 64n,
+    `pendingPayoutAddress: request id ${requestId} is not a positive u64`
+  )
+  const requestIdSeed = Buffer.alloc(PendingPayoutRequestIdBytes)
+  requestIdSeed.writeBigUInt64LE(requestId)
+  return SolanaOutpostProgramTool.derivePda(
+    programId,
+    Buffer.from(LiqsolPdaSeed.PendingDesyndication),
+    requestIdSeed
+  )
 }

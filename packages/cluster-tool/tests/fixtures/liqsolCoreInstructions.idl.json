@@ -85,6 +85,74 @@
       ]
     },
     {
+      "name": "pay_pending_desyndication",
+      "docs": [
+        "Pay a `DESYNDICATE_LIQ` a frozen outpost stored as a pending payout, once the emergency",
+        "stop has cleared. Permissionless; the pending account is closed, so each stored payout",
+        "is paid exactly once."
+      ],
+      "discriminator": [
+        88,
+        182,
+        225,
+        5,
+        255,
+        189,
+        178,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Permissionless caller; pays the transaction fee only."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Supplies the depot token code -> mint mapping the payout is checked against."
+          ]
+        },
+        {
+          "name": "pending_payout",
+          "docs": [
+            "The stored payout. Closed on success, so it can never be paid twice."
+          ],
+          "writable": true
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "account's rent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "docs": [
+            "settlement itself: a typed `Account` would re-serialize its stale pre-payment copy over",
+            "that write when the instruction exits."
+          ],
+          "writable": true
+        },
+        {
+          "name": "distribution_state",
+          "docs": [
+            "`global_state`."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "request_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "report_liq_yield",
       "docs": [
         "Permissionless PostLaunch liq-yield report: claims the pool's pending rewards and",
@@ -168,6 +236,76 @@
         },
         {
           "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_frozen",
+      "docs": [
+        "Set or clear the outpost's emergency stop (`GlobalState.frozen`). Signed by the panic",
+        "account or the admin. Independent of `set_paused`."
+      ],
+      "discriminator": [
+        62,
+        87,
+        99,
+        96,
+        206,
+        47,
+        204,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "The admin or the configured panic account."
+          ],
+          "signer": true
+        },
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "global_state",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "frozen",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_panic",
+      "docs": [
+        "Name the emergency-stop (panic) account, which may call `set_frozen` and nothing else.",
+        "Admin-only."
+      ],
+      "discriminator": [
+        210,
+        198,
+        251,
+        142,
+        23,
+        5,
+        70,
+        145
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "new_authority"
         }
       ],
       "args": []
@@ -381,6 +519,13 @@
           "signer": true
         },
         {
+          "name": "global_config",
+          "docs": [
+            "Read for the per-transfer syndication maximum (`max_syndication_per_transfer`). Never",
+            "written here, so a syndication cannot move its own ceiling."
+          ]
+        },
+        {
           "name": "liqsol_mint",
           "writable": true
         },
@@ -435,7 +580,7 @@
           "name": "outpost_account",
           "docs": [
             "The user's pre-launch position record. Required (and created on first use) in",
-            "PreLaunch & Launching, where the pretoken accounting is per-user and lives here.",
+            "PreLaunch, where the pretoken accounting is per-user and lives here.",
             "",
             "PostLaunch passes None: a syndicated position becomes OUTPOST PROPERTY the moment",
             "`SyndicateLIQ` is queued and the DEPOT is its ledger of record, so the outpost keeps",
@@ -458,9 +603,9 @@
         {
           "name": "pretoken_purchase_history",
           "docs": [
-            "Legacy pretoken history -- the synd/yield source in PreLaunch & Launching.",
+            "Legacy pretoken history -- the synd/yield source in PreLaunch.",
             "Optional because PostLaunch retires it (and `close_pretoken_singletons` closes it), so",
-            "PostLaunch callers pass None; the handler requires it present in the non-PostLaunch path."
+            "PostLaunch callers pass None; the handler requires it present in the PreLaunch path."
           ],
           "writable": true,
           "optional": true
@@ -503,6 +648,19 @@
   ],
   "accounts": [
     {
+      "name": "GlobalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
       "name": "GlobalState",
       "discriminator": [
         163,
@@ -514,27 +672,271 @@
         133,
         98
       ]
+    },
+    {
+      "name": "PendingPayout",
+      "discriminator": [
+        239,
+        77,
+        254,
+        154,
+        7,
+        99,
+        62,
+        144
+      ]
     }
   ],
   "events": [],
   "errors": [],
   "types": [
     {
-      "name": "WireState",
+      "name": "GlobalConfig",
+      "docs": [
+        "Zero-copy global config PDA"
+      ],
+      "serialization": "bytemuckunsafe",
+      "repr": {
+        "kind": "c"
+      },
       "type": {
-        "kind": "enum",
-        "variants": [
+        "kind": "struct",
+        "fields": [
           {
-            "name": "PreLaunch"
+            "name": "bump",
+            "type": "u8"
           },
           {
-            "name": "PostLaunch"
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
           },
           {
-            "name": "Refund"
+            "name": "admin",
+            "type": "pubkey"
           },
           {
-            "name": "Launching"
+            "name": "cranky",
+            "type": "pubkey"
+          },
+          {
+            "name": "panic",
+            "docs": [
+              "Emergency-stop (panic) account. May call `set_frozen` and nothing else: every other",
+              "configuration instruction is gated on `admin` alone. Set by the admin with `set_panic`;",
+              "the all-zero default means \"no panic account configured\" and authorizes nobody (see",
+              "[`GlobalConfig::is_freeze_authority`]). Occupies the slot that was `_reserved_pubkey[0]`,",
+              "so the account layout and `LEN` are unchanged and an existing config reads it as unset."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "min_user_deposit",
+            "docs": [
+              "Minimum SOL amount a user can deposit"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_unstake_request",
+            "docs": [
+              "Minimum SOL amount for an unstake/withdrawal request"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_rebalance_stake_delta",
+            "docs": [
+              "Minimum stake delta to trigger a stake rebalance order"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_rebalance_unstake_delta",
+            "docs": [
+              "Minimum unstake delta to trigger an unstake rebalance order"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "transient_threshold",
+            "docs": [
+              "DEPRECATED (WNS-33): no longer read. Kept for account layout stability.",
+              "Rebalance now counts all transient stake on both sides of the delta equation,",
+              "so the per-validator threshold gate was removed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_late_epoch_slot_gate",
+            "docs": [
+              "Minimum slots that must have elapsed in the epoch before late epoch operations can execute"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_syndication_per_transfer",
+            "docs": [
+              "Per-transfer syndication maximum, in the smallest unit of the liqSOL token: the largest",
+              "amount one `synd` call may syndicate. Set by the admin with `set_max_syndication`; the",
+              "panic account cannot change it. ZERO refuses every syndication, so an outpost that has",
+              "not had it set fails closed (see [`GlobalConfig::require_syndication_within_max`]).",
+              "",
+              "Occupies the first of the two former `_reserved_u64` slots, so the account layout and",
+              "`LEN` are unchanged and no migration is needed. The slot is provably zero on every live",
+              "account: it has one writer in the whole tree, `initialize`, which stores zero, and the",
+              "account was allocated zeroed. A pre-upgrade config therefore reads 0 here, which refuses."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "_reserved_u64",
+            "type": {
+              "array": [
+                "u64",
+                1
+              ]
+            }
+          },
+          {
+            "name": "cooldown_epochs",
+            "docs": [
+              "Epochs a validator must wait in the graveyard before it is booted. This begins after the last recorded state change"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "deposit_fee_multiplier",
+            "docs": [
+              "Multiplier for deposit fee calculation, this would be average \"pay rate x number of epochs we expect the stake to warm up\""
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "min_vpp_entry",
+            "docs": [
+              "Minimum VPP score required to enter the active validator set, this is a fall back for when the val set is really small"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "min_vpp_exit",
+            "docs": [
+              "VPP score threshold below which a validator is removed from active set, again a fall back"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "tiny_network_threshold",
+            "docs": [
+              "Max validators for \"tiny\" network band (uses fixed VPP thresholds) as above"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "small_network_threshold",
+            "docs": [
+              "Max validators for \"small\" network band (uses percentile-based selection)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "medium_network_threshold",
+            "docs": [
+              "Max validators for \"medium\" network band (uses percentile-based selection)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "large_network_entry_rank",
+            "docs": [
+              "Fixed rank threshold to enter active set in large networks (0-indexed)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "large_network_exit_rank",
+            "docs": [
+              "Fixed rank threshold to exit active set in large networks (0-indexed)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "_reserved_u16",
+            "type": {
+              "array": [
+                "u16",
+                3
+              ]
+            }
+          },
+          {
+            "name": "small_network_entry_percent",
+            "docs": [
+              "Percentile rank required to enter active set in small networks"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "small_network_exit_percent",
+            "docs": [
+              "Percentile rank below which validators exit in small networks"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "medium_network_entry_percent",
+            "docs": [
+              "Percentile rank required to enter active set in medium networks"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "medium_network_exit_percent",
+            "docs": [
+              "Percentile rank below which validators exit in medium networks"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_reserved_u8",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "feature_flags",
+            "docs": [
+              "Bit 0: DepositsEnabled, Bit 1: WithdrawalsEnabled, Bit 2: ClaimWithdrawalsEnabled,",
+              "Bit 3: ProcessStakeOrdersEnabled, Bit 4: ProcessUnstakeOrdersEnabled,",
+              "Bit 5: ProcessPayCycleEnabled, Bit 6: RebalancingEnabled, Bits 7-15: Reserved"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "_reserved_flags",
+            "type": {
+              "array": [
+                "u16",
+                1
+              ]
+            }
+          },
+          {
+            "name": "_reserved_trailing",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }
@@ -590,7 +992,12 @@
           {
             "name": "protocol_shares",
             "docs": [
-              "Total shares issued to protocol (for share/index yield isolation)"
+              "Total shares issued to protocol (for share/index yield isolation).",
+              "Retained for layout only: no handler reads it. On a freshly initialised chain it is",
+              "zero; on a chain upgraded from v1.6 it is FROZEN at its last pre-upgrade value and is",
+              "not a live figure -- the upgrade is a program upgrade plus",
+              "`migrate_global_state_liq_fields`, which is a pure realloc, so neither",
+              "`initialize_wire_config` nor the `development` reset (the only two writers) runs."
             ],
             "type": "u64"
           },
@@ -606,7 +1013,13 @@
             "name": "expected_pool_balance",
             "docs": [
               "Expected liqSOL pool balance (tracked by protocol operations, not read from on-chain balance).",
-              "Any discrepancy vs actual on-chain balance is treated as unsolicited donations, not yield."
+              "Retained for layout only: no handler reads it. On a freshly initialised chain it is",
+              "zero; on a chain upgraded from v1.6 it is FROZEN at its last pre-upgrade value and is",
+              "not a live figure -- the upgrade is a program upgrade plus",
+              "`migrate_global_state_liq_fields`, which is a pure realloc, so neither",
+              "`initialize_wire_config` nor the `development` reset (the only two writers) runs. A",
+              "reader who takes it for a live pool figure will be reading a stale one that diverges",
+              "further on every later syndication and exit."
             ],
             "type": "u64"
           },
@@ -618,23 +1031,19 @@
             "type": "u64"
           },
           {
-            "name": "role_principals",
+            "name": "_reserved",
             "docs": [
-              "Required principal (liqSOL) per role [YieldOp, BatchOp, Underwriter, PoolOp]"
+              "Bytes of the retired Bonded Actor Registry role config (`role_principals` then",
+              "`role_warmup_duration`). Kept so `wire_state` and `bump` stay at their deployed",
+              "offsets. Nothing reads them; `admin_clear_bond_config` zeroed them before the",
+              "registry was removed, so confirm they are still zero before carving a field out."
             ],
             "type": {
               "array": [
-                "u64",
-                4
+                "u8",
+                40
               ]
             }
-          },
-          {
-            "name": "role_warmup_duration",
-            "docs": [
-              "Warmup duration in seconds (applies when ANY new role is bonded)"
-            ],
-            "type": "i64"
           },
           {
             "name": "wire_state",
@@ -666,6 +1075,149 @@
               "that counter is consumed (`init_liqsol_reserve`), so the delta can never go negative."
             ],
             "type": "u64"
+          },
+          {
+            "name": "frozen",
+            "docs": [
+              "Emergency-stop flag, set and cleared by `set_frozen` (the panic account or the admin).",
+              "While set, `synd`, `desynd` and `report_liq_yield` are refused, and a depot-ordered",
+              "`DESYNDICATE_LIQ` is stored as a `PendingPayout` instead of being paid; the",
+              "permissionless `pay_pending_desyndication` pays it once the flag clears. Independent",
+              "of `paused`, which keeps its own meaning. APPENDED after `liq_yield_reported`: the",
+              "retired `_reserved` bytes are not guaranteed zero on a live chain, so no field is carved",
+              "out of them. An existing account is grown by `migrate_global_state_liq_fields`, whose",
+              "zeroed tail reads as `false`."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingPayout",
+      "docs": [
+        "One deferred `DESYNDICATE_LIQ`, keyed by the depot's request id.",
+        "",
+        "Carries everything the payout needs (`user`, `token_code`, `amount`) and the depot's",
+        "`request_id` a reconciler matches it back to the depot's `desyndlog` by. The outpost's",
+        "syndicated totals are NOT touched when it is stored: the payout is applied -- and counted --",
+        "only when `pay_pending_desyndication` pays it."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "request_id",
+            "docs": [
+              "The depot's `DesyndicateLIQ.request_id` (never 0; 0 means \"no id\" and cannot key a PDA)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "user",
+            "docs": [
+              "The holder the depot ordered paid; their Token-2022 liqSOL ATA is the destination."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_code",
+            "docs": [
+              "The depot token code the payout is denominated in, checked against the pool's liqSOL",
+              "mint again at payment time."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "liqSOL base units to pay."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rent_payer",
+            "docs": [
+              "Who funded this account's rent (the settlement crank's caller); refunded on payment."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "reason",
+            "docs": [
+              "Why the payout was deferred."
+            ],
+            "type": {
+              "defined": {
+                "name": "PendingPayoutReason"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingPayoutReason",
+      "docs": [
+        "Why a `DESYNDICATE_LIQ` was stored instead of paid inline."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "OutpostFrozen"
+          },
+          {
+            "name": "LegacyUserRecord"
+          },
+          {
+            "name": "CustodyShortfall",
+            "fields": [
+              {
+                "name": "pool_balance",
+                "docs": [
+                  "The pool ATA's liqSOL balance when the payout arrived, before anything moved."
+                ],
+                "type": "u64"
+              },
+              {
+                "name": "depot_outstanding",
+                "docs": [
+                  "The depot's outstanding shadow after its burn (`DesyndicateLIQ.total_syndicated`)."
+                ],
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "SettlementRefused"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WireState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PreLaunch"
+          },
+          {
+            "name": "PostLaunch"
+          },
+          {
+            "name": "Refund"
+          },
+          {
+            "name": "Launching"
           }
         ]
       }

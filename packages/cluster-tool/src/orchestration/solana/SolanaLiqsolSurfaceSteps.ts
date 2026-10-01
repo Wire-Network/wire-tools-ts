@@ -118,7 +118,11 @@ export namespace SolanaLiqsolSurfaceSteps {
    * instruction refuses a non-empty bootstrap state outright); and the
    * stake-controller state precedes `global_config` too, whose admin gates the
    * leaderboard config. `init-wire-config` also still precedes the pretoken
-   * history, which reads the `GlobalState` it creates.
+   * history, which reads the `GlobalState` it creates. `set-max-syndication`
+   * follows `init-global-config` immediately, because the maximum lives on the
+   * `global_config` that script creates; with `--fresh` it gives a config
+   * still at 0 (which refuses every `synd`) the default and leaves any other
+   * value alone, so it is get-or-create too.
    *
    * EVERY entry here is get-or-create AND exits non-zero on failure, which is
    * what {@link SolanaAnchorScriptTool} requires — a re-run against a
@@ -173,6 +177,11 @@ export namespace SolanaLiqsolSurfaceSteps {
     { script: "init-transfer-hook", description: "create the liqSOL mint's ExtraAccountMetaList" },
     { script: "init-wire-config", description: "create the wire GlobalState + the liqSOL pool's ATA and distribution record" },
     { script: "init-global-config", description: "create the liqsol global_config (admin = the deployer)" },
+    {
+      script: "set-max-syndication",
+      description: "give the new outpost its default per-transfer syndication maximum (0 refuses every synd)",
+      args: ["--fresh"]
+    },
     { script: "init-validators-active-list", description: "create the active-validator list" },
     { script: "init-validators-graveyard-list", description: "create the graveyard-validator list" },
     { script: "init-validator-leaderboard", description: "create + size the validator leaderboard" },
@@ -202,6 +211,19 @@ export namespace SolanaLiqsolSurfaceSteps {
 
   /** The init script the epoch gate precedes and the history read follows. */
   export const PretokenHistoryScript = "init-pretoken-purchase-history"
+
+  /**
+   * The init script the emergency-stop Steps follow — the per-transfer
+   * maximum lives on `global_config`, next to the panic account the Steps
+   * after it name.
+   */
+  export const SetMaxSyndicationScript = "set-max-syndication"
+
+  /**
+   * Lamport floor the panic keypair is topped up to: it pays the fee of every
+   * `set_frozen` a flow signs with it.
+   */
+  export const PanicFloorLamports = BigInt(LAMPORTS_PER_SOL)
 
   /**
    * The harness Steps that must run immediately BEFORE `script`, keyed by the
@@ -255,12 +277,37 @@ export namespace SolanaLiqsolSurfaceSteps {
    * The harness Steps that must run immediately AFTER `script`.
    *
    * @param script - The init script just planned.
+   * @param options - Step tuning applied to the emitted write Steps.
    * @returns The Steps to emit after it (empty for most).
    */
   function planStepsAfter<C extends ClusterBuildContext>(
-    script: string
+    script: string,
+    options: ClusterBuildStepOptions
   ): ClusterBuildStep.Any<C>[] {
     return match(script)
+      .with(SetMaxSyndicationScript, () => [
+        SolanaFundingTool.planKeypairAirdrop<C>(
+          Report.Actor.SolanaOutpost,
+          "airdrop-panic",
+          `create the panic keypair and top it up to ${PanicFloorLamports} lamports`,
+          options,
+          SolanaFundingTool.PanicKeypairName,
+          PanicFloorLamports
+        ),
+        SolanaLiqSyndicationTool.planSetPanic<C>(
+          Report.Actor.SolanaOutpost,
+          "set-panic",
+          "name the harness panic keypair the outpost's panic account (set_panic)",
+          options,
+          SolanaFundingTool.PanicKeypairName
+        ),
+        verifyStep<C>(
+          Report.Actor.SolanaOutpost,
+          "verify-emergency-stop",
+          "global_config carries a per-transfer maximum above 0 and names the harness panic keypair",
+          assertEmergencyStopConfigured
+        )
+      ])
       .with(PretokenHistoryScript, () => [
         verifyStep<C>(
           Report.Actor.SolanaOutpost,
@@ -329,7 +376,7 @@ export namespace SolanaLiqsolSurfaceSteps {
             script,
             args ?? []
           ),
-          ...planStepsAfter<C>(script)
+          ...planStepsAfter<C>(script, options)
         ]
       ),
       planFundTreasury<C>(
@@ -341,6 +388,35 @@ export namespace SolanaLiqsolSurfaceSteps {
       )
     ]
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * Verify body — the outpost's `global_config` refuses no syndication by
+   * default (its per-transfer maximum is above 0) and names the harness panic
+   * keypair ({@link SolanaFundingTool.PanicKeypairName}) its panic account.
+   *
+   * @param ctx - The build context (RPC connection, `solanaPath`, `dataPath`).
+   * @throws If the maximum is 0 or the panic account is anyone else.
+   */
+  export async function assertEmergencyStopConfigured<
+    C extends ClusterBuildContext
+  >(ctx: C): Promise<void> {
+    const { maxSyndicationPerTransfer, panic } =
+        await SolanaLiqSyndicationTool.readGlobalConfig(ctx),
+      expected = SolanaFundingTool.loadKeypair(
+        ctx.config.dataPath,
+        SolanaFundingTool.PanicKeypairName
+      ).publicKey
+    Assert.ok(
+      maxSyndicationPerTransfer > 0n,
+      "SolanaLiqsolSurfaceSteps: global_config.max_syndication_per_transfer is 0 — every synd " +
+        "on this outpost would be refused (SyndicationMaximumUnset)"
+    )
+    Assert.ok(
+      panic.equals(expected),
+      `SolanaLiqsolSurfaceSteps: global_config.panic is ${panic.toBase58()}, not the harness ` +
+        `panic keypair ${expected.toBase58()}`
+    )
   }
 
   // ── Step: top up the rent treasury (one SystemProgram.transfer) ──────────

@@ -12,8 +12,8 @@ liqsol_core::inject_bonus_synd_yield (permissionless — SOL-funded pool yield)
 liqsol_core::report_liq_yield        (permissionless crank — non-admin signer)
   → LIQ_YIELD queued by the program
   → batch operator ferries both via an OPP envelope
-  → sysio.msgch consumes the envelope and routes both to sysio.liq
-      (this user never links their key, so the syndication stays PARKED —
+  → sysio.msgch consumes the envelope and routes both to sysio.synd
+      (no bonder is provisioned, so the items stay HELD —
        flow-liq-yield follows the credit through to WIRE and back)
   → sysio.epoch::advance keeps closing epochs
 ```
@@ -28,10 +28,19 @@ Asserts:
    consumes exactly one value of the shared liq sequence; the circulated
    attestation is DECODED and must match that delta, that sequence, the
    outpost's chain code and the depot's liqSOL token code.
-3. **The depot keeps advancing.**
+3. **The syndication remains held.** Its closed envelope is WAITING or REQUESTED,
+   and the full item remains in `sysio.synd::items` with nothing parked for the
+   unlinked user. Intake mints shadow into the depot's custody; it does not
+   release that shadow to the user. This flow enables no mock import or pool.
+4. **The depot keeps advancing.**
    `sysio.epoch::epochstate.current_epoch_index` advances past the value
    snapshotted before the syndication — a depot that choked on either
    attestation would stall the epoch instead.
+
+5. **Solvency stays healthy.** The final verify Step requires a clear emergency
+   cord and an empty `sysio.synd::mismatch` table.
+
+The shared `synd` Step supplies `globalConfig` through `accountsStrict`.
 
 ## What the harness provides
 
@@ -50,7 +59,7 @@ bootstrap binds that code to the mock SPL mint the swap flows use. The
 scenario's first step re-binds it to the REAL liqSOL mint, so only this flow's
 cluster sees the change.
 
-`DESYNDICATE_LIQ` is depot-originated (`sysio.liq::desyndicate`); `flow-liq-yield`
+`DESYNDICATE_LIQ` is depot-originated (`sysio.synd::desyndicate`); `flow-liq-yield`
 exercises it, together with the link, the yield sale and the claim.
 
 ## Single-shot per cluster

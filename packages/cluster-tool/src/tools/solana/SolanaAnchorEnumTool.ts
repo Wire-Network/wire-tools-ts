@@ -121,3 +121,18 @@ export const canTransitionWireState = (
   current: WireState,
   next: WireState
 ): boolean => WireStateTransitions[current].includes(next)
+
+/**
+ * Why `liqsol_core` stored a `DESYNDICATE_LIQ` instead of paying it inline
+ * (`PendingPayoutReason` in
+ * `wire-solana/programs/liqsol-core/src/states/pending_payout.rs`). An identity
+ * enum whose members ARE the camelCased variant keys the Anchor coder decodes
+ * a `PendingPayout.reason` into. The two outposts' reasons differ per chain:
+ * Ethereum's are `EthereumSyndicationTool.PendingPayoutReason`.
+ */
+export enum PendingPayoutReason {
+  outpostFrozen = "outpostFrozen",
+  legacyUserRecord = "legacyUserRecord",
+  custodyShortfall = "custodyShortfall",
+  settlementRefused = "settlementRefused"
+}

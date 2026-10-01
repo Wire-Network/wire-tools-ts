@@ -11,6 +11,7 @@ import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import {
   SolanaFundingTool,
+  SolanaLiqSyndicationTool,
   SolanaOutpostProgramTool
 } from "@wireio/cluster-tool/tools/solana"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
@@ -38,6 +39,7 @@ const ResetLocalClusterOrder = [
   "init-wire-config",
   "init-controller",
   "init-global-config",
+  "set-max-syndication",
   "init-validators-active-list",
   "init-validators-graveyard-list",
   "init-validator-leaderboard",
@@ -112,15 +114,32 @@ describe("SolanaLiqsolSurfaceSteps", () => {
       )
     })
 
-    it("describes every script and needs no script arguments", () => {
+    it("describes every script, and only set-max-syndication takes an argument", () => {
       SolanaLiqsolSurfaceSteps.InitScripts.forEach(entry =>
         expect(entry.description.length).toBeGreaterThan(0)
       )
+      // `--fresh`, as reset-local-cluster.sh passes it: a config still at 0
+      // gets the default maximum, anything else is left alone.
       expect(
         SolanaLiqsolSurfaceSteps.InitScripts.filter(
           entry => (entry.args ?? []).length > 0
         )
-      ).toEqual([])
+      ).toEqual([
+        {
+          script: SolanaLiqsolSurfaceSteps.SetMaxSyndicationScript,
+          description: expect.any(String),
+          args: ["--fresh"]
+        }
+      ])
+    })
+
+    it("sets the per-transfer maximum right after init-global-config creates it", () => {
+      const scripts = SolanaLiqsolSurfaceSteps.InitScripts.map(
+        ({ script }) => script
+      )
+      expect(
+        scripts.indexOf(SolanaLiqsolSurfaceSteps.SetMaxSyndicationScript)
+      ).toBe(scripts.indexOf(SolanaLiqsolSurfaceSteps.GlobalConfigScript) + 1)
     })
 
     it("excludes fund-treasury — the reset-local-cluster step that is not get-or-create", () => {
@@ -175,6 +194,7 @@ describe("SolanaLiqsolSurfaceSteps", () => {
       expect(scripts).toContain(SolanaLiqsolSurfaceSteps.WireConfigScript)
       expect(scripts).toContain(SolanaLiqsolSurfaceSteps.GlobalConfigScript)
       expect(scripts).toContain(SolanaLiqsolSurfaceSteps.PretokenHistoryScript)
+      expect(scripts).toContain(SolanaLiqsolSurfaceSteps.SetMaxSyndicationScript)
     })
 
     it("excludes init-tranche-state — it pins the MAINNET Chainlink feed", () => {
@@ -442,6 +462,9 @@ describe("SolanaLiqsolSurfaceSteps", () => {
               ? // the epoch gate the history's starting_epoch depends on, and
                 // the read-back that proves it was not written as the sentinel
                 ["await-pretoken-history-epoch", script, "verify-pretoken-history"]
+            : script === SolanaLiqsolSurfaceSteps.SetMaxSyndicationScript
+              ? // the panic account next to the maximum, and the read-back
+                [script, "airdrop-panic", "set-panic", "verify-emergency-stop"]
               : [script]
         )
       expect(collectStepNames(cluster.children)).toEqual([
@@ -510,6 +533,103 @@ describe("SolanaLiqsolSurfaceSteps", () => {
         floorLamports: SolanaLiqsolSurfaceSteps.TreasuryFloorLamports
       })
       expect(treasury.runner).toBe(SolanaLiqsolSurfaceSteps.runFundTreasury)
+    })
+  })
+
+  describe("emergency stop", () => {
+    /** The surface phase's Step named `name`. */
+    function surfaceStep(name: string) {
+      const phase = SolanaLiqsolSurfaceSteps.planLiqsolSurface(
+        newBuild(),
+        "SolanaLiqsolSurface",
+        "stand up the liqsol surface",
+        {}
+      )
+      return phase.steps.find(step => step.name === name)
+    }
+
+    it("creates and funds the panic keypair, then names it with set_panic", () => {
+      expect(surfaceStep("airdrop-panic").input).toEqual({
+        kind: "SolanaFundingTool.KeypairAirdropInput",
+        keypairName: SolanaFundingTool.PanicKeypairName,
+        floorLamports: SolanaLiqsolSurfaceSteps.PanicFloorLamports
+      })
+      const setPanic = surfaceStep("set-panic")
+      expect(setPanic.input).toEqual({
+        kind: "SolanaLiqSyndicationTool.SetPanicInput",
+        panicKeypairName: SolanaFundingTool.PanicKeypairName
+      })
+      expect(setPanic.runner).toBe(SolanaLiqSyndicationTool.runSetPanic)
+    })
+
+    it("persists the panic keypair next to the deployer's", () => {
+      expect(
+        Path.dirname(SolanaFundingTool.keypairFile("/data", SolanaFundingTool.PanicKeypairName))
+      ).toBe(Path.dirname(SolanaFundingTool.deployerKeypairFile("/data")))
+      expect(SolanaFundingTool.PanicKeypairName).not.toBe(
+        SolanaFundingTool.DeployerKeypairName
+      )
+    })
+
+    describe("assertEmergencyStopConfigured", () => {
+      let dataPath: string
+      let panic: PublicKey
+
+      beforeAll(() => {
+        dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "liqsol-panic-"))
+        panic = SolanaFundingTool.createKeypair(
+          dataPath,
+          SolanaFundingTool.PanicKeypairName
+        ).publicKey
+      })
+
+      afterAll(() => {
+        Fs.rmSync(dataPath, { recursive: true, force: true })
+      })
+
+      afterEach(() => {
+        jest.restoreAllMocks()
+      })
+
+      /** The one context member the verify body reads directly. */
+      function panicContext(): ClusterBuildContext {
+        return { config: { dataPath } } as unknown as ClusterBuildContext
+      }
+
+      /** Answer `readGlobalConfig` with `maxSyndicationPerTransfer` and `configuredPanic`. */
+      function stubGlobalConfig(
+        maxSyndicationPerTransfer: bigint,
+        configuredPanic: PublicKey
+      ): void {
+        jest
+          .spyOn(SolanaLiqSyndicationTool, "readGlobalConfig")
+          .mockResolvedValue({
+            admin: Keypair.generate().publicKey,
+            panic: configuredPanic,
+            maxSyndicationPerTransfer
+          })
+      }
+
+      it("accepts a positive maximum and the harness panic keypair", async () => {
+        stubGlobalConfig(250_000_000_000n, panic)
+        await expect(
+          SolanaLiqsolSurfaceSteps.assertEmergencyStopConfigured(panicContext())
+        ).resolves.toBeUndefined()
+      })
+
+      it("refuses a maximum of 0, which refuses every synd", async () => {
+        stubGlobalConfig(0n, panic)
+        await expect(
+          SolanaLiqsolSurfaceSteps.assertEmergencyStopConfigured(panicContext())
+        ).rejects.toThrow(/max_syndication_per_transfer is 0/)
+      })
+
+      it("refuses a panic account that is not the harness keypair", async () => {
+        stubGlobalConfig(250_000_000_000n, PublicKey.default)
+        await expect(
+          SolanaLiqsolSurfaceSteps.assertEmergencyStopConfigured(panicContext())
+        ).rejects.toThrow(/not the harness panic keypair/)
+      })
     })
   })
 

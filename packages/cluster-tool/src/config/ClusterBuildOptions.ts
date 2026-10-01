@@ -88,6 +88,8 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockLiqPools?: boolean
+  /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
+  enableMockSyndicationImport?: boolean
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit

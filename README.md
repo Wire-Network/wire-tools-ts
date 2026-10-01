@@ -322,6 +322,37 @@ chains; `run` starts the cluster from that saved config and **blocks until you
 wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 ```
 
+### Underwriting, syndication and the emergency stop
+
+Every `create` sets these up on the depot; no flag gates them, because a real
+depot needs them too:
+
+| Phase | What it does |
+|---|---|
+| `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
+| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
+| `EmergencyStop` | `sysio.andon::setpanic(andon.panic)`, then `addpuller(sysio.synd)`, so a custody shortfall pulls the cord — both before any liq token is registered |
+| `SyndicationConfig` | after `LiqConfig`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+
+`setpanic` and `addpuller` run after the four cord readers are deployed, not
+before them as `docs/contract-upgrade-order.md` orders a live upgrade: the panic
+account must exist first, and the bootstrap creates it only once the bootstrap
+node owner can grant its resource policy, which is after `OPPContracts`. The
+order is still safe, because what the rule protects is traffic: a reader that
+runs before `setpanic` reads the cord as clear, and during the bootstrap no
+traffic reaches the readers: the liq tokens are registered only after
+`EmergencyStop`, and no envelope is accepted until `EpochBootstrap` starts the
+first epoch. By then the panic account is named and `sysio.synd` is a registered
+puller.
+
+Each outpost gets its own emergency stop and per-transfer syndication maximum
+in local mode:
+
+| Phase | What it does |
+|---|---|
+| `EthereumOutpost` | the deploy config names `panicAccount` (anvil HD index 49, granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
+| `SolanaLiqsolSurface` | `set-max-syndication --fresh` right after `init-global-config` (a new outpost's maximum is 0, which refuses every `synd`), then `set_panic` naming the harness panic keypair (`<cluster>/data/sol-panic-keypair.json`), then `verify-emergency-stop` |
+
 ### Common options (every command)
 
 Options follow their command (`wire-cluster-tool <command> --flag …` — the
@@ -355,7 +386,8 @@ command comes first).
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
 | `--enable-launch-withheld-operations` | | `false` | run the Solana outpost bootstrap calls the launch build withholds (`init_reserve`, `create_reserve_native`, mock SPL reserves); a flow that sets it (in its scenario defaults, when it needs the bootstrap-seeded Solana reserves or the mock SPL mints) requires a Solana program build without the launch restrictions, which answer these calls with `OperationDisabled` (6086). The flag does not decide which flows the launch program can run: the eight opted-in flows need withheld Solana operations, and `flow-yield-distribution` needs the withheld `add_attestation` instruction without opting in (see CLAUDE.md, "Flow authoring — launch-withheld operations") |
-| `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at bootstrap — mints the pool shadow from nothing, so a real / external depot never sets it |
+| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
@@ -648,3 +680,29 @@ handled. Keep them in mind when touching any of these areas:
   own registered pids on exit (with a `/proc` recycled-pid guard). A host-wide
   `pkill nodeop` from any tooling would kill *every* parallel run's nodes —
   see the incident note in `ProcessManager.ts`.
+
+### Mock syndication import and custody backing
+
+Flows that need the first bonder set `enableMockSyndicationImport: true` in
+`Scenario.defaults`. The `MockSyndicationImport` phase runs after
+`SyndicationConfig` and any `MockLiqPools` seed, before `EpochBootstrap`.
+It generates an unlinked ED/EM bonder, imports each position in its own Step,
+and calls `importdone`. `Steps.registry.readMockSyndicationBonder(ctx)` reloads
+its keys from the durable `mock-syndication-bonder` label; its Solana keypair
+also follows the `sol-<label>-keypair.json` convention. No WIRE account or
+authex link is created: positions stay parked until the flow links the keys.
+
+Either mock flag enables `MockShadowBackingSolana` and
+`MockShadowBackingEthereum`. Each reads custody and the depot's full outstanding
+shadow after all seeds. If custody is short, it acquires and donates only the
+difference between outstanding shadow and current custody; if already covered, the write Steps move no funds. A final
+verify Step re-reads both sides. Solana airdrop, deposit and donation and
+Ethereum deposit and donation are separate Report Steps. The default bootstrap
+imports no positions and performs none of these backing writes.
+
+Ethereum also seeds `syndicatedPrincipal` in depot units through
+`OutpostManager.execute(pool, initializeSyndication(...))`, signed by the local
+deployer who holds the manager's configuration role. This separate Step preserves
+the current chain code, token code, precision and deadband. The final verification
+requires principal to equal the backing and custody to cover it, so the epoch
+relay's `realizeYield()` does not count the imported backing as new yield.

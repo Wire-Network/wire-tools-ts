@@ -251,6 +251,7 @@ export namespace ClusterConfigProvider {
       enableLaunchWithheldOperations:
         options.enableLaunchWithheldOperations ?? false,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
+      enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,

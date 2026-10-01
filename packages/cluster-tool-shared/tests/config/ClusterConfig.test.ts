@@ -93,6 +93,7 @@ describe("ClusterConfig shape", () => {
     enableMockReserves: false,
     enableLaunchWithheldOperations: false,
     enableMockLiqPools: false,
+    enableMockSyndicationImport: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
@@ -123,6 +124,16 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
+  it("persists explicit mock syndication opt-in and rejects a non-boolean flag", () => {
+    const enabled = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize({ ...config, enableMockSyndicationImport: true })
+    )
+    expect(enabled.enableMockSyndicationImport).toBe(true)
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    parsed.enableMockSyndicationImport = "true"
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow()
+  })
+
   it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
@@ -131,6 +142,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
     delete parsed.enableLaunchWithheldOperations
+    delete parsed.enableMockSyndicationImport
     delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
@@ -147,6 +159,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.enableMockReserves).toBe(false)
     expect(rehydrated.enableLaunchWithheldOperations).toBe(false)
     expect(rehydrated.enableMockLiqPools).toBe(false)
+    expect(rehydrated.enableMockSyndicationImport).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)

@@ -65,6 +65,9 @@ describe("SolanaLiqSyndicationTool", () => {
       expect(SolanaLiqSyndicationTool.PdaSeed.ExtraAccountMetaList).toBe(
         "extra-account-metas"
       )
+      expect(SolanaLiqSyndicationTool.PdaSeed.PendingDesyndication).toBe(
+        "pending_desyndication"
+      )
     })
   })
 
@@ -283,6 +286,92 @@ describe("SolanaLiqSyndicationTool", () => {
           UserName
         ).input.crankerName
       ).toBe(UserName)
+    })
+
+    it("planSetPanic names the panic keypair and the set_panic runner", () => {
+      const step = SolanaLiqSyndicationTool.planSetPanic(
+        Report.Actor.SolanaOutpost,
+        "set-panic",
+        "name the panic account",
+        {},
+        SolanaFundingTool.PanicKeypairName
+      )
+      expect(step.input).toEqual({
+        kind: "SolanaLiqSyndicationTool.SetPanicInput",
+        panicKeypairName: SolanaFundingTool.PanicKeypairName
+      })
+      expect(step.runner).toBe(SolanaLiqSyndicationTool.runSetPanic)
+    })
+
+    it("planSetFrozen carries the signer and the flag, both ways", () => {
+      const freeze = SolanaLiqSyndicationTool.planSetFrozen(
+          Report.Actor.SolanaOutpost,
+          "freeze",
+          "set the emergency stop",
+          {},
+          SolanaFundingTool.PanicKeypairName,
+          true
+        ),
+        clear = SolanaLiqSyndicationTool.planSetFrozen(
+          Report.Actor.SolanaOutpost,
+          "clear",
+          "clear the emergency stop",
+          {},
+          SolanaFundingTool.DeployerKeypairName,
+          false
+        )
+      expect(freeze.input).toEqual({
+        kind: "SolanaLiqSyndicationTool.SetFrozenInput",
+        signerName: SolanaFundingTool.PanicKeypairName,
+        frozen: true
+      })
+      expect(clear.input.frozen).toBe(false)
+      expect(clear.input.signerName).toBe(SolanaFundingTool.DeployerKeypairName)
+      expect(freeze.runner).toBe(SolanaLiqSyndicationTool.runSetFrozen)
+    })
+
+    it("planPayPendingDesyndication carries the caller and the request id", () => {
+      const step = SolanaLiqSyndicationTool.planPayPendingDesyndication(
+        Report.Actor.User,
+        "pay-pending",
+        "pay the stored payout",
+        {},
+        UserName,
+        17n
+      )
+      expect(step.input).toEqual({
+        kind: "SolanaLiqSyndicationTool.PayPendingDesyndicationInput",
+        callerName: UserName,
+        requestId: 17n
+      })
+      expect(step.runner).toBe(
+        SolanaLiqSyndicationTool.runPayPendingDesyndication
+      )
+    })
+
+    it("planDonateToPool carries the donor and the amount", () => {
+      const step = SolanaLiqSyndicationTool.planDonateToPool(
+        Report.Actor.User,
+        "donate",
+        "donate liqSOL to the pool",
+        {},
+        UserName,
+        50_000_000n
+      )
+      expect(step.input).toEqual({
+        kind: "SolanaLiqSyndicationTool.DonateToPoolInput",
+        donorName: UserName,
+        amount: 50_000_000n
+      })
+      expect(step.runner).toBe(SolanaLiqSyndicationTool.runDonateToPool)
+    })
+
+    it("pays with the relay's heap frame and the per-transaction CU maximum", () => {
+      // wire-sysio SOLANA_DISPATCH_HEAP_FRAME_BYTES and the playbook's
+      // SETTLEMENT_CU_LIMIT: the crank runs the same settlement the relay does.
+      expect(SolanaLiqSyndicationTool.DispatchHeapFrameBytes).toBe(256_000)
+      expect(SolanaLiqSyndicationTool.SettlementComputeUnitLimit).toBe(1_400_000)
+      expect(SolanaLiqSyndicationTool.LiqsolDecimals).toBe(9)
     })
   })
 
@@ -533,6 +622,42 @@ describe("SolanaLiqSyndicationTool", () => {
       ).rejects.toThrow(/amount must be positive/)
     })
 
+    it("runDonateToPool rejects a non-positive amount", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.runDonateToPool(
+          context,
+          {
+            kind: "SolanaLiqSyndicationTool.DonateToPoolInput",
+            donorName: UserName,
+            amount: 0n
+          },
+          signal
+        )
+      ).rejects.toThrow(/amount must be positive/)
+    })
+
+    it("runPayPendingDesyndication refuses a request with no stored payout", async () => {
+      // The record is read first: an id that was never deferred, or was
+      // already paid (paying closes the account), has nothing to pay.
+      const emptyChain = {
+        solana: { connection: { getAccountInfo: async () => null } },
+        config: { solanaPath }
+      } as unknown as Parameters<
+        typeof SolanaLiqSyndicationTool.runPayPendingDesyndication
+      >[0]
+      await expect(
+        SolanaLiqSyndicationTool.runPayPendingDesyndication(
+          emptyChain,
+          {
+            kind: "SolanaLiqSyndicationTool.PayPendingDesyndicationInput",
+            callerName: UserName,
+            requestId: 5n
+          },
+          signal
+        )
+      ).rejects.toThrow(/no PendingPayout is stored for request 5/)
+    })
+
     it("runInjectBonusSyndYield rejects an off-granularity donation", async () => {
       await expect(
         SolanaLiqSyndicationTool.runInjectBonusSyndYield(
@@ -555,6 +680,8 @@ describe("SolanaLiqSyndicationTool", () => {
       // its coder, so the IDL's own `GlobalState` is NOT the coder's key —
       // passing it throws `Account not found: GlobalState` at run time.
       expect(SolanaLiqSyndicationTool.GlobalStateAccountName).toBe("globalState")
+      expect(SolanaLiqSyndicationTool.GlobalConfigAccountName).toBe("globalConfig")
+      expect(SolanaLiqSyndicationTool.PendingPayoutAccountName).toBe("pendingPayout")
     })
   })
 

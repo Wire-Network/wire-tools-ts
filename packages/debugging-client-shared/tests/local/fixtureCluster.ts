@@ -160,6 +160,7 @@ export function makeFixtureCluster(): FixtureCluster {
     enableMockReserves: false,
     enableLaunchWithheldOperations: false,
     enableMockLiqPools: false,
+    enableMockSyndicationImport: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig()

@@ -302,6 +302,8 @@ export const ClusterConfigSchema = z.object({
    * unbacked shadow unless a caller (or a flow's scenario defaults) opts in.
    */
   enableMockLiqPools: z.boolean().default(false),
+  /** Opt-in bootstrap import of mock bonder positions, with custody backing. */
+  enableMockSyndicationImport: z.boolean().default(false),
   /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every

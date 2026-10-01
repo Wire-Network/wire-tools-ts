@@ -13,11 +13,11 @@ const { SysioContractName, SysioContractAccount } = SysioContracts
 /**
  * Steps for `sysio.liq` actions — the shadow liq token.
  *
- * The contract-signed actions (`create`, `regliqpool`) ride the client's default
- * authorization, the contract account. `setkicker` is governance's: the contract
- * requires the system account. The holder actions (`claim`, `desyndicate`) are
- * signed by the holder named in their data, and the permissionless `sweep` by
- * whichever account foots the CPU, which rides the step input.
+ * The contract-signed actions (`create`, `regliqpool`, `recredit`) ride the
+ * client's default authorization, the contract account. `setkicker` is
+ * governance's: the contract requires the system account. `claim` is signed by
+ * the holder named in its data. Sweeping parked shadow and desyndicating are
+ * `sysio.synd`'s actions (`Steps.contracts.sysio.synd`).
  */
 export namespace LiqContractSteps {
   /** Input for {@link planCreate} — the generated `liq::create` data. */
@@ -145,50 +145,6 @@ export namespace LiqContractSteps {
       .actions.regliqpool.invoke(input.data)
   }
 
-  /** Input for {@link planSweep} — the generated `liq::sweep` data plus the CPU payer. */
-  export interface SweepInput extends StepInput {
-    readonly kind: "LiqContractSteps.SweepInput"
-    readonly data: SysioContracts.SysioLiqSweepAction
-    /** The account whose signature carries the permissionless push. */
-    readonly signer: string
-  }
-
-  /**
-   * `sysio.liq::sweep` — deliver the shadow parked against an account's link
-   * for a chain family. Permissionless: `signer` only foots the CPU.
-   */
-  export function planSweep<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioLiqSweepAction,
-    signer: string
-  ): ClusterBuildStep<C, SweepInput> {
-    return ClusterBuildStep.create<C, SweepInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "LiqContractSteps.SweepInput", data, signer },
-      runSweep
-    )
-  }
-
-  /** Named runner — `sysio.liq::sweep`, signed by the CPU payer. */
-  export async function runSweep<C extends ClusterBuildContext>(
-    ctx: C,
-    input: SweepInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.liq)
-      .actions.sweep.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.signer)
-      })
-  }
-
   /** Input for {@link planClaim} — the generated `liq::claim` data. */
   export interface ClaimInput extends StepInput {
     readonly kind: "LiqContractSteps.ClaimInput"
@@ -230,45 +186,44 @@ export namespace LiqContractSteps {
       })
   }
 
-  /** Input for {@link planDesyndicate} — the generated `liq::desyndicate` data. */
-  export interface DesyndicateInput extends StepInput {
-    readonly kind: "LiqContractSteps.DesyndicateInput"
-    readonly data: SysioContracts.SysioLiqDesyndicateAction
+  /** Input for {@link planRecredit} — the generated `liq::recredit` data. */
+  export interface RecreditInput extends StepInput {
+    readonly kind: "LiqContractSteps.RecreditInput"
+    readonly data: SysioContracts.SysioLiqRecreditAction
   }
 
   /**
-   * `sysio.liq::desyndicate` — settle, burn, and queue `DESYNDICATE_LIQ` for
-   * the outpost to pay the holder's linked key inline. Signed by the holder,
-   * who must be AuthX-linked for the token's chain.
+   * `sysio.liq::recredit` — return shadow to a holder whose desyndication the
+   * outpost skipped: it grows the supply and credits the holder's row. Only for
+   * a release the outpost neither paid nor stored (`docs/sysio-synd.md`, the
+   * recredit rule). Signed by the contract.
    */
-  export function planDesyndicate<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRecredit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioLiqDesyndicateAction
-  ): ClusterBuildStep<C, DesyndicateInput> {
-    return ClusterBuildStep.create<C, DesyndicateInput>(
+    data: SysioContracts.SysioLiqRecreditAction
+  ): ClusterBuildStep<C, RecreditInput> {
+    return ClusterBuildStep.create<C, RecreditInput>(
       actor,
       name,
       description,
       options,
-      { kind: "LiqContractSteps.DesyndicateInput", data },
-      runDesyndicate
+      { kind: "LiqContractSteps.RecreditInput", data },
+      runRecredit
     )
   }
 
-  /** Named runner — `sysio.liq::desyndicate`, signed by the holder. */
-  export async function runDesyndicate<C extends ClusterBuildContext>(
+  /** Named runner — `sysio.liq::recredit`. */
+  export async function runRecredit<C extends ClusterBuildContext>(
     ctx: C,
-    input: DesyndicateInput,
+    input: RecreditInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
     await ctx.wire
       .getSysioContract(SysioContractName.liq)
-      .actions.desyndicate.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.data.holder)
-      })
+      .actions.recredit.invoke(input.data)
   }
 }

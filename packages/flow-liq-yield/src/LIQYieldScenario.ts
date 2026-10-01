@@ -10,18 +10,21 @@ import {
 import { Asset, SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  Constants as HarnessConstants,
+  SolanaOutpostBootstrapper,
   FlowScenario,
   ProtocolTiming,
   Report,
   SolanaFundingTool,
   SolanaLiqSyndicationTool,
   Steps,
+  SyndicationUserSteps,
   WireClient,
   WireState,
+  WireSyndicationTool,
   containsDesyndicateLIQ,
   containsLIQYield,
   containsSyndicateLIQ,
-  matchesProtoEnum,
   outputKey,
   pollUntil,
   readEnvelopeAttestations,
@@ -31,9 +34,9 @@ import {
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { LIQYieldScenarioConstants as Constants } from "./LIQYieldScenarioConstants.js"
-import { LIQYieldScenarioUserSteps } from "./steps/index.js"
 
-const { SysioContractName, SysioLiqChainkind } = SysioContracts
+const { SysioContractName, SysioSyndChainkind, SysioSyndItemKind } =
+  SysioContracts
 const { Actor } = Report
 
 // ── reads (execute freely inside verify steps) ──────────────────────────────
@@ -55,7 +58,7 @@ function assetUnits(quantity: string): bigint {
   return BigInt(Asset.from(quantity).units.toString())
 }
 
-/** The user's persisted Solana public key, as the 32 bytes `sysio.liq` parks against. */
+/** The user's persisted Solana public key, as the 32 bytes `sysio.synd` parks against. */
 function readUserPubkeyBytes(ctx: ClusterBuildContext): Uint8Array {
   return SolanaFundingTool.loadKeypair(
     ctx.config.dataPath,
@@ -64,25 +67,19 @@ function readUserPubkeyBytes(ctx: ClusterBuildContext): Uint8Array {
 }
 
 /**
- * The shadow `sysio.liq` has parked against the user's Solana key (base
+ * The shadow `sysio.synd` has parked against the user's Solana key (base
  * units), `0n` when nothing is parked — the depot's ledger for a syndication
  * whose key is not yet AuthX-linked.
  */
 async function readParkedShadow(ctx: ClusterBuildContext): Promise<bigint> {
   const pubkeyHex = Buffer.from(readUserPubkeyBytes(ctx)).toString("hex"),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.liq)
-      .tables.parked.query({ limit: Constants.TableQueryLimit }),
-    row = rows.find(
-      parked =>
-        parked.pubkey === pubkeyHex &&
-        matchesProtoEnum(
-          parked.chain_kind,
-          SysioLiqChainkind,
-          SysioLiqChainkind.CHAIN_KIND_SVM
-        )
+    row = await WireSyndicationTool.readParked(
+      ctx,
+      Constants.LIQTokenCodename,
+      SysioSyndChainkind.CHAIN_KIND_SVM,
+      pubkeyHex
     )
-  return row == null ? 0n : assetUnits(row.holding.balance)
+  return row == null ? 0n : BigInt(row.balance)
 }
 
 /** The user's own shadow row (scope = the user, key = the shadow symbol), or nothing yet (a read). */
@@ -203,18 +200,18 @@ async function readCirculatedDesyndications(
 
 /**
  * LIQ yield — the reward flow end to end, on the real `liqsol_core` paths and
- * the real depot contracts: nothing injected, nothing cranked by hand.
+ * the real depot contracts: with explicit underwriting and release Steps.
  *
  * 1. **SnapshotDepotEpoch** — record `current_epoch_index` BEFORE any write.
  * 2. **ProvisionUser** — the user's WIRE account and their Solana wallet.
  * 3. **Syndicate** — map the liq token, deposit for liqSOL, flip Launching →
- *    PostLaunch, `synd`; `SYNDICATE_LIQ` reaches the depot, which PARKS the
- *    shadow against the still-unlinked Solana key.
+ *    PostLaunch, `synd`; `SYNDICATE_LIQ` reaches the depot, which holds the
+ *    shadow until its request is bonded; a crank then parks it against the unlinked key.
  * 4. **Link** — the user links that key through `sysio.authex::createlink`;
  *    its inline sweep delivers the parked shadow into the user's own row.
  * 5. **ReportLiqYield** — a bonus donation + the permissionless
  *    `report_liq_yield` crank queue `LIQ_YIELD`; the depot lands it in
- *    `liqpending`, outside supply.
+ *    a held item, outside supply, until the flow bonds and cranks its envelope.
  * 6. **QueueYield** — the batch operators' `queueyield` crank mints the pending
  *    yield as protocol-owned shadow and hands it to the swap's reservoir.
  * 7. **SellYield** — their `tickyield` crank sells the reservoir into the pool;
@@ -235,6 +232,7 @@ export class LIQYieldScenario extends FlowScenario {
     // The yield pool `queueyield` funds and `tickyield` sells through —
     // `regliqpool` is epoch-0-gated by the depot, so it rides the bootstrap.
     enableMockLiqPools: true,
+    enableMockSyndicationImport: true,
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
@@ -251,7 +249,8 @@ export class LIQYieldScenario extends FlowScenario {
           Constants.CirculationTimeoutMs + ProtocolTiming.PollDeadlineBufferMs
       },
       crankStepOptions = {
-        timeoutMs: Constants.CrankTimeoutMs + ProtocolTiming.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.CrankTimeoutMs + ProtocolTiming.PollDeadlineBufferMs
       },
       epochAdvanceStepOptions = {
         timeoutMs:
@@ -284,13 +283,20 @@ export class LIQYieldScenario extends FlowScenario {
       "ProvisionUser",
       "Provision the user's WIRE account and fund their Solana wallet"
     ).push(
-      Steps.user.planProvisionWire(
+      Steps.account.planCreateKeyed(
         Actor.User,
-        "provision-wire-account",
-        `provision ${Constants.UserAccount} (unfunded: the yield is their first WIRE)`,
+        "create-wire-account",
+        "create the yield recipient",
         depotWriteStepOptions,
         Constants.UserAccount,
-        0n
+        HarnessConstants.DEV_K1_PUBLIC_KEY
+      ),
+      SyndicationUserSteps.planResourcePolicy(
+        Actor.User,
+        "user-resource-policy",
+        "allocate resources to the yield recipient",
+        depotWriteStepOptions,
+        Constants.resourcePolicy(Constants.UserAccount)
       ),
       SolanaFundingTool.planKeypairAirdrop(
         Actor.User,
@@ -302,11 +308,65 @@ export class LIQYieldScenario extends FlowScenario {
       )
     )
 
+    ClusterBuildPhase.create(
+      cluster,
+      "ProvisionBonder",
+      "Link the opt-in imported position to the bonder"
+    ).push(
+      Steps.account.planCreateKeyed(
+        Actor.Underwriter,
+        "create-bonder-account",
+        "create the imported position's bonder",
+        depotWriteStepOptions,
+        Constants.BonderAccount,
+        HarnessConstants.DEV_K1_PUBLIC_KEY
+      ),
+      SyndicationUserSteps.planResourcePolicy(
+        Actor.Underwriter,
+        "bonder-resource-policy",
+        "allocate resources to the bonder",
+        depotWriteStepOptions,
+        Constants.resourcePolicy(Constants.BonderAccount)
+      ),
+      SyndicationUserSteps.planLinkSolanaKey(
+        Actor.Underwriter,
+        "link-bonder-solana-key",
+        "sweep the bonder's parked import through createlink",
+        depotWriteStepOptions,
+        Constants.BonderAccount,
+        Steps.registry.MockSyndicationBonderLabel
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "import-delivered-to-bonder",
+        "the imported shadow is liquid bonding capacity",
+        async ctx => {
+          Steps.registry.readMockSyndicationBonder(ctx)
+          const { rows } = await ctx.wire
+              .getSysioContract(SysioContractName.liq)
+              .tables.accounts.query({
+                scope: Constants.BonderAccount,
+                limit: Constants.TableQueryLimit
+              }),
+            holding = rows.find(
+              row =>
+                Asset.from(row.balance).symbol.name ===
+                Constants.LIQTokenCodename
+            )
+          Assert.ok(holding != null, "bonder import was not delivered")
+          Assert.strictEqual(
+            assetUnits(holding.balance),
+            BigInt(Steps.registry.MockSyndicationImportAmount)
+          )
+        }
+      )
+    )
+
     // ── 3. A real syndication, parked on the depot against the unlinked key ──
     ClusterBuildPhase.create(
       cluster,
       "Syndicate",
-      "The user deposits SOL for liqSOL and syndicates it PostLaunch; the depot parks the shadow against their unlinked key"
+      "The user syndicates liqSOL PostLaunch; the depot holds the item until its request is bonded"
     ).push(
       // FIRST, and a read: the phase's writes are all one-way, so a cluster
       // this scenario has already run against must be refused before it
@@ -379,17 +439,81 @@ export class LIQYieldScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "depot-parks-the-syndication",
-        "sysio.liq parks exactly the syndicated amount against the user's unlinked Solana key",
+        "syndication-held-before-bond",
+        "the closed envelope holds the user's full item before bonding",
         async ctx => {
           await pollUntil(
-            `${Constants.SyndicateAmount} shadow parked against the user's key`,
-            async () => (await readParkedShadow(ctx)) === Constants.SyndicateAmount,
+            "held syndication envelope",
+            async () => {
+              const envelope = await WireSyndicationTool.readHeldEnvelope(
+                ctx,
+                SolanaOutpostBootstrapper.SolanaChainCodename,
+                Constants.LIQTokenCodename,
+                SysioSyndItemKind.SYNDICATION,
+                Constants.SyndicateAmount,
+                Buffer.from(readUserPubkeyBytes(ctx)).toString("hex")
+              )
+              if (!WireSyndicationTool.isRequestIssued(envelope)) return false
+              ctx.outputs.set(
+                LIQYieldScenario.SyndicationEpochKey,
+                envelope.epoch_index
+              )
+              ctx.outputs.set(
+                LIQYieldScenario.SyndicationRequestKey,
+                envelope.request_id
+              )
+              return true
+            },
             Constants.CirculationTimeoutMs,
             Constants.CirculationPollMs
           )
-          Assert.strictEqual(await readHolding(ctx), undefined,
-            "the user must hold no shadow before linking — the credit is parked, not delivered")
+          Assert.strictEqual(await readParkedShadow(ctx), 0n)
+          Assert.strictEqual(await readHolding(ctx), undefined)
+        },
+        circulationStepOptions
+      )
+    )
+
+    WireSyndicationTool.planBondEnvelope(
+      cluster,
+      "BondSyndication",
+      "Bond the held syndication envelope",
+      circulationStepOptions,
+      Constants.BonderAccount,
+      SolanaOutpostBootstrapper.SolanaChainCodename,
+      Constants.LIQTokenCodename,
+      LIQYieldScenario.SyndicationEpochKey
+    )
+    ClusterBuildPhase.create(
+      cluster,
+      "ReleaseSyndication",
+      "Release bonded shadow to the unlinked user"
+    ).push(
+      Steps.contracts.sysio.synd.planCrank(
+        Actor.User,
+        "release-syndication",
+        "crank the bonded envelope",
+        depotWriteStepOptions,
+        { limit: Constants.CrankLimit },
+        Constants.UserAccount
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "depot-parks-the-syndication",
+        "sysio.synd parks exactly the syndicated amount against the user's unlinked Solana key",
+        async ctx => {
+          await pollUntil(
+            `${Constants.SyndicateAmount} shadow parked against the user's key`,
+            async () =>
+              (await readParkedShadow(ctx)) === Constants.SyndicateAmount,
+            Constants.CirculationTimeoutMs,
+            Constants.CirculationPollMs
+          )
+          Assert.strictEqual(
+            await readHolding(ctx),
+            undefined,
+            "the user must hold no shadow before linking — the credit is parked, not delivered"
+          )
         },
         circulationStepOptions
       )
@@ -401,7 +525,7 @@ export class LIQYieldScenario extends FlowScenario {
       "Link",
       "The user links their Solana key; createlink's inline sweep delivers the parked shadow"
     ).push(
-      LIQYieldScenarioUserSteps.planLinkSolanaKey(
+      SyndicationUserSteps.planLinkSolanaKey(
         Actor.User,
         "link-solana-key",
         `link the user's Solana key to ${Constants.UserAccount} through sysio.authex::createlink`,
@@ -415,18 +539,33 @@ export class LIQYieldScenario extends FlowScenario {
         "the user's own shadow row holds the syndicated amount and nothing stays parked",
         async ctx => {
           const holding = await readHolding(ctx)
-          Assert.ok(holding != null, "createlink's sweep opened no shadow row for the user")
-          Assert.strictEqual(assetUnits(holding.balance), Constants.SyndicateAmount)
+          Assert.ok(
+            holding != null,
+            "createlink's sweep opened no shadow row for the user"
+          )
+          Assert.strictEqual(
+            assetUnits(holding.balance),
+            Constants.SyndicateAmount
+          )
           Assert.strictEqual(await readParkedShadow(ctx), 0n)
         }
       )
+    )
+
+    WireSyndicationTool.planApproveAndClaim(
+      cluster,
+      "ApproveSyndication",
+      "Wait out the window and return the syndication bond",
+      circulationStepOptions,
+      Constants.BonderAccount,
+      LIQYieldScenario.SyndicationRequestKey
     )
 
     // ── 5. Reported yield lands on the depot, outside supply ──
     ClusterBuildPhase.create(
       cluster,
       "ReportLiqYield",
-      "Bonus pool yield is donated and the permissionless crank queues LIQ_YIELD; the depot lands it in liqpending"
+      "Bonus pool yield is donated and LIQ_YIELD remains held until the envelope is bonded"
     ).push(
       verifyStep(
         Actor.SolanaOutpost,
@@ -456,8 +595,8 @@ export class LIQYieldScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "liq-yield-lands-in-pending",
-        "LIQ_YIELD circulates and the depot's liqpending holds exactly the reported delta",
+        "yield-held-before-bond",
+        "LIQ_YIELD circulates but its item stays held outside liqpending and supply",
         async ctx => {
           const before = ctx.outputs.assert(
               LIQYieldScenario.LiqYieldStateBeforeKey
@@ -475,16 +614,72 @@ export class LIQYieldScenario extends FlowScenario {
             await readShadowSupply(ctx)
           )
           await pollUntil(
-            `LIQ_YIELD in an OUTPOST_SOLANA_DEPOT envelope and ${reportedAmount} pending on sysio.liq`,
-            async () =>
-              containsLIQYield(oppDebuggingPath(ctx.config.clusterPath)) &&
-              (await readPendingYield(ctx)) === reportedAmount,
+            `LIQ_YIELD held for ${reportedAmount}`,
+            async () => {
+              if (!containsLIQYield(oppDebuggingPath(ctx.config.clusterPath)))
+                return false
+              const envelope = await WireSyndicationTool.readHeldEnvelope(
+                ctx,
+                SolanaOutpostBootstrapper.SolanaChainCodename,
+                Constants.LIQTokenCodename,
+                SysioSyndItemKind.YIELD,
+                reportedAmount
+              )
+              if (!WireSyndicationTool.isRequestIssued(envelope)) return false
+              ctx.outputs.set(
+                LIQYieldScenario.YieldEpochKey,
+                envelope.epoch_index
+              )
+              ctx.outputs.set(
+                LIQYieldScenario.YieldRequestKey,
+                envelope.request_id
+              )
+              Assert.strictEqual(await readPendingYield(ctx), 0n)
+              Assert.strictEqual(
+                await readShadowSupply(ctx),
+                ctx.outputs.assert(LIQYieldScenario.SupplyBeforeYieldKey)
+              )
+              return true
+            },
             Constants.CirculationTimeoutMs,
             Constants.CirculationPollMs
           )
         },
         circulationStepOptions
       )
+    )
+
+    WireSyndicationTool.planBondEnvelope(
+      cluster,
+      "BondYield",
+      "Bond the held yield envelope",
+      circulationStepOptions,
+      Constants.BonderAccount,
+      SolanaOutpostBootstrapper.SolanaChainCodename,
+      Constants.LIQTokenCodename,
+      LIQYieldScenario.YieldEpochKey
+    )
+    ClusterBuildPhase.create(
+      cluster,
+      "ReleaseYield",
+      "Release bonded yield to sysio.liq"
+    ).push(
+      Steps.contracts.sysio.synd.planCrank(
+        Actor.User,
+        "release-yield",
+        "crank the bonded yield envelope",
+        depotWriteStepOptions,
+        { limit: Constants.CrankLimit },
+        Constants.UserAccount
+      )
+    )
+    WireSyndicationTool.planApproveAndClaim(
+      cluster,
+      "ApproveYield",
+      "Wait out the window and return the yield bond",
+      circulationStepOptions,
+      Constants.BonderAccount,
+      LIQYieldScenario.YieldRequestKey
     )
 
     // ── 6. The operators' queueyield crank mints the yield into the reservoir ──
@@ -498,7 +693,9 @@ export class LIQYieldScenario extends FlowScenario {
         "pending-yield-queued",
         "liqpending empties and the shadow supply grows by exactly the reported yield",
         async ctx => {
-          const reported = ctx.outputs.assert(LIQYieldScenario.ReportedYieldKey),
+          const reported = ctx.outputs.assert(
+              LIQYieldScenario.ReportedYieldKey
+            ),
             supplyBefore = ctx.outputs.assert(
               LIQYieldScenario.SupplyBeforeYieldKey
             )
@@ -537,7 +734,10 @@ export class LIQYieldScenario extends FlowScenario {
           const index = await readYieldIndex(ctx),
             holding = await readHolding(ctx),
             owed = owedWire(holding, BigInt(index.index))
-          Assert.ok(owed > 0n, "the user holds shadow through a distribution, so they must be owed WIRE")
+          Assert.ok(
+            owed > 0n,
+            "the user holds shadow through a distribution, so they must be owed WIRE"
+          )
           ctx.outputs.set(LIQYieldScenario.OwedWireKey, owed)
           ctx.outputs.set(LIQYieldScenario.PotBeforeClaimKey, BigInt(index.pot))
         },
@@ -569,7 +769,10 @@ export class LIQYieldScenario extends FlowScenario {
             holding = await readHolding(ctx)
           Assert.strictEqual(await readWireBalance(ctx), owed)
           Assert.strictEqual(BigInt(holding.owed_wire), 0n)
-          Assert.strictEqual(BigInt(holding.index_checkpoint), BigInt(index.index))
+          Assert.strictEqual(
+            BigInt(holding.index_checkpoint),
+            BigInt(index.index)
+          )
           Assert.strictEqual(BigInt(index.pot), potBefore - owed)
         }
       )
@@ -586,6 +789,18 @@ export class LIQYieldScenario extends FlowScenario {
         "snapshot-liqsol-balance",
         "record the user's liqSOL ATA balance before the redemption",
         async ctx => {
+          const config = await WireSyndicationTool.readSyndicationConfig(
+            ctx,
+            SolanaOutpostBootstrapper.SolanaChainCodename,
+            Constants.LIQTokenCodename
+          )
+          Assert.ok(config != null, "missing syndication configuration")
+          ctx.outputs.set(
+            LIQYieldScenario.RedemptionAmountKey,
+            Constants.SyndicateAmount -
+              (Constants.SyndicateAmount * BigInt(config.desynd_fee_bps)) /
+                Constants.FeeDenominator
+          )
           ctx.outputs.set(
             LIQYieldScenario.LiqsolBalanceBeforeKey,
             await SolanaLiqSyndicationTool.readLiqsolBalance(
@@ -595,7 +810,7 @@ export class LIQYieldScenario extends FlowScenario {
           )
         }
       ),
-      Steps.contracts.sysio.liq.planDesyndicate(
+      Steps.contracts.sysio.synd.planDesyndicate(
         Actor.User,
         "desyndicate",
         `burn ${Constants.SyndicateAmount} shadow base units and queue DESYNDICATE_LIQ`,
@@ -626,14 +841,19 @@ export class LIQYieldScenario extends FlowScenario {
           await pollUntil(
             "DESYNDICATE_LIQ in a DEPOT_OUTPOST_SOLANA envelope",
             async () =>
-              containsDesyndicateLIQ(oppDebuggingPath(ctx.config.clusterPath)) &&
+              containsDesyndicateLIQ(
+                oppDebuggingPath(ctx.config.clusterPath)
+              ) &&
               (await readCirculatedDesyndications(ctx)).some(
                 redemption =>
                   redemption.chainCode === Constants.SolanaChainCode &&
                   redemption.amount?.tokenCode === Constants.LIQTokenCode &&
-                  redemption.amount?.amount === Constants.SyndicateAmount &&
+                  redemption.amount?.amount ===
+                    ctx.outputs.assert(LIQYieldScenario.RedemptionAmountKey) &&
                   redemption.user?.kind === ChainKind.SVM &&
-                  Buffer.from(redemption.user.address).equals(Buffer.from(pubkey)) &&
+                  Buffer.from(redemption.user.address).equals(
+                    Buffer.from(pubkey)
+                  ) &&
                   redemption.requestId > 0n
               ),
             Constants.CirculationTimeoutMs,
@@ -645,19 +865,19 @@ export class LIQYieldScenario extends FlowScenario {
       verifyStep(
         Actor.SolanaOutpost,
         "outpost-pays-the-redemption",
-        "the user's liqSOL ATA grows by exactly the burned amount",
+        "the user's liqSOL ATA grows by the burned amount less the configured fee",
         async ctx => {
           const before = ctx.outputs.assert(
             LIQYieldScenario.LiqsolBalanceBeforeKey
           )
           await pollUntil(
-            `the user's liqSOL balance reaches ${before + Constants.SyndicateAmount}`,
+            `the user's liqSOL balance reaches ${before + ctx.outputs.assert(LIQYieldScenario.RedemptionAmountKey)}`,
             async () =>
               (await SolanaLiqSyndicationTool.readLiqsolBalance(
                 ctx,
                 Constants.UserKeypairName
               )) ===
-              before + Constants.SyndicateAmount,
+              before + ctx.outputs.assert(LIQYieldScenario.RedemptionAmountKey),
             Constants.CirculationTimeoutMs,
             Constants.CirculationPollMs
           )
@@ -677,7 +897,9 @@ export class LIQYieldScenario extends FlowScenario {
         "epoch-index-advances",
         "sysio.epoch::epochstate.current_epoch_index advances past the pre-syndication snapshot",
         async ctx => {
-          const before = ctx.outputs.assert(LIQYieldScenario.EpochIndexBeforeKey)
+          const before = ctx.outputs.assert(
+            LIQYieldScenario.EpochIndexBeforeKey
+          )
           await pollUntil(
             `current_epoch_index advances past ${before}`,
             async () => (await readCurrentEpochIndex(ctx)) > before,
@@ -686,6 +908,18 @@ export class LIQYieldScenario extends FlowScenario {
           )
         },
         epochAdvanceStepOptions
+      )
+    )
+    ClusterBuildPhase.create(
+      cluster,
+      "VerifySolvency",
+      "The flow leaves the emergency cord clear and no mismatch"
+    ).push(
+      WireSyndicationTool.planVerifyHealthy(
+        Actor.Sysio,
+        "cord-clear-no-mismatch",
+        "cord clear and mismatch empty",
+        {}
       )
     )
   }
@@ -702,11 +936,37 @@ async function readReservoirQueued(ctx: ClusterBuildContext): Promise<bigint> {
         Asset.from(reservoir.balance.quantity).symbol.name ===
         Constants.LIQTokenCodename
     )
-    .reduce((sum, reservoir) => sum + assetUnits(reservoir.balance.quantity), 0n)
+    .reduce(
+      (sum, reservoir) => sum + assetUnits(reservoir.balance.quantity),
+      0n
+    )
 }
 
 /** Typed cross-step output keys for the liq-yield scenario. */
 export namespace LIQYieldScenario {
+  /** Closed depot epoch containing the user's held syndication item. */
+  export const SyndicationEpochKey = outputKey<number>(
+    "LIQYieldScenario.syndicationEpoch",
+    "held syndication epoch"
+  )
+  /** Closed depot epoch containing the held yield item. */
+  export const YieldEpochKey = outputKey<number>(
+    "LIQYieldScenario.yieldEpoch",
+    "held yield epoch"
+  )
+  /** Underwriting request captured from the syndication envelope. */
+  export const SyndicationRequestKey = outputKey<
+    SysioContracts.SysioBondApproveAction["request_id"]
+  >("LIQYieldScenario.syndicationRequest", "syndication request")
+  /** Underwriting request captured from the yield envelope. */
+  export const YieldRequestKey = outputKey<
+    SysioContracts.SysioBondApproveAction["request_id"]
+  >("LIQYieldScenario.yieldRequest", "yield request")
+  /** Redemption after the configured, floor-rounded desyndication fee. */
+  export const RedemptionAmountKey = outputKey<bigint>(
+    "LIQYieldScenario.redemptionAmount",
+    "net outpost redemption"
+  )
   /** `epochstate.current_epoch_index` snapshotted before the syndication. */
   export const EpochIndexBeforeKey = outputKey<number>(
     "LIQYieldScenario.epochIndexBefore",

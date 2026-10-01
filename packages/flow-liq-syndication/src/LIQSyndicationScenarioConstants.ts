@@ -27,13 +27,16 @@ export namespace LIQSyndicationScenarioConstants {
     SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
   )
 
+  /** Depot token codename used by typed syndication table reads. */
+  export const LIQTokenCodename = "LIQSOL"
+
   /**
    * Depot token slug code the outpost's REAL liqSOL mint is registered under.
    * `synd` and `report_liq_yield` resolve it through
    * `OutpostConfig::token_code_for_mint` and refuse (`LiqTokenNotMapped`) when
    * the mint is unmapped, so the scenario maps it before syndicating.
    */
-  export const LIQTokenCode: bigint = BigInt(SlugName.from("LIQSOL"))
+  export const LIQTokenCode: bigint = BigInt(SlugName.from(LIQTokenCodename))
 
   /**
    * Durable handle of the flow's syndicating user keypair. It is created and

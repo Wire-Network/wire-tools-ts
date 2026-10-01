@@ -43,15 +43,15 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
     expect(names).not.toContain("MockLiqPools")
   })
 
-  it("adds MockLiqPools immediately after LiqConfig when enableMockLiqPools is set", async () => {
+  it("adds MockLiqPools immediately after SyndicationConfig when enableMockLiqPools is set", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
       enableMockLiqPools: true
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MockLiqPools")
-    // gated phase is registered directly after the kicker config, pre-EpochBootstrap
-    expect(names.indexOf("MockLiqPools")).toBe(names.indexOf("LiqConfig") + 1)
+    // gated phase follows the kicker and the per-pair syndication config, pre-EpochBootstrap
+    expect(names.indexOf("MockLiqPools")).toBe(names.indexOf("SyndicationConfig") + 1)
     expect(names.indexOf("MockLiqPools")).toBeLessThan(names.indexOf("EpochBootstrap"))
   })
 

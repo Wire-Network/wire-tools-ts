@@ -250,13 +250,15 @@ export namespace OperatorDaemonTool {
     // get_events can filter by contract address (hardhat artifact format).
     const abiDir = mkdirs(Path.join(dataPath, EthereumAbiSubpath))
     const ethereumAbiFiles = EthereumAbiContractNames.map(contractName => {
+      // Deployment aliases retain the address/plugin name after Solidity renames.
+      const artifactContractName = contractName === "BAR" ? "BARV2" : contractName
       const artifactFile = Path.join(
         ethereumPath,
         "artifacts",
         "contracts",
         "outpost",
         `${contractName}.sol`,
-        `${contractName}.json`
+        `${artifactContractName}.json`
       )
       if (!Fs.existsSync(artifactFile)) return null
       const artifact = JSON.parse(Fs.readFileSync(artifactFile, "utf-8")),

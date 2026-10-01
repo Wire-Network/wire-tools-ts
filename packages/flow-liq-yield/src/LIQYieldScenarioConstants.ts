@@ -1,5 +1,6 @@
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
+  Constants as HarnessConstants,
   ProtocolTiming,
   SolanaLiqSyndicationTool,
   SolanaOutpostBootstrapper
@@ -34,7 +35,8 @@ export namespace LIQYieldScenarioConstants {
   /** The shadow symbol `sysio.liq` opened for liqSOL, in ABI form. */
   export const ShadowSymbol = `${ShadowPrecision},${LIQTokenCodename}`
   /** The one key field of `sysio.liq`'s symbol-keyed KV tables (`stat`, `liqpending`, `yieldidx`). */
-  export const SymbolKeyField: keyof SysioContracts.SysioLiqSymbolKeyType = "symbol_code"
+  export const SymbolKeyField: keyof SysioContracts.SysioLiqSymbolKeyType =
+    "symbol_code"
   /**
    * The shadow's distribution state before its first distribution: `sysio.liq`
    * creates the `yieldidx` row on the first `addyield`, and until then computes
@@ -60,6 +62,30 @@ export namespace LIQYieldScenarioConstants {
   export const UserKeypairName = "liq-yield-user"
   /** The user's WIRE account — the holder the depot credits once the key is linked. */
   export const UserAccount = "liq.yielder"
+
+  /** WIRE account that receives the opt-in imported bonder's Solana position. */
+  export const BonderAccount = "liq.bonder"
+  /** Resource policy weight used for each flow identity. */
+  export const ResourceWeight = "25.0000 SYS"
+  /** Queue work budget; each flow envelope holds one item. */
+  export const CrankLimit = 100
+  /** sysio.bond::BPS_DENOMINATOR used by synd::fee_of. */
+  export const FeeDenominator = 10_000n
+
+  /** The separate addpolicy write's generated input for a flow account. */
+  export function resourcePolicy(
+    owner: string
+  ): SysioContracts.SysioRoaAddpolicyAction {
+    return {
+      owner,
+      issuer: HarnessConstants.BOOTSTRAP_NODE_OWNER,
+      net_weight: ResourceWeight,
+      cpu_weight: ResourceWeight,
+      ram_weight: ResourceWeight,
+      time_block: 0,
+      network_gen: 0
+    }
+  }
 
   /** Lamports the user's wallet is topped up to — the deposit plus fee + tx headroom. */
   export const UserFloorLamports = 20_000_000_000n

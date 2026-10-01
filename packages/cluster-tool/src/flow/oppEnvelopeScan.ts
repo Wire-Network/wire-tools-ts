@@ -151,7 +151,7 @@ export function containsLIQYield(
 
 /**
  * Whether a `DESYNDICATE_LIQ` attestation has circulated on `direction` — the
- * depot → outpost proof that a holder's `sysio.liq::desyndicate` reached an
+ * depot → outpost proof that a holder's `sysio.synd::desyndicate` reached an
  * envelope the outpost pays from (`flow-liq-yield`).
  *
  * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.

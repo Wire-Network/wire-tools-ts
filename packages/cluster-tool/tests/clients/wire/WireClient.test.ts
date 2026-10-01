@@ -445,3 +445,21 @@ describe("WireClient", () => {
     })
   })
 })
+
+describe("WireClient.chainTimeMs", () => {
+  it("reads a zone-less chain stamp as UTC", () => {
+    expect(WireClient.chainTimeMs("2026-09-30T00:00:01.500")).toBe(
+      Date.UTC(2026, 8, 30, 0, 0, 1, 500)
+    )
+  })
+
+  it("accepts a stamp that already carries the Z", () => {
+    expect(WireClient.chainTimeMs("2026-09-30T00:00:01.500Z")).toBe(
+      WireClient.chainTimeMs("2026-09-30T00:00:01.500")
+    )
+  })
+
+  it("answers NaN for a stamp that is not a time", () => {
+    expect(WireClient.chainTimeMs("not a time")).toBeNaN()
+  })
+})

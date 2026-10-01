@@ -1,8 +1,7 @@
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
-
-const { SysioLiqChainkind } = SysioContracts
+import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 
 /** The shadow symbol every case below addresses (the depot's 9-decimal frame). */
 const ShadowSymbol = "9,LIQSOL"
@@ -73,28 +72,6 @@ describe("Steps.contracts.sysio.liq", () => {
     expect(typeof step.runner).toBe("function")
   })
 
-  it("sweep carries the liq::sweep data AND the CPU payer, who is the signer", () => {
-    // `sweep` is permissionless — the account is not the signer, so the payer
-    // rides the step input for the authorization.
-    const data: SysioContracts.SysioLiqSweepAction = {
-      account: Holder,
-      chain_kind: SysioLiqChainkind.CHAIN_KIND_SVM
-    }
-    const step = Steps.contracts.sysio.liq.planSweep(
-      Report.Actor.User,
-      "sweep-parked-liqsol",
-      "deliver the shadow parked against the holder's link",
-      {},
-      data,
-      Holder
-    )
-    expect(step.actor).toBe(Report.Actor.User)
-    expect(step.input.kind).toBe("LiqContractSteps.SweepInput")
-    expect(step.input.data).toBe(data)
-    expect(step.input.signer).toBe(Holder)
-    expect(typeof step.runner).toBe("function")
-  })
-
   it("claim carries the liq::claim data, whose holder is the signer", () => {
     const data: SysioContracts.SysioLiqClaimAction = {
       holder: Holder,
@@ -113,21 +90,63 @@ describe("Steps.contracts.sysio.liq", () => {
     expect(typeof step.runner).toBe("function")
   })
 
-  it("desyndicate carries the liq::desyndicate data, whose holder is the signer", () => {
-    const data: SysioContracts.SysioLiqDesyndicateAction = {
+  it("recredit carries the liq::recredit data and binds runRecredit", () => {
+    const data: SysioContracts.SysioLiqRecreditAction = {
       holder: Holder,
       quantity: "2.000000000 LIQSOL"
     }
-    const step = Steps.contracts.sysio.liq.planDesyndicate(
-      Report.Actor.User,
-      "desyndicate-liqsol",
-      "burn the holder's shadow and queue DESYNDICATE_LIQ",
+    const step = Steps.contracts.sysio.liq.planRecredit(
+      Report.Actor.Sysio,
+      "recredit-liqsol",
+      "return a skipped desyndication's shadow to the holder",
       {},
       data
     )
-    expect(step.input.kind).toBe("LiqContractSteps.DesyndicateInput")
-    expect(step.input.data).toBe(data)
-    expect(step.input.data.quantity).toBe("2.000000000 LIQSOL")
-    expect(typeof step.runner).toBe("function")
+    expect(step.actor).toBe(Report.Actor.Sysio)
+    expect(step.input).toEqual({ kind: "LiqContractSteps.RecreditInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.liq.runRecredit)
+  })
+
+  describe("runRecredit", () => {
+    const data: SysioContracts.SysioLiqRecreditAction = {
+      holder: Holder,
+      quantity: "2.000000000 LIQSOL"
+    }
+
+    /** A fixture context whose `getSysioContract` hands back one shared `sysio.liq` client. */
+    function liqContext() {
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.liq)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      return { ctx, contract }
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("pushes liq::recredit under the contract's own authority", async () => {
+      const { ctx, contract } = liqContext(),
+        invoke = jest.spyOn(contract.actions.recredit, "invoke").mockResolvedValue(undefined)
+      await Steps.contracts.sysio.liq.runRecredit(
+        ctx,
+        { kind: "LiqContractSteps.RecreditInput", data },
+        new AbortController().signal
+      )
+      expect(invoke).toHaveBeenCalledWith(data)
+    })
+
+    it("pushes nothing once the step is aborted", async () => {
+      const { ctx, contract } = liqContext(),
+        invoke = jest.spyOn(contract.actions.recredit, "invoke").mockResolvedValue(undefined),
+        controller = new AbortController()
+      controller.abort()
+      await expect(
+        Steps.contracts.sysio.liq.runRecredit(
+          ctx,
+          { kind: "LiqContractSteps.RecreditInput", data },
+          controller.signal
+        )
+      ).rejects.toThrow()
+      expect(invoke).not.toHaveBeenCalled()
+    })
   })
 })

@@ -1,7 +1,13 @@
+import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey, SlugName, SysioContracts } from "@wireio/sdk-core"
+import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { keyPairFromPrivate, solanaKeypair } from "../../utils/keyPairUtils.js"
+import type { StepInput } from "../StepRunner.js"
+import { MockSyndicationBonderKey, type MockSyndicationBonderOutput } from "../outputs/MockSyndicationBonderOutput.js"
+import { KeySteps } from "./KeySteps.js"
 import { eachSeries } from "../../utils/asyncUtils.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../report/Report.js"
@@ -13,9 +19,13 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import type { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { ProtocolTiming } from "../../Constants.js"
+import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
+import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
 import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { ReservContractSteps } from "./contracts/sysio/ReservContractSteps.js"
+import { SyndContractSteps } from "./contracts/sysio/SyndContractSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
@@ -117,6 +127,331 @@ export namespace RegistrySteps {
   const MockLiqPoolDepthCapBps = 3000
   /** Smallest clip (shadow base units) a mock pool sells. */
   const MockLiqPoolClipFloor = 1000
+  /**
+   * `sysio.bond`'s hold bond, in basis points of a request's covered amount — the
+   * contract's own default, set explicitly so the bootstrap states it.
+   */
+  export const BondHoldBps = 1000
+  /**
+   * Fee on each released syndication tranche and on each desyndication (bps). The
+   * bootstrap charges none; a flow that exercises the fee path sets its own through
+   * `sysio.synd::setconfig` in its scenario and restores this.
+   */
+  export const SyndicationFeeBps = 0
+  /** Fee on each desyndication (bps); see {@link SyndicationFeeBps}. */
+  export const DesyndicationFeeBps = 0
+  /**
+   * Size and per-epoch refill of each pair's syndication and desyndication buckets
+   * (shadow base units): one million tokens at the depot's 9 decimals, far above any
+   * amount a flow moves, so no existing flow waits on a bucket.
+   */
+  export const SyndicationBucketSize = 1_000_000_000_000_000
+  /** Bounty posted on each envelope's `sysio.bond` request (shadow base units): none. */
+  export const SyndicationBounty = 0
+  /**
+   * Charged to a challenger on top of the hold bond (shadow base units): one token. The
+   * contract refuses a challenge whose charge is zero, so this is never 0.
+   */
+  export const SyndicationChallengeExtra = 1_000_000_000
+
+  /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
+  export const MockSyndicationBonderLabel = "mock-syndication-bonder"
+  /** Beyond all funded anvil/operator slots; the import needs no outpost transaction. */
+  export const MockSyndicationBonderEthereumHdIndex = AnvilProcess.AccountCount
+  /** One hundred tokens per imported position, in the depot's nine-decimal frame. */
+  export const MockSyndicationImportAmount = 100_000_000_000
+
+  /** Runtime key selection plus the generated import action's pair and credit amount. */
+  export interface MockSyndicationImportInput
+    extends
+      StepInput,
+      Pick<SysioContracts.SysioSyndImportsyndAction, "chain_code">,
+      Pick<SysioContracts.SysioSyndImportsyndAction, "token_code">,
+      Pick<SysioContracts.SysioSyndImportCreditType, "amount"> {
+    readonly kind: "RegistrySteps.MockSyndicationImportInput"
+    readonly keyType: KeyType.ED | KeyType.EM
+  }
+
+  /** Import templates; public keys resolve only after the bonder materializes. */
+  export const MockSyndicationImportCredits: MockSyndicationImportInput[] = [
+    {
+      kind: "RegistrySteps.MockSyndicationImportInput",
+      chain_code: "SOLANA",
+      token_code: "LIQSOL",
+      keyType: KeyType.ED,
+      amount: MockSyndicationImportAmount
+    },
+    {
+      kind: "RegistrySteps.MockSyndicationImportInput",
+      chain_code: "ETHEREUM",
+      token_code: "LIQETH",
+      keyType: KeyType.EM,
+      amount: MockSyndicationImportAmount
+    }
+  ]
+
+  /** Provision the import identity, import each position separately, then seal import. */
+  export function planMockSyndicationImport<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(parent, name, description, [
+      planMockSyndicationBonder<C>(
+        Report.Actor.Sysio,
+        "materialize-mock-syndication-bonder",
+        "persist the bonder's import keys",
+        options
+      ),
+      ...MockSyndicationImportCredits.map(input =>
+        planMockSyndicationCredit<C>(
+          Report.Actor.Sysio,
+          `import-syndication-${input.token_code.toLowerCase()}`,
+          "import one bonder position during epoch zero",
+          options,
+          input
+        )
+      ),
+      SyndContractSteps.planImportdone<C>(
+        Report.Actor.Sysio,
+        "seal-mock-syndication-import",
+        "seal the bootstrap import",
+        options,
+        {}
+      ),
+      planVerifyMockSyndicationImport<C>(
+        Report.Actor.Sysio,
+        "verify-mock-syndication-import",
+        "both credits are parked and no custody mismatch exists",
+        options
+      )
+    ])
+  }
+
+  /** Report checkpoint for imported parked positions and an empty mismatch table. */
+  export function planVerifyMockSyndicationImport<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runVerifyMockSyndicationImport
+    )
+  }
+
+  /** Read each exact bonder position after import finality; fail on missing or wrong credit. */
+  export async function runVerifyMockSyndicationImport<
+    C extends ClusterBuildContext
+  >(ctx: C, _input: null, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    const bonder = readMockSyndicationBonder(ctx)
+    await eachSeries(MockSyndicationImportCredits, async input => {
+      const solana = input.keyType === KeyType.ED,
+        pubkey = PublicKey.from(
+          (solana ? bonder.solana : bonder.ethereum).publicKey
+        ).data.hexString,
+        row = await WireSyndicationTool.readParked(
+          ctx,
+          input.token_code,
+          solana
+            ? SysioContracts.SysioSyndChainkind.CHAIN_KIND_SVM
+            : SysioContracts.SysioSyndChainkind.CHAIN_KIND_EVM,
+          pubkey
+        )
+      Assert.ok(
+        row,
+        `mock syndication import missing parked ${input.token_code}`
+      )
+      Assert.strictEqual(
+        BigInt(row.balance),
+        BigInt(input.amount),
+        `mock syndication import wrong ${input.token_code} balance`
+      )
+    })
+    Assert.deepStrictEqual(
+      await WireSyndicationTool.readMismatches(ctx),
+      [],
+      "mock syndication import has custody mismatches"
+    )
+  }
+
+  /** Durable identity named explicitly in the bonder's materialization Report row. */
+  export interface MockSyndicationBonderInput extends StepInput {
+    readonly kind: "RegistrySteps.MockSyndicationBonderInput"
+    readonly label: string
+    readonly ethereumHdIndex: number
+  }
+
+  /** Create the local key material as a Report-visible Step. */
+  export function planMockSyndicationBonder<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, MockSyndicationBonderInput> {
+    return ClusterBuildStep.create<C, MockSyndicationBonderInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "RegistrySteps.MockSyndicationBonderInput",
+        label: MockSyndicationBonderLabel,
+        ethereumHdIndex: MockSyndicationBonderEthereumHdIndex
+      },
+      runMockSyndicationBonder
+    )
+  }
+
+  /** Generate ED and EM keys once, keeping the bonder unlinked so imports park. */
+  export async function runMockSyndicationBonder<C extends ClusterBuildContext>(
+    ctx: C,
+    input: MockSyndicationBonderInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.strictEqual(
+      input.label,
+      MockSyndicationBonderLabel,
+      "unexpected mock bonder label"
+    )
+    Assert.strictEqual(
+      input.ethereumHdIndex,
+      MockSyndicationBonderEthereumHdIndex,
+      "unexpected mock bonder HD index"
+    )
+    Assert.ok(
+      !ctx.outputs.get(MockSyndicationBonderKey),
+      "mock syndication bonder already exists"
+    )
+    const keyContext = KeySteps.keyGeneratorContext(ctx),
+      solana = await KeyGenerator.create(KeyType.ED, keyContext, {
+        purpose: input.label
+      }),
+      ethereum = await KeyGenerator.create(KeyType.EM, keyContext, {
+        purpose: input.label,
+        ethereumHdIndex: input.ethereumHdIndex
+      })
+    Fs.mkdirSync(ctx.config.dataPath, { recursive: true })
+    Fs.writeFileSync(
+      SolanaFundingTool.keypairFile(
+        ctx.config.dataPath,
+        MockSyndicationBonderLabel
+      ),
+      JSON.stringify(Array.from(solanaKeypair(solana).secretKey)),
+      { mode: 0o600, flag: "wx" }
+    )
+    const bonder: MockSyndicationBonderOutput = { solana, ethereum }
+    Fs.writeFileSync(
+      Path.join(ctx.config.dataPath, `${MockSyndicationBonderLabel}.json`),
+      JSON.stringify(bonder),
+      { mode: 0o600, flag: "wx" }
+    )
+    ctx.outputs.set(MockSyndicationBonderKey, bonder)
+  }
+
+  /** Reload the unlinked bonder from its durable label after bootstrap or a context restart. */
+  export function readMockSyndicationBonder<C extends ClusterBuildContext>(
+    ctx: C
+  ): MockSyndicationBonderOutput {
+    const cached = ctx.outputs.get(MockSyndicationBonderKey)
+    if (cached) return cached
+    const file = Path.join(
+      ctx.config.dataPath,
+      `${MockSyndicationBonderLabel}.json`
+    )
+    Assert.ok(
+      Fs.existsSync(file),
+      "mock syndication bonder has not been provisioned"
+    )
+    const saved = JSON.parse(
+        Fs.readFileSync(file, "utf8")
+      ) as MockSyndicationBonderOutput,
+      bonder: MockSyndicationBonderOutput = {
+        solana: keyPairFromPrivate(
+          KeyType.ED,
+          PrivateKey.from(saved.solana.privateKey).toNativeString()
+        ),
+        ethereum: keyPairFromPrivate(
+          KeyType.EM,
+          PrivateKey.from(saved.ethereum.privateKey).toNativeString()
+        )
+      }
+    Assert.strictEqual(
+      bonder.solana.publicKey,
+      saved.solana.publicKey,
+      "bonder ED key mismatch"
+    )
+    Assert.strictEqual(
+      bonder.ethereum.publicKey,
+      saved.ethereum.publicKey,
+      "bonder EM key mismatch"
+    )
+    ctx.outputs.set(MockSyndicationBonderKey, bonder)
+    return bonder
+  }
+
+  /** One import action; the bonder public key is loaded at execution time. */
+  export function planMockSyndicationCredit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    input: MockSyndicationImportInput
+  ): ClusterBuildStep<C, MockSyndicationImportInput> {
+    return ClusterBuildStep.create<C, MockSyndicationImportInput>(
+      actor,
+      name,
+      description,
+      options,
+      input,
+      runMockSyndicationCredit
+    )
+  }
+
+  /** Resolve the canonical ED/EM key to its native bytes and perform one importsynd. */
+  export async function runMockSyndicationCredit<C extends ClusterBuildContext>(
+    ctx: C,
+    input: MockSyndicationImportInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const bonder = readMockSyndicationBonder(ctx),
+      key = input.keyType === KeyType.ED ? bonder.solana : bonder.ethereum
+    Assert.ok(key, "mock syndication bonder is missing its import key")
+    await SyndContractSteps.runImportsynd(
+      ctx,
+      {
+        kind: "SyndContractSteps.ImportsyndInput",
+        data: {
+          chain_code: input.chain_code,
+          token_code: input.token_code,
+          credits: [
+            {
+              pubkey: PublicKey.from(key.publicKey).data.hexString,
+              amount: input.amount
+            }
+          ]
+        }
+      },
+      signal
+    )
+  }
 
   /** A symbol in ABI form (`9,LIQSOL`) from a codename, at the liq precision. */
   function liqSymbol(codename: string): string {
@@ -153,6 +488,28 @@ export namespace RegistrySteps {
       conversion_horizon_sec: MockLiqPoolConversionHorizonSec,
       depth_cap_bps: MockLiqPoolDepthCapBps,
       clip_floor: MockLiqPoolClipFloor
+    }))
+
+  /**
+   * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
+   * {@link runSeedRegistry} registers, in {@link ShadowLiqTokenPairs} order. A pair with no
+   * row releases no syndication and accepts no desyndication, so a real depot configures
+   * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
+   * that phase (one Report step per row) and its unit test.
+   */
+  export const SyndicationConfigRegistrations: SysioContracts.SysioSyndSetconfigAction[] =
+    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+      chain_code: chainCodename,
+      token_code: tokenCodename,
+      synd_fee_bps: SyndicationFeeBps,
+      desynd_fee_bps: DesyndicationFeeBps,
+      synd_burst: SyndicationBucketSize,
+      synd_refill: SyndicationBucketSize,
+      desynd_burst: SyndicationBucketSize,
+      desynd_refill: SyndicationBucketSize,
+      window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
+      bounty: SyndicationBounty,
+      challenge_extra: SyndicationChallengeExtra
     }))
 
   /** Seed chains + tokens + chain-token bindings. */
@@ -314,6 +671,68 @@ export namespace RegistrySteps {
           ShadowLiqTokenRegistrations[index]
         )
     )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase configuring underwriting and syndication, after the shadow symbols exist:
+   * `sysio.bond::setconfig` ({@link BondHoldBps}), one `sysio.synd::setconfig` per shadow
+   * pair ({@link SyndicationConfigRegistrations}), then the verify Steps of the
+   * syndication preconditions: one that every shadow is at the depot frame's precision,
+   * and one per shadow that its `(chain, token)` is an active TOKEN_KIND_LIQ token with an
+   * active binding (without it `sysio.msgch` drops every `SYNDICATE_LIQ` of the pair). Registry setup a
+   * real depot performs too, so the bootstrap composes it unconditionally. Self-registers
+   * on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every step.
+   * @returns The self-registered configuration phase.
+   */
+  export function planSyndicationConfig<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = [
+      BondContractSteps.planSetconfig<C>(
+        Report.Actor.Sysio,
+        "configure-bond",
+        "set sysio.bond's hold bond",
+        options,
+        { hold_bps: BondHoldBps }
+      ),
+      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename], index) =>
+        SyndContractSteps.planSetconfig<C>(
+          Report.Actor.Sysio,
+          `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+          `set the ${chainCodename}/${tokenCodename} syndication rules on sysio.synd`,
+          options,
+          SyndicationConfigRegistrations[index]
+        )
+      ),
+      WireSyndicationTool.planVerifyShadowPrecision<C>(
+        Report.Actor.Sysio,
+        "verify-shadow-precision",
+        "every shadow symbol is at the depot frame's precision, which sysio.bond can bond",
+        options,
+        ShadowLiqTokenPairs.map(([, tokenCodename]) => tokenCodename)
+      ),
+      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) =>
+        WireSyndicationTool.planVerifyLiqTokenActive<C>(
+          Report.Actor.Sysio,
+          `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+          `${chainCodename}/${tokenCodename} is an active liq token with an active binding`,
+          options,
+          chainCodename,
+          tokenCodename
+        )
+      )
+    ]
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
   }
 

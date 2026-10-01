@@ -15,6 +15,8 @@ import {
   SolanaFundingTool,
   SolanaLiqSyndicationTool,
   WireState,
+  WireSyndicationTool,
+  SolanaOutpostBootstrapper,
   containsLIQYield,
   containsSyndicateLIQ,
   outputKey,
@@ -27,7 +29,8 @@ import {
 } from "@wireio/cluster-tool"
 import { LIQSyndicationScenarioConstants as Constants } from "./LIQSyndicationScenarioConstants.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioContractName, SysioSyndItemKind, SysioSyndChainkind } =
+  SysioContracts
 const { Actor } = Report
 
 // ── reads (execute freely inside verify steps) ──────────────────────────────
@@ -82,9 +85,9 @@ async function readCirculatedLIQYields(
  *
  * This flow proves the OUTPOST side: the two attestations circulate, and the
  * depot keeps advancing its epoch while consuming envelopes that carry them —
- * whatever its `sysio.msgch` dispatcher does with them (today it routes both
- * to `sysio.liq`, where this user's unlinked key leaves the syndication parked;
- * `flow-liq-yield` follows the credit through to WIRE and back to the outpost).
+ * `sysio.msgch` routes both to `sysio.synd`, which holds them until bonded;
+ * this flow provides no bonder and verifies the closed envelope remains held.
+ * `flow-liq-yield` follows the bonded credit through to WIRE and back to the outpost.
  * A depot that choked on either type would stall the epoch — the last phase is
  * what catches that.
  *
@@ -227,6 +230,53 @@ export class LIQSyndicationScenario extends FlowScenario {
       )
     )
 
+    ClusterBuildPhase.create(
+      cluster,
+      "HeldWithoutBonder",
+      "The depot holds the envelope's items without crediting shadow"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "syndication-remains-held",
+        "the closed envelope is WAITING or REQUESTED and the unlinked user has no shadow",
+        async ctx => {
+          const pubkey = SolanaFundingTool.loadKeypair(
+            ctx.config.dataPath,
+            Constants.UserKeypairName
+          )
+            .publicKey.toBuffer()
+            .toString("hex")
+          await pollUntil(
+            "held syndication envelope",
+            async () =>
+              (await WireSyndicationTool.readHeldEnvelope(
+                ctx,
+                SolanaOutpostBootstrapper.SolanaChainCodename,
+                Constants.LIQTokenCodename,
+                SysioSyndItemKind.SYNDICATION,
+                Constants.SyndicateAmount,
+                pubkey
+              )) != null,
+            Constants.CirculationTimeoutMs,
+            Constants.CirculationPollMs
+          )
+          Assert.strictEqual(
+            await WireSyndicationTool.readParked(
+              ctx,
+              Constants.LIQTokenCodename,
+              SysioSyndChainkind.CHAIN_KIND_SVM,
+              pubkey
+            ),
+            undefined
+          )
+          // Intake mints shadow into sysio.synd's custody. The full held item
+          // and absent parked credit prove this unlinked user's funds have
+          // not been released; total token supply is not a user balance.
+        },
+        circulationStepOptions
+      )
+    )
+
     // ── 3. A real donation + crank emits LIQ_YIELD for the reported delta ──
     ClusterBuildPhase.create(
       cluster,
@@ -323,6 +373,18 @@ export class LIQSyndicationScenario extends FlowScenario {
           )
         },
         epochAdvanceStepOptions
+      )
+    )
+    ClusterBuildPhase.create(
+      cluster,
+      "VerifySolvency",
+      "The flow leaves the emergency cord clear and no mismatch"
+    ).push(
+      WireSyndicationTool.planVerifyHealthy(
+        Actor.Sysio,
+        "cord-clear-no-mismatch",
+        "cord clear and mismatch empty",
+        {}
       )
     )
   }

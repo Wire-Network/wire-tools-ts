@@ -239,6 +239,12 @@ export namespace SolanaFundingTool {
    * liqsol `global_config.admin`, and the mock-SPL mint authority.
    */
   export const DeployerKeypairName = "deployer"
+  /**
+   * Handle of the per-cluster Solana panic keypair — the account the bootstrap
+   * names with `set_panic`, which may call `set_frozen` (the outpost's
+   * emergency stop) and nothing else. Persisted next to the deployer's.
+   */
+  export const PanicKeypairName = "panic"
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
   export const DeployerKeypairFilename = `${KeypairFilePrefix}${DeployerKeypairName}${KeypairFileSuffix}`
 

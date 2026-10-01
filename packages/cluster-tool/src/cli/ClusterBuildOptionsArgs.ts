@@ -560,6 +560,10 @@ export function buildOptionShape(
       false,
       "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
     ),
+    enableMockSyndicationImport: leaf(
+      false,
+      "import mock syndication positions for the bonder and back mock shadow at bootstrap"
+    ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,

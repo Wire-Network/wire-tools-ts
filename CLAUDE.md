@@ -299,8 +299,9 @@ off — run the Solana outpost bootstrap calls the launch build of the program
 withholds with `OperationDisabled`: `init_reserve`, `create_reserve_native` and the
 mock SPL reserve provisioning that writes `sol-mock-mints.json`; a default cluster
 skips them), `--enable-mock-liq-pools` (default off — seed the
-2 mock shadow-liq yield pools on `sysio.swap`, minting the pool shadow from
-nothing; a real / external depot never does), `--api-count <N>` (default 0 — plan N API nodes:
+2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
+custody), `--enable-mock-syndication-import` (default off — import the mock
+bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -348,7 +349,7 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
-**Flow authoring — mock reserves and liq pools.** A flow that reads the mock
+**Flow authoring — mock reserves, liq pools and syndication import.** A flow that reads the mock
 (chain, token) PRIMARY reserves sets `enableMockReserves: true` in its
 `Scenario.defaults` (the same mechanism it uses for `operatorsPerEpoch` /
 collateral) — never in `plan()`. The bootstrap seeds them during epoch 0; a
@@ -358,7 +359,39 @@ a flow phase. The mock shadow-liq yield pools (`enableMockLiqPools: true`,
 `sysio.liq::regliqpool`) follow the same rule for the same reason. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
 `setconfig` and the kicker are registry setup a real depot performs too, so the
-bootstrap does those unconditionally.
+bootstrap does those unconditionally. A flow needing the first bonder sets
+`enableMockSyndicationImport: true` in `Scenario.defaults`, never `plan()`:
+`importsynd` is epoch-zero only. Reload the unlinked bonder with
+`Steps.registry.readMockSyndicationBonder(ctx)` (durable label
+`Steps.registry.MockSyndicationBonderLabel`); link its ED/EM keys in the flow to
+sweep the parked import. Either mock shadow flag enables custody backing after
+all seeds, with one funding/deposit/donation per Step and final custody checks.
+Ethereum then seeds principal through `OutpostManager.execute` in a separate
+Step, preserving the pool configuration. Verification requires principal to equal
+the backing and custody to cover it before the epoch relay can realize yield.
+
+**Flow authoring — underwriting, syndication and the emergency stop.** The
+bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
+unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: the
+panic account `Constants.PANIC_ACCOUNT`, `sysio.andon::setpanic`,
+`addpuller(sysio.synd)`) and `SyndicationConfig` (after `LiqConfig`:
+`sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
+`Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
+fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not
+bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
+are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
+`planDesyndicate`); `WireSyndicationTool` reads the depot's syndication state and
+bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). On the
+outposts, the Ethereum deploy config names the panic account
+(`EthereumOutpostBootstrapper.PanicAccountIndex`), `maxSyndicationPerTransfer` and
+`yieldDeadband` (`verify-syndication-pool` reads them back), and the Solana surface
+runs `set-max-syndication --fresh` and `set_panic` to the harness panic keypair
+(`SolanaFundingTool.PanicKeypairName`). The outpost writes a flow drives —
+syndicating, donating custody, pulling the stop and paying a stored desyndication —
+are `SolanaLiqSyndicationTool` (`planSetFrozen`, `planDonateToPool`,
+`planPayPendingDesyndication`, which derives the relay's `pending_desyndication`
+PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
+`planSetPaused`, `planPayPendingDesyndication`).
 
 **Flow authoring — launch-withheld operations.** `enableLaunchWithheldOperations:
 true` makes the bootstrap RUN the Solana outpost calls the launch build of the
