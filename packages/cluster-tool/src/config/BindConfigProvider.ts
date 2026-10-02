@@ -16,6 +16,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 import {
   isUdpPortFree,
+  isIpv6PortFree,
   ListenAllAddress,
   Localhost
 } from "../utils/netUtils.js"
@@ -26,7 +27,7 @@ import { Deferred, getLogger, getValue, guard } from "@wireio/shared"
 const log = getLogger(__filename)
 
 type GetPortModuleType = typeof import("get-port")
-type GetPortParameters = Parameters<GetPortModuleType["default"]>
+type GetPortOptions = Parameters<GetPortModuleType["default"]>[0]
 
 let importGetPortModuleDeferred: Deferred<GetPortModuleType> = null
 
@@ -34,8 +35,8 @@ let importGetPortModuleDeferred: Deferred<GetPortModuleType> = null
  * `get-port` is ESM-only (`"type": "module"`) and this package emits CommonJS.
  * With `module: nodenext` TypeScript PRESERVES this dynamic `import()` (it is NOT
  * down-leveled to `require()`), so the ESM module loads at runtime and under
- * ts-jest. The default export is cached after first load. `get-port` bind-probes
- * every local host and LOCKS each returned port in-process for a short window, so
+ * ts-jest. The default export is cached after first load. `get-port` probes the
+ * IPv4 wildcard and LOCKS each returned port in-process for a short window, so
  * consecutive calls never return the same port — the parallel-run collision
  * safety this module exists to guarantee. It is the single primitive behind EVERY
  * port-finding path here (`findAvailable` / `pickPort` / `isPortAvailable`).
@@ -51,10 +52,16 @@ function importGetPortModule(): Promise<GetPortModuleType> {
   return importGetPortModuleDeferred.promise
 }
 
-/** Find an available port via `get-port` (see the note above). */
-async function getPort(...args: GetPortParameters): Promise<number> {
+/**
+ * Select an IPv4 candidate; callers also check the IPv6 wildcard before accepting
+ * it. Wildcard listeners conflict with listeners on specific local interfaces.
+ * Enumerating every NIC adds redundant binds, each paying the host syscall
+ * mediation cost. Both families remain checked;
+ * the registry, exclusions, in-process locks and UDP checks remain authoritative.
+ */
+async function getPort(options: GetPortOptions): Promise<number> {
   const mod = await importGetPortModule()
-  return mod.default(...args)
+  return mod.default({ ...options, host: ListenAllAddress })
 }
 
 /**
@@ -83,9 +90,9 @@ export namespace BindConfigProvider {
    * resolve the same default registry dir, so they hash to the SAME lock and
    * still serialize host-globally — behaviour unchanged. A caller that
    * sandboxes the registry via {@link RegistryPathEnvVar} (every jest suite
-   * does, in `tests/jest.setup.ts`) hashes to its OWN lock, which is correct:
-   * disjoint registries cannot collide on a port, so serializing them protects
-   * nothing.
+   * does, in `tests/jest.setup.ts`) hashes to its OWN lock. This isolates
+   * registry bookkeeping, not the OS network namespace: real concurrent clusters
+   * must still share the host registry to coordinate pending reservations.
    *
    * When the path was a FIXED tmpdir name the two scopes disagreed, and every
    * port-drawing test across all 8 jest projects queued on one global lock
@@ -96,11 +103,10 @@ export namespace BindConfigProvider {
    *
    * The lock lives in the temp dir rather than INSIDE the registry dir because
    * a sandboxing caller owns (and deletes) that dir: `proper-lockfile` keeps an
-   * mtime-refresh timer alive for a held lock and its `onCompromised` hook
-   * THROWS when the lock's directory vanishes underneath it, so a fixture
-   * tearing down its temp root raced the refresh and produced
-   * `ENOENT ... wire-cluster-ports.lock.lock`. Hashing the path keeps the
-   * scoping while putting the file somewhere no test owns.
+   * mtime-refresh timer alive for a held lock. Keeping the mutex outside the
+   * registry lets it survive registry cleanup. If the mutex itself is removed,
+   * withFileLock rejects the owning call through its onCompromised handler;
+   * that reports the loss but cannot cancel the critical section's side effects.
    */
   export function portLockPath(): string {
     const registryKey = Crypto.createHash("sha256")
@@ -669,7 +675,8 @@ export namespace BindConfigProvider {
   export async function isPortAvailable(port: number): Promise<boolean> {
     return withFileLock(
       portLockPath(),
-      async () => (await getPort({ port })) === port
+      async () =>
+        (await getPort({ port })) === port && (await isIpv6PortFree(port))
     )
   }
 
@@ -785,6 +792,7 @@ export namespace BindConfigProvider {
       const resolved = await getPort({ port: callerPin, exclude: claimed })
       Assert.ok(
         resolved === callerPin &&
+          (await isIpv6PortFree(callerPin)) &&
           (protocol === BindConfigPortProtocol.tcp ||
             (await isUdpPortFree(callerPin))),
         `port ${callerPin} for ${daemon} is pinned but unavailable`
@@ -809,6 +817,7 @@ export namespace BindConfigProvider {
             : { exclude: claimed }
         )
         return !claimed.has(candidate) &&
+          (await isIpv6PortFree(candidate)) &&
           (protocol === BindConfigPortProtocol.tcp ||
             (await isUdpPortFree(candidate)))
           ? candidate
@@ -848,13 +857,17 @@ export namespace BindConfigProvider {
   ): Promise<boolean> {
     const ports = range(first, first + SolanaDynamicPortRangeSize)
     if (ports.some(port => exclusions.has(port))) return false
-    const taken = await Bluebird.filter(
+    // One occupied port rejects the window. Probing the remaining ports wastes
+    // syscalls AND locks otherwise-free candidates in get-port's cache.
+    return Bluebird.reduce(
       ports,
-      async port =>
-        (await getPort({ port })) !== port || !(await isUdpPortFree(port)),
-      { concurrency: 1 }
+      async (free, port) =>
+        free &&
+        (await getPort({ port })) === port &&
+        (await isIpv6PortFree(port)) &&
+        (await isUdpPortFree(port)),
+      true
     )
-    return taken.length === 0
   }
 
   /**

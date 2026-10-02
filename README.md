@@ -45,7 +45,7 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 
 | Tool | Pinned version | Why | Install |
 |---|---|---|---|
-| **Node.js** | `>= 22` | runs the harness + flow tests | [nodejs.org](https://nodejs.org/) or [nvm](https://github.com/nvm-sh/nvm) |
+| **Node.js** | `>= 24.9` | runs the harness + flow tests | [nodejs.org](https://nodejs.org/) or [nvm](https://github.com/nvm-sh/nvm) |
 | **pnpm** | `10.32.1` | the only supported package manager | `corepack enable && corepack prepare pnpm@10.32.1 --activate` |
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
@@ -273,6 +273,40 @@ pnpm --filter @wireio/test-flow-operator-collateral-deposit test
 # Unit tests only (builds first; no live flows):
 pnpm test
 ```
+
+### Commit checks
+
+Run `pnpm check` to execute the same gate as the pre-commit hook: full lint,
+TypeScript build, the runner regressions, all eight Jest projects, and every flow
+`test:unit` script. This does not launch live flows. The hook uses the mise-pinned
+toolchain when available; Node 24.9 or newer is required.
+
+Each stage reports its duration and prints progress every 30 seconds. Lint has a
+two-minute deadline; build and tests have a fifteen-minute deadline. A timeout or
+interrupt terminates the stage's process group on Linux/WSL/macOS, escalating after
+five seconds, and fails the gate. No timeout is treated as a passing test.
+
+Jest defaults to two workers: CPU-count concurrency oversubscribes the host's
+socket-probing path on WSL. For a controlled comparison on another host, run
+`NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --maxWorkers=4` after building.
+Keep the test inventory unchanged when comparing times.
+
+The port allocator probes IPv4 and IPv6 wildcards separately, instead of every
+NIC, and stops scanning a candidate port window as soon as one port rejects it.
+Registry locking, reserved-port exclusions, pinned-port rejection, and UDP checks
+are retained. Real socket regressions cover IPv4 and IPv6-only listener collisions.
+On the WSL development host (2026-10-02), one default 83-port allocation took
+9.44 seconds with the committed allocator and 3.35 seconds with these changes
+(sequential runs with an otherwise idle test harness). This measures allocation,
+not the entire hook; test-suite time also includes compilation and process tests.
+
+The integrated lock fixes from PRs #76 and #100 keep the mutex outside the
+registry directory, keyed by its normalized path, with a 30-second stale threshold
+for short critical sections. Actual lock compromise rejects the owning operation
+with the original cause; it does not cancel or roll back its underlying work.
+The existing long-operation lock settings remain unchanged. Separate test
+registries isolate bookkeeping, not network namespaces: concurrent live clusters
+must continue sharing the host registry.
 
 ### Monitoring a live flow run
 
