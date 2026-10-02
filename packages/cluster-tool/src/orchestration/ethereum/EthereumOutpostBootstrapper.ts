@@ -8,6 +8,7 @@ import { defaults, range } from "lodash"
 import Assert from "node:assert"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
+import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -206,30 +207,31 @@ export class EthereumOutpostBootstrapper {
       if (Fs.existsSync(file)) Fs.unlinkSync(file)
     })
 
-    const liqEthConfig = {
-      url: rpcUrl,
-      key: deployerPrivateKey,
-      addressFile: Path.join(localDir, "liqeth-addrs.json"),
-      gasLimitFile: Path.join(localDir, "liqeth-gas-limits.json"),
-      entryQueue: 47,
-      dailyRateBPS: 283,
-      rewardCooldown: 100,
-      withdrawalDelay: 50
-    }
+    Assert.ok(
+      this.accounts.length > EthereumOutpostBootstrapper.PanicAccountIndex,
+      `EthereumOutpostBootstrapper: ${this.accounts.length} generated accounts leave no HD index ` +
+        `${EthereumOutpostBootstrapper.PanicAccountIndex} for the panic account`
+    )
+    const panicAccount =
+      this.accounts[EthereumOutpostBootstrapper.PanicAccountIndex].address
+    this.markAccountUsed(
+      EthereumOutpostBootstrapper.PanicAccountIndex,
+      "Emergency-stop panic account (panic role: pause / unpause)"
+    )
     const { initialRoster } = this.config,
-      outpostConfig = {
-        url: rpcUrl,
-        key: deployerPrivateKey,
-        addressFile: Path.join(localDir, "outpost-addrs.json"),
-        gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-        useMockAggregator: true,
-        // WNE-41: consumed by `deployLocal.ts`'s OutpostLocalDeploy, which
-        // hands them to `OPPInbound.initialize`. The deployer is deliberately
-        // NOT among them — on a cluster the batch-operator daemons sign
-        // `epochIn` with their own keys.
-        initialOperatorGroups: initialRoster.groups,
-        epochDurationSec: initialRoster.epochDurationSec
-      }
+      liqEthConfig = EthereumOutpostBootstrapper.liqEthDeployConfig(
+        rpcUrl,
+        deployerPrivateKey,
+        localDir,
+        panicAccount
+      ),
+      outpostConfig = EthereumOutpostBootstrapper.outpostDeployConfig(
+        rpcUrl,
+        deployerPrivateKey,
+        localDir,
+        panicAccount,
+        initialRoster
+      )
     log.info(
       `[ethereum] initial batch-operator roster: ${initialRoster.groups
         .map(group => `[${group.join(", ")}]`)
@@ -479,7 +481,9 @@ export class EthereumOutpostBootstrapper {
         outpostAddresses,
         EthereumOutpostBootstrapper.OutpostManagerContractName,
         [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
-        deployer
+        deployer,
+        EthereumOutpostBootstrapper.OutpostManagerContractName,
+        EthereumOutpostBootstrapper.OutpostManagerArtifactName
       ),
       oppInbound = loadOutpostContract<EthereumOutpostBootstrapper.OppInboundRosterView>(
         ethereumPath,
@@ -571,6 +575,8 @@ export namespace EthereumOutpostBootstrapper {
   export const OutpostArtifactSubpath = ["outpost"] as const
   /** `outpost-addrs.json` key + artifact basename of the manager. */
   export const OutpostManagerContractName = "OutpostManager"
+  /** Compiled V2 name behind the stable deployment address key. */
+  export const OutpostManagerArtifactName = "OutpostManagerV2"
   /** `outpost-addrs.json` key + artifact basename of the inbound endpoint. */
   export const OppInboundContractName = "OPPInbound"
   /** The roster seed entry point on `OPPInbound`. */
@@ -651,10 +657,160 @@ export namespace EthereumOutpostBootstrapper {
   export const DerivationPath = "m/44'/60'/0'/0/"
   /** HD index of the deployer account. */
   export const DeployerAccountIndex = 0
+  /**
+   * HD index of the emergency-stop panic account the deploy config names
+   * (`panicAccount`), which the deploy grants the `panic` role: `pause()` /
+   * `unpause()` on the pausable contracts and nothing else. The LAST
+   * prefunded anvil account, clear of the operators (from 1), the swap users
+   * (32 up) and every flow-owned index (35–47).
+   */
+  export const PanicAccountIndex = AnvilProcess.AccountCount - 1
+  /**
+   * `SyndicationPool.maxSyndicationPerTransfer` the deploy sets, in wei — a
+   * decimal string, as `deployOutpost.ts` reads it. 1,000 liqETH: the deploy
+   * script's own fresh-pool default and the Solana outpost's, named here so a
+   * harness cluster never depends on the absent-key path.
+   */
+  export const MaxSyndicationPerTransferWei = "1000000000000000000000"
+  /**
+   * `SyndicationPool.yieldDeadband` the deploy sets, in depot units (9
+   * decimals) — a decimal string. 0.01 liqETH, the deploy script's fresh-pool
+   * default: a `realizeYield` below it is refused, so a flow reporting pool
+   * yield donates more than this.
+   */
+  export const YieldDeadbandDepotUnits = "10000000"
+  /** `liqeth.json` / `outpost.json` address-map file of the liqETH deploy. */
+  export const LiqEthAddressesFile = "liqeth-addrs.json"
+  /** Gas-limit file the liqETH deploy writes. */
+  export const LiqEthGasLimitsFile = "liqeth-gas-limits.json"
+  /** Gas-limit file the outpost deploy writes. */
+  export const OutpostGasLimitsFile = "outpost-gas-limits.json"
+  /** `DepositManager` entry-queue length the local liqETH deploy configures. */
+  export const LiqEthEntryQueue = 47
+  /** `DepositManager` daily rate (bps) the local liqETH deploy configures. */
+  export const LiqEthDailyRateBps = 283
+  /** `DepositManager` reward cooldown the local liqETH deploy configures. */
+  export const LiqEthRewardCooldown = 100
+  /** Withdrawal delay the local liqETH deploy configures. */
+  export const LiqEthWithdrawalDelay = 50
+
+  /**
+   * The `liqeth.json` deploy config `deployLocal.ts` reads. A pure value
+   * helper, so the written JSON is unit-testable without hardhat.
+   *
+   * `panicAccount` rides here too: every `DeployScript` grants the `panic`
+   * role from its OWN config (`deployScript.ts` `applyPermissions`), so the
+   * liqETH contracts' pause role follows this key, not the outpost's.
+   *
+   * @param rpcUrl - The run anvil's endpoint.
+   * @param deployerPrivateKey - The deployer (anvil HD index 0) key.
+   * @param deploymentsPath - This cluster's deploy-artifact dir.
+   * @param panicAccount - The panic account's address.
+   * @returns The config object written as `liqeth.json`.
+   */
+  export function liqEthDeployConfig(
+    rpcUrl: string,
+    deployerPrivateKey: string,
+    deploymentsPath: string,
+    panicAccount: string
+  ) {
+    return {
+      url: rpcUrl,
+      key: deployerPrivateKey,
+      addressFile: Path.join(deploymentsPath, LiqEthAddressesFile),
+      gasLimitFile: Path.join(deploymentsPath, LiqEthGasLimitsFile),
+      entryQueue: LiqEthEntryQueue,
+      dailyRateBPS: LiqEthDailyRateBps,
+      rewardCooldown: LiqEthRewardCooldown,
+      withdrawalDelay: LiqEthWithdrawalDelay,
+      panicAccount
+    }
+  }
+
+  /**
+   * The `outpost.json` deploy config `deployLocal.ts` reads. A pure value
+   * helper, so the written JSON is unit-testable without hardhat.
+   *
+   * The three syndication keys are the ones `deployOutpost.ts` resolves
+   * (`panicAccount`, `maxSyndicationPerTransfer`, `yieldDeadband`), each
+   * named explicitly so the pool's configuration never rests on the script's
+   * absent-key defaults.
+   *
+   * @param rpcUrl - The run anvil's endpoint.
+   * @param deployerPrivateKey - The deployer (anvil HD index 0) key.
+   * @param deploymentsPath - This cluster's deploy-artifact dir.
+   * @param panicAccount - The panic account's address.
+   * @param initialRoster - The WNE-41 roster `OPPInbound.initialize` seats.
+   * @returns The config object written as `outpost.json`.
+   */
+  export function outpostDeployConfig(
+    rpcUrl: string,
+    deployerPrivateKey: string,
+    deploymentsPath: string,
+    panicAccount: string,
+    initialRoster: EthereumOutpostInitialRoster
+  ) {
+    return {
+      url: rpcUrl,
+      key: deployerPrivateKey,
+      addressFile: Path.join(deploymentsPath, OutpostAddressesFile),
+      gasLimitFile: Path.join(deploymentsPath, OutpostGasLimitsFile),
+      useMockAggregator: true,
+      // WNE-41: consumed by `deployLocal.ts`'s OutpostLocalDeploy, which
+      // hands them to `OPPInbound.initialize`. The deployer is deliberately
+      // NOT among them — on a cluster the batch-operator daemons sign
+      // `epochIn` with their own keys.
+      initialOperatorGroups: initialRoster.groups,
+      epochDurationSec: initialRoster.epochDurationSec,
+      panicAccount,
+      maxSyndicationPerTransfer: MaxSyndicationPerTransferWei,
+      yieldDeadband: YieldDeadbandDepotUnits
+    }
+  }
+
+  /**
+   * Assert every operator's EM HD index — batch operators from
+   * {@link Constants.batchOperatorEthereumHdIndex}, underwriters from
+   * {@link Constants.underwriterEthereumHdIndex} — sits below
+   * {@link PanicAccountIndex}, so no operator key is the panic account.
+   *
+   * @param batchOperatorCount - The cluster's batch-operator count.
+   * @param underwriterCount - The cluster's underwriter count.
+   * @throws If the highest operator index reaches the panic account's.
+   */
+  export function assertOperatorsClearOfPanicAccount(
+    batchOperatorCount: number,
+    underwriterCount: number
+  ): void {
+    const highest = Math.max(
+      Constants.batchOperatorEthereumHdIndex(batchOperatorCount - 1),
+      Constants.underwriterEthereumHdIndex(batchOperatorCount, underwriterCount - 1)
+    )
+    Assert.ok(
+      highest < PanicAccountIndex,
+      `EthereumOutpostBootstrapper: ${batchOperatorCount} batch operators and ${underwriterCount} ` +
+        `underwriters reach HD index ${highest}, which is not below the panic account's ` +
+        `${PanicAccountIndex}`
+    )
+  }
+
+  /**
+   * The anvil HD wallet at `hdIndex` — the account anvil prefunds under its
+   * default mnemonic. A pure value helper.
+   *
+   * @param hdIndex - The HD account index.
+   * @returns The wallet (unconnected).
+   */
+  export function anvilWallet(hdIndex: number): ethers.HDNodeWallet {
+    return ethers.HDNodeWallet.fromMnemonic(
+      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
+      `${DerivationPath}${hdIndex}`
+    )
+  }
   /** Deploy-artifact files cleared before every deploy (stale-address guard). */
   export const StaleDeployArtifactFiles = [
-    "liqeth-addrs.json",
-    "outpost-addrs.json"
+    LiqEthAddressesFile,
+    OutpostAddressesFile
   ] as const
   /**
    * Host-global lock serializing the hardhat deploy subprocess across every
@@ -699,12 +855,8 @@ export namespace EthereumOutpostBootstrapper {
    * they match exactly what anvil generates internally.
    */
   export function generateAccounts(count: number): EthereumAccount[] {
-    const mnemonic = ethers.Mnemonic.fromPhrase(AnvilMnemonic)
     return range(count).map(index => {
-      const wallet = ethers.HDNodeWallet.fromMnemonic(
-        mnemonic,
-        `${DerivationPath}${index}`
-      )
+      const wallet = anvilWallet(index)
       return {
         address: wallet.address,
         privateKey: wallet.privateKey,

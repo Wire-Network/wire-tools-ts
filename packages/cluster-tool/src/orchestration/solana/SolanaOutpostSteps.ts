@@ -38,7 +38,8 @@ export namespace SolanaOutpostSteps {
 
   /**
    * Deploy the Solana outpost: airdrop the deployer, initialize the opp-outpost
-   * PDAs against the already-loaded program, seed the native-SOL reserve, and
+   * PDAs against the already-loaded program and — only when the config's
+   * `enableLaunchWithheldOperations` is set — seed the native-SOL reserve and
    * provision mock SPL reserves (persisting `sol-mock-mints.json` for depot-side
    * token registration). Input-less — paths + RPC come from `ctx.config` /
    * `ctx.solana`; the validator must already be running.
@@ -62,7 +63,8 @@ export namespace SolanaOutpostSteps {
     await new SolanaOutpostBootstrapper({
       solanaPath: ctx.config.solanaPath,
       rpcUrl: ctx.solana.rpcUrl,
-      clusterDataPath: ctx.config.dataPath
+      clusterDataPath: ctx.config.dataPath,
+      enableLaunchWithheldOperations: ctx.config.enableLaunchWithheldOperations
     }).bootstrap()
   }
 

@@ -1,0 +1,22 @@
+{
+  "name": "@wireio/test-flow-syndication-underwriting",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Live Solana syndication underwriting assertions",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.92",
+    "@wireio/opp-typescript-models": "^1.0.50",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

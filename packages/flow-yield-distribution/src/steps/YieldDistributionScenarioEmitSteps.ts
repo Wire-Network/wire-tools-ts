@@ -1,24 +1,24 @@
 /**
  * YieldDistributionScenarioEmitSteps — Step factories for the flow's synthetic
  * STAKING_REWARD writes. Every emit is its OWN {@link ClusterBuildStep} so the
- * `Report` records it: {@link YieldDistributionScenarioEmitSteps.ethereumEmit}
- * (one `MockYieldEmitter.emitYield(...)` tx), {@link
- * YieldDistributionScenarioEmitSteps.ethereumEmitReplay} (the SAME
+ * `Report` records it: {@link YieldDistributionScenarioEmitSteps.planEthereumEmit}
+ * (one `MockYieldEmitter.emitYield(...)` tx) and {@link
+ * YieldDistributionScenarioEmitSteps.planEthereumEmitReplay} (the SAME
  * `external_epoch_ref` re-emitted — the emitter's per-staker monotonic check
- * MUST revert it), and {@link YieldDistributionScenarioEmitSteps.solanaEmit}
- * (one `opp_outpost::add_attestation` ix). Emitter / program / keypair loading
- * are pure value helpers executed INSIDE the runners.
+ * MUST revert it). Emitter / contract loading are pure value helpers executed
+ * INSIDE the runners.
+ *
+ * The flow is Ethereum-only: the Solana outpost emits STAKING_REWARD from no
+ * real path (its staking surface is a separate developer track), and the
+ * harness no longer injects attestations. The SOL leg returns when the outpost
+ * produces one.
  */
 
 import Assert from "node:assert"
 import { ethers } from "ethers"
-import { Keypair } from "@solana/web3.js"
 import {
   EthereumCollateralTool,
   Report,
-  SolanaCollateralTool,
-  SolanaFundingTool,
-  emitSolanaYield,
   emitYieldBatch,
   loadMockYieldEmitter,
   ClusterBuildStep,
@@ -221,108 +221,6 @@ export namespace YieldDistributionScenarioEmitSteps {
         ),
       Constants.ReplayRejectionPattern,
       `expected the replayed external_epoch_ref ${replayedRef} to revert on the emitter's monotonic check`
-    )
-  }
-
-  // ── Step: SOL-side STAKING_REWARD (`opp_outpost::add_attestation`) ────────
-
-  /** Input for {@link planSolanaEmit} — one `opp_outpost::add_attestation` write. */
-  export interface SolanaEmitInput extends StepInput {
-    readonly kind: "YieldDistributionScenarioEmitSteps.SolanaEmitInput"
-    /** WIRE account the depot credits — `""` parks the reward in `unmapped`. */
-    readonly wireAccount: string
-    /** Reward in lamports. */
-    readonly rewardAmount: bigint
-    /** Informational share-in-bps. */
-    readonly shareBps: number
-    /** SlugName-packed chain code of the Solana outpost. */
-    readonly chainCode: bigint
-    /** SlugName-packed token code of the reward token. */
-    readonly tokenCode: bigint
-    /** Monotonic-per-staker reference the depot dedupes against. */
-    readonly externalEpochRef: bigint
-    /** Informational WIRE epoch index. */
-    readonly rewardEpochIndex: number
-  }
-
-  /**
-   * A single SOL-side STAKING_REWARD pushed through
-   * `opp_outpost::add_attestation`, signed by the outpost deployer keypair
-   * (`OutpostConfig.authority`). The staker is a FRESH keypair generated inside
-   * the runner — it has no authex link, so the depot parks the credit in
-   * `unmapped` (the flow's count-based verify needs no cross-step identity).
-   *
-   * @param actor - The narrative subject (the Solana outpost emits).
-   * @param name - Step name (report row).
-   * @param description - One-line description.
-   * @param options - Per-step tuning (e.g. `timeoutMs`).
-   * @param wireAccount - WIRE account to credit (`""` → unmapped park).
-   * @param rewardAmount - Reward in lamports.
-   * @param shareBps - Informational share-in-bps.
-   * @param chainCode - SlugName-packed Solana chain code.
-   * @param tokenCode - SlugName-packed reward token code.
-   * @param externalEpochRef - Monotonic-per-staker reference.
-   * @param rewardEpochIndex - Informational WIRE epoch index.
-   * @returns The definition step.
-   */
-  export function planSolanaEmit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    wireAccount: string,
-    rewardAmount: bigint,
-    shareBps: number,
-    chainCode: bigint,
-    tokenCode: bigint,
-    externalEpochRef: bigint,
-    rewardEpochIndex: number
-  ): ClusterBuildStep<C, SolanaEmitInput> {
-    return ClusterBuildStep.create<C, SolanaEmitInput>(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "YieldDistributionScenarioEmitSteps.SolanaEmitInput",
-        wireAccount,
-        rewardAmount,
-        shareBps,
-        chainCode,
-        tokenCode,
-        externalEpochRef,
-        rewardEpochIndex
-      },
-      runSolanaEmit
-    )
-  }
-
-  /** Named runner — ONE `opp_outpost::add_attestation` ix for a new unlinked staker. */
-  export async function runSolanaEmit<C extends ClusterBuildContext>(
-    ctx: C,
-    input: SolanaEmitInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const staker = Keypair.generate()
-    const authority = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
-    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, authority)
-    await emitSolanaYield(
-      ctx.solana.connection,
-      program,
-      authority,
-      {
-        staker: staker.publicKey,
-        wireAccount: input.wireAccount,
-        rewardAmount: input.rewardAmount,
-        shareBps: input.shareBps
-      },
-      input.chainCode,
-      input.tokenCode,
-      input.externalEpochRef,
-      input.rewardEpochIndex
     )
   }
 

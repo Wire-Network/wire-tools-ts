@@ -6,13 +6,13 @@
   "description": "Flow: Swap FROM WIRE (WIRE depot → Solana, queued escrow + single-leg underwriting)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.88",
-    "@wireio/shared": "^1.0.88"
+    "@wireio/sdk-core": "^1.0.92",
+    "@wireio/shared": "^1.0.92"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

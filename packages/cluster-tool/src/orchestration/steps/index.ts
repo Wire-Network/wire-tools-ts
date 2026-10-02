@@ -6,12 +6,15 @@ import { ContractSteps } from "./ContractSteps.js"
 import { DebuggingServerBundleSteps } from "./DebuggingServerBundleSteps.js"
 import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
+import { MockShadowBackingSteps } from "./MockShadowBackingSteps.js"
 import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
 import { StartScriptSteps } from "./StartScriptSteps.js"
+import { UserSteps } from "./UserSteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
+import { SolanaLiqsolSurfaceSteps } from "../solana/SolanaLiqsolSurfaceSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
 import { ProcessSteps } from "./processes/index.js"
@@ -49,9 +52,18 @@ export namespace Steps {
   export import operator = OperatorSteps
   export import protocol = ProtocolSteps
   export import registry = RegistrySteps
+  /** Opt-in custody backing after mock shadow seeds. */
+  export import mockShadowBacking = MockShadowBackingSteps
+  /** The wire-solana liqsol surface (`anchor run init-*`) on the cluster validator. */
+  export import solanaLiqsolSurface = SolanaLiqsolSurfaceSteps
   export import solanaOutpost = SolanaOutpostSteps
   /** Copies the bundled debugging server into the cluster tree. */
   export import debuggingServerBundle = DebuggingServerBundleSteps
   /** Per-daemon `start.sh` emission (create + create-external-config rebind). */
   export import startScript = StartScriptSteps
+  /** WIRE-side user identities a flow scenario acts as. */
+  export import user = UserSteps
 }
+export * from "./MockShadowBackingSteps.js"
+
+export * from "./SyndicationUserSteps.js"

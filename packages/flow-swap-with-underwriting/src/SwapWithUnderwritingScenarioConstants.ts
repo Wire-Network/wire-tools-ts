@@ -114,7 +114,8 @@ export namespace SwapWithUnderwritingScenarioConstants {
    * config is empty, and `uwrit.a` must flip ACTIVE for the race to land any
    * commits. Matches `WireUnderwriterTool.DefaultAmount` (the per-chain deposit
    * this flow's UnderwriterCollateral phase bonds), so `reevaluate_eligibility`
-   * flips status=ACTIVE once both DEPOSIT_REQUESTs credit.
+   * flips status=ACTIVE once both DEPOSIT_REQUESTs credit. The phase also funds
+   * and bonds that amount of WIRE on the depot, which no requirement here names.
    */
   export const UnderwriterMinimumBond = 1_000_000_000
 

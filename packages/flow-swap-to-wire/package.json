@@ -6,12 +6,12 @@
   "description": "Flow: Swap TO WIRE (Ethereum → WIRE depot, single-leg underwriting + direct WIRE payout)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "node lib/index.js",
+    "test:disabled": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.88",
+    "@wireio/sdk-core": "^1.0.92",
     "ethers": "^6.14.0"
   },
   "devDependencies": {

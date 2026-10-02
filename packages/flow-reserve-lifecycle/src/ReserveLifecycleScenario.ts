@@ -125,6 +125,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
     // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
     enableMockReserves: true,
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Constants.EpochDurationSec,
     requiredUnderwriterCollateral: [
       {

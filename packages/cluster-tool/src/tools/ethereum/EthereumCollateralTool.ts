@@ -1,13 +1,12 @@
 /**
  * EthereumCollateralTool — Step factories for the Ethereum-outpost collateral
  * writes. Every on-chain WRITE is its OWN {@link ClusterBuildStep} so the
- * `Report` records it: {@link planDeposit} (native ETH), {@link planWithdrawal} (the
- * collateral withdraw request), {@link planErc20Approval} (the ERC-20 allowance
- * write), {@link planNonNativeDeposit} (the ERC-20 deposit write). Each runner
- * resolves the operator identity from `ctx.keyStore`, binds the
+ * `Report` records it: {@link planDeposit} (native ETH), {@link planErc20Approval}
+ * (the ERC-20 allowance write), {@link planNonNativeDeposit} (the ERC-20 deposit
+ * write). Each runner resolves the operator identity from `ctx.keyStore`, binds the
  * `OperatorRegistry` to the operator's derived wallet, and performs exactly ONE
  * write. The contract-surface types + artifact resolution are pure value helpers
- * used INSIDE the runners; {@link readDepositedByCode} is a free READ.
+ * used INSIDE the runners.
  */
 
 import Assert from "node:assert"
@@ -59,13 +58,6 @@ export interface OperatorRegistryContract extends ethers.BaseContract {
   depositNonNative: (
     ...args: DepositNonNativeArgs
   ) => Promise<ethers.ContractTransactionResponse>
-  withdraw: (
-    compressedPubkey: string | Uint8Array,
-    tokenCode: bigint,
-    amount: bigint,
-    overrides?: ethers.Overrides
-  ) => Promise<ethers.ContractTransactionResponse>
-  depositedByCode: (operator: string, tokenCode: bigint) => Promise<bigint>
   nativeTokenCode: () => Promise<bigint>
   getAddress: () => Promise<string>
 }
@@ -161,99 +153,6 @@ export namespace EthereumCollateralTool {
       receipt?.status === 1,
       `EthereumCollateralTool.planDeposit: reverted (status=${receipt?.status ?? "null"})`
     )
-  }
-
-  // ── Step: collateral withdraw request (`OperatorRegistry.withdraw`) ──────
-
-  /** Input for {@link planWithdrawal} — one collateral withdraw-request write. */
-  export interface WithdrawInput extends StepInput {
-    readonly kind: "EthereumCollateralTool.WithdrawInput"
-    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
-    readonly operatorLabel: string
-    /** 8-byte slug_name (`uint64`) of the token to release. */
-    readonly tokenCode: bigint
-    /** Wei to release (must not exceed the escrowed collateral). */
-    readonly amount: bigint
-  }
-
-  /**
-   * A single `OperatorRegistry.withdraw(...)` write, signed by the operator's
-   * ETH wallet. This is a REQUEST — the depot queues it (`sysio.opreg::
-   * wtdwqueue`) and the escrow only decrements when the WITHDRAW_REMIT comes
-   * back through OPP.
-   */
-  export function planWithdrawal<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    operatorLabel: string,
-    tokenCode: bigint,
-    amount: bigint
-  ): ClusterBuildStep<C, WithdrawInput> {
-    return ClusterBuildStep.create<C, WithdrawInput>(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "EthereumCollateralTool.WithdrawInput",
-        operatorLabel,
-        tokenCode,
-        amount
-      },
-      runWithdrawal
-    )
-  }
-
-  /** Named runner — ONE `OperatorRegistry.withdraw(...)` write. */
-  export async function runWithdrawal<C extends ClusterBuildContext>(
-    ctx: C,
-    input: WithdrawInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    Assert.ok(
-      input.amount > 0n,
-      "EthereumCollateralTool.planWithdrawal: amount must be positive"
-    )
-    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
-    const registry = loadOperatorRegistry(
-      ctx,
-      ethereumSigner(operator.ethereum, ctx.ethereum.provider)
-    )
-    const nonce = await resolveLatestNonce(registry)
-    const response = await registry.withdraw(
-      ethereumCompressedPubkey(operator.ethereum),
-      input.tokenCode,
-      input.amount,
-      { nonce }
-    )
-    const receipt = await response.wait(1)
-    Assert.ok(
-      receipt?.status === 1,
-      `EthereumCollateralTool.planWithdrawal: reverted (status=${receipt?.status ?? "null"})`
-    )
-  }
-
-  /**
-   * READ the operator's escrowed collateral for `tokenCode` (the outpost's
-   * `depositedByCode` ledger, keyed by the operator's ETH address). A read —
-   * executes freely inside verify steps.
-   */
-  export async function readDepositedByCode<C extends ClusterBuildContext>(
-    ctx: C,
-    operatorLabel: string,
-    tokenCode: bigint
-  ): Promise<bigint> {
-    const operator = ctx.keyStore.assertOperator(operatorLabel)
-    const registry = loadOperatorRegistry(
-      ctx,
-      ethereumSigner(operator.ethereum, ctx.ethereum.provider)
-    )
-    return registry.depositedByCode(operator.ethereum.address, tokenCode)
   }
 
   // ── Step: ERC-20 allowance (`approve`) ───────────────────────────────────

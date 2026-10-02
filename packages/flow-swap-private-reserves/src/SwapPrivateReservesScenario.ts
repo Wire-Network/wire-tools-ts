@@ -135,6 +135,9 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     "Bidirectional swaps through a same-owner PRIVATE reserve pair (native × non-native) + private→WIRE exclusion"
 
   override readonly defaults: ClusterBuildOptions = {
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Constants.Timing.EpochDurationSec,
     // `createuwreq` re-checks `meets_role_min` for BOTH legs of every swap —
     // the per-(chain, token) minimums the underwriter's deposits must clear.

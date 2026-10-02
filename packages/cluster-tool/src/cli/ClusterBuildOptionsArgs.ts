@@ -522,6 +522,15 @@ export function buildOptionShape(
     ),
     // ── query engine (API nodes; every leaf unseeded — see buildQueryEngineShape) ──
     [QueryEngineOptionKey]: buildQueryEngineShape(),
+    // ── solana-test-validator tuning ──
+    // optionalLeaf for the same reason as above: omitting the flag has to mean
+    // "resolve the default", not "write 100 here", so the fallback stays in
+    // `ClusterConfigProvider.resolve` — the ONE place that authors the value a
+    // cluster is created with.
+    solanaSlotsPerEpoch: optionalLeaf(
+      OptionLeafType.number,
+      "solana-test-validator --slots-per-epoch; omit for the default (100 — agave's own default leaves the chain at epoch 0, which the liqsol surface cannot initialize against)"
+    ),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,
@@ -541,6 +550,19 @@ export function buildOptionShape(
     enableMockReserves: leaf(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
+    ),
+    // ── launch policy (default false → the Solana outpost bootstrap skips the calls the launch build withholds) ──
+    enableLaunchWithheldOperations: leaf(
+      false,
+      "run the Solana outpost bootstrap calls the launch policy withholds (init_reserve, create_reserve_native, mock SPL reserves)"
+    ),
+    enableMockLiqPools: leaf(
+      false,
+      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
+    ),
+    enableMockSyndicationImport: leaf(
+      false,
+      "import mock syndication positions for the bonder and back mock shadow at bootstrap"
     ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(

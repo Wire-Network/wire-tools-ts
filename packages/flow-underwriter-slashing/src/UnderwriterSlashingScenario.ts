@@ -103,6 +103,9 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
     // The swaps ride the bootstrap-seeded mock PRIMARY reserves — `regreserve`
     // is epoch-0-gated by the depot, so seeding must ride the bootstrap.
     enableMockReserves: true,
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Constants.EpochDurationSec,
     // The depot's `meets_role_min` rejects non-bootstrapped underwriters when
     // the config is empty — the underwriter must flip ACTIVE for the races to
@@ -151,11 +154,12 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         timeoutMs: Constants.ResolveDeadlineMs + Constants.PollDeadlineBufferMs
       }
 
-    // ── 1. Underwriter collateral on both outposts (flips the winner ACTIVE) ──
+    // ── 1. Underwriter collateral on both outposts (flips the winner ACTIVE),
+    //       plus the WIRE the default plan funds and bonds on the depot ──
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
-      "Bond every underwriter's collateral on the Ethereum + Solana outposts",
+      "Bond every underwriter's collateral: WIRE on the depot, ETH and SOL on the outposts",
       requestStepOptions,
       underwriterLabels,
       config.underwriterCollateral ??

@@ -7,6 +7,7 @@ import {
   Constants as HarnessConstants,
   FlowScenario,
   Report,
+  Steps,
   SwapScenarioContext,
   SwapUserIdentities,
   WireReserveTool,
@@ -22,10 +23,7 @@ import {
 } from "@wireio/cluster-tool"
 import { SwapFromWireScenarioConstants as Constants } from "./SwapFromWireScenarioConstants.js"
 import { SwapFromWireScenarioOutputs as Outputs } from "./SwapFromWireScenarioOutputs.js"
-import {
-  SwapFromWireScenarioUserSteps,
-  SwapFromWireScenarioUwritSteps
-} from "./steps/index.js"
+import { SwapFromWireScenarioUwritSteps } from "./steps/index.js"
 
 const {
   SysioContractName,
@@ -124,9 +122,14 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
     // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
     enableMockReserves: true,
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Constants.EpochDurationSec,
     // ACTIVE gates on real bonds on EVERY registered outpost chain, so the
-    // flow's underwriter-activation assertion is meaningful.
+    // flow's underwriter-activation assertion is meaningful. The default
+    // collateral plan also funds and bonds WIRE on the depot; that bond is not
+    // one of these requirements.
     requiredUnderwriterCollateral: [
       {
         chainCode: Constants.EthereumChainCode,
@@ -203,10 +206,12 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 2. Underwriter bonds on both outposts → ACTIVE (deposits credit) ──
+    //       The default plan also funds the underwriter with WIRE from `sysio`
+    //       and bonds it on the depot through `sysio.opreg::deposit`.
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
-      "Bond the default underwriter collateral on both outposts",
+      "Bond the default underwriter collateral: WIRE on the depot, ETH and SOL on the outposts",
       writeStepOptions,
       underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)
@@ -244,7 +249,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       "ProvisionDepositor",
       "Provision the WIRE depositor, funded from the treasury"
     ).push(
-      SwapFromWireScenarioUserSteps.planProvisionWire<SwapScenarioContext>(
+      Steps.user.planProvisionWire<SwapScenarioContext>(
         Actor.User,
         "provision-depositor",
         `provision ${Constants.DepositorAccount} + fund ${Constants.DepositorFunding} WIRE base units from the treasury`,

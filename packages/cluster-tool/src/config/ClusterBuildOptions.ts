@@ -68,6 +68,28 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Run the Solana outpost bootstrap calls the launch policy withholds
+   * (`--enable-launch-withheld-operations`): `init_reserve`,
+   * `create_reserve_native`, and the mock SPL reserve provisioning
+   * (`create_reserve_spl_authority` / `init_liqsol_reserve` + `sol-mock-mints.json`).
+   * The launch build of the program answers each with `OperationDisabled`, so
+   * the default `false` (at every layer) bootstraps a cluster that never calls
+   * them. A flow whose scenario needs the bootstrap-seeded Solana reserves or the
+   * mock SPL mints opts in through its scenario `defaults`, and then requires a
+   * Solana program build without the launch restrictions.
+   */
+  enableLaunchWithheldOperations?: boolean
+  /**
+   * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
+   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an
+   * external / real-world depot mints NO unbacked shadow unless a caller (or a
+   * flow's scenario `defaults`) opts in. The depot contract gates `regliqpool`
+   * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
+   */
+  enableMockLiqPools?: boolean
+  /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
+  enableMockSyndicationImport?: boolean
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit
@@ -82,6 +104,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  // solana-test-validator tuning
+  /**
+   * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
+   * {@link DefaultSolanaSlotsPerEpoch} default — agave's own default leaves the
+   * validator at Solana epoch 0 for ~2 days, which the liqsol surface cannot be
+   * initialized against.
+   */
+  solanaSlotsPerEpoch?: number
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

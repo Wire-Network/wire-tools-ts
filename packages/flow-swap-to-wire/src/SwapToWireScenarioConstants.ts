@@ -93,7 +93,8 @@ export namespace SwapToWireScenarioConstants {
   /**
    * Per-(chain, token) collateral minimum gating underwriter ACTIVE status —
    * matches {@link WireUnderwriterTool.DefaultAmount} so the default bond meets
-   * the minimum exactly on both outpost chains.
+   * the minimum exactly on both outpost chains. The default plan also funds and
+   * bonds that amount of WIRE on the depot, which no requirement here names.
    */
   export const UnderwriterMinimumBond = 1_000_000_000
 

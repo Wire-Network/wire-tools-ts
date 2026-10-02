@@ -133,6 +133,10 @@ export namespace StartScriptSteps {
           config.dataPath,
           SolanaValidatorProcess.LedgerSubpath
         ),
+        // Persisted, not re-derived: a `start.sh` that fell back to the process
+        // default would silently launch on a different epoch schedule than the
+        // one `create` bootstrapped the liqsol surface on.
+        slotsPerEpoch: config.solanaSlotsPerEpoch,
         // The SAME resolution `runStart` uses. Omitting it renders a validator
         // argv with no `--upgradeable-program`, so a script-started validator
         // comes up WITHOUT the opp-outpost program — surfacing as a

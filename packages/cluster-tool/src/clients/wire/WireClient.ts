@@ -836,10 +836,7 @@ export class WireClient {
   /** Head block time in epoch ms, or null when unreadable. */
   private async readHeadTimeMs(): Promise<number> {
     try {
-      // Chain times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would
-      // read a bare stamp as LOCAL time, so the `Z` is appended explicitly.
-      const { head_block_time } = await this.getInfo()
-      return Date.parse(`${head_block_time.replace(/Z$/, "")}Z`)
+      return WireClient.chainTimeMs((await this.getInfo()).head_block_time)
     } catch (error) {
       log.warn(`readHeadTimeMs failed: ${errorText(error)}`)
       return null
@@ -998,6 +995,34 @@ export namespace WireClient {
    */
   export function nameKeyBound(field: string, account: string): string {
     return JSON.stringify({ [field]: Name.from(account).value.toString() })
+  }
+
+  /**
+   * A chain timestamp (`head_block_time`, a table's `time_point` cell) in epoch ms. Chain
+   * times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would read a bare stamp as
+   * LOCAL time, so the `Z` is appended explicitly.
+   *
+   * @param stamp - The chain's ISO-8601 stamp, with or without a trailing `Z`.
+   * @returns The instant in epoch ms (`NaN` for an unparseable stamp).
+   */
+  export function chainTimeMs(stamp: string): number {
+    return Date.parse(`${stamp.replace(/Z$/, "")}Z`)
+  }
+
+  /**
+   * The exact `get_table_rows` range of ONE row of a KV table keyed by a single `symbol_code`
+   * field: the node takes `lower_bound` inclusive and `upper_bound` EXCLUSIVE, so the range is
+   * `[code, code + 1)`. A row whose VALUE carries no identity (`sysio.liq::yieldidx`) can only be
+   * read this way — a lower bound alone hands back the NEXT symbol's row when the one asked for
+   * does not exist. Same JSON-object encoding as {@link nameKeyBound}; a bare code string fails
+   * at parse time exactly like a bare account name does.
+   */
+  export function symbolCodeKeyRange(field: string, code: string): TableQueryArgs {
+    const { value } = Asset.SymbolCode.from(code)
+    return {
+      lowerBound: JSON.stringify({ [field]: value.toString() }),
+      upperBound: JSON.stringify({ [field]: value.adding(1).toString() })
+    }
   }
 
   /**

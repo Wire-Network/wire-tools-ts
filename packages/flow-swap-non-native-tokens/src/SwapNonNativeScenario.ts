@@ -290,6 +290,9 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
     // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
     enableMockReserves: true,
+    // The launch build of the Solana outpost withholds the reserve/swap
+    // bootstrap calls; this flow exercises them, so it opts in (never in plan()).
+    enableLaunchWithheldOperations: true,
     epochDurationSec: Timing.EpochDurationSec,
     // The underwriter must bond on every (chain, token) leg this flow's swap
     // matrix touches — `sysio.uwrit::createuwreq` re-checks `meets_role_min`
