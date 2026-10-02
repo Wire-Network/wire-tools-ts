@@ -3,6 +3,9 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  SyndicationScenario,
+  SyndicationUserSteps,
+  WireReserveTool,
   Constants as ClusterToolConstants,
   FlowScenario,
   ProducerNodeTool,
@@ -21,11 +24,11 @@ import {
   type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
+import { ProducerCollateralSteps } from "./ProducerCollateralSteps.js"
 import { ProducerRegistrationScenarioConstants as Constants } from "./ProducerRegistrationScenarioConstants.js"
 
 const { SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
-
 
 /** The flow producer's on-chain WIRE account, resolved from the key store by its label. */
 function producerAccount(ctx: ClusterBuildContext): string {
@@ -34,7 +37,10 @@ function producerAccount(ctx: ClusterBuildContext): string {
 
 /** True while the flow producer's operator row is `OPERATOR_STATUS_ACTIVE`. */
 async function isOperatorActive(ctx: ClusterBuildContext): Promise<boolean> {
-  const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.ProducerLabel)
+  const operator = await WireCollateralTool.readOperatorRow(
+    ctx,
+    Constants.ProducerLabel
+  )
   return (
     operator != null &&
     matchesProtoEnum(
@@ -58,7 +64,9 @@ async function readProducerRow(
  * The producers the ACTIVE schedule names — the set actually taking turns. A pending or proposed
  * schedule becomes it only once its proposing block is FINAL.
  */
-async function activeScheduleProducers(ctx: ClusterBuildContext): Promise<string[]> {
+async function activeScheduleProducers(
+  ctx: ClusterBuildContext
+): Promise<string[]> {
   return (await ctx.wire.getProducerSchedule()).active.producers
 }
 
@@ -75,8 +83,9 @@ async function hasProducedBlock(ctx: ClusterBuildContext): Promise<boolean> {
 const ScheduleSize = Constants.ProducerCount + 1
 
 /** The genesis producers' on-chain names — the only names the schedule may hold after an exit. */
-const GenesisProducers = Array.from({ length: Constants.ProducerCount }, (_, index) =>
-  producerName(index)
+const GenesisProducers = Array.from(
+  { length: Constants.ProducerCount },
+  (_, index) => producerName(index)
 )
 
 /**
@@ -91,7 +100,9 @@ const GenesisProducers = Array.from({ length: Constants.ProducerCount }, (_, ind
  * applies to them too, and a genesis node that misses three rounds on a loaded host is dropped
  * exactly as the flow producer was.
  */
-async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<void> {
+async function verifyProducerLeavesSchedule(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const account = producerAccount(ctx)
   await pollUntil(
     "the active schedule no longer names the flow producer",
@@ -114,43 +125,15 @@ async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<v
 }
 
 /**
- * Block Producer Registration — a fresh account driven from provisioning all the way to
- * producing blocks, then out of the schedule and back:
- *
- * 0. **ScoreConfig** — the flow INSTALLS the score weights and the demotion threshold it later
- *    asserts against (`setscorecfg`), rather than assuming the contract's defaults.
- * 1. **ProvisionProducer** — the ONE provisioning mechanism creates the account (unique WIRE
- *    key + its own finalizer key, ETH + SOL identities, authex links, `regoperator`). No
- *    `producerNodeIndex`, so it takes the collateral-backed route, not the genesis one.
- * 2. **NegativeCase** — `regproducer` BEFORE collateral must be rejected; no producer row is
- *    created while the operator is UNKNOWN.
- * 3. **Deposit** — `sysio` funds the account with WIRE and it bonds the WIRE on the depot
- *    through `opreg::deposit`; the `(WIRE, WIRE)` minimum is met and the operator flips ACTIVE
- *    in the same transaction.
- * 4. **RegisterProducer** — only now create the producer row and finalizer key; its first score
- *    lands in the healthy tier.
- * 5. **StartProducerNode** — its own nodeop, peered into the mesh.
- * 6. **EntersSchedule** — it enters the ranked schedule and PRODUCES A BLOCK. This is also the
- *    first end-to-end coverage anywhere of the `regfinkey` → `set_proposed_finalizers` path; a
- *    cluster otherwise installs finality directly at genesis.
- * 7. **MissedRounds** — its node is stopped (a controlled stop; the flow owns the process). The
- *    miss counter climbs, demotion fires at exactly the installed threshold, and the ACTIVE
- *    schedule drops it while every genesis producer keeps its slot.
- * 8. **Recover** — the node restarts and `regproducer` clears the DEMOTION, returning eligibility
- *    without wiping the record: the miss streak survives, because re-registering costs only a
- *    signature and could otherwise be called on a timer by an operator that never produces. The
- *    producer re-enters the schedule, produces, and THAT is what clears the streak.
- * 9. **Removal** — the whole bond is withdrawn. `opreg::withdraw` re-evaluates eligibility
- *    inline, so the operator leaves ACTIVE in the same transaction, and the active schedule
- *    drops it — the collateral-driven exit that mirrors the collateral-driven entry in phase 3.
- * 10. **ReturnBond** — after the withdraw wait, `flushwtdw` debits the balance row and credits
- *    `remitclaims{account, WIRE}`; `opreg::claimremit` pays the bond back to the account's
- *    liquid WIRE.
+ * A fresh producer bonds 2.0 LIQSOL AND 2.0 LIQETH on the depot, joins the active
+ * schedule, produces blocks, is demoted for missed rounds, and recovers through
+ * the off-schedule registration pardon. Withdrawing either shadow removes
+ * admission; each bond is returned through its own remit claim.
  */
 export class ProducerRegistrationScenario extends FlowScenario {
   readonly name = "flow-producer-registration"
   readonly description =
-    "A fresh account bonds WIRE on the depot, registers as a producer, enters the ranked schedule, is demoted for missed rounds, recovers, and withdraws its bond"
+    "A fresh account bonds 2.0 LIQSOL and 2.0 LIQETH on the depot, registers as a producer, enters the ranked schedule, is demoted for missed rounds, recovers, and withdraws both bonds"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -160,26 +143,36 @@ export class ProducerRegistrationScenario extends FlowScenario {
     producerCount: Constants.ProducerCount,
     // The flow starts one node of its own, outside `NodeConfig.plan`.
     adHocCount: Constants.AdHocNodeCount,
-    // Without this the requirement vector is empty, `meets_role_min` refuses every
-    // non-bootstrapped producer by design, and the flow's account could never leave UNKNOWN.
-    requiredProducerCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)]
+    // Import backed shadow positions for the two collateral-funding transfers.
+    enableMockSyndicationImport: true,
+    // Both entries are mandatory for the non-bootstrapped producer to leave UNKNOWN.
+    requiredProducerCollateral: Constants.CollateralTokens.map(token => ({
+      chainCode: WireReserveTool.WireChainCode,
+      tokenCode: Number(Constants.claim(token, 0n).tokenCode),
+      minimumBond: Number(Constants.MinimumBond)
+    }))
   }
 
   plan(cluster: ClusterBuild): void {
     const scoreStepOptions = {
-        timeoutMs: Constants.scoreDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.scoreDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       scheduleStepOptions = {
         timeoutMs:
-          Constants.scheduleDeadlineMs(ScheduleSize) + ProtocolTiming.PollDeadlineBufferMs
+          Constants.scheduleDeadlineMs(ScheduleSize) +
+          ProtocolTiming.PollDeadlineBufferMs
       },
       demotionStepOptions = {
         timeoutMs:
-          Constants.demotionDeadlineMs(ScheduleSize) + ProtocolTiming.PollDeadlineBufferMs
+          Constants.demotionDeadlineMs(ScheduleSize) +
+          ProtocolTiming.PollDeadlineBufferMs
       },
       // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`).
       remitClaimStepOptions = {
-        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(cluster.context.config.epochDurationSec)
+        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
+          cluster.context.config.epochDurationSec
+        )
       }
 
     // ── 0. Install the weights + the demotion threshold the flow asserts against ──
@@ -237,14 +230,20 @@ export class ProducerRegistrationScenario extends FlowScenario {
                 signal
               ),
             error => {
-              const message = error instanceof Error ? error.message : String(error)
-              ctx.log.debug(`unbonded producer registration rejected: ${message}`)
+              const message =
+                error instanceof Error ? error.message : String(error)
+              ctx.log.debug(
+                `unbonded producer registration rejected: ${message}`
+              )
               return Constants.ProducerAdmissionErrorPattern.test(message)
             },
             "expected producer registration to fail before collateral admission"
           )
 
-          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.ProducerLabel)
+          const operator = await WireCollateralTool.readOperatorRow(
+            ctx,
+            Constants.ProducerLabel
+          )
           Assert.ok(
             operator != null,
             "the provisioned producer operator row is missing"
@@ -266,41 +265,119 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 3. Fund + bond WIRE on the depot → balance row, ACTIVE ──
+    // Imported shadows are backed by the bootstrap's actual outpost custody fixture.
     ClusterBuildPhase.create(
       cluster,
-      "Deposit",
-      "Bond WIRE on the depot; the producer operator flips ACTIVE"
+      "FundShadowCollateral",
+      "Deliver backed LIQSOL and LIQETH to the producer"
     ).push(
-      ...WireCollateralTool.planDeposit(
+      Steps.account.planCreateKeyed(
         Actor.Producer,
-        "deposit-wire",
-        `bond ${Constants.BondAmount} WIRE units of producer collateral through sysio.opreg::deposit`,
+        "create-shadow-funder",
+        "create the shadow funding account",
         {},
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireCollateral(Constants.BondAmount)
+        Constants.FundingAccount,
+        ClusterToolConstants.DEV_K1_PUBLIC_KEY
       ),
-      WireCollateralTool.planVerifyBalanceRow(
-        Actor.Sysio,
-        "depot-balance-holds-bond",
-        `the (WIRE, WIRE) balance row holds exactly ${Constants.BondAmount}`,
+      SyndicationUserSteps.planResourcePolicy(
+        Actor.Producer,
+        "funding-resources",
+        "allocate funding account resources",
         {},
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireCollateral(Constants.BondAmount)
+        SyndicationScenario.resourcePolicy(Constants.FundingAccount)
       ),
-      verifyStep(
-        Actor.Sysio,
-        "depot-status-active",
-        "the bond meets the producer minimum; the operator is OPERATOR_STATUS_ACTIVE",
-        async ctx => {
-          // `deposit` re-evaluates eligibility inline, so one read after its Step is final.
-          Assert.ok(
-            await isOperatorActive(ctx),
-            `${Constants.ProducerLabel} is not OPERATOR_STATUS_ACTIVE after bonding the minimum`
-          )
-        }
+      SyndicationUserSteps.planLinkSolanaKey(
+        Actor.Producer,
+        "link-solana-funder",
+        "deliver imported LIQSOL",
+        {},
+        Constants.FundingAccount,
+        Steps.registry.MockSyndicationBonderLabel
+      ),
+      ProducerCollateralSteps.planLinkEthereum(
+        Actor.Producer,
+        "link-ethereum-funder",
+        "deliver imported LIQETH",
+        {}
       )
     )
+    for (const token of Constants.CollateralTokens) {
+      ClusterBuildPhase.create(
+        cluster,
+        `Deposit${token}`,
+        `Fund and bond 2.0 ${token} on the depot`
+      ).push(
+        ProducerCollateralSteps.planFunding(
+          Actor.Producer,
+          `fund-${token}`,
+          `transfer 2.0 backed ${token}`,
+          {},
+          token
+        ),
+        ProducerCollateralSteps.planVerifyLiquidBalance(
+          Actor.Producer,
+          `funded-${token}`,
+          "producer holds exactly the intended bond",
+          {},
+          token,
+          Constants.BondAmount
+        ),
+        ProducerCollateralSteps.planDeposit(
+          Actor.Producer,
+          `deposit-${token}`,
+          `bond 2.0 ${token} through sysio.opreg`,
+          {},
+          token
+        ),
+        WireCollateralTool.planVerifyBalanceRow(
+          Actor.Sysio,
+          `bonded-${token}`,
+          "depot collateral holds exactly the minimum",
+          {},
+          Constants.ProducerLabel,
+          Constants.collateral(token, Constants.BondAmount)
+        ),
+        ProducerCollateralSteps.planVerifyLiquidBalance(
+          Actor.Producer,
+          `debited-${token}`,
+          "bonding consumes the liquid shadow",
+          {},
+          token,
+          0n
+        ),
+        verifyStep(
+          Actor.Sysio,
+          `admission-after-${token}`,
+          "admission requires BOTH shadow minima",
+          async (ctx, signal) => {
+            const complete = token === Constants.CollateralToken.Ethereum
+            Assert.equal(
+              await isOperatorActive(ctx),
+              complete,
+              "both collateral requirements must be met"
+            )
+            if (!complete) {
+              await Assert.rejects(
+                () =>
+                  Steps.consensus.runRegisterProducer(
+                    ctx,
+                    {
+                      kind: "ConsensusSteps.ProducerRegistrationInput",
+                      label: Constants.ProducerLabel
+                    },
+                    signal
+                  ),
+                Constants.ProducerAdmissionErrorPattern
+              )
+              Assert.ok(
+                (await readProducerRow(ctx)) == null,
+                "partial collateral must not create a producer row"
+              )
+            }
+          }
+        )
+      )
+    }
 
     // ── 4. ACTIVE operator → producer row + finalizer key → initial score ──
     ClusterBuildPhase.create(
@@ -422,7 +499,10 @@ export class ProducerRegistrationScenario extends FlowScenario {
           }
           // Exactly the threshold the flow installed, not merely "at least": demoting early
           // would evict a producer that had not yet earned it.
-          if (demoted.consecutive_missed_rounds < Constants.MaxConsecutiveMissedRounds) {
+          if (
+            demoted.consecutive_missed_rounds <
+            Constants.MaxConsecutiveMissedRounds
+          ) {
             throw new Error(
               `demoted at ${demoted.consecutive_missed_rounds} misses, below the installed ${Constants.MaxConsecutiveMissedRounds}`
             )
@@ -471,7 +551,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
         async ctx => {
           const producer = await readProducerRow(ctx)
           if (producer == null) {
-            throw new Error("the producer's row disappeared after re-registration")
+            throw new Error(
+              "the producer's row disappeared after re-registration"
+            )
           }
           if (producer.is_demoted) {
             throw new Error("regproducer left the producer demoted")
@@ -522,10 +604,14 @@ export class ProducerRegistrationScenario extends FlowScenario {
           )
           const producer = await readProducerRow(ctx)
           if (producer == null) {
-            throw new Error("the producer's row disappeared after it produced again")
+            throw new Error(
+              "the producer's row disappeared after it produced again"
+            )
           }
           if (producer.is_demoted) {
-            throw new Error("the recovered producer was demoted again while serving its rounds")
+            throw new Error(
+              "the recovered producer was demoted again while serving its rounds"
+            )
           }
           if (producer.consecutive_missed_rounds !== 0) {
             throw new Error(
@@ -538,98 +624,119 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 9. Withdraw the bond → below the minimum → out of the schedule ──
-    ClusterBuildPhase.create(
-      cluster,
-      "Removal",
-      "Withdraw the whole bond; the producer drops below the minimum and leaves the schedule"
-    ).push(
-      // The runner fails the Step unless a new wtdwqueue row for exactly this amount appears.
-      WireCollateralTool.planWithdrawal(
-        Actor.Producer,
-        "withdraw-wire",
-        `withdraw the whole ${Constants.WithdrawAmount} WIRE-unit bond`,
-        {},
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireCollateral(Constants.WithdrawAmount)
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "depot-status-leaves-active",
-        "the producer leaves OPERATOR_STATUS_ACTIVE once it is under the minimum",
-        async ctx => {
-          // The queued amount no longer counts as available, and `withdraw` re-evaluates
-          // eligibility inline, so the status is final once the withdraw Step returns.
-          Assert.ok(
-            !(await isOperatorActive(ctx)),
-            `${Constants.ProducerLabel} is still OPERATOR_STATUS_ACTIVE with its whole bond queued for withdrawal`
+    // Restore LIQSOL after its withdrawal, so withdrawing LIQETH independently
+    // proves the other requirement. The final LIQSOL pass cleans up that restored bond.
+    const withdrawals = [
+      ...Constants.CollateralTokens,
+      Constants.CollateralToken.Solana
+    ]
+    for (const [index, token] of withdrawals.entries()) {
+      ClusterBuildPhase.create(
+        cluster,
+        `Removal${index}${token}`,
+        `Withdraw ${token} and return its bond`
+      ).push(
+        WireCollateralTool.planWithdrawal(
+          Actor.Producer,
+          `withdraw-${token}`,
+          `withdraw the whole ${token} bond`,
+          {},
+          Constants.ProducerLabel,
+          Constants.collateral(token, Constants.WithdrawAmount)
+        ),
+        verifyStep(
+          Actor.Sysio,
+          `inactive-without-${token}`,
+          "a missing required bond removes admission immediately",
+          async ctx => {
+            Assert.ok(
+              !(await isOperatorActive(ctx)),
+              `producer is still ACTIVE without ${token}`
+            )
+          }
+        ),
+        verifyStep(
+          Actor.Sysio,
+          "producer-leaves-schedule",
+          "the active schedule excludes the undercollateralized producer",
+          verifyProducerLeavesSchedule,
+          scheduleStepOptions
+        ),
+        WireCollateralTool.planVerifyRemitClaim(
+          Actor.Sysio,
+          `remit-${token}`,
+          "withdrawal matures into the exact shadow claim",
+          remitClaimStepOptions,
+          Constants.ProducerLabel,
+          Constants.claim(token, Constants.WithdrawAmount)
+        ),
+        WireCollateralTool.planVerifyBalanceRow(
+          Actor.Sysio,
+          `empty-${token}`,
+          "the collateral balance is empty after flush",
+          {},
+          Constants.ProducerLabel,
+          Constants.collateral(token, 0n)
+        ),
+        ProducerCollateralSteps.planVerifyLiquidBalance(
+          Actor.Producer,
+          `before-claim-${token}`,
+          "no shadow is liquid before payout",
+          {},
+          token,
+          0n
+        ),
+        WireCollateralTool.planClaimremit(
+          Actor.Producer,
+          `claim-${token}`,
+          "claim the returned shadow bond",
+          {},
+          Constants.ProducerLabel,
+          Constants.claim(token, 0n).tokenCode
+        ),
+        ProducerCollateralSteps.planVerifyLiquidBalance(
+          Actor.Producer,
+          `paid-${token}`,
+          "payout restores exactly 2.0 shadow tokens",
+          {},
+          token,
+          Constants.WithdrawAmount
+        ),
+        WireCollateralTool.planVerifyRemitClaim(
+          Actor.Sysio,
+          `cleared-${token}`,
+          "the paid remit claim is empty",
+          remitClaimStepOptions,
+          Constants.ProducerLabel,
+          Constants.claim(token, 0n)
+        )
+      )
+      if (index === 0) {
+        ClusterBuildPhase.create(
+          cluster,
+          "RestoreSolanaBond",
+          "Restore both minima before testing LIQETH withdrawal"
+        ).push(
+          ProducerCollateralSteps.planDeposit(
+            Actor.Producer,
+            "rebond-LIQSOL",
+            "rebond the returned LIQSOL",
+            {},
+            token
+          ),
+          verifyStep(
+            Actor.Sysio,
+            "both-bonds-restore-admission",
+            "both minima restore ACTIVE status",
+            async ctx => {
+              Assert.ok(
+                await isOperatorActive(ctx),
+                "restoring both bonds must restore admission"
+              )
+            }
           )
-        }
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "unbonded-producer-leaves-the-schedule",
-        "the active schedule drops the unbonded producer and every genesis producer keeps its slot",
-        // No ACTIVE opreg row means no rank position, so the next rebuild drops it — absorbed
-        // rather than retained, because the genesis producers alone still exceed the floor.
-        verifyProducerLeavesSchedule,
-        scheduleStepOptions
-      )
-    )
-
-    // ── 10. The withdrawal matures into a claim; claimremit pays the bond back ──
-    ClusterBuildPhase.create(
-      cluster,
-      "ReturnBond",
-      "flushwtdw credits the withdrawn bond to remitclaims; claimremit pays it back"
-    ).push(
-      WireCollateralTool.planVerifyRemitClaim(
-        Actor.Sysio,
-        "flush-credits-remit-claim",
-        `remitclaims{producer, WIRE} holds exactly ${Constants.WithdrawAmount}`,
-        remitClaimStepOptions,
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireClaim(Constants.WithdrawAmount)
-      ),
-      WireCollateralTool.planVerifyBalanceRow(
-        Actor.Sysio,
-        "depot-balance-emptied",
-        "the (WIRE, WIRE) balance row is empty after the flush",
-        {},
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireCollateral(0n)
-      ),
-      WireCollateralTool.planRecordWireBalance(
-        Actor.Producer,
-        "record-wire-before-claim",
-        "record the producer's liquid WIRE before the claim",
-        {},
-        Constants.ProducerLabel
-      ),
-      WireCollateralTool.planClaimremit(
-        Actor.Producer,
-        "claimremit-wire",
-        "claim the returned bond through sysio.opreg::claimremit",
-        {},
-        Constants.ProducerLabel,
-        WireCollateralTool.WireTokenCode
-      ),
-      WireCollateralTool.planVerifyWireBalanceIncrease(
-        Actor.Producer,
-        "claim-pays-bond",
-        `the producer's liquid WIRE rises by exactly ${Constants.WithdrawAmount}`,
-        {},
-        Constants.ProducerLabel,
-        Constants.WithdrawAmount
-      ),
-      WireCollateralTool.planVerifyRemitClaim(
-        Actor.Sysio,
-        "claim-row-cleared",
-        "remitclaims{producer, WIRE} is gone after the payout",
-        remitClaimStepOptions,
-        Constants.ProducerLabel,
-        WireCollateralTool.createWireClaim(0n)
-      )
-    )
+        )
+      }
+    }
   }
 }

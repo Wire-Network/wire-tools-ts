@@ -1,5 +1,10 @@
-import { SysioContracts } from "@wireio/sdk-core"
-import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { TokenAmount } from "@wireio/opp-typescript-models"
+import {
+  Constants,
+  ProtocolTiming,
+  WireReserveTool
+} from "@wireio/cluster-tool"
 
 /**
  * Constants for the producer-registration flow.
@@ -8,8 +13,8 @@ import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
  * {@link ProtocolTiming.producerRotationMs} (rounds) — never a stopwatch constant. The
  * distinction matters here more than in most flows: a producer's miss is only observable once
  * its slot comes round again, so the demotion phases are budgeted in ROUNDS while the score and
- * bond-return phases are budgeted in EPOCHS. Collateral is WIRE bonded on the depot through
- * `sysio.opreg::deposit`, in depot atomic units (WIRE has 9 decimals).
+ * bond-return phases are budgeted in EPOCHS. Collateral is LIQSOL and LIQETH bonded on the depot through
+ * `sysio.opreg::deposit`, each in depot atomic units (9 decimals).
  */
 export namespace ProducerRegistrationScenarioConstants {
   /** The flow's NON-bootstrapped producer's durable harness handle. */
@@ -50,9 +55,37 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const AdHocNodeCount = 1
 
-  /** WIRE bonded on the depot — 2 WIRE. */
+  /** Each required depot shadow symbol; both entries must be satisfied. */
+  export enum CollateralToken {
+    Solana = "LIQSOL",
+    Ethereum = "LIQETH"
+  }
+  export const CollateralTokens = [
+    CollateralToken.Solana,
+    CollateralToken.Ethereum
+  ]
+  export const FundingAccount = "prodbonder"
+  export const Precision = 9
+
+  /** Encode a shadow amount for collateral and remit claims. */
+  export function claim(token: CollateralToken, amount: bigint): TokenAmount {
+    return TokenAmount.create({
+      tokenCode: BigInt(SlugName.from(token)),
+      amount
+    })
+  }
+
+  /** Both shadow symbols are collateral on WIRE, not on their origin chains. */
+  export function collateral(token: CollateralToken, amount: bigint) {
+    return {
+      chain_code: WireReserveTool.WireChainCode,
+      amount: claim(token, amount)
+    }
+  }
+
+  /** 2.0 of EACH shadow token, in depot atomic units. */
   export const BondAmount = 2_000_000_000n
-  /** The `(WIRE, WIRE)` minimum the depot requires of a producer (equal to the bond: exactly sufficient). */
+  /** Each minimum equals its bond: exactly sufficient only when BOTH are held. */
   export const MinimumBond = BondAmount
 
   /**
@@ -84,23 +117,23 @@ export namespace ProducerRegistrationScenarioConstants {
    * ships it — it breaks ties rather than outranking a bond. The reserved `relay` / `api` /
    * `benchmark` factors stay at 0.
    */
-  export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType = {
-    collateral_weight: ScoreScale,
-    participation_weight: ScoreScale,
-    snapshot_weight: ScoreScale / 10,
-    relay_weight: 0,
-    api_weight: 0,
-    benchmark_weight: 0,
-    max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
-    snapshot_target_attestations: SnapshotTargetAttestations,
-    min_blocks_per_round: MinBlocksPerRound
-  }
+  export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType =
+    {
+      collateral_weight: ScoreScale,
+      participation_weight: ScoreScale,
+      snapshot_weight: ScoreScale / 10,
+      relay_weight: 0,
+      api_weight: 0,
+      benchmark_weight: 0,
+      max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
+      snapshot_target_attestations: SnapshotTargetAttestations,
+      min_blocks_per_round: MinBlocksPerRound
+    }
 
   /**
    * Withdrawn from the bond in the removal phase — the WHOLE of it.
    *
-   * Partial would leave the operator above the minimum and change nothing; the assertion is that
-   * dropping BELOW the minimum takes a producer out of the schedule.
+   * Each bond is exactly at its minimum; dropping either below that minimum removes eligibility.
    */
   export const WithdrawAmount = BondAmount
 
@@ -133,7 +166,8 @@ export namespace ProducerRegistrationScenarioConstants {
   export function scheduleDeadlineMs(scheduleSize: number): number {
     return (
       ProtocolTiming.ScheduleRebuildIntervalMs +
-      ProtocolTiming.producerRotationMs(scheduleSize) * ScheduleRebuildRoundBudget
+      ProtocolTiming.producerRotationMs(scheduleSize) *
+        ScheduleRebuildRoundBudget
     )
   }
 
@@ -146,7 +180,8 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export function demotionDeadlineMs(scheduleSize: number): number {
     return (
-      ProtocolTiming.producerRotationMs(scheduleSize) * MaxConsecutiveMissedRounds +
+      ProtocolTiming.producerRotationMs(scheduleSize) *
+        MaxConsecutiveMissedRounds +
       scheduleDeadlineMs(scheduleSize)
     )
   }
