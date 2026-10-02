@@ -470,6 +470,20 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
           Assert.strictEqual(rows.length, before.logs)
         }
       ),
+      verifyStep(
+        Actor.User,
+        "snapshot-return-wallet",
+        "record external balance before the accepted return",
+        async ctx => {
+          ctx.outputs.set(
+            Constants.ExternalBalanceBefore,
+            await SolanaLiqSyndicationTool.readLiqsolBalance(
+              ctx,
+              Constants.UserA.keypairName
+            )
+          )
+        }
+      ),
       Steps.contracts.sysio.synd.planDesyndicate(
         Actor.User,
         "within-budget",
@@ -544,6 +558,32 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       SyndicationScenario.VerifyOptions,
       SyndicationScenario.Bonder,
       Constants.Request
+    )
+    ClusterBuildPhase.create(
+      cluster,
+      "VerifyExternalReturn",
+      "Complete the accepted redemption at its destination"
+    ).push(
+      verifyStep(
+        Actor.SolanaOutpost,
+        "return-in-wallet",
+        "the external wallet receives the exact desyndicated amount",
+        async ctx => {
+          await pollUntil(
+            "external redemption settled",
+            async () =>
+              (await SolanaLiqSyndicationTool.readLiqsolBalance(
+                ctx,
+                Constants.UserA.keypairName
+              )) ===
+              ctx.outputs.assert(Constants.ExternalBalanceBefore) +
+                Constants.DesyndicationAmount,
+            ProtocolTiming.SingleHopBudgetMs,
+            SyndicationScenario.PollMs
+          )
+        },
+        SyndicationScenario.VerifyOptions
+      )
     )
     this.planFinish(cluster)
   }

@@ -89,4 +89,9 @@ export namespace SyndicationRateLimitScenarioConstants {
     "rate.beforeDesyndication",
     "redemption baseline"
   )
+  /** Destination token balance before the accepted return. */
+  export const ExternalBalanceBefore = outputKey<bigint>(
+    "rate.externalBalanceBefore",
+    "external redemption baseline"
+  )
 }

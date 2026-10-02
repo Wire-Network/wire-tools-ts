@@ -22,7 +22,9 @@ held envelope. Each write is a Report Step and state assertions are verify Steps
   kind, and its admitted epoch. Donation repairs custody. A new syndication reports
   the repaired balance; the depot cursor must admit its sequence before the cord
   clears. Earlier in-flight messages may add mismatches, all recorded in the
-  Report. No mismatch at or beyond the repaired sequence is permitted.
+  Report. No mismatch at or beyond the repaired sequence is permitted. After clear,
+  `sysio` validates both recovery deposits, and the normal release queue must deliver
+  both amounts to the user's wallet, including the existing recredited baseline.
 - Ethereum's imported position exercises both explicit pause and automatic
   `CUSTODY_SHORTFALL` pause. Each stored redemption is paid after recovery in
   native wei (depot units times 1,000,000,000), and a second call refuses. Before

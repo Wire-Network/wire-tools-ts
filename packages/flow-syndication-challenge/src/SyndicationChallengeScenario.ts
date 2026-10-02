@@ -544,5 +544,57 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
       )
     )
     this.planFinish(cluster)
+    ClusterBuildPhase.create(
+      cluster,
+      "SettleExcessProbe",
+      "Release the successful probe to its wallet"
+    ).push(
+      WireSyndicationTool.planResolveEnvelope(
+        Actor.Sysio,
+        "resolve-probe",
+        "sysio validates the successful custody probe",
+        SyndicationScenario.VerifyOptions,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.ProbeEpoch
+      ),
+      SyndicationScenario.planCrank(
+        Actor.User,
+        "release-probe",
+        "release the probe after restoring normal budgets",
+        SyndicationScenario.WriteOptions
+      ),
+      verifyStep(
+        Actor.User,
+        "probe-in-wallet",
+        "the successful probe is fully credited to the destination",
+        async ctx => {
+          await pollUntil(
+            "probe wallet settlement",
+            async () =>
+              BigInt(
+                (
+                  await SyndicationScenario.readEnvelope(
+                    ctx,
+                    Constants.ProbeEpoch
+                  )
+                ).released
+              ) >= Constants.ProbeAmount &&
+              (await SyndicationScenario.readBalance(
+                ctx,
+                Constants.User.account
+              )) ===
+                ctx.outputs.assert(Constants.Before).holder +
+                  Constants.Burst -
+                  (Constants.Burst * BigInt(Constants.FeeBps)) /
+                    SyndicationScenario.BasisPoints +
+                  Constants.ProbeAmount,
+            ProtocolTiming.SingleHopBudgetMs,
+            SyndicationScenario.PollMs
+          )
+        },
+        SyndicationScenario.VerifyOptions
+      )
+    )
   }
 }

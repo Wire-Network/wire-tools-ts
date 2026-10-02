@@ -639,6 +639,100 @@ export namespace WireSyndicationTool {
     )
   }
 
+  /** Explicit governance shortcut for a known envelope, never an implicit bond fallback. */
+  export interface ResolveEnvelopeInput extends StepInput {
+    readonly kind: "WireSyndicationTool.ResolveEnvelopeInput"
+    readonly chainCode: string
+    readonly tokenCode: string
+    readonly epoch: EnvelopeEpoch
+  }
+
+  /** Plan ONE sysio-authorized VALID ruling; callers still crank and verify wallet delivery. */
+  export function planResolveEnvelope<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    chainCode: string,
+    tokenCode: string,
+    epoch: EnvelopeEpoch
+  ): ClusterBuildStep<C, ResolveEnvelopeInput> {
+    return ClusterBuildStep.create<C, ResolveEnvelopeInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireSyndicationTool.ResolveEnvelopeInput",
+        chainCode,
+        tokenCode,
+        epoch
+      },
+      runResolveEnvelope
+    )
+  }
+
+  /** Resolve only an OPEN request. Never override a challenge, invalidation or provider bond. */
+  export async function runResolveEnvelope<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ResolveEnvelopeInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const epoch = resolveEnvelopeEpoch(ctx, input.epoch)
+    await pollUntil(
+      "governance settlement request is issued",
+      async () => {
+        signal.throwIfAborted()
+        return isRequestIssued(
+          await readEnvelope(ctx, input.chainCode, input.tokenCode, epoch)
+        )
+      },
+      RequestIssuedBudgetMs,
+      RequestIssuedPollIntervalMs
+    )
+    const envelope = await readEnvelope(
+        ctx,
+        input.chainCode,
+        input.tokenCode,
+        epoch
+      ),
+      request = await readRequest(ctx, envelope.request_id)
+    Assert.ok(request, "missing governance settlement request")
+    // Two deposits can share an envelope; its prior explicit ruling is sufficient.
+    if (
+      matchesProtoEnum(
+        request.state,
+        SysioBondRequestState,
+        SysioBondRequestState.VALID
+      )
+    )
+      return
+    Assert.ok(
+      matchesProtoEnum(
+        request.state,
+        SysioBondRequestState,
+        SysioBondRequestState.OPEN
+      ),
+      "governance settlement requires OPEN; refusing to override provider or challenge state"
+    )
+    Assert.strictEqual(
+      BigInt(request.bonded),
+      0n,
+      "governance shortcut requires an unbonded request"
+    )
+    await BondContractSteps.runRslvvalid(
+      ctx,
+      {
+        kind: "BondContractSteps.RslvvalidInput",
+        data: { request_id: request.id }
+      },
+      signal
+    )
+  }
+
   // ── composite: approve and claim ─────────────────────────────────────────
 
   /** Gap between {@link runApproveAfterWindow}'s chain-time reads (ms). */

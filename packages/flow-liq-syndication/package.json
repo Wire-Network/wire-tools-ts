@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: SYNDICATE_LIQ + LIQ_YIELD produced by the real liqsol_core paths circulate and the depot keeps advancing",
+  "description": "Flow: real liqsol syndication fully settles in the destination wallet and reported yield is released",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",

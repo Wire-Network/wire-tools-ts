@@ -9,6 +9,8 @@ and each observed bucket level stays within capacity.
 
 A redemption above even a full desyndication bucket is refused without a balance,
 supply or queue change; a smaller redemption burns and queues the exact amount.
+The flow then waits for the external destination wallet to receive that exact
+amount. A queued instruction alone cannot pass the flow.
 The flow synchronizes writes at epoch boundaries and fails if the required
 same-epoch crank pair crosses a boundary; it never weakens finality.
 
@@ -30,4 +32,4 @@ node scripts/flow-heartbeat-monitor.mjs --cluster-path <same-cluster-path>
 
 Run the runner in the background with a log and the monitor alongside it, without
 `--expect-freeze`. On BAIL stop the run and preserve its cluster for diagnosis.
-The Report under `<cluster>/reports/` is the assertion record. This package has no Jest suite.
+The Report under `<cluster>/reports/` is the assertion record. Focused wallet-settlement regressions run with `pnpm run test:unit`; the live flow remains the end-to-end gate.

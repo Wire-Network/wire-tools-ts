@@ -13,8 +13,9 @@ liqsol_core::report_liq_yield        (permissionless crank — non-admin signer)
   → LIQ_YIELD queued by the program
   → batch operator ferries both via an OPP envelope
   → sysio.msgch consumes the envelope and routes both to sysio.synd
-      (no bonder is provisioned, so the items stay HELD —
-       flow-liq-yield follows the credit through to WIRE and back)
+  → sysio rules each request VALID using sysio.bond::rslvvalid
+  → sysio.synd releases principal; authenticated linking delivers it to the wallet
+  → reported yield is released into the depot yield queue
   → sysio.epoch::advance keeps closing epochs
 ```
 
@@ -28,10 +29,13 @@ Asserts:
    consumes exactly one value of the shared liq sequence; the circulated
    attestation is DECODED and must match that delta, that sequence, the
    outpost's chain code and the depot's liqSOL token code.
-3. **The syndication remains held.** Its closed envelope is WAITING or REQUESTED,
-   and the full item remains in `sysio.synd::items` with nothing parked for the
-   unlinked user. Intake mints shadow into the depot's custody; it does not
-   release that shadow to the user. This flow enables no mock import or pool.
+3. **Held intake is an intermediate assertion.** Before resolution, the closed
+   envelope is WAITING or REQUESTED with no parked credit. An explicit `sysio`
+   VALID ruling then unblocks the normal release queue. The user authenticates
+   the Solana key and the flow requires the entire principal in their WIRE wallet,
+   with no parked credit. Reported yield also reaches full release. This flow
+   enables no mock import, bonder or pool; native tests compare its governance
+   shortcut with actual provider settlement.
 4. **The depot keeps advancing.**
    `sysio.epoch::epochstate.current_epoch_index` advances past the value
    snapshotted before the syndication — a depot that choked on either
@@ -102,3 +106,7 @@ committed `.keys/*-keypair.json` ids. The bootstrap's `verify-program-ids` step
 fails fast with the remediation when those ids drift. `node_modules` must be
 installed there too: the bootstrap drives the repo's `init-*` scripts with
 `anchor run`.
+
+Focused wallet-settlement regressions run with `pnpm run test:unit`. They reject
+a destination balance even one unit short; the live flow verifies actual relay
+and contract execution.

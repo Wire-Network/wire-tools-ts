@@ -136,7 +136,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | **Disabled at launch (reserves/swaps withheld)** — Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
-| `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real `synd` / `report_liq_yield` emit `SYNDICATE_LIQ` / `LIQ_YIELD`; depot keeps advancing |
+| `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `flow-reserve-lifecycle` | `@wireio/test-flow-reserve-lifecycle` | **Disabled at launch (reserves/swaps withheld)** |
@@ -147,6 +147,55 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
+
+### LIQ settlement audit — syndication-underwriting
+
+A successful syndication finishes only when its fee-adjusted principal is liquid
+in the destination WIRE wallet. A successful desyndication finishes only when the
+external recipient receives the exact return. Held intake, parked credit, burns,
+and outbound queue entries are intermediate checks.
+
+| Enabled flow | Settlement obligation |
+| --- | --- |
+| `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
+| `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
+| `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
+| `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
+| `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
+
+The other seven enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
+`flow-operator-collateral-deposit`, `flow-producer-registration`,
+`flow-yield-distribution`) submit no user LIQ syndication/desyndication. Imported
+bootstrap collateral and reward funding have their own assertions. The eight
+disabled swap/reserve flows remain disabled and have no direct LIQ syndication call.
+
+`WireSyndicationTool.planResolveEnvelope` is an explicit `sysio.bond::rslvvalid`
+shortcut for an unbonded OPEN request. It refuses provider-funded, challenged or
+invalid requests, and never replaces the real bond-provider flows. Native
+`sysio_synd_tests/generic_governance_and_provider_release_have_identical_settlement`
+compares both paths on EC1/NTA and EC2/NTB: linked/parked delivery, fee rounding,
+freeze, partial release, same-epoch budgets, yield release, and external returns.
+Collateral, challenge windows and bounty ownership intentionally differ; existing
+bond tests cover those obligations. Matching settlement does not make the
+shortcut a test of provider participation or external relay liveness.
+
+Validation on 2026-10-02 used fresh clusters, the canonical runner and heartbeat,
+and Solana 4.2.0. All changed live flows passed:
+
+| Flow | Successful report steps | Elapsed |
+| --- | ---: | ---: |
+| `flow-liq-syndication` | 226 | 10m 31s |
+| `flow-syndication-challenge` | 270 | 12m 39s |
+| `flow-syndication-rate-limit` | 268 | 24m 05s |
+| `flow-emergency-stop` | 312 | 20m 31s |
+
+The rate-limit flow's final external-wallet check waited another 139 seconds for
+payout after the existing queued-redemption assertions. TypeScript compilation,
+53 shared-helper tests and 32 focused flow tests passed. The first live attempts
+stopped at the bootstrap toolchain check because the shell selected Solana 4.0.3;
+the successful runs above selected the installed pinned 4.2.0 toolchain explicitly.
 
 ### Disabled reserve and swap flows
 

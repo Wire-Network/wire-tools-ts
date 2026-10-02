@@ -15,6 +15,10 @@ import {
   SolanaFundingTool,
   SolanaLiqSyndicationTool,
   WireState,
+  Steps,
+  SyndicationScenario,
+  SyndicationUserSteps,
+  Constants as HarnessConstants,
   WireSyndicationTool,
   SolanaOutpostBootstrapper,
   containsLIQYield,
@@ -83,28 +87,15 @@ async function readCirculatedLIQYields(
  * permissionless `report_liq_yield` crank queues `LIQ_YIELD` for the delta
  * above its watermark. Both must reach an outpost → depot envelope.
  *
- * This flow proves the OUTPOST side: the two attestations circulate, and the
- * depot keeps advancing its epoch while consuming envelopes that carry them —
- * `sysio.msgch` routes both to `sysio.synd`, which holds them until bonded;
- * this flow provides no bonder and verifies the closed envelope remains held.
- * `flow-liq-yield` follows the bonded credit through to WIRE and back to the outpost.
- * A depot that choked on either type would stall the epoch — the last phase is
- * what catches that.
- *
- * 1. **SnapshotDepotEpoch** — record `current_epoch_index` BEFORE any write.
- * 2. **Syndicate** — map the liq token, fund the user, deposit for liqSOL, flip
- *    Launching → PostLaunch, `synd`, then prove `SYNDICATE_LIQ` reached an
- *    `OUTPOST_SOLANA_DEPOT` envelope.
- * 3. **ReportLiqYield** — snapshot the on-chain liq-yield accounting, donate
- *    bonus pool yield, crank `report_liq_yield` as a NON-admin, then prove the
- *    circulated `LIQ_YIELD` decodes to exactly the reported delta.
- * 4. **DepotKeepsAdvancing** — `current_epoch_index` advances past the
- *    snapshot, so consensus kept closing epochs across both attestations.
+ * After proving the unbonded intake is held, sysio explicitly resolves it VALID.
+ * The normal queue releases the principal and authenticated linking delivers it
+ * to the destination wallet. Yield is separately resolved into pending yield.
+ * Native contract tests compare this governance shortcut against real providers.
  */
 export class LIQSyndicationScenario extends FlowScenario {
   readonly name = "flow-liq-syndication"
   readonly description =
-    "SYNDICATE_LIQ + LIQ_YIELD produced by the real liqsol_core paths circulate in an OPP envelope, and the depot keeps advancing its epoch"
+    "Real liqsol syndication reaches the destination wallet; reported yield is released on the depot"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -248,15 +239,22 @@ export class LIQSyndicationScenario extends FlowScenario {
             .toString("hex")
           await pollUntil(
             "held syndication envelope",
-            async () =>
-              (await WireSyndicationTool.readHeldEnvelope(
+            async () => {
+              const envelope = await WireSyndicationTool.readHeldEnvelope(
                 ctx,
                 SolanaOutpostBootstrapper.SolanaChainCodename,
                 Constants.LIQTokenCodename,
                 SysioSyndItemKind.SYNDICATION,
                 Constants.SyndicateAmount,
                 pubkey
-              )) != null,
+              )
+              if (!envelope) return false
+              ctx.outputs.set(
+                LIQSyndicationScenario.SyndicationEpochKey,
+                envelope.epoch_index
+              )
+              return true
+            },
             Constants.CirculationTimeoutMs,
             Constants.CirculationPollMs
           )
@@ -272,6 +270,85 @@ export class LIQSyndicationScenario extends FlowScenario {
           // Intake mints shadow into sysio.synd's custody. The full held item
           // and absent parked credit prove this unlinked user's funds have
           // not been released; total token supply is not a user balance.
+        },
+        circulationStepOptions
+      )
+    )
+
+    ClusterBuildPhase.create(
+      cluster,
+      "DeliverSyndication",
+      "Resolve intake and deliver all principal to the destination wallet"
+    ).push(
+      Steps.account.planCreateKeyed(
+        Actor.User,
+        "create-destination",
+        "create the WIRE destination",
+        SyndicationScenario.WriteOptions,
+        Constants.UserAccount,
+        HarnessConstants.DEV_K1_PUBLIC_KEY
+      ),
+      SyndicationUserSteps.planResourcePolicy(
+        Actor.User,
+        "destination-resources",
+        "allocate destination resources",
+        SyndicationScenario.WriteOptions,
+        SyndicationScenario.resourcePolicy(Constants.UserAccount)
+      ),
+      WireSyndicationTool.planResolveEnvelope(
+        Actor.Sysio,
+        "resolve-syndication",
+        "sysio validates the custody report",
+        circulationStepOptions,
+        SolanaOutpostBootstrapper.SolanaChainCodename,
+        Constants.LIQTokenCodename,
+        LIQSyndicationScenario.SyndicationEpochKey
+      ),
+      Steps.contracts.sysio.synd.planCrank(
+        Actor.User,
+        "release-syndication",
+        "release resolved principal through the normal queue",
+        SyndicationScenario.WriteOptions,
+        { limit: SyndicationScenario.CrankLimit },
+        Constants.UserAccount
+      ),
+      SyndicationUserSteps.planLinkSolanaKey(
+        Actor.User,
+        "link-destination",
+        "authenticate the wallet and sweep parked principal",
+        SyndicationScenario.WriteOptions,
+        Constants.UserAccount,
+        Constants.UserKeypairName
+      ),
+      verifyStep(
+        Actor.User,
+        "syndication-in-wallet",
+        "all syndicated principal is liquid in the destination wallet",
+        async ctx => {
+          await pollUntil(
+            "principal delivered to destination",
+            async () =>
+              (await SyndicationScenario.readBalance(
+                ctx,
+                Constants.UserAccount
+              )) === Constants.SyndicateAmount,
+            Constants.CirculationTimeoutMs,
+            Constants.CirculationPollMs
+          )
+          Assert.strictEqual(
+            await WireSyndicationTool.readParked(
+              ctx,
+              Constants.LIQTokenCodename,
+              SysioSyndChainkind.CHAIN_KIND_SVM,
+              SolanaFundingTool.loadKeypair(
+                ctx.config.dataPath,
+                Constants.UserKeypairName
+              )
+                .publicKey.toBuffer()
+                .toString("hex")
+            ),
+            undefined
+          )
         },
         circulationStepOptions
       )
@@ -351,6 +428,85 @@ export class LIQSyndicationScenario extends FlowScenario {
       )
     )
 
+    ClusterBuildPhase.create(
+      cluster,
+      "ReleaseReportedYield",
+      "Resolve reported yield into the depot yield queue"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "yield-intake",
+        "capture the held yield envelope",
+        async ctx => {
+          const before = ctx.outputs.assert(
+              LIQSyndicationScenario.LiqYieldStateBeforeKey
+            ),
+            after = await SolanaLiqSyndicationTool.readLiqYieldState(ctx),
+            amount = after.liqYieldReported - before.liqYieldReported
+          ctx.outputs.set(LIQSyndicationScenario.ReportedYieldKey, amount)
+          await pollUntil(
+            "reported yield intake",
+            async () => {
+              const envelope = await WireSyndicationTool.readHeldEnvelope(
+                ctx,
+                SolanaOutpostBootstrapper.SolanaChainCodename,
+                Constants.LIQTokenCodename,
+                SysioSyndItemKind.YIELD,
+                amount
+              )
+              if (!envelope) return false
+              ctx.outputs.set(
+                LIQSyndicationScenario.YieldEpochKey,
+                envelope.epoch_index
+              )
+              return true
+            },
+            Constants.CirculationTimeoutMs,
+            Constants.CirculationPollMs
+          )
+        },
+        circulationStepOptions
+      ),
+      WireSyndicationTool.planResolveEnvelope(
+        Actor.Sysio,
+        "resolve-yield",
+        "sysio validates the reported custody yield",
+        circulationStepOptions,
+        SolanaOutpostBootstrapper.SolanaChainCodename,
+        Constants.LIQTokenCodename,
+        LIQSyndicationScenario.YieldEpochKey
+      ),
+      Steps.contracts.sysio.synd.planCrank(
+        Actor.User,
+        "release-yield",
+        "release yield through the normal queue",
+        SyndicationScenario.WriteOptions,
+        { limit: SyndicationScenario.CrankLimit },
+        Constants.UserAccount
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "yield-released",
+        "reported yield is fully released and principal remains in the wallet",
+        async ctx => {
+          const envelope = await WireSyndicationTool.readEnvelope(
+            ctx,
+            SolanaOutpostBootstrapper.SolanaChainCodename,
+            Constants.LIQTokenCodename,
+            ctx.outputs.assert(LIQSyndicationScenario.YieldEpochKey)
+          )
+          Assert.strictEqual(
+            BigInt(envelope.released),
+            BigInt(envelope.synd_total) + BigInt(envelope.yield_total)
+          )
+          Assert.strictEqual(
+            await SyndicationScenario.readBalance(ctx, Constants.UserAccount),
+            Constants.SyndicateAmount
+          )
+        }
+      )
+    )
+
     // ── 4. The depot kept advancing while carrying both liq types ──
     ClusterBuildPhase.create(
       cluster,
@@ -403,4 +559,17 @@ export namespace LIQSyndicationScenario {
       "LIQSyndicationScenario.liqYieldStateBefore",
       "the outpost's liq-yield watermark + sequence before the bonus-yield donation"
     )
+  /** Runtime envelope identities used by explicit governance settlement. */
+  export const SyndicationEpochKey = outputKey<number>(
+    "liq-syndication.principalEpoch",
+    "principal envelope"
+  )
+  export const YieldEpochKey = outputKey<number>(
+    "liq-syndication.yieldEpoch",
+    "yield envelope"
+  )
+  export const ReportedYieldKey = outputKey<bigint>(
+    "liq-syndication.reportedYield",
+    "reported yield amount"
+  )
 }

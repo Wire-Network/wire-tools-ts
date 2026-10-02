@@ -1103,3 +1103,89 @@ describe("WireSyndicationTool held-envelope and final health reads", () => {
     ).rejects.toThrow(/custody mismatch/)
   })
 })
+
+describe("explicit governance settlement", () => {
+  const epoch = 12
+  const planned = () =>
+    WireSyndicationTool.planResolveEnvelope(
+      Report.Actor.Sysio,
+      "resolve",
+      "resolve a successful custody report",
+      {},
+      Solana,
+      Liqsol,
+      epoch
+    )
+
+  it("performs one sysio-authorized VALID ruling on an unbonded OPEN request", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, epoch, SysioSyndEnvelopeState.REQUESTED)
+    ])
+    serve(clients.bond.tables.requests, [
+      request(100, 0, SysioBondRequestState.OPEN)
+    ])
+    const invoke = jest
+      .spyOn(clients.bond.actions.rslvvalid, "invoke")
+      .mockResolvedValue({} as never)
+    const step = planned()
+    expect(step.runner).toBe(WireSyndicationTool.runResolveEnvelope)
+    await step.runner(ctx, step.input, signal)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith(
+      { request_id: String(RequestId) },
+      {
+        authorization: WireClient.activeAuthorization(
+          SysioContracts.SysioContractAccount.system
+        )
+      }
+    )
+  })
+
+  it.each([
+    SysioBondRequestState.HELD,
+    SysioBondRequestState.INVALID,
+    SysioBondRequestState.BONDED,
+    SysioBondRequestState.APPROVED
+  ])("refuses to replace provider/challenge state %s", async state => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, epoch, SysioSyndEnvelopeState.REQUESTED)
+    ])
+    serve(clients.bond.tables.requests, [request(100, 0, state)])
+    const invoke = jest.spyOn(clients.bond.actions.rslvvalid, "invoke")
+    const step = planned()
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      /requires OPEN/
+    )
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("refuses a partly funded OPEN request", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, epoch, SysioSyndEnvelopeState.REQUESTED)
+    ])
+    serve(clients.bond.tables.requests, [
+      request(100, 50, SysioBondRequestState.OPEN)
+    ])
+    const step = planned()
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      /unbonded request/
+    )
+  })
+
+  it("does not re-resolve two deposits sharing an already VALID envelope", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, epoch, SysioSyndEnvelopeState.DONE)
+    ])
+    serve(clients.bond.tables.requests, [
+      request(100, 0, SysioBondRequestState.VALID)
+    ])
+    const invoke = jest.spyOn(clients.bond.actions.rslvvalid, "invoke")
+    const step = planned()
+    await step.runner(ctx, step.input, signal)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+})

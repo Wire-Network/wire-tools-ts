@@ -38,6 +38,9 @@ export namespace LIQSyndicationScenarioConstants {
    */
   export const LIQTokenCode: bigint = BigInt(SlugName.from(LIQTokenCodename))
 
+  /** WIRE account receiving the entire successful syndication. */
+  export const UserAccount = "synd.dest"
+
   /**
    * Durable handle of the flow's syndicating user keypair. It is created and
    * persisted per-cluster by the airdrop step and re-loaded by every later

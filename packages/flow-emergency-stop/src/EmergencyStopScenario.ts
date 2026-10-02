@@ -800,6 +800,65 @@ export class EmergencyStopScenario extends SyndicationScenario {
         }
       )
     )
+    ClusterBuildPhase.create(
+      cluster,
+      "SettleRecoveryDeposits",
+      "Release both repaired-custody deposits to the user"
+    ).push(
+      WireSyndicationTool.planResolveEnvelope(
+        Actor.Sysio,
+        "resolve-shortfall-probe",
+        "sysio validates the repaired probe",
+        verify,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.ProbeEpoch
+      ),
+      SyndicationScenario.planCrank(
+        Actor.User,
+        "release-shortfall-probe",
+        "release principal and advance FIFO",
+        write
+      ),
+      WireSyndicationTool.planResolveEnvelope(
+        Actor.Sysio,
+        "resolve-recovery-probe",
+        "sysio validates the backed follow-up",
+        verify,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.RecoveryEpoch
+      ),
+      SyndicationScenario.planCrank(
+        Actor.User,
+        "release-recovery-probe",
+        "release all recovery principal",
+        write
+      ),
+      verifyStep(
+        Actor.User,
+        "recovery-deposits-in-wallet",
+        "both successful deposits reach the destination",
+        async ctx => {
+          await pollUntil(
+            "recovery wallet settlement",
+            async () =>
+              (await SyndicationScenario.readBalance(
+                ctx,
+                Constants.User.account
+              )) ===
+              Constants.Remaining +
+                Constants.HeldAmount +
+                ctx.outputs.assert(Constants.Shortfall) +
+                Constants.ProbeAmount * 2n +
+                Constants.Deficit,
+            ProtocolTiming.SingleHopBudgetMs,
+            SyndicationScenario.PollMs
+          )
+        },
+        verify
+      )
+    )
   }
   /** Ethereum pause and custody-shortfall lanes both store and later pay exactly once. */
   private planEthereum(cluster: ClusterBuild): void {
