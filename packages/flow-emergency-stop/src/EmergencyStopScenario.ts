@@ -752,19 +752,39 @@ export class EmergencyStopScenario extends SyndicationScenario {
             }
           )
           EmergencyStopSteps.assertRecoveryMismatches(rows, message.sequence)
-          for (const original of ctx.outputs.assert(Constants.Mismatches))
-            Assert.deepStrictEqual(
-              rows.find(
-                row =>
-                  row.chain_code === original.chain_code &&
-                  BigInt(row.sequence) === BigInt(original.sequence)
-              ),
-              original
+          for (const original of ctx.outputs.assert(Constants.Mismatches)) {
+            const current = rows.filter(
+              row =>
+                row.chain_code === original.chain_code &&
+                row.token_code === original.token_code
             )
+            Assert.strictEqual(current.length, 1)
+            Assert.ok(BigInt(current[0].sequence) >= BigInt(original.sequence))
+          }
           Assert.ok((await WireSyndicationTool.readCord(ctx)).pulled)
           ctx.outputs.set(Constants.Mismatches, rows)
         },
         verify
+      ),
+      EmergencyStopSteps.planAction(
+        Actor.Sysio,
+        "reconcile-shortfall",
+        "attest repaired custody and remove the active incident",
+        write,
+        Action.reconcileSolana
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "reconciled-still-stopped",
+        "incident resolved while the emergency cord remains pulled",
+        async ctx => {
+          Assert.deepStrictEqual(
+            await WireSyndicationTool.readMismatches(ctx),
+            []
+          )
+          Assert.ok((await WireSyndicationTool.readCord(ctx)).pulled)
+          ctx.outputs.set(Constants.Mismatches, [])
+        }
       ),
       Steps.contracts.sysio.andon.planClear(
         Actor.Sysio,
@@ -779,7 +799,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "no-new-mismatch",
-        "historical evidence preserved with cord clear",
+        "no active incident with cord clear",
         async ctx => {
           const mismatches = await WireSyndicationTool.readMismatches(ctx)
           StepExtraRecorder.note("Complete mismatch evidence after clear", {
@@ -993,7 +1013,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           const { rows, more } = await ctx.wire
             .getSysioContract(SysioContractName.synd)
-            .tables.desyndlog.query({ limit: SyndicationScenario.QueryLimit })
+            .tables.returns.query({ limit: SyndicationScenario.QueryLimit })
           Assert.ok(!more)
           ctx.outputs.set(
             Constants.LastRequest,
@@ -1034,7 +1054,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
             async () => {
               const { rows, more } = await ctx.wire
                 .getSysioContract(SysioContractName.synd)
-                .tables.desyndlog.query({
+                .tables.returns.query({
                   limit: SyndicationScenario.QueryLimit
                 })
               Assert.ok(!more)

@@ -114,7 +114,7 @@ export namespace EmergencyStopScenarioConstants {
   /** Last request before each redemption. */
   export const LastRequest = outputKey<bigint>(
     "emergency.lastRequest",
-    "desyndlog baseline"
+    "returns baseline"
   )
   /** Permanent, deliberate mismatch evidence. */
   export const Mismatches = outputKey<

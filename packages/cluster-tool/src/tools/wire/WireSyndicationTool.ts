@@ -215,7 +215,7 @@ export namespace WireSyndicationTool {
     )
   }
 
-  /** READ the `sysio.synd::ledger` row of one pair: its running sums and queue cursor. */
+  /** READ the `sysio.synd::ledger` row of one pair: its queue cursors and retained-epoch floor. */
   export async function readLedger<C extends ClusterBuildContext>(
     ctx: C,
     chainCode: string,
@@ -293,7 +293,7 @@ export namespace WireSyndicationTool {
     return result.rows.find(row => isCode(row.token_code, tokenCode))
   }
 
-  /** READ every `sysio.synd::mismatch` row: each custody shortfall an outpost reported. */
+  /** READ every `sysio.synd::mismatch` row: the latest active custody incident for each outpost/token pair. */
   export async function readMismatches<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<SysioContracts.SysioSyndMismatchRowType[]> {
@@ -822,7 +822,8 @@ export namespace WireSyndicationTool {
   /**
    * Close a bonded request: ONE Phase of two Steps — `sysio.bond::approve`, sent once the
    * request's challenge window has passed ({@link runApproveAfterWindow}), then
-   * `sysio.bond::claim` of what the request owes `account`. Both are permissionless;
+   * `sysio.bond::claim` of the request-token entitlement owed to `account`. Earned WIRE
+   * is banked separately for `sysio.bond::claimwire`. Both actions here are permissionless;
    * `account` signs them. Self-registers on `parent`.
    *
    * @param parent - The build root or enclosing PhaseGroup.

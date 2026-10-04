@@ -401,11 +401,11 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.User,
         "snapshot-redemption",
-        "record balance, supply, ledger and queued records",
+        "record balance, supply and outstanding returns",
         async ctx => {
           const { rows, more } = await ctx.wire
             .getSysioContract(SysioContractName.synd)
-            .tables.desyndlog.query({ limit: SyndicationScenario.QueryLimit })
+            .tables.returns.query({ limit: SyndicationScenario.QueryLimit })
           Assert.ok(!more)
           ctx.outputs.set(Constants.BeforeDesyndication, {
             balance: await SyndicationScenario.readBalance(
@@ -420,16 +420,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
                 )
               ).supply
             ),
-            sum: BigInt(
-              (
-                await WireSyndicationTool.readLedger(
-                  ctx,
-                  SyndicationScenario.Chain,
-                  SyndicationScenario.Token
-                )
-              ).desyndicated_sum
-            ),
-            logs: rows.length
+            returns: rows.length
           })
         }
       ),
@@ -447,7 +438,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
           const before = ctx.outputs.assert(Constants.BeforeDesyndication),
             { rows } = await ctx.wire
               .getSysioContract(SysioContractName.synd)
-              .tables.desyndlog.query({ limit: SyndicationScenario.QueryLimit })
+              .tables.returns.query({ limit: SyndicationScenario.QueryLimit })
           Assert.match(
             ctx.outputs.assert(Constants.Refusal),
             /desyndication exceeds the current budget/
@@ -467,7 +458,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             ),
             before.supply
           )
-          Assert.strictEqual(rows.length, before.logs)
+          Assert.strictEqual(rows.length, before.returns)
         }
       ),
       verifyStep(
@@ -497,12 +488,12 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.User,
         "within-budget-queued",
-        "exact debit, burn and desyndlog prove accepted queued redemption",
+        "exact debit, burn and outstanding return prove accepted queued redemption",
         async ctx => {
           const before = ctx.outputs.assert(Constants.BeforeDesyndication),
             { rows, more } = await ctx.wire
               .getSysioContract(SysioContractName.synd)
-              .tables.desyndlog.query({
+              .tables.returns.query({
                 limit: SyndicationScenario.QueryLimit
               }),
             bucket = await WireSyndicationTool.readBucket(
@@ -512,7 +503,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               SysioSyndBucketDirection.DESYNDICATION
             )
           Assert.ok(!more)
-          Assert.strictEqual(rows.length, before.logs + 1)
+          Assert.strictEqual(rows.length, before.returns + 1)
           Assert.strictEqual(
             BigInt(rows[rows.length - 1].amount),
             Constants.DesyndicationAmount
@@ -533,16 +524,12 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             before.supply - Constants.DesyndicationAmount
           )
           Assert.strictEqual(
-            BigInt(
-              (
-                await WireSyndicationTool.readLedger(
-                  ctx,
-                  SyndicationScenario.Chain,
-                  SyndicationScenario.Token
-                )
-              ).desyndicated_sum
-            ),
-            before.sum + Constants.DesyndicationAmount
+            rows[rows.length - 1].holder,
+            Constants.UserA.account
+          )
+          Assert.strictEqual(
+            rows[rows.length - 1].token_code,
+            SyndicationScenario.Token
           )
           Assert.strictEqual(
             BigInt(bucket.level),

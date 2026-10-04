@@ -49,6 +49,7 @@ export namespace EmergencyStopSteps {
     payEthereum = "payEthereum",
     recreditSolana = "recreditSolana",
     donateSolana = "donateSolana",
+    reconcileSolana = "reconcileSolana",
     recreditEthereum = "recreditEthereum",
     donateEthereum = "donateEthereum"
   }
@@ -219,6 +220,25 @@ export namespace EmergencyStopSteps {
             signal
           )
         )
+        .with(Action.reconcileSolana, async () => {
+          const reported = await SolanaLiqSyndicationTool.readPoolBalance(ctx)
+          await ctx.wire
+            .getSysioContract(SysioContracts.SysioContractName.synd)
+            .actions.reconcile.invoke(
+              {
+                chain_code: SyndicationScenario.Chain,
+                token_code: SyndicationScenario.Token,
+                reported: reported.toString()
+              },
+              {
+                authorization: WireClient.activeAuthorization(
+                  SysioContracts.SysioContractAccount[
+                    SysioContracts.SysioContractName.system
+                  ]
+                )
+              }
+            )
+        })
         .with(Action.donateSolana, () =>
           SolanaLiqSyndicationTool.runDonateToPool(
             ctx,

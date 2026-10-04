@@ -4,8 +4,6 @@ export interface SyndicationRateLimitSnapshot {
   readonly balance: bigint
   /** Pre-operation supply. */
   readonly supply: bigint
-  /** Pre-operation sum. */
-  readonly sum: bigint
-  /** Pre-operation logs. */
-  readonly logs: number
+  /** Number of outstanding returns before the operation. */
+  readonly returns: number
 }
