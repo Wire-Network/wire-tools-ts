@@ -90,8 +90,6 @@ describe("ClusterConfig shape", () => {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false,
-    enableLaunchWithheldOperations: false,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
     deploymentKind: ClusterDeploymentKind.local,
@@ -126,12 +124,17 @@ describe("ClusterConfig shape", () => {
 
   it("persists explicit mock syndication opt-in and rejects a non-boolean flag", () => {
     const enabled = ClusterConfigSchemaCodec.deserialize(
-      ClusterConfigSchemaCodec.serialize({ ...config, enableMockSyndicationImport: true })
+      ClusterConfigSchemaCodec.serialize({
+        ...config,
+        enableMockSyndicationImport: true
+      })
     )
     expect(enabled.enableMockSyndicationImport).toBe(true)
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     parsed.enableMockSyndicationImport = "true"
-    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow()
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
+    ).toThrow()
   })
 
   it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
@@ -140,8 +143,6 @@ describe("ClusterConfig shape", () => {
     delete parsed.awsClusterNodeConfig
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
-    delete parsed.enableMockReserves
-    delete parsed.enableLaunchWithheldOperations
     delete parsed.enableMockSyndicationImport
     delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
@@ -156,8 +157,6 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.awsClusterNodeConfig).toBeNull()
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
-    expect(rehydrated.enableMockReserves).toBe(false)
-    expect(rehydrated.enableLaunchWithheldOperations).toBe(false)
     expect(rehydrated.enableMockLiqPools).toBe(false)
     expect(rehydrated.enableMockSyndicationImport).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on

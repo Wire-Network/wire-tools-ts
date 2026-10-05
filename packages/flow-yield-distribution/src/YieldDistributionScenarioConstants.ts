@@ -16,7 +16,7 @@ export namespace YieldDistributionScenarioConstants {
   /** Batch operators ferrying OPP envelopes (the old suite's `batchOperatorCount`). */
   export const BatchOperatorCount = 3
   /** Underwriters provisioned by the bootstrap (the old suite's `underwriterCount`). */
-  export const UnderwriterCount = 1
+  export const UnderwriterCount = 0
 
   /** The AuthEx-linked staker's WIRE account — its reward lands in `sysio.dclaim::pclaims`. */
   export const LinkedStakerAccount = "yield.lnk"
@@ -58,7 +58,8 @@ export namespace YieldDistributionScenarioConstants {
    * Rejection signature of a replayed `external_epoch_ref` — the
    * `MockYieldEmitter` per-staker monotonic check reverts the tx.
    */
-  export const ReplayRejectionPattern = /externalEpochRef not monotonic|reverted/i
+  export const ReplayRejectionPattern =
+    /externalEpochRef not monotonic|reverted/i
 
   /** Settle window slept before asserting the replayed emission credited nothing. */
   export function dedupeSettleMs(): number {

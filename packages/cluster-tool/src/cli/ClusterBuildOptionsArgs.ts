@@ -44,7 +44,7 @@ const CliDefault = {
   nodeCount: 1,
   producerCount: 1,
   batchOperatorCount: 3,
-  underwriterCount: 1,
+  underwriterCount: 0,
   apiCount: 0,
   adHocCount: 0,
   epochDurationSec: 60
@@ -124,9 +124,7 @@ export class OptionLeafSpec {
  * walk.
  */
 export type OptionShapeNode =
-  | OptionLeafSpec
-  | OptionShapeNode[]
-  | OptionShapeObject
+  OptionLeafSpec | OptionShapeNode[] | OptionShapeObject
 
 /** A nested object of shape nodes (named — no inline object types). */
 export interface OptionShapeObject {
@@ -546,16 +544,6 @@ export function buildOptionShape(
     ),
     // ── network binding ──
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
-    // ── mock data seeding (default false → external / real depots get no fake reserves) ──
-    enableMockReserves: leaf(
-      false,
-      "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
-    ),
-    // ── launch policy (default false → the Solana outpost bootstrap skips the calls the launch build withholds) ──
-    enableLaunchWithheldOperations: leaf(
-      false,
-      "run the Solana outpost bootstrap calls the launch policy withholds (init_reserve, create_reserve_native, mock SPL reserves)"
-    ),
     enableMockLiqPools: leaf(
       false,
       "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
@@ -712,7 +700,9 @@ export function applyClusterBuildOptionsArgs(
     environmentPathDefaults(environment),
     defaults
   )
-  const withShape = flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
+  const withShape = flattenOptionLeaves(
+    buildOptionShape(seededDefaults)
+  ).reduce(
     (instance, optionLeaf) =>
       instance.option(
         optionLeaf.flag,
@@ -821,10 +811,7 @@ function isIndexSegment(segment: string): boolean {
 }
 
 /** Read a child by segment (arrays accept numeric-string keys uniformly). */
-function childOf(
-  node: OptionTreeContainer,
-  segment: string
-): OptionTreeValue {
+function childOf(node: OptionTreeContainer, segment: string): OptionTreeValue {
   return (node as OptionTreeObject)[segment] ?? null
 }
 
@@ -1043,8 +1030,7 @@ function assertDocumentLeafValue(
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be a ${optionLeaf.type} (got ${documentLeafType(scalar)} ${JSON.stringify(scalar)})`
   )
   Assert.ok(
-    optionLeaf.choices == null ||
-      optionLeaf.choices.includes(String(scalar)),
+    optionLeaf.choices == null || optionLeaf.choices.includes(String(scalar)),
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be one of ${optionLeaf.choices?.join(" | ")} (got ${JSON.stringify(scalar)})`
   )
   return scalar
@@ -1342,9 +1328,7 @@ export function mergeSignatureProviderSSM(
  * @param argv - The parsed yargs result.
  * @returns The validated AWS placement, or `null`.
  */
-export function toAWSClusterNodeConfig(
-  argv: OptionArgv
-): AWSClusterNodeConfig {
+export function toAWSClusterNodeConfig(argv: OptionArgv): AWSClusterNodeConfig {
   const raw = readArg(argv, AWSClusterNodeConfigFlag)
   if (!isString(raw) || raw.trim().length === 0) {
     return null

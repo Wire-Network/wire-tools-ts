@@ -40,7 +40,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
     epochDurationSec: SyndicationScenario.EpochDurationSec,
     producerCount: 3,
     batchOperatorCount: 3,
-    underwriterCount: 1
+    underwriterCount: 0
   }
 
   plan(cluster: ClusterBuild): void {

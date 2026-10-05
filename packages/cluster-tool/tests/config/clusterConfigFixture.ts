@@ -38,7 +38,7 @@ export const PersistedFixture: ClusterConfig = {
   producerCount: 21,
   nodeCount: 1,
   batchOperatorCount: 3,
-  underwriterCount: 1,
+  underwriterCount: 0,
   apiCount: 1,
   epochDurationSec: 60,
   operatorsPerEpoch: null,
@@ -62,7 +62,7 @@ export const PersistedFixture: ClusterConfig = {
         },
         producers: [pair(0)],
         batch: [pair(1), pair(2), pair(3)],
-        underwriters: [pair(4)],
+        underwriters: [],
         // One API node, so every role-driven test (`nodeOfRole`, `it.each(Object.values(NodeRole))`)
         // finds a planned node of the api role.
         api: [pair(7)],
@@ -118,8 +118,6 @@ export const PersistedFixture: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false,
-  enableLaunchWithheldOperations: false,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
   deploymentKind: ClusterDeploymentKind.local,

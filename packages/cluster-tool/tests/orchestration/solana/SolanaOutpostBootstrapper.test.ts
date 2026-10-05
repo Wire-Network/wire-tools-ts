@@ -1,10 +1,9 @@
-import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
-import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { PublicKey } from "@solana/web3.js"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
-import { getLogger } from "@wireio/cluster-tool/logging"
+
 import { toURL } from "@wireio/cluster-tool/utils"
 
 /** A minimal roster entry — the asserts under test never read its contents. */
@@ -16,24 +15,15 @@ const bootstrapOperator = (): SolanaOutpostBootstrapper.BootstrapOperator => ({
 })
 
 /** A seed of `size` paired roster entries + group members (roster IS the group). */
-const seedOfSize = (size: number): SolanaOutpostBootstrapper.OppBootstrapSeed => {
+const seedOfSize = (
+  size: number
+): SolanaOutpostBootstrapper.OppBootstrapSeed => {
   const operators = Array.from({ length: size }, bootstrapOperator)
-  return { operators, groupMembers: operators.map(operator => operator.solAddress) }
+  return {
+    operators,
+    groupMembers: operators.map(operator => operator.solAddress)
+  }
 }
-
-describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
-  it("provisions USDCSOL / USDTSOL / LIQSOL with the expected decimals", () => {
-    const byCode = new Map(
-      SolanaOutpostBootstrapper.SplReserveSpecifications.map(spec => [
-        spec.codeName,
-        spec
-      ])
-    )
-    expect(byCode.get("USDCSOL")?.decimals).toBe(6)
-    expect(byCode.get("USDTSOL")?.decimals).toBe(6)
-    expect(byCode.get("LIQSOL")?.decimals).toBe(9)
-  })
-})
 
 describe("SolanaOutpostBootstrapper.PdaSeed", () => {
   it("carries the liqsol global_config seed matching the on-chain program", () => {
@@ -150,90 +140,5 @@ describe("SolanaOutpostBootstrapper.oppBootstrap argument validation", () => {
         epochDurationSec
       )
     ).rejects.toThrow(/program keypair missing/)
-  })
-})
-
-const BootstrapperSourceFile = Path.resolve(
-  __dirname,
-  "../../../src/orchestration/solana/SolanaOutpostBootstrapper.ts"
-)
-
-describe("SolanaOutpostBootstrapper.seedWithheldOperations (launch policy)", () => {
-  const ProgramName = "launch_policy_fixture"
-  const ProgramVersion = "0.0.0"
-  const IdlSpecVersion = "0.1.0"
-  let rpcUrl: string
-
-  beforeAll(async () => {
-    rpcUrl = toURL(
-      await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultSolanaRpc
-      )
-    )
-  })
-
-  /** An instruction-less program: any `program.methods.<x>` call would throw, and no RPC is ever issued. */
-  function createEmptyProgram(deployer: Keypair): anchor.Program<anchor.Idl> {
-    const provider = new anchor.AnchorProvider(
-      new Connection(rpcUrl),
-      new anchor.Wallet(deployer),
-      {}
-    )
-    return new anchor.Program(
-      {
-        address: PublicKey.default.toBase58(),
-        metadata: {
-          name: ProgramName,
-          version: ProgramVersion,
-          spec: IdlSpecVersion
-        },
-        instructions: []
-      },
-      provider
-    )
-  }
-
-  it("skips every withheld call by default and reports it did not run", async () => {
-    const deployer = Keypair.generate(),
-      bootstrapper = new SolanaOutpostBootstrapper({
-        solanaPath: "/repo/sol",
-        rpcUrl
-      })
-    // the bootstrapper's `log` is `getLogger(__filename)`, cached per category
-    const info = jest.spyOn(getLogger(BootstrapperSourceFile), "info")
-    try {
-      await expect(
-        bootstrapper.seedWithheldOperations(
-          deployer,
-          createEmptyProgram(deployer),
-          PublicKey.default,
-          new anchor.BN(1)
-        )
-      ).resolves.toBe(false)
-      expect(info).toHaveBeenCalledWith(
-        SolanaOutpostBootstrapper.LaunchWithheldOperationsSkippedMessage
-      )
-    } finally {
-      info.mockRestore()
-    }
-  })
-
-  it("opens the gate once the policy flag is set (reaches the programId assertion)", async () => {
-    const deployer = Keypair.generate(),
-      bootstrapper = new SolanaOutpostBootstrapper({
-        solanaPath: "/repo/sol",
-        rpcUrl,
-        enableLaunchWithheldOperations: true
-      })
-    // programId is absent without a program keypair → the enabled path asserts
-    // before touching the chain, proving the gate opened.
-    await expect(
-      bootstrapper.seedWithheldOperations(
-        deployer,
-        createEmptyProgram(deployer),
-        PublicKey.default,
-        new anchor.BN(1)
-      )
-    ).rejects.toThrow(/programId required/)
   })
 })

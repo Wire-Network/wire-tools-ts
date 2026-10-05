@@ -1,3 +1,4 @@
+import { Constants } from "../../Constants.js"
 /**
  * WireSyndicationTool — reads of the depot's syndication state (`sysio.synd`,
  * `sysio.bond`, `sysio.andon`, the `sysio.liq` shadow ledger and the
@@ -40,7 +41,6 @@ import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/Bon
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
-import { WireReserveTool } from "./WireReserveTool.js"
 
 const {
   SysioContractName,
@@ -928,7 +928,7 @@ export namespace WireSyndicationTool {
 
   /**
    * Verify each shadow's `sysio.liq::stat` supply is at the depot frame's precision
-   * ({@link WireReserveTool.DepotPrecisionCap}, the frame the Ethereum pool floors its
+   * ({@link Constants.DepotPrecisionCap}, the frame the Ethereum pool floors its
    * custody to), which is at least {@link BondIncrementDecimals} — below it `sysio.bond`
    * cannot bond the token and every envelope of the pair stalls WAITING.
    */
@@ -959,8 +959,8 @@ export namespace WireSyndicationTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(
-      WireReserveTool.DepotPrecisionCap >= BondIncrementDecimals,
-      `WireSyndicationTool: the depot frame (${WireReserveTool.DepotPrecisionCap}) is below sysio.bond's increment decimals (${BondIncrementDecimals})`
+      Constants.DepotPrecisionCap >= BondIncrementDecimals,
+      `WireSyndicationTool: the depot frame (${Constants.DepotPrecisionCap}) is below sysio.bond's increment decimals (${BondIncrementDecimals})`
     )
     const precisions = await Promise.all(
       input.symbolCodes.map(async symbolCode => ({
@@ -970,11 +970,11 @@ export namespace WireSyndicationTool {
       }))
     )
     const wrong = precisions.filter(
-      ({ precision }) => precision !== WireReserveTool.DepotPrecisionCap
+      ({ precision }) => precision !== Constants.DepotPrecisionCap
     )
     Assert.ok(
       wrong.length === 0,
-      `WireSyndicationTool: shadow precision must be ${WireReserveTool.DepotPrecisionCap}; got ` +
+      `WireSyndicationTool: shadow precision must be ${Constants.DepotPrecisionCap}; got ` +
         wrong
           .map(({ symbolCode, precision }) => `${symbolCode}=${precision}`)
           .join(", ")

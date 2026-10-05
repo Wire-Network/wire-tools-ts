@@ -33,18 +33,9 @@ const log = getLogger(__filename)
  */
 export namespace ExternalOutpostSteps {
   /** ETH outpost address keys the daemons require (parity with local prep). */
-  const RequiredEthereumAddressKeys = [
-    "OPP",
-    "OPPInbound",
-    "OperatorRegistry",
-    "ReserveManager"
-  ] as const
+  const RequiredEthereumAddressKeys = ["OPP", "OPPInbound"] as const
   /** SOL outpost IDL instructions the daemons require (parity with local prep). */
-  const RequiredSolanaIdlInstructions = [
-    "epoch_in",
-    "commit_underwrite",
-    "request_swap"
-  ] as const
+  const RequiredSolanaIdlInstructions = ["epoch_in"] as const
 
   /** Minimum head-block advance that proves the depot is producing blocks. */
   export const HeadAdvanceMinBlocks = 2
@@ -115,7 +106,9 @@ export namespace ExternalOutpostSteps {
       "ExternalOutpostSteps.planMaterialize requires config.externalOutposts (external-outpost mode only)"
     )
     const dataPath = ctx.config.dataPath,
-      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
+        ctx.config
+      ),
       abiDir = Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath),
       idlDir = Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath),
       materialize = (source: string, destination: string): void => {
@@ -418,7 +411,9 @@ export namespace ExternalOutpostSteps {
         `an outbound envelope is queued for every registered outpost (${expectedLabel})`,
         async () => {
           const { rows: outbound } = await ctx.wire.getOutboundEnvelopes(),
-            queued = new Set(outbound.map(row => packedSlugValue(row.chain_code)))
+            queued = new Set(
+              outbound.map(row => packedSlugValue(row.chain_code))
+            )
           return expected.every(code => queued.has(code))
         },
         OutboundEnvelopesPollBudgetMs,
@@ -439,7 +434,10 @@ export namespace ExternalOutpostSteps {
       )
       throw new NestedError(
         "external-outpost bootstrap gate: the depot queued no outbound envelope for every registered outpost",
-        { cause: error, context: { expected: expectedLabel, depotEnvelopeCount } }
+        {
+          cause: error,
+          context: { expected: expectedLabel, depotEnvelopeCount }
+        }
       )
     }
   }

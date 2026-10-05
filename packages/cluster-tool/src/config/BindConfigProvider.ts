@@ -208,7 +208,7 @@ export namespace BindConfigProvider {
    */
   export const DefaultAdHocCount = 0
   export const DefaultBatchCount = 3
-  export const DefaultUnderwriterCount = 1
+  export const DefaultUnderwriterCount = 0
   /**
    * API-node pairs claimed when a caller names no count — none. Raising it
    * makes every cluster and flow that omits `apiCount` plan that many API nodes.

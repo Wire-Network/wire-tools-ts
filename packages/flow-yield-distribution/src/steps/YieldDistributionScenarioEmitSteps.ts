@@ -14,10 +14,25 @@
  * produces one.
  */
 
+/**
+ * YieldDistributionScenarioEmitSteps — Step factories for the flow's synthetic
+ * STAKING_REWARD writes. Every emit is its OWN {@link ClusterBuildStep} so the
+ * `Report` records it: {@link YieldDistributionScenarioEmitSteps.planEthereumEmit}
+ * (one `MockYieldEmitter.emitYield(...)` tx) and {@link
+ * YieldDistributionScenarioEmitSteps.planEthereumEmitReplay} (the SAME
+ * `external_epoch_ref` re-emitted — the emitter's per-staker monotonic check
+ * MUST revert it). Emitter / contract loading are pure value helpers executed
+ * INSIDE the runners.
+ *
+ * The flow is Ethereum-only: the Solana outpost emits STAKING_REWARD from no
+ * real path (its staking surface is a separate developer track), and the
+ * harness no longer injects attestations. The SOL leg returns when the outpost
+ * produces one.
+ */
 import Assert from "node:assert"
 import { ethers } from "ethers"
 import {
-  EthereumCollateralTool,
+  OperatorDaemonArtifactsKey,
   Report,
   emitYieldBatch,
   loadMockYieldEmitter,
@@ -26,8 +41,7 @@ import {
   type ClusterBuildStepOptions,
   type MockYieldEmitterContract,
   type OutputKey,
-  type StepInput,
-  ClusterConfigProvider
+  type StepInput
 } from "@wireio/cluster-tool"
 import { YieldDistributionScenarioConstants as Constants } from "../YieldDistributionScenarioConstants.js"
 
@@ -240,9 +254,7 @@ export namespace YieldDistributionScenarioEmitSteps {
   ): MockYieldEmitterContract {
     return loadMockYieldEmitter(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      ctx.outputs.assert(OperatorDaemonArtifactsKey).ethereumAddresses,
       ctx.ethereum.wallet.signer
     )
   }

@@ -101,8 +101,6 @@ const stubConfig: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false,
-  enableLaunchWithheldOperations: false,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
   deploymentKind: ClusterDeploymentKind.local,

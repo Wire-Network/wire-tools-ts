@@ -8,17 +8,17 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey
 } from "@solana/web3.js"
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
+
 import { SlugName } from "@wireio/sdk-core"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
-import { mapSeries } from "../../utils/asyncUtils.js"
+
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
+
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 
@@ -38,13 +38,6 @@ export interface SolanaOutpostBootstrapperOptions {
    * When `null`, SPL provisioning is skipped (native SOL still works).
    */
   clusterDataPath?: string | null
-  /**
-   * Run the launch-withheld calls (`init_reserve`, `create_reserve_native`, mock
-   * SPL reserve provisioning). Default `false`: the launch build of the program
-   * answers each with `OperationDisabled`. Sourced from
-   * `ClusterConfig.enableLaunchWithheldOperations` — never a second setting.
-   */
-  enableLaunchWithheldOperations?: boolean
 }
 
 /** Resolved {@link SolanaOutpostBootstrapper} config (derived defaults filled in). */
@@ -53,7 +46,6 @@ export interface SolanaOutpostBootstrapperConfig {
   rpcUrl: string
   deployerKeypairFile: string
   clusterDataPath: string | null
-  enableLaunchWithheldOperations: boolean
 }
 
 /**
@@ -93,9 +85,7 @@ export class SolanaOutpostBootstrapper {
         (options.clusterDataPath != null
           ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
           : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
-      clusterDataPath: options.clusterDataPath ?? null,
-      enableLaunchWithheldOperations:
-        options.enableLaunchWithheldOperations ?? false
+      clusterDataPath: options.clusterDataPath ?? null
     }
     this.connection = new Connection(
       options.rpcUrl,
@@ -144,7 +134,8 @@ export class SolanaOutpostBootstrapper {
     log.info("=== Solana outpost bootstrap ===")
 
     const { solanaPath } = this.config,
-      programKeypairFile = SolanaOutpostProgramTool.programKeypairFile(solanaPath)
+      programKeypairFile =
+        SolanaOutpostProgramTool.programKeypairFile(solanaPath)
     this.programId = SolanaOutpostProgramTool.programId(solanaPath)
     if (this.programId != null) {
       log.info(
@@ -234,21 +225,6 @@ export class SolanaOutpostBootstrapper {
   /** Derive a program-derived address from `seed` under the opp-outpost program. */
   private deriveProgramAddress(programId: PublicKey, seed: string): PublicKey {
     return SolanaOutpostProgramTool.derivePda(programId, Buffer.from(seed))
-  }
-
-  /** Derive a `(token_code, reserve_code)`-scoped PDA (reserve / reserve_vault). */
-  private deriveReserveScopedAddress(
-    programId: PublicKey,
-    seed: string,
-    tokenCode: number,
-    reserveCode: number
-  ): PublicKey {
-    return SolanaOutpostProgramTool.derivePda(
-      programId,
-      Buffer.from(seed),
-      slugNameToLittleEndianBuffer(tokenCode),
-      slugNameToLittleEndianBuffer(reserveCode)
-    )
   }
 
   private async initializePDAs(deployer: Keypair): Promise<void> {
@@ -378,273 +354,6 @@ export class SolanaOutpostBootstrapper {
       "set_token_precision(SOL)"
     )
     log.info("SOL native-token precision registered")
-
-    await this.seedWithheldOperations(deployer, program, configPda, solTokenCode)
-  }
-
-  /**
-   * Run the launch-withheld outpost bootstrap calls — `init_reserve`,
-   * `create_reserve_native`, and the mock SPL reserve provisioning — when
-   * `enableLaunchWithheldOperations` is set; otherwise skip them and log the
-   * policy. The launch build of the program answers each with
-   * `OperationDisabled`, and the inbound path does not need them: `epoch_in`
-   * declares `reserve_aggregate` as an `UncheckedAccount` with a seeds check
-   * only, so an uninitialised PDA passes.
-   *
-   * @param deployer - outpost admin / payer keypair.
-   * @param program - the loaded `liqsol_core` Anchor program.
-   * @param configPda - the `OutpostConfig` PDA.
-   * @param solTokenCode - the native-SOL token slug code.
-   * @return `true` when the withheld calls ran, `false` when the policy skipped them.
-   */
-  async seedWithheldOperations(
-    deployer: Keypair,
-    program: anchor.Program<anchor.Idl>,
-    configPda: PublicKey,
-    solTokenCode: anchor.BN
-  ): Promise<boolean> {
-    if (!this.config.enableLaunchWithheldOperations) {
-      log.info(SolanaOutpostBootstrapper.LaunchWithheldOperationsSkippedMessage)
-      return false
-    }
-    const programId = this.programId
-    Assert.ok(programId != null, "seedWithheldOperations: programId required")
-    // Initialize the ReserveAggregate PDA (`init_reserve`).
-    const reserveAggregatePda = this.deriveProgramAddress(
-      programId,
-      SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
-    )
-    log.info(`  reserveAggregate:       ${reserveAggregatePda.toBase58()}`)
-    const initReserveTransaction = await program.methods
-      .initReserve()
-      .accounts({
-        payer: deployer.publicKey,
-        ...this.getAdminAccounts(deployer),
-        config: configPda,
-        reserveAggregate: reserveAggregatePda,
-        systemProgram: anchor.web3.SystemProgram.programId
-      })
-      .signers([deployer])
-      .transaction()
-    await this.runSimpleAuthorityInstruction(
-      deployer,
-      initReserveTransaction,
-      "init_reserve"
-    )
-    log.info("SOL ReserveAggregate PDA initialized")
-
-    // Bootstrap-seeded native SOL reserve — the outpost-side mirror of the
-    // depot's SOLANA/SOL/PRIMARY row. `create_reserve_native` is the
-    // authority-gated, NATIVE-only bootstrap-symmetry IX (no SPL Mint/ATA, no
-    // RESERVE_CREATE attestation; status=Active set inline).
-    const solReserveCode = new anchor.BN(
-      SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
-    )
-    const nativeReserveAmount = new anchor.BN(
-      SolanaOutpostBootstrapper.BootstrapNativeReserveLamports
-    )
-    const solReservePda = this.deriveReserveScopedAddress(
-      programId,
-      SolanaOutpostBootstrapper.PdaSeed.Reserve,
-      SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename),
-      SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
-    )
-    log.info(`  reserve (SOL/PRIMARY):  ${solReservePda.toBase58()}`)
-    const createReserveTransaction = await program.methods
-      .createReserveNative(
-        solTokenCode,
-        solReserveCode,
-        nativeReserveAmount,
-        nativeReserveAmount,
-        SolanaOutpostBootstrapper.BootstrapConnectorWeightBps,
-        "SOLANA-SOL/WIRE primary reserve",
-        "Bootstrap-seeded native SOL ↔ WIRE reserve (outpost-side custody)"
-      )
-      .accounts({
-        payer: deployer.publicKey,
-        ...this.getAdminAccounts(deployer),
-        config: configPda,
-        reserve: solReservePda,
-        systemProgram: anchor.web3.SystemProgram.programId
-      })
-      .signers([deployer])
-      .transaction()
-    await this.runSimpleAuthorityInstruction(
-      deployer,
-      createReserveTransaction,
-      "create_reserve_native"
-    )
-    log.info(
-      `SOL native reserve seeded (PDA=${solReservePda.toBase58()}, lamports=${SolanaOutpostBootstrapper.BootstrapNativeReserveLamports})`
-    )
-
-    if (this.config.clusterDataPath != null)
-      await this.provisionSplReserves(deployer, program, configPda)
-    return true
-  }
-
-  /**
-   * Provision mock SPL reserves (USDCSOL, USDTSOL, LIQSOL): create each mint,
-   * fund the deployer ATA, bind via `set_token_address` + `set_token_precision`,
-   * then `create_reserve_spl_authority` to allocate the per-reserve vault seeded
-   * with bootstrap liquidity. Persists the mint pubkeys to
-   * `<clusterDataPath>/sol-mock-mints.json` for depot-side token registration.
-   */
-  private async provisionSplReserves(
-    deployer: Keypair,
-    program: anchor.Program<anchor.Idl>,
-    configPda: PublicKey
-  ): Promise<void> {
-    const clusterDataPath = this.config.clusterDataPath
-    const programId = this.programId
-    Assert.ok(
-      clusterDataPath != null,
-      "provisionSplReserves: clusterDataPath required"
-    )
-    Assert.ok(programId != null, "provisionSplReserves: programId required")
-    log.info(
-      "[solana] provisioning mock SPL reserves (USDCSOL, USDTSOL, LIQSOL)..."
-    )
-
-    const primaryCode = new anchor.BN(
-      SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
-    )
-    const persisted: SolanaOutpostBootstrapper.PersistedSplMint[] = []
-
-    // Every registered SPL mint can back a CollateralPosition, and an
-    // OPERATOR_ACTION(SLASH) settles that custody into the reserve_aggregate's
-    // canonical ATA (opp/inbound.rs `process_slash_action` SPL branch). The
-    // program never creates ATAs, so a missing one makes the slash log-and-skip
-    // — silently dropping the seizure, which carries no return attestation to
-    // re-drive it. Pre-create the aggregate ATA per mint here so every SPL slash
-    // has a live destination (SOL-380).
-    const reserveAggregatePda = this.deriveProgramAddress(
-      programId,
-      SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
-    )
-
-    // Sequential: each step depends on the previous landing on-chain.
-    await mapSeries(
-      SolanaOutpostBootstrapper.SplReserveSpecifications,
-      async specification => {
-        const code = SlugName.from(specification.codeName)
-        const codeBigNumber = new anchor.BN(code)
-        log.info(
-          `[solana]  - creating mock SPL mint for ${specification.codeName} (decimals=${specification.decimals})`
-        )
-        const mint = await SolanaFundingTool.createMockSplMint(
-          this.connection,
-          deployer,
-          specification.decimals
-        )
-        log.info(`[solana]    mint=${mint.toBase58()}`)
-
-        const deployerAta = await SolanaFundingTool.mintMockSplToUser(
-          this.connection,
-          deployer,
-          mint,
-          deployer.publicKey,
-          specification.chainAmount * 2n
-        )
-        log.info(
-          `[solana]    deployer ATA funded (ata=${deployerAta.toBase58()})`
-        )
-
-        const setAddressTransaction = await program.methods
-          .setTokenAddress(codeBigNumber, mint)
-          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
-          .signers([deployer])
-          .transaction()
-        await this.runSimpleAuthorityInstruction(
-          deployer,
-          setAddressTransaction,
-          `set_token_address(${specification.codeName})`
-        )
-
-        const setPrecisionTransaction = await program.methods
-          .setTokenPrecision(codeBigNumber, specification.decimals)
-          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
-          .signers([deployer])
-          .transaction()
-        await this.runSimpleAuthorityInstruction(
-          deployer,
-          setPrecisionTransaction,
-          `set_token_precision(${specification.codeName})`
-        )
-
-        // reserve_aggregate is a PDA (off-curve owner) — the SPL slash destination.
-        const aggregateAta =
-          await SolanaFundingTool.ensureAssociatedTokenAccount(
-            this.connection,
-            deployer,
-            mint,
-            reserveAggregatePda,
-            true
-          )
-        log.info(
-          `[solana]    reserve_aggregate ATA ensured (ata=${aggregateAta.toBase58()})`
-        )
-
-        const reservePda = this.deriveReserveScopedAddress(
-          programId,
-          SolanaOutpostBootstrapper.PdaSeed.Reserve,
-          code,
-          SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
-        )
-        const reserveVaultPda = this.deriveReserveScopedAddress(
-          programId,
-          SolanaOutpostBootstrapper.PdaSeed.ReserveVault,
-          code,
-          SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
-        )
-        const chainAmount = new anchor.BN(specification.chainAmount.toString())
-        const createTransaction = await program.methods
-          .createReserveSplAuthority(
-            codeBigNumber,
-            primaryCode,
-            chainAmount,
-            chainAmount,
-            SolanaOutpostBootstrapper.BootstrapConnectorWeightBps,
-            `SOLANA-${specification.codeName}/WIRE primary reserve`,
-            `Bootstrap-seeded mock ${specification.codeName} ↔ WIRE reserve (outpost-side custody)`
-          )
-          .accounts({
-            payer: deployer.publicKey,
-            ...this.getAdminAccounts(deployer),
-            config: configPda,
-            reserve: reservePda,
-            reserveVault: reserveVaultPda,
-            mint,
-            adminAta: deployerAta,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            systemProgram: anchor.web3.SystemProgram.programId,
-            rent: anchor.web3.SYSVAR_RENT_PUBKEY
-          })
-          .signers([deployer])
-          .transaction()
-        await this.runSimpleAuthorityInstruction(
-          deployer,
-          createTransaction,
-          `create_reserve_spl_authority(${specification.codeName}/PRIMARY)`
-        )
-
-        persisted.push({
-          code,
-          mint: mint.toBase58(),
-          decimals: specification.decimals
-        })
-        log.info(
-          `[solana]    reserve PDA seeded (${specification.codeName}/PRIMARY)`
-        )
-      }
-    )
-
-    mkdirs(clusterDataPath)
-    const persistedFile = Path.join(clusterDataPath, "sol-mock-mints.json")
-    Fs.writeFileSync(persistedFile, JSON.stringify(persisted, null, 2))
-    log.info(
-      `[solana] persisted ${persisted.length} mock SPL mint(s) to ${persistedFile}`
-    )
   }
 
   /**
@@ -768,9 +477,18 @@ export class SolanaOutpostBootstrapper {
     epochDurationSec: number
   ): Promise<void> {
     const { operators, groupMembers } = seed
-    Assert.ok(operators.length > 0, "oppBootstrap: at least one operator is required")
-    Assert.ok(groupMembers.length > 0, "oppBootstrap: at least one group member is required")
-    Assert.ok(epochDurationSec > 0, "oppBootstrap: epochDurationSec must be positive")
+    Assert.ok(
+      operators.length > 0,
+      "oppBootstrap: at least one operator is required"
+    )
+    Assert.ok(
+      groupMembers.length > 0,
+      "oppBootstrap: at least one group member is required"
+    )
+    Assert.ok(
+      epochDurationSec > 0,
+      "oppBootstrap: epochDurationSec must be positive"
+    )
     Assert.ok(
       SolanaOutpostBootstrapper.oppBootstrapEncodedBytes(
         operators.length,
@@ -803,7 +521,10 @@ export class SolanaOutpostBootstrapper {
 
     const Seed = SolanaOutpostBootstrapper.PdaSeed,
       configPda = this.deriveProgramAddress(programId, Seed.OutpostConfig),
-      operatorRegistryPda = this.deriveProgramAddress(programId, Seed.OperatorRegistry)
+      operatorRegistryPda = this.deriveProgramAddress(
+        programId,
+        Seed.OperatorRegistry
+      )
 
     log.info(
       `opp_bootstrap: seeding ${operators.length} operator(s), group of ${groupMembers.length}, epoch_duration=${epochDurationSec}s`
@@ -818,26 +539,22 @@ export class SolanaOutpostBootstrapper {
       })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, transaction, "opp_bootstrap")
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      transaction,
+      "opp_bootstrap"
+    )
     log.info("opp_bootstrap: SOL outpost roster seeded — registry_initialized")
   }
 }
 
 export namespace SolanaOutpostBootstrapper {
-  /** Logged when the launch policy skips the withheld outpost operations. */
-  export const LaunchWithheldOperationsSkippedMessage =
-    "launch policy: skipping init_reserve, create_reserve_native and mock SPL reserve provisioning (enable with --enable-launch-withheld-operations)"
   /** Total attempts allowed for each airdrop / RPC retry block. */
   export const AirdropRetryAttempts = 3
   /** Delay between airdrop / RPC retries (ms). */
   export const AirdropRetryDelayMs = 2_000
   /** Default airdrop size (SOL) for the deployer + refunded signing accounts. */
   export const DefaultAirdropSol = 100
-  /**
-   * Lamports the bootstrap-seeded native SOL Reserve PDA is funded with — sized
-   * for ~40 swap-with-underwriting runs (~0.5 SOL each) plus the rent floor.
-   */
-  export const BootstrapNativeReserveLamports = 20 * LAMPORTS_PER_SOL
   /** Bancor connector weight (basis points) for the bootstrap-seeded reserves. */
   export const BootstrapConnectorWeightBps = 5000
 
@@ -847,8 +564,6 @@ export namespace SolanaOutpostBootstrapper {
   export const SolTokenCodename = "SOL"
   /** Native SOL chain decimals (lamports) — bound via `set_token_precision`. */
   export const SolTokenDecimals = 9
-  /** Default reserve codename. */
-  export const PrimaryReserveCodename = "PRIMARY"
 
   /** Program-derived-address seeds — MUST match `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
   export namespace PdaSeed {
@@ -858,9 +573,6 @@ export namespace SolanaOutpostBootstrapper {
     export const InboundEnvelopes = "inbound_envelopes"
     export const OutboundEnvelopes = "outbound_envelopes"
     export const LatestOutboundEnvelope = "latest_outbound_envelope"
-    export const ReserveAggregate = "reserve_aggregate"
-    export const Reserve = "reserve"
-    export const ReserveVault = "reserve_vault"
     /**
      * Per-`(operator, token_code)` bonded-collateral position. BOTH deposit
      * instructions declare it `init_if_needed, payer = depositor`, so it is
@@ -1000,33 +712,6 @@ export namespace SolanaOutpostBootstrapper {
     /** Chain-native decimals (6 for USDC/USDT, 9 for LIQSOL). */
     decimals: number
   }
-
-  /** A mock SPL reserve to provision: codename, decimals, bootstrap chain-side amount. */
-  export interface SplReserveSpecification {
-    codeName: string
-    decimals: number
-    chainAmount: bigint
-  }
-
-  /**
-   * The mock SPL reserves provisioned at bootstrap. USDCSOL/USDTSOL use 6
-   * decimals (mainnet parity); LIQSOL uses 9 (depot parity). Distinct SOL-side
-   * slug_names (`USDCSOL`/`USDTSOL`) per the v6 "two Token rows per pair" rule.
-   */
-  export const SplReserveSpecifications: ReadonlyArray<SplReserveSpecification> =
-    [
-      {
-        codeName: "USDCSOL",
-        decimals: 6,
-        chainAmount: 1_000_000n * 1_000_000n
-      },
-      {
-        codeName: "USDTSOL",
-        decimals: 6,
-        chainAmount: 1_000_000n * 1_000_000n
-      },
-      { codeName: "LIQSOL", decimals: 9, chainAmount: 20n * 1_000_000_000n }
-    ]
 
   /** Default deployer keypair file (`~/.config/solana/id.json`). */
   export function defaultDeployerKeypairFile(): string {

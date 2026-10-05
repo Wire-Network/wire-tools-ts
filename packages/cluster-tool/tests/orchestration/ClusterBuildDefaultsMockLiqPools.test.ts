@@ -30,10 +30,20 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
   it("always configures the swap, opens the shadow symbols and sets the kicker, in that order", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
     const names = collectPhaseNames(cluster.children)
-    expect(names.indexOf("SwapConfig")).toBeGreaterThan(names.indexOf("Registry"))
-    expect(names.indexOf("ShadowLiqTokens")).toBe(names.indexOf("SwapConfig") + 1)
-    expect(names.indexOf("LiqConfig")).toBe(names.indexOf("ShadowLiqTokens") + 1)
-    expect(names.indexOf("UnderwriterConfig")).toBeGreaterThan(names.indexOf("LiqConfig"))
+    expect(names.indexOf("SwapConfig")).toBeGreaterThan(
+      names.indexOf("Registry")
+    )
+    expect(names.indexOf("ShadowLiqTokens")).toBe(
+      names.indexOf("SwapConfig") + 1
+    )
+    expect(names.indexOf("LiqConfig")).toBe(
+      names.indexOf("ShadowLiqTokens") + 1
+    )
+    expect(names.indexOf("SyndicationConfig")).toBeGreaterThan(
+      names.indexOf("LiqConfig")
+    )
+    expect(names).not.toContain("UnderwriterConfig")
+    expect(names).not.toContain("ReserveConfig")
   })
 
   it("omits the MockLiqPools phase by default (no --enable-mock-liq-pools)", async () => {
@@ -51,18 +61,11 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MockLiqPools")
     // gated phase follows the kicker and the per-pair syndication config, pre-EpochBootstrap
-    expect(names.indexOf("MockLiqPools")).toBe(names.indexOf("SyndicationConfig") + 1)
-    expect(names.indexOf("MockLiqPools")).toBeLessThan(names.indexOf("EpochBootstrap"))
-  })
-
-  it("keeps MockReserves directly after Registry when both mock surfaces are enabled", async () => {
-    const cluster = await ClusterBuildDefaults.create({
-      ...baseOptions(),
-      enableMockReserves: true,
-      enableMockLiqPools: true
-    })
-    const names = collectPhaseNames(cluster.children)
-    expect(names.indexOf("MockReserves")).toBe(names.indexOf("Registry") + 1)
-    expect(names.indexOf("SwapConfig")).toBe(names.indexOf("MockReserves") + 1)
+    expect(names.indexOf("MockLiqPools")).toBe(
+      names.indexOf("SyndicationConfig") + 1
+    )
+    expect(names.indexOf("MockLiqPools")).toBeLessThan(
+      names.indexOf("EpochBootstrap")
+    )
   })
 })

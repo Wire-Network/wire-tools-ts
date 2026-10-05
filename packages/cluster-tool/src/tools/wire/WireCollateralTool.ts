@@ -1,3 +1,4 @@
+import { Constants } from "../../Constants.js"
 /**
  * WireCollateralTool — Step factories for depot-native operator collateral on
  * `sysio.opreg`. Every on-chain WRITE is its OWN {@link ClusterBuildStep} so the
@@ -20,7 +21,10 @@
 
 import Assert from "node:assert"
 
-import type { ChainTokenAmount, CollateralRequirement } from "@wireio/cluster-tool-shared"
+import type {
+  ChainTokenAmount,
+  CollateralRequirement
+} from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
@@ -38,7 +42,6 @@ import { OpregContractSteps } from "../../orchestration/steps/contracts/sysio/Op
 import { TokenContractSteps } from "../../orchestration/steps/contracts/sysio/TokenContractSteps.js"
 import { Report } from "../../report/Report.js"
 import { slugValue } from "../../utils/slugUtils.js"
-import { WireReserveTool } from "./WireReserveTool.js"
 import { formatWireAsset } from "./WireUserTool.js"
 
 const log = getLogger(__filename)
@@ -85,7 +88,7 @@ export namespace WireCollateralTool {
    * The WIRE token's packed slug code as the `bigint` a `TokenAmount` carries — the token
    * every WIRE bond, claim and payout here is keyed on.
    */
-  export const WireTokenCode = BigInt(WireReserveTool.WireTokenCode)
+  export const WireTokenCode = BigInt(Constants.WireTokenCode)
 
   // ── Step: WIRE funding (`sysio.token::transfer`) ─────────────────────────
 
@@ -104,7 +107,9 @@ export namespace WireCollateralTool {
    *
    * @throws If `collateral` is not a WIRE amount on the WIRE chain.
    */
-  export function planFunding<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planFunding<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -173,7 +178,9 @@ export namespace WireCollateralTool {
    * @throws If `collateral` is not a WIRE amount on the WIRE chain — only WIRE has a
    *   harness funding path.
    */
-  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -248,7 +255,9 @@ export namespace WireCollateralTool {
    *
    * @throws If `collateral` is not on the WIRE chain.
    */
-  export function planWithdrawal<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planWithdrawal<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -278,7 +287,9 @@ export namespace WireCollateralTool {
     const operator = ctx.keyStore.assertOperator(input.operatorLabel),
       { tokenCode, amount } = input.collateral.amount,
       priorRequestIds = new Set(
-        (await readWithdrawRequests(ctx, operator.account)).map(row => BigInt(row.request_id))
+        (await readWithdrawRequests(ctx, operator.account)).map(row =>
+          BigInt(row.request_id)
+        )
       )
     await OpregContractSteps.runWithdraw(
       ctx,
@@ -297,7 +308,7 @@ export namespace WireCollateralTool {
     const queued = (await readWithdrawRequests(ctx, operator.account)).some(
       row =>
         !priorRequestIds.has(BigInt(row.request_id)) &&
-        slugValue(row.chain_code) === WireReserveTool.WireChainCode &&
+        slugValue(row.chain_code) === Constants.WireChainCode &&
         BigInt(slugValue(row.token_code)) === tokenCode &&
         BigInt(row.amount) === amount
     )
@@ -336,7 +347,9 @@ export namespace WireCollateralTool {
     account: string
   ): Promise<string> {
     try {
-      const latest = (await findOperatorRow(ctx, account))?.recent_actions.at(-1)
+      const latest = (await findOperatorRow(ctx, account))?.recent_actions.at(
+        -1
+      )
       return latest != null && !latest.success
         ? `contract reason: ${latest.error_message}`
         : UnreadableRefusalReason
@@ -365,7 +378,9 @@ export namespace WireCollateralTool {
   }
 
   /** A single `opreg::claimremit` of the operator's `remitclaims{account, token}` row. */
-  export function planClaimremit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClaimremit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -435,7 +450,9 @@ export namespace WireCollateralTool {
    * Place it immediately before the write it measures, with no other transfer to the
    * operator in between.
    */
-  export function planRecordWireBalance<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRecordWireBalance<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -460,7 +477,10 @@ export namespace WireCollateralTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const account = ctx.keyStore.assertOperator(input.operatorLabel).account
-    ctx.outputs.set(wireBalanceKey(input.operatorLabel), await ctx.wire.getWireBalance(account))
+    ctx.outputs.set(
+      wireBalanceKey(input.operatorLabel),
+      await ctx.wire.getWireBalance(account)
+    )
   }
 
   /** Input for {@link planVerifyWireBalanceIncrease}. */
@@ -477,7 +497,9 @@ export namespace WireCollateralTool {
    * {@link planRecordWireBalance} recorded it — the `claimremit` transfer arrived, in full
    * and no more. One read: the payout is confirmed irreversible before this Step runs.
    */
-  export function planVerifyWireBalanceIncrease<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planVerifyWireBalanceIncrease<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -490,13 +512,19 @@ export namespace WireCollateralTool {
       name,
       description,
       options,
-      { kind: "WireCollateralTool.VerifyWireBalanceIncreaseInput", operatorLabel, increase },
+      {
+        kind: "WireCollateralTool.VerifyWireBalanceIncreaseInput",
+        operatorLabel,
+        increase
+      },
       runVerifyWireBalanceIncrease
     )
   }
 
   /** Named runner — compare the operator's liquid WIRE with the recorded balance. */
-  export async function runVerifyWireBalanceIncrease<C extends ClusterBuildContext>(
+  export async function runVerifyWireBalanceIncrease<
+    C extends ClusterBuildContext
+  >(
     ctx: C,
     input: VerifyWireBalanceIncreaseInput,
     signal: AbortSignal
@@ -532,7 +560,9 @@ export namespace WireCollateralTool {
    *
    * @throws If `collateral` is not on the WIRE chain.
    */
-  export function planVerifyBalanceRow<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planVerifyBalanceRow<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -546,7 +576,11 @@ export namespace WireCollateralTool {
       name,
       description,
       options,
-      { kind: "WireCollateralTool.VerifyBalanceRowInput", operatorLabel, collateral },
+      {
+        kind: "WireCollateralTool.VerifyBalanceRowInput",
+        operatorLabel,
+        collateral
+      },
       runVerifyBalanceRow
     )
   }
@@ -578,7 +612,7 @@ export namespace WireCollateralTool {
   ): Promise<bigint> {
     const entry = (await findOperatorRow(ctx, account))?.balances.find(
       balance =>
-        slugValue(balance.chain_code) === WireReserveTool.WireChainCode &&
+        slugValue(balance.chain_code) === Constants.WireChainCode &&
         BigInt(slugValue(balance.token_code)) === tokenCode
     )
     return entry == null ? 0n : BigInt(entry.balance)
@@ -595,7 +629,10 @@ export namespace WireCollateralTool {
     ctx: C,
     operatorLabel: string
   ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-    return findOperatorRow(ctx, ctx.keyStore.assertOperator(operatorLabel).account)
+    return findOperatorRow(
+      ctx,
+      ctx.keyStore.assertOperator(operatorLabel).account
+    )
   }
 
   /** The `operators` row for an on-chain `account`, from one complete read; absent when there is none. */
@@ -631,7 +668,9 @@ export namespace WireCollateralTool {
    * runner polls for up to {@link RemitClaimEpochCount} effective epochs. A missing row
    * reads as zero, so a zero expectation verifies a claim that `claimremit` has paid.
    */
-  export function planVerifyRemitClaim<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planVerifyRemitClaim<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -644,7 +683,11 @@ export namespace WireCollateralTool {
       name,
       description,
       options,
-      { kind: "WireCollateralTool.VerifyRemitClaimInput", operatorLabel, claim },
+      {
+        kind: "WireCollateralTool.VerifyRemitClaimInput",
+        operatorLabel,
+        claim
+      },
       runVerifyRemitClaim
     )
   }
@@ -679,10 +722,10 @@ export namespace WireCollateralTool {
       .tables.remitclaims.query({ limit: TableRowLimit })
     assertCompleteRead(result.more, RemitClaimsTable)
     const claim = result.rows.find(
-        row =>
-          row.account === account &&
-          BigInt(slugValue(row.token_code)) === tokenCode
-      )
+      row =>
+        row.account === account &&
+        BigInt(slugValue(row.token_code)) === tokenCode
+    )
     return claim == null ? 0n : BigInt(claim.balance)
   }
 
@@ -706,7 +749,10 @@ export namespace WireCollateralTool {
    * runners later read as `ctx.config.epochDurationSec`.
    */
   export function remitClaimStepTimeoutMs(epochDurationSec: number): number {
-    return remitClaimDeadlineMs(epochDurationSec) + ProtocolTiming.PollDeadlineBufferMs
+    return (
+      remitClaimDeadlineMs(epochDurationSec) +
+      ProtocolTiming.PollDeadlineBufferMs
+    )
   }
 
   // ── value helpers ────────────────────────────────────────────────────────
@@ -714,7 +760,7 @@ export namespace WireCollateralTool {
   /** A WIRE amount on the WIRE chain — the collateral every depot-native bond here moves. */
   export function createWireCollateral(amount: bigint): ChainTokenAmount {
     return {
-      chain_code: WireReserveTool.WireChainCode,
+      chain_code: Constants.WireChainCode,
       amount: createWireClaim(amount)
     }
   }
@@ -735,14 +781,16 @@ export namespace WireCollateralTool {
    * @throws If `minimumBond` is not positive, or exceeds what the persisted number field holds
    *   exactly.
    */
-  export function createWireRequirement(minimumBond: bigint): CollateralRequirement {
+  export function createWireRequirement(
+    minimumBond: bigint
+  ): CollateralRequirement {
     Assert.ok(
       minimumBond > 0n && minimumBond <= BigInt(Number.MAX_SAFE_INTEGER),
       `WireCollateralTool: a minimum bond must be positive and at most ${Number.MAX_SAFE_INTEGER}, got ${minimumBond}`
     )
     return {
-      chainCode: WireReserveTool.WireChainCode,
-      tokenCode: WireReserveTool.WireTokenCode,
+      chainCode: Constants.WireChainCode,
+      tokenCode: Constants.WireTokenCode,
       minimumBond: Number(minimumBond)
     }
   }
@@ -755,7 +803,7 @@ export namespace WireCollateralTool {
   /** Assert a collateral amount sits on the WIRE chain, where every depot-native row lives. */
   export function assertDepotCollateral(collateral: ChainTokenAmount): void {
     Assert.ok(
-      collateral.chain_code === WireReserveTool.WireChainCode,
+      collateral.chain_code === Constants.WireChainCode,
       `WireCollateralTool: depot-native collateral is keyed on the WIRE chain, got ${SlugName.toString(collateral.chain_code)}`
     )
   }

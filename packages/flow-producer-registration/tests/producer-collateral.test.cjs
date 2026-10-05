@@ -7,7 +7,7 @@ const {
   Report,
   Steps,
   WireCollateralTool,
-  WireReserveTool,
+  Constants: DepotConstants,
   privateKeyFromNativeString
 } = require("@wireio/cluster-tool")
 const {
@@ -39,7 +39,7 @@ test("producer policy requires exactly 2.0 of BOTH depot shadows", () => {
   Assert.deepEqual(
     defaults.requiredProducerCollateral,
     ["LIQSOL", "LIQETH"].map(token => ({
-      chainCode: WireReserveTool.WireChainCode,
+      chainCode: DepotConstants.WireChainCode,
       tokenCode: SlugName.from(token),
       minimumBond: 2_000_000_000
     }))
@@ -94,10 +94,7 @@ test("bond-only steps use depot collateral without WIRE funding", async () => {
       token
     )
     Assert.equal(step.runner, WireCollateralTool.runDeposit)
-    Assert.equal(
-      step.input.collateral.chain_code,
-      WireReserveTool.WireChainCode
-    )
+    Assert.equal(step.input.collateral.chain_code, DepotConstants.WireChainCode)
     await run(step, context({}))
     Assert.deepEqual(calls.at(-1).data, {
       account,

@@ -5,7 +5,7 @@ import {
   ClusterBuildPhase,
   SyndicationScenario,
   SyndicationUserSteps,
-  WireReserveTool,
+  Constants as DepotConstants,
   Constants as ClusterToolConstants,
   FlowScenario,
   ProducerNodeTool,
@@ -147,7 +147,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
     enableMockSyndicationImport: true,
     // Both entries are mandatory for the non-bootstrapped producer to leave UNKNOWN.
     requiredProducerCollateral: Constants.CollateralTokens.map(token => ({
-      chainCode: WireReserveTool.WireChainCode,
+      chainCode: DepotConstants.WireChainCode,
       tokenCode: Number(Constants.claim(token, 0n).tokenCode),
       minimumBond: Number(Constants.MinimumBond)
     }))
