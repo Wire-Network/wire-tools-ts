@@ -529,8 +529,8 @@ const {
 
 Notes: async defaults are fine (`const { port = await BindConfigProvider.findAvailable(…) } = options`);
 a fallback to ANOTHER member destructures both then coalesces the locals
-(`const { batchOperatorAccount, underwriterAccount } = node` →
-`batchOperatorAccount ?? underwriterAccount`); optional chains and computed
+(`const { primary, fallback } = options` →
+`primary ?? fallback`); optional chains and computed
 members (`arr[0] ?? x`) stay accessor-form.
 
 ### Module-level joined declarations
@@ -966,8 +966,8 @@ define protocol latency):
 |---|---|---|
 | `EpochExtensionMaxSec` (30s) | via `effectiveEpochSec()` | every N-epoch deadline: `N × (epochDurationSec + 30) × MsPerSecond` |
 | `CollateralVerifyBudgetMs` (6 min) | deposit → depot verification gates |
-| `SingleHopBudgetMs` (7 min) | act on an outpost, verify on the depot — or the reverse (uwreq appears, race confirms, reserve relay/READY, attestation propagation) |
-| `DoubleHopBudgetMs` (14 min) | outpost → depot → outpost tails (remit/payout, SWAP_REVERT round-trips) |
+| `SingleHopBudgetMs` (7 min) | act on an outpost, verify on the depot — or the reverse (a `SYNDICATE_LIQ` envelope reaches `REQUESTED`, a `DESYNDICATE_LIQ` payout reaches the outpost wallet, attestation propagation) |
+| `DoubleHopBudgetMs` (14 min) | outpost → depot → outpost tails (an outpost syndication bonded and released on the depot, then redeemed back to the outpost wallet via `DESYNDICATE_LIQ`) |
 
 Principles:
 
