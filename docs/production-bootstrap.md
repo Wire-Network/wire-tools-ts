@@ -63,8 +63,8 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
   `{threshold:1, keys:[], accounts:[{permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}`; no
   standalone key. Governance (`sysio`, msig-backed in production) controls every system account and signs every
   `[sysio.X@active]` step. Stage 8 only ADDs `@sysio.code` weights on the eleven OPP accounts' **owner**
-  authorities on top of that `sysio@active` base (never removing it). No other authority is rewritten during
-  the bootstrap.
+  authorities on top of that `sysio@active` base (never removing it). Stage 10b additionally creates and
+  links `sysio.andon@pull` and `sysio.andon@clear`, both children of its unchanged `active` permission.
 - The root **`sysio`** account is the one exception: its own `active` authority carries a **standalone key**
   from genesis (cluster: `DEV_K1`; production: the governance key / msig) and is never rewritten. It is never
   a `sysio@active` self-reference.
@@ -112,10 +112,12 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | `activateroa.total_sys` | `75496.0000 SYS` **(cluster; production: real pool sizing)** |
 | `ROA_BYTES_PER_UNIT` | `104` (fixed) |
 
-### Resource-policy weights (`sysio.roa::addpolicy`, issued as `wireno`) — NOT part of the bootstrap
-The bootstrap registers `wireno` (Stage 10) so its tier-1 reserve can issue these policies. It issues exactly
-one itself — to the `sysio.andon` panic account (Stage 10b); flows/tools provision users and non-bootstrapped
-operators with them post-bootstrap:
+### Resource-policy weights (`sysio.roa::addpolicy`, issued as `wireno`)
+The bootstrap registers `wireno` (Stage 10) so its tier-1 reserve can issue these policies. Stage 10b issues
+the standard policy below to the panic account and a separate RAM-only policy to `sysio.andon` for native
+permissions and action links (`net_weight = cpu_weight = "0.0000 SYS"`, `ram_weight = "0.0100 SYS"`,
+`time_block = network_gen = 0`). Flows/tools use the standard policy for users and non-bootstrapped
+operators after bootstrap:
 
 | Field | Value |
 |---|---|
@@ -231,8 +233,8 @@ standalone key, and `sysio.authex` keeps the plain `sysio@active` owner/active i
     actions.) Lets each contract inline-send its own actions (epoch `advance`, `evalcons`, `dispatch`, …)
     while staying governed by `sysio@active`.
 
-These eleven owner grants are the ONLY authority rewrites in the bootstrap. The former cross-contract
-active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/roa and for `sysio.roa` on
+These eleven owner grants are separate from the native Andon child permissions and action links created
+in Stage 10b. The former cross-contract active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/roa and for `sysio.roa` on
 authex) are no longer configured.
 
 `sysio.dclaim` must be deployed before the first `sysio.authex::createlink` or `recordlink`. Both link
@@ -353,18 +355,41 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
     (surfacing the audit rejection if not).
 
 ## Stage 10b — Emergency stop (`sysio.andon`)
-`setpanic` needs an existing account, so the panic account is created first, through the ordinary user path.
+`sysio.andon` exposes `pull(reason)` and `clear(note)`. Authorization is configured with native
+`sysio::updateauth` and `sysio::linkauth`; there is no contract-managed panic account or puller registry.
+Create the panic account first so the delegated authority can reference it.
+
+**Companion requirement:** deploy the native-permission Andon contract from wire-sysio #662 and use
+tooling that implements the sequence below. Older `ClusterBuildDefaults` / `AndonContractSteps` that
+invoke `setpanic` or `addpuller` must be updated before running this bootstrap against that contract;
+those actions no longer exist. This sequence supersedes that older harness configuration.
 
 28. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — then `sysio.roa::addpolicy({owner:"andon.panic",
     issuer:"wireno", net_weight:"25.0000 SYS", cpu_weight:"25.0000 SYS", ram_weight:"25.0000 SYS",
     time_block:0, network_gen:0})` — `[wireno@active]`. No WIRE is transferred to it **(cluster dev key;
     production: the governance-held panic key)**.
-29. `sysio.andon::setpanic({account:"andon.panic"})` — `[sysio.andon@active]` — the account that may pull and
-    clear the cord.
-30. `sysio.andon::addpuller({contract:"sysio.synd"})` — `[sysio.andon@active]` — registers `sysio.synd` as a
-    puller, so a custody shortfall it detects pulls the cord. The cord is armed before any cord reader carries
-    traffic.
+29. **Permission RAM** — `sysio.roa::addpolicy({owner:"sysio.andon", issuer:"wireno",
+    net_weight:"0.0000 SYS", cpu_weight:"0.0000 SYS", ram_weight:"0.0100 SYS", time_block:0,
+    network_gen:0})` — `[wireno@active]`. Fund the native permission and link rows before creating them;
+    the contract deployment's RAM gift covers code/ABI, not these additional rows.
+30. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
+    - `sysio::updateauth({account:"sysio.andon", permission, parent:"active", auth:{threshold:1,
+      keys:[], accounts:[{permission:{actor:"andon.panic",permission:"active"},weight:1},
+      {permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}})` — `[sysio.andon@active]`.
+      Sort the authority's accounts by chain name value when substituting a production panic account.
+    - `sysio::linkauth({account:"sysio.andon", code:"sysio.andon", type:permission,
+      requirement:permission})` — `[sysio.andon@active]`.
+
+The panic account signs with its own key but declares `[sysio.andon@pull]` for `pull({reason})` and
+`[sysio.andon@clear]` for `clear({note})`. Governance is also delegated in both authorities and retains
+control through the parent `active` permission. Inspect both authorities and action links with
+`clio get account sysio.andon` before traffic begins.
+
+Privileged `sysio.synd` automatically pulls on a custody shortfall using the existing
+`sysio.andon@active` permission; it needs no puller registration. Changing the panic delegate through
+`updateauth` does not revoke that privileged inline path. Neither `sysio.andon`'s owner nor its active
+authority is replaced by this setup.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
