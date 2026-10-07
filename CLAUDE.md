@@ -89,7 +89,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (21 packages; 13 enabled, 8 disabled at launch) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, liq syndication, liq yield, and the six swap variants |
+| `flow-*` (13 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -300,13 +300,7 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-reserves` (default off —
-seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real / external
-depot leaves these unseeded), `--enable-launch-withheld-operations` (default
-off — run the Solana outpost bootstrap calls the launch build of the program
-withholds with `OperationDisabled`: `init_reserve`, `create_reserve_native` and the
-mock SPL reserve provisioning that writes `sol-mock-mints.json`; a default cluster
-skips them), `--enable-mock-liq-pools` (default off — seed the
+requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
 custody), `--enable-mock-syndication-import` (default off — import the mock
 bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--api-count <N>` (default 0 — plan N API nodes:
@@ -357,14 +351,8 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
-**Flow authoring — mock reserves, liq pools and syndication import.** A flow that reads the mock
-(chain, token) PRIMARY reserves sets `enableMockReserves: true` in its
-`Scenario.defaults` (the same mechanism it uses for `operatorsPerEpoch` /
-collateral) — never in `plan()`. The bootstrap seeds them during epoch 0; a
-flow's `plan()` phases always run AFTER `EpochBootstrap` advances epoch 0→1, and
-the depot gates `regreserve` to epoch 0, so `regreserve` can never be called from
-a flow phase. The mock shadow-liq yield pools (`enableMockLiqPools: true`,
-`sysio.liq::regliqpool`) follow the same rule for the same reason. The shadow
+**Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
+`sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
 `setconfig` and the kicker are registry setup a real depot performs too, so the
 bootstrap does those unconditionally. A flow needing the first bonder sets
@@ -401,37 +389,9 @@ are `SolanaLiqSyndicationTool` (`planSetFrozen`, `planDonateToPool`,
 PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
 `planSetPaused`, `planPayPendingDesyndication`).
 
-**Flow authoring — launch-withheld operations.** `enableLaunchWithheldOperations:
-true` makes the bootstrap RUN the Solana outpost calls the launch build of the
-program withholds (`init_reserve`, `create_reserve_native`, the mock SPL reserve
-provisioning), so a flow that sets it requires a Solana program build without the
-launch restrictions; against the launch build those calls return
-`OperationDisabled` (6086). A flow sets it in its `Scenario.defaults` — never in
-`plan()` — when its scenario needs the bootstrap-seeded Solana reserves or the mock
-SPL mints. The flag does not decide which flows the launch program can run: the
-eight that set it are **disabled at launch** (`flow-reserve-lifecycle`, `flow-swap-from-wire`,
-`flow-swap-non-native-tokens`, `flow-swap-private-reserves`, `flow-swap-to-wire`,
-`flow-swap-variance-revert`, `flow-swap-with-underwriting`,
-`flow-underwriter-slashing`) need Solana operations the launch build withholds, and
-`flow-yield-distribution` injects attestations through the withheld
-`add_attestation` instruction — it does not set the flag, which governs only
-bootstrap calls. The collateral, producer-registration and batch-operator-termination
-flows bond on the depot, do not set the flag, and run against the launch program.
-
-Each of the eight disabled flows opts into `enableLaunchWithheldOperations: true`
-and exercises
-reserves/swaps, which the launch Solana program refuses: wire-solana `89565920`
-("Disable unaudited reserve and swap operations") returns `OperationDisabled`
-6086 at `InitReserve` during bootstrap. There is no launch replacement for these
-operations; they return when reserves/swaps are enabled after audit.
-
-Their `package.json` live-flow script is named `test:disabled` instead of `test`.
-Both local `scripts/run-flow.mjs` discovery (including exact names, short names,
-regex and the picker) and CI's `run-flows.mjs` require a `test` script, so these
-packages are skipped. To re-enable a flow after audit, rename `test:disabled`
-back to `test` in its `package.json` (one line per flow). All packages remain in
-`pnpm build`; root `pnpm test` still runs Jest and every `test:unit` script.
-These eight packages currently have no unit tests.
+**Removed functionality.** The eight reserve/swap flow packages and their bootstrap
+flags have been deleted. Only batch operators run OPP daemons. Syndication bond
+providers act through `sysio.bond`; they do not run swap-underwriter daemons.
 
 **Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
 (and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in

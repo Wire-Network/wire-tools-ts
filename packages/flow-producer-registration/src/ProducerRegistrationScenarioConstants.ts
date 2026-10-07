@@ -3,7 +3,7 @@ import { TokenAmount } from "@wireio/opp-typescript-models"
 import {
   Constants,
   ProtocolTiming,
-  WireReserveTool
+  Constants as DepotConstants
 } from "@wireio/cluster-tool"
 
 /**
@@ -78,7 +78,7 @@ export namespace ProducerRegistrationScenarioConstants {
   /** Both shadow symbols are collateral on WIRE, not on their origin chains. */
   export function collateral(token: CollateralToken, amount: bigint) {
     return {
-      chain_code: WireReserveTool.WireChainCode,
+      chain_code: DepotConstants.WireChainCode,
       amount: claim(token, amount)
     }
   }

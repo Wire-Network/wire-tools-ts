@@ -40,7 +40,7 @@ config and re-derives the node topology deterministically via
 ### What gets spawned
 
 - `kiod` — WIRE wallet daemon.
-- One `nodeop` per bios / producer / batch-operator / underwriter / API node.
+- One `nodeop` per bios / producer / batch-operator / API node.
 - `anvil` — the local Ethereum outpost (omitted in external-outpost mode).
 - `solana-test-validator` — the local Solana outpost (omitted in
   external-outpost mode; each cluster gets a disjoint `--dynamic-port-range`).
@@ -81,24 +81,24 @@ the path flags.
 | `--cluster-path` | `-d` | **required** | cluster data directory + `cluster-config.json` |
 | `--build-path` | | **required** | `wire-sysio` build dir (with `bin/nodeop`) |
 | `--ethereum-path` | | **required** | `wire-ethereum` repo (anvil + outpost deploy) |
-| `--solana-path` | | **required** | `wire-solana` repo (`solana-test-validator` + `opp-outpost`) |
+| `--solana-path` | | **required** | `wire-solana` repo (`solana-test-validator` + the Anchor programs; the OPP outpost lives in `liqsol_core`) |
 | `--force` | | `false` | replace an existing cluster directory. `create` REQUIRES this when `--cluster-path` already exists — it fails fast otherwise rather than overlaying a new cluster onto the old one's chain state. Refuses while the existing cluster's daemons are still live. |
 | `--node-count` | `-n` | `1` | producer node **processes** |
-| `--producer-count` | `-p` | `21` | producer **accounts** registered on-chain |
+| `--producer-count` | `-p` | `1` | producer **accounts** registered on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
-| `--underwriter-count` | `-u` | `1` | underwriters — must be an EXPLICIT `0` with `--external-outpost-config` (omitting it means ONE underwriter, not zero) |
+| `--underwriter-count` | `-u` | `0` | compatibility option; swap-underwriter daemons have been removed, so any nonzero value is rejected |
 | `--epoch-duration-sec` | | `60` | minimum epoch duration (the depot floor) |
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
-| `--enable-launch-withheld-operations` | | `false` | run the Solana outpost bootstrap calls the launch build withholds (`init_reserve`, `create_reserve_native`, mock SPL reserves); a flow that sets it (in its scenario defaults, when it needs the bootstrap-seeded Solana reserves or the mock SPL mints) requires a Solana program build without the launch restrictions, which answer these calls with `OperationDisabled` (6086). The flag does not decide which flows the launch program can run: the eight opted-in flows need withheld Solana operations, and `flow-yield-distribution` needs the withheld `add_attestation` instruction without opting in (see CLAUDE.md, "Flow authoring — launch-withheld operations") |
+| `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
-| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (requires `--underwriter-count 0`) |
+| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
 | `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
@@ -268,9 +268,9 @@ wire-cluster-tool create-external-config \
 # reconstructed from the pattern) — NO plaintext keys.
 ```
 
-External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config` +
-a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
-endpoints, and an EXPLICIT `--underwriter-count 0`:
+External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config`
+and a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
+endpoints:
 
 ```bash
 wire-cluster-tool create \
@@ -279,13 +279,10 @@ wire-cluster-tool create \
   --ethereum-path           <wire-ethereum> \
   --solana-path             <wire-solana> \
   --external-outpost-config ~/external-outpost.json \
-  --bind-config             ~/external-bind-config.json \
-  --underwriter-count       0
+  --bind-config             ~/external-bind-config.json
 ```
 
-`--underwriter-count 0` is REQUIRED, not optional: the flag defaults to `1`, so
-omitting it asks for one underwriter — and an external cluster has no local
-outpost for an underwriter to bond collateral on. `create` verifies
+`create` verifies
 `eth_chainId` / Solana `getVersion`, then gates success on head-block advance
 **and** on an outbound envelope being queued for every registered outpost (not
 on epoch distribution — there is no local chain to advance an epoch on). A LOCAL
@@ -383,9 +380,11 @@ schema behind `SchemaCodec.create<T>(schema)`).
 
 A flow is a `FlowScenario` composed onto the same engine via
 `FlowCLI.create(<Name>Scenario).run()`. See the 13 `flow-*` packages —
-`flow-operator-collateral-deposit`, `flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, the six `flow-swap-*` variants,
-`flow-reserves-*`, `flow-emissions-soak`, `flow-node-owner-nft`,
+`flow-batch-operator-slashing`, `flow-batch-operator-termination`,
+`flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
+`flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
+`flow-producer-registration`, `flow-syndication-challenge`,
+`flow-syndication-rate-limit`, `flow-syndication-underwriting`,
 `flow-yield-distribution` — for end-to-end examples.
 
 ---

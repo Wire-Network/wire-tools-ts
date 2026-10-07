@@ -13,7 +13,10 @@ import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import { readNodeOwner, readNodeOwnerReg } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import {
+  readNodeOwner,
+  readNodeOwnerReg
+} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -60,26 +63,6 @@ const LiqKickerBps = 200
  * and `clear`, which move no funds; its resource policy pays for them.
  */
 const PanicAccountWireFunding = 0n
-/** WIRE-leg swap fee (bps) + collateral-lock challenge window (dev). */
-const SwapFeeBps = 30
-const CollateralLockDurationMs = 600_000
-/**
- * Minimum `swapfromwire` escrow (9-dec base units). The contract default is
- * 5 WIRE; dev clusters lower it to exactly the 0.1 WIRE escrow the
- * swap-from-WIRE flow pushes — the same way they shorten the collateral-lock
- * window — so the enqueue boundary stays exercised without re-baselining flow
- * economics.
- */
-const MinFromWireAmount = 100_000_000
-/**
- * Fee (bps of the escrow) forfeited on caller-fault drain-time reverts of
- * queued `swapfromwire` rows (zero quote / missed variance at `drainfwq`),
- * routed like the settlement fee. Mirrors the contract default — the 5% launch
- * value — so a cluster prices revert churn the way the network will. Happy-path
- * flows never pay it and system-caused reverts refund in full, so no flow's
- * economics depend on this number.
- */
-const FromWireRevertFeeBps = 500
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -92,31 +75,6 @@ const FromWireRevertFeeBps = 500
  * that risk.
  */
 const NodeStartConcurrency = 4
-
-/**
- * Epochs a PENDING uwreq may wait for its underwriter race before
- * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
- * the contract default; flow races resolve within an epoch, so the timeout
- * only fires for genuinely abandoned requests (SEC-129 / WSA-223).
- */
-const UwreqPendingTimeoutEpochs = 10
-/**
- * Epochs a terminal (COMPLETED / REJECTED / EXPIRED) uwreq row is retained
- * for audit before `sysio.uwrit::pruneuwreqs` erases it. Mirrors the
- * contract default (SEC-129 / WSA-223).
- */
-const UwreqRetentionEpochs = 10
-/**
- * Stage 2 of the swap-fee split: the share of each fee's rewards pool routed to
- * the `sysio` emissions treasury instead of the batch-operator rewards bucket.
- * Mirrors `sysio.reserv::DEFAULT_FEE_EMISSIONS_SHARE_BPS`.
- *
- * Zero keeps every swap fee inside `sysio.reserv` custody at settlement (the
- * underwriter half as a `uwfees` accrual, the rest in the rewards bucket), which
- * is what the swap flows' custody assertions expect. Raising it makes exactly
- * that share leave custody per settlement.
- */
-const FeeEmissionsShareBps = 0
 
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
@@ -199,29 +157,29 @@ export namespace ClusterBuildDefaults {
       batchOperators = range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
       ),
-      underwriters = range(config.underwriterCount).map(index =>
-        Constants.underwriterLabel(index)
-      ),
       plannedNodes = NodeConfig.plan(config),
-      producerNodes = plannedNodes.filter(node => node.role === NodeRole.producer),
+      producerNodes = plannedNodes.filter(
+        node => node.role === NodeRole.producer
+      ),
       apiNodes = plannedNodes.filter(node => node.role === NodeRole.api),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
-    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction = {
-      owner: Constants.BOOTSTRAP_NODE_OWNER,
-      tier: NodeOwnerTier.T1,
-      eth_pub_key: bootstrapNodeOwnerEth.publicKey,
-      // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
-      // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
-      // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
-      // this key can satisfy the account's `active` authority BY ITSELF —
-      // i.e. it must be exactly the `newnameduser.pubkey` below.
-      wire_pub_key: nodeOwner.wire.publicKey,
-      eth_address: bootstrapNodeOwnerEth.nativeAddress
-    }
+    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
+      {
+        owner: Constants.BOOTSTRAP_NODE_OWNER,
+        tier: NodeOwnerTier.T1,
+        eth_pub_key: bootstrapNodeOwnerEth.publicKey,
+        // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
+        // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
+        // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
+        // this key can satisfy the account's `active` authority BY ITSELF —
+        // i.e. it must be exactly the `newnameduser.pubkey` below.
+        wire_pub_key: nodeOwner.wire.publicKey,
+        eth_address: bootstrapNodeOwnerEth.nativeAddress
+      }
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -567,8 +525,6 @@ export namespace ClusterBuildDefaults {
       SysioContractName.epoch,
       SysioContractName.opreg,
       SysioContractName.msgch,
-      SysioContractName.uwrit,
-      SysioContractName.reserv,
       SysioContractName.chalg,
       SysioContractName.dclaim,
       SysioContractName.andon,
@@ -650,7 +606,8 @@ export namespace ClusterBuildDefaults {
             {},
             {
               account: label,
-              type: SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_PRODUCER,
+              type: SysioContracts.SysioOpregOperatortype
+                .OPERATOR_TYPE_PRODUCER,
               is_bootstrapped: true
             }
           )
@@ -945,7 +902,7 @@ export namespace ClusterBuildDefaults {
       )
     }
 
-    // ── registry + optional mock reserves + underwriter config ──
+    // ── registry + syndication configuration ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Registry",
@@ -958,19 +915,6 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    // Mock (chain, token) PRIMARY reserves — opt-in via `--enable-mock-reserves`
-    // (default off, so a real / external depot never gets fake reserves). Seeded
-    // HERE, pre-EpochBootstrap, because the contract gates `regreserve` to the
-    // epoch-0 bootstrap window — a flow phase (which always runs after epoch
-    // 0→1) could never seed them.
-    if (config.enableMockReserves) {
-      Steps.registry.planMockReserves<C>(
-        prerequisites,
-        "MockReserves",
-        "Seed the 8 mock (chain, token) PRIMARY reserves",
-        {}
-      )
-    }
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
     // the swap's governance + system token, one shadow symbol per registered liq
     // token, the T5 kicker. Registry setup a real depot performs too — unconditional.
@@ -1046,45 +990,12 @@ export namespace ClusterBuildDefaults {
       Steps.mockShadowBacking.planSolana<C>(prerequisites)
       Steps.mockShadowBacking.planEthereum<C>(prerequisites)
     }
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "UnderwriterConfig",
-      "Configure sysio.uwrit"
-    ).push(
-      Steps.contracts.sysio.uwrit.planSetconfig<C>(
-        Actor.Sysio,
-        "configure-uwrit",
-        "set the underwriter config",
-        {},
-        {
-          fee_bps: SwapFeeBps,
-          collateral_lock_duration_ms: CollateralLockDurationMs,
-          min_fromwire_amount: MinFromWireAmount,
-          fromwire_revert_fee_bps: FromWireRevertFeeBps,
-          uwreq_pending_timeout_epochs: UwreqPendingTimeoutEpochs,
-          uwreq_retention_epochs: UwreqRetentionEpochs
-        }
-      )
-    )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "ReserveConfig",
-      "Configure sysio.reserv fee routing"
-    ).push(
-      Steps.contracts.sysio.reserv.planSetconfig<C>(
-        Actor.Sysio,
-        "configure-reserv",
-        "set the swap-fee routing config",
-        {},
-        { fee_emissions_share_bps: FeeEmissionsShareBps }
-      )
-    )
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
       cluster,
       "Cluster Post Contract Deployment",
-      "Provision batch operators + underwriters, start API nodes (when planned) + operator nodes, bootstrap the first epoch"
+      "Provision batch operators, start API and operator nodes, bootstrap the first epoch"
     )
 
     // The operator daemons' shared prerequisites: the in-process OPP debugging
@@ -1125,14 +1036,14 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
+    // Bootstrapped batch operators use the shared provisioning mechanism. Fee-payer
     // funding only — deposit flows provision their own non-bootstrapped ops with
     // collateral funding on top.
     const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
-      "Provision the bootstrapped batch operators + underwriters",
+      "Provision the bootstrapped batch operators",
       {},
       [
         ...batchOperators.map((label, index) => ({
@@ -1145,21 +1056,6 @@ export namespace ClusterBuildDefaults {
           // mnemonic and are prefunded, under SSM they come off a generated
           // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
           airdropSolanaLamports: BatchOperatorAirdropLamports,
-          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
-        })),
-        ...underwriters.map((label, index) => ({
-          label,
-          type: OperatorType.UNDERWRITER,
-          // The offset is the length of the PREFIX-FILTERED batch-operator
-          // array, not `config.batchOperatorCount`: only a list already
-          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
-          // rule is defined against. `index` is that same filtered array's
-          // iterator index for underwriters.
-          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
-            batchOperators.length,
-            index
-          ),
-          isBootstrapped: false,
           ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
       ]
@@ -1198,16 +1094,8 @@ export namespace ClusterBuildDefaults {
       "OperatorNodes",
       "Start operator nodes",
       plannedNodes.filter(node => NodeConfig.isOperatorRole(node.role)),
-      node =>
-        node.batchOperatorLabel != null ? Actor.BatchOperator : Actor.Underwriter
+      () => Actor.BatchOperator
     )
-
-    // The underwriter_plugin defers its startup preflight until the chain
-    // plugin reports the node synced (head within `sync_recency_ms` of now,
-    // via the controller's accepted_block signal), so a first boot that
-    // starts at genesis simply waits out its replay — no relaunch needed.
-    // The generic `Steps.processes.nodeop.restart` machinery remains for
-    // scenarios that need a real restart.
 
     // ── first epoch ──
     // Step ORDER is load-bearing: both roster seeds read the schedule
@@ -1504,7 +1392,8 @@ export namespace ClusterBuildDefaults {
         config.terminateMaxConsecutiveMisses ??
         DefaultTerminateMaxConsecutiveMisses,
       terminate_max_pct_misses_24h:
-        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+        config.terminateMaxPercentMisses24h ??
+        DefaultTerminateMaxPercentMisses24h,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:

@@ -61,15 +61,6 @@ export namespace OperatorDaemonTool {
     "sysio::cron_plugin"
   ] as const
 
-  /** Plugins an underwriter daemon loads. */
-  export const UnderwriterPlugins = [
-    "sysio::underwriter_plugin",
-    "sysio::outpost_ethereum_client_plugin",
-    "sysio::outpost_solana_client_plugin",
-    ExternalDebuggingPlugin,
-    "sysio::cron_plugin"
-  ] as const
-
   /** `plugins` with the external-debugging sink removed when the server is off. */
   const debuggingGatedPlugins = (
     plugins: readonly string[],
@@ -85,15 +76,6 @@ export namespace OperatorDaemonTool {
   export const BatchEpochPollMs = 15_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 30_000
-  /**
-   * underwriter_plugin outpost action timeout (ms; nominal — scaled at arg
-   * build). Mirrors the plugin default; passed EXPLICITLY so the flow timing
-   * scale reaches it: on a starved shared-host validator a commit tx can
-   * take >15s to confirm, and the plugin then re-submits every scan cycle
-   * forever (run 28700849707: uwreq 35's SOL leg timed out at 15s per
-   * attempt for 12 minutes while the ETH leg sat confirmed).
-   */
-  export const UnderwriterActionTimeoutMs = 30_000
   /** The `sysio.chains` codename identifying the ETH outpost. */
   export const EthereumChainCodename = "ETHEREUM"
   /** The `sysio.chains` codename identifying the SOL outpost. */
@@ -110,32 +92,18 @@ export namespace OperatorDaemonTool {
   export const EthereumClientId = EthereumChainCodename
   /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
   export const SolanaClientId = SolanaChainCodename
-  /** ETH source-deposit function the underwriter verifies before committing. */
-  export const EthereumSourceDepositFunction = "requestSwap"
-  /** SOL source-deposit instruction the underwriter verifies before committing. */
-  export const SolanaSourceDepositInstruction = "request_swap"
   /** SOL inbound-delivery instruction the batch operator invokes. */
   export const SolanaEpochInInstruction = "epoch_in"
-  /** SOL underwriter-commit instruction. */
-  export const SolanaCommitUnderwriteInstruction = "commit_underwrite"
   /**
    * OPP outpost instructions the daemons invoke — asserted present in the
    * copied IDL so a wrong or stale IDL fails at artifact preparation, not at
    * the first delivery.
    */
   export const RequiredSolanaIdlInstructions = [
-    SolanaEpochInInstruction,
-    SolanaCommitUnderwriteInstruction,
-    SolanaSourceDepositInstruction
+    SolanaEpochInInstruction
   ] as const
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
-  export const EthereumAbiContractNames = [
-    "OPP",
-    "OPPInbound",
-    "BAR",
-    "ReserveManager",
-    "OperatorRegistry"
-  ] as const
+  export const EthereumAbiContractNames = ["OPP", "OPPInbound", "BAR"] as const
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
@@ -173,10 +141,7 @@ export namespace OperatorDaemonTool {
     return {
       ethereumRpcUrl:
         config.externalOutposts?.ethereum.rpcUrl ??
-        toURL(
-          config.bind.anvil.port,
-          toDialAddress(config.bind.anvil.address)
-        ),
+        toURL(config.bind.anvil.port, toDialAddress(config.bind.anvil.address)),
       // External-outpost mode carries the REAL chain id; else the anvil default.
       ethereumChainId:
         config.externalOutposts?.ethereum.chainId ??
@@ -251,7 +216,8 @@ export namespace OperatorDaemonTool {
     const abiDir = mkdirs(Path.join(dataPath, EthereumAbiSubpath))
     const ethereumAbiFiles = EthereumAbiContractNames.map(contractName => {
       // Deployment aliases retain the address/plugin name after Solidity renames.
-      const artifactContractName = contractName === "BAR" ? "BARV2" : contractName
+      const artifactContractName =
+        contractName === "BAR" ? "BARV2" : contractName
       const artifactFile = Path.join(
         ethereumPath,
         "artifacts",
@@ -408,7 +374,12 @@ export namespace OperatorDaemonTool {
     assertOutpostKeys(operator)
     return [
       ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
-      ...pluginArgs(debuggingGatedPlugins(BatchOperatorPlugins, network.debuggingServerEnabled)),
+      ...pluginArgs(
+        debuggingGatedPlugins(
+          BatchOperatorPlugins,
+          network.debuggingServerEnabled
+        )
+      ),
       ...pair(
         "--signature-provider",
         KeyGenerator.toSignatureProvider(
@@ -430,64 +401,6 @@ export namespace OperatorDaemonTool {
       // No per-chain outpost flags: the remote OPP contract addresses live on
       // each chain's `sysio.chains` row (seeded by RegistrySteps), and the RPC
       // client for a chain is the one registered under that chain's code.
-      ...pair("--solana-idl-file", artifacts.solanaIdlFile),
-      // The outpost interface is hosted in liqsol_core since the clean-room
-      // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
-      ...pair(
-        "--solana-outpost-program-name",
-        SolanaOutpostProgramTool.ProgramName
-      )
-    ]
-  }
-
-  /**
-   * The full extra-arg block for an UNDERWRITER daemon: read-mode + plugins + the
-   * operator's WIRE signature provider + underwriter plugin config + both outpost
-   * client specs + the source-deposit verification targets.
-   */
-  export function underwriterArgs(
-    operator: OperatorAccount,
-    artifacts: OperatorDaemonArtifacts,
-    network: OperatorDaemonNetwork,
-    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
-  ): string[] {
-    Assert.ok(
-      operator.type === OperatorType.UNDERWRITER,
-      `underwriterArgs: ${operator.label} is a ${OperatorType[operator.type]}, not an underwriter`
-    )
-    assertOutpostKeys(operator)
-    return [
-      ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
-      ...pluginArgs(debuggingGatedPlugins(UnderwriterPlugins, network.debuggingServerEnabled)),
-      ...pair(
-        "--signature-provider",
-        KeyGenerator.toSignatureProvider(
-          operator.wire,
-          undefined,
-          keySourceFor(operator.label, KeyType.K1)
-        )
-      ),
-      ...pair("--underwriter-account", operator.account),
-      ...pair(
-        "--underwriter-action-timeout-ms",
-        String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
-      ),
-      ...(network.debuggingServerEnabled
-        ? pair("--ext-debugging-server", network.debuggingServerUrl)
-        : []),
-      ...outpostClientArgs(operator, artifacts, network, keySourceFor),
-      // No per-chain outpost flags: the underwriter serves every ACTIVE
-      // `sysio.chains` row, reads each one's OperatorRegistry / source-deposit
-      // address off that row, and reaches it through the RPC client registered
-      // under the chain's code.
-      ...pair(
-        "--underwriter-eth-source-deposit-function",
-        EthereumSourceDepositFunction
-      ),
-      ...pair(
-        "--underwriter-sol-source-deposit-instruction",
-        SolanaSourceDepositInstruction
-      ),
       ...pair("--solana-idl-file", artifacts.solanaIdlFile),
       // The outpost interface is hosted in liqsol_core since the clean-room
       // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
@@ -554,16 +467,16 @@ export namespace OperatorDaemonTool {
         .with(OperatorType.BATCH, () =>
           batchOperatorArgs(operator, artifacts, network, keySourceFor)
         )
-        .with(OperatorType.UNDERWRITER, () =>
-          underwriterArgs(operator, artifacts, network, keySourceFor)
-        )
         .otherwise(() => {
           throw new Error(
             `startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`
           )
         })
 
-    const ports = BindConfigProvider.claimAdHocPorts(ctx.config.bind, input.label)
+    const ports = BindConfigProvider.claimAdHocPorts(
+      ctx.config.bind,
+      input.label
+    )
     // startWithRecovery (not bare create+start): a flow rerun reuses the
     // daemon's data dir, so an unclean prior stop leaves a dirty chainbase
     // this launch must recover from, same as the planned-node paths.

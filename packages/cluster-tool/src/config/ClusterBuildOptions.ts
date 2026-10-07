@@ -59,27 +59,6 @@ export interface ClusterBuildOptions {
   // network binding
   bindAll?: boolean
   bind?: BindOptions
-  // mock data seeding
-  /**
-   * Seed the 8 mock (chain, token) PRIMARY reserves at bootstrap
-   * (`--enable-mock-reserves`). Default `false` at every layer — an
-   * external / real-world depot gets NO fake reserves unless a caller (or a
-   * flow's scenario `defaults`) opts in. The depot contract gates `regreserve`
-   * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
-   */
-  enableMockReserves?: boolean
-  /**
-   * Run the Solana outpost bootstrap calls the launch policy withholds
-   * (`--enable-launch-withheld-operations`): `init_reserve`,
-   * `create_reserve_native`, and the mock SPL reserve provisioning
-   * (`create_reserve_spl_authority` / `init_liqsol_reserve` + `sol-mock-mints.json`).
-   * The launch build of the program answers each with `OperationDisabled`, so
-   * the default `false` (at every layer) bootstraps a cluster that never calls
-   * them. A flow whose scenario needs the bootstrap-seeded Solana reserves or the
-   * mock SPL mints opts in through its scenario `defaults`, and then requires a
-   * Solana program build without the launch restrictions.
-   */
-  enableLaunchWithheldOperations?: boolean
   /**
    * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
    * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an

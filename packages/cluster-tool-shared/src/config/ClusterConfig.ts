@@ -279,23 +279,6 @@ export const ClusterConfigSchema = z.object({
    */
   debuggingServerEnabled: z.boolean().default(true),
   /**
-   * Whether the bootstrap seeds the 8 mock (chain, token) PRIMARY reserves
-   * (the `--enable-mock-reserves` create flag). Schema-defaulted `false` so
-   * pre-existing configs — and every real/external depot — stay reserve-free
-   * unless a caller (or a flow's scenario defaults) opts in.
-   */
-  enableMockReserves: z.boolean().default(false),
-  /**
-   * Whether the Solana outpost bootstrap runs the calls the launch policy
-   * withholds (the `--enable-launch-withheld-operations` create flag):
-   * `init_reserve`, `create_reserve_native` and the mock SPL reserve
-   * provisioning. Schema-defaulted `false` so pre-existing configs — and every
-   * default cluster — never call them (the launch build of the program answers
-   * each with `OperationDisabled`) unless a flow's scenario defaults opt in — which
-   * requires a Solana program build without the launch restrictions.
-   */
-  enableLaunchWithheldOperations: z.boolean().default(false),
-  /**
    * Whether the bootstrap seeds the 2 mock shadow-liq yield pools on
    * `sysio.swap` (the `--enable-mock-liq-pools` create flag). Schema-defaulted
    * `false` so pre-existing configs — and every real/external depot — mint no

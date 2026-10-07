@@ -122,7 +122,8 @@ function request(
     held_at: "1970-01-01T00:00:00.000",
     resolved_at: "1970-01-01T00:00:00.000",
     resolved_index: "0",
-    forfeit_pending: 0
+    forfeit_pending: 0,
+    outcome_acknowledged: false
   }
 }
 
@@ -210,10 +211,9 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
       {
         chain_code: Solana,
         token_code: Liqsol,
-        syndicated_sum: 5_000_000_000,
-        yield_sum: 0,
-        desyndicated_sum: 0,
-        queue_epoch: 4
+        queue_epoch: 4,
+        underwriting_epoch: 4,
+        retained_from_epoch: 0
       }
     ])
     serve(clients.synd.tables.syndconfig, [

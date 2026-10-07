@@ -20,7 +20,7 @@ export namespace LIQSyndicationScenarioConstants {
   /** Batch operators ferrying OPP envelopes (the group that must relay the attestations). */
   export const BatchOperatorCount = 3
   /** Underwriters provisioned by the bootstrap. */
-  export const UnderwriterCount = 1
+  export const UnderwriterCount = 0
 
   /** Registered chain slug code of the Solana outpost — what `OutpostConfig.chain_code` stamps. */
   export const SolanaChainCode: bigint = BigInt(

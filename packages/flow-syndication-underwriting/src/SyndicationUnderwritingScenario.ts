@@ -40,7 +40,7 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
     epochDurationSec: SyndicationScenario.EpochDurationSec,
     producerCount: 3,
     batchOperatorCount: 3,
-    underwriterCount: 1
+    underwriterCount: 0
   }
 
   plan(cluster: ClusterBuild): void {
@@ -60,13 +60,8 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "snapshot-before",
-        "record supply custody, bonder, fees and ledger",
+        "record custody, bonder and fee balances",
         async ctx => {
-          const ledger = await WireSyndicationTool.readLedger(
-            ctx,
-            SyndicationScenario.Chain,
-            SyndicationScenario.Token
-          )
           ctx.outputs.set(Constants.Before, {
             holder: await SyndicationScenario.readBalance(
               ctx,
@@ -76,8 +71,7 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
               ctx,
               SyndicationScenario.Bonder
             ),
-            fees: await SyndicationScenario.readFees(ctx),
-            syndicated: ledger ? BigInt(ledger.syndicated_sum) : 0n
+            fees: await SyndicationScenario.readFees(ctx)
           })
           Assert.strictEqual(
             await SyndicationScenario.readBalance(ctx, Constants.User.account),
@@ -244,11 +238,6 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
             second = await SyndicationScenario.readEnvelope(
               ctx,
               Constants.SecondEpoch
-            ),
-            ledger = await WireSyndicationTool.readLedger(
-              ctx,
-              SyndicationScenario.Chain,
-              SyndicationScenario.Token
             )
           Assert.strictEqual(BigInt(first.released), Constants.Amount)
           Assert.strictEqual(
@@ -259,10 +248,8 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
             await SyndicationScenario.readFees(ctx),
             before.fees + fee
           )
-          Assert.strictEqual(
-            BigInt(ledger.syndicated_sum),
-            before.syndicated + Constants.Amount + Constants.LaterAmount
-          )
+          Assert.strictEqual(BigInt(first.synd_total), Constants.Amount)
+          Assert.strictEqual(BigInt(second.synd_total), Constants.LaterAmount)
           Assert.ok(
             matchesProtoEnum(
               second.state,

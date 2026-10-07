@@ -17,7 +17,10 @@ import {
   withFileLock
 } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
-import { EvmAddressPattern, loadOutpostContract } from "../../utils/ethereumUtils.js"
+import {
+  EvmAddressPattern,
+  loadOutpostContract
+} from "../../utils/ethereumUtils.js"
 
 const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
@@ -91,16 +94,13 @@ export interface EthereumOutpostBootstrapperConfig extends Required<EthereumOutp
  * Bootstrap the Ethereum (anvil) outpost for the test cluster: generate
  * deterministic accounts from anvil's default mnemonic, deploy the
  * `wire-ethereum` contracts via Hardhat AGAINST the already-running run anvil,
- * seed the `ReserveManager` with physical custody, and write an annotated
+ * and write an annotated
  * accounts file.
  *
  * The run anvil is started separately (`Steps.processes.anvil.start`) and owned
  * by the process manager for the whole cluster lifecycle — this bootstrapper
  * never spawns its own anvil; it only deploys against the one it is handed.
  *
- * Test-cluster custody priming (`seedReserveManager`) lives HERE in the
- * harness, never in `wire-ethereum`'s `deployLocal.ts` — it runs after the
- * deploy returns and owns its own nonce counter.
  */
 export class EthereumOutpostBootstrapper {
   private readonly config: EthereumOutpostBootstrapperConfig
@@ -139,7 +139,7 @@ export class EthereumOutpostBootstrapper {
 
   /**
    * Run the full Ethereum-outpost bootstrap: generate accounts → deploy
-   * contracts against the running anvil → seed the ReserveManager → write the
+   * contracts against the running anvil → write the
    * annotated accounts file. The anvil is neither started nor stopped here —
    * it is the process-manager-owned run anvil for the whole cluster lifecycle.
    */
@@ -152,11 +152,6 @@ export class EthereumOutpostBootstrapper {
     this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
 
     await this.deployContracts(ethereumPath, rpcUrl)
-    // Seed ReserveManager AFTER deploy so `outpost-addrs.json` reflects the
-    // final addresses; the depot's logical `sysio.reserv` view and the
-    // outpost's physical custody are independent ledgers (a non-native dst
-    // SwapRemit can only draw against physically-funded custody).
-    await this.seedReserveManager(rpcUrl)
 
     const accountsFile = Path.join(
       mkdirs(anvilDataPath),
@@ -317,121 +312,6 @@ export class EthereumOutpostBootstrapper {
   }
 
   /**
-   * Send native ETH + mock ERC-20 (USDC / USDT / LIQETH) from the deployer
-   * wallet to `ReserveManager` so its physical custody matches the depot's
-   * `sysio.reserv::regreserve` logical view. Uses a single owner-managed nonce
-   * counter (seeded once from `getNonce("pending")`, incremented per tx) to
-   * avoid the back-to-back-tx nonce race.
-   */
-  private async seedReserveManager(rpcUrl: string): Promise<void> {
-    const outpostAddressesFile = Path.join(
-      this.config.deploymentsPath,
-      "outpost-addrs.json"
-    )
-    if (!Fs.existsSync(outpostAddressesFile)) {
-      log.warn(
-        "[ethereum] seedReserveManager: outpost-addrs.json missing, skipping"
-      )
-      return
-    }
-    const addresses = JSON.parse(Fs.readFileSync(outpostAddressesFile, "utf-8"))
-    const {
-      ReserveManager: reserveManagerAddress,
-      MockUsdc: mockUsdcAddress,
-      MockUsdt: mockUsdtAddress
-    } = addresses
-    if (reserveManagerAddress == null) {
-      log.warn(
-        "[ethereum] seedReserveManager: ReserveManager address missing, skipping"
-      )
-      return
-    }
-
-    // Bind the deployer (anvil HD index 0) — the same identity deployLocal.ts
-    // used as `owner`, so its minted MockUSDC/USDT balances are available here.
-    const provider = new ethers.JsonRpcProvider(rpcUrl)
-    const deployer = new ethers.Wallet(
-      this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex]
-        .privateKey,
-      provider
-    )
-    let nonce = await deployer.getNonce("pending")
-    log.info(
-      `[ethereum] seedReserveManager start (deployer=${deployer.address}, nonce=${nonce})`
-    )
-
-    const nativeSeed = ethers.parseEther(
-      EthereumOutpostBootstrapper.NativeSeedEther
-    )
-    const stableSeed = ethers.parseUnits(
-      EthereumOutpostBootstrapper.StableSeedUnits,
-      EthereumOutpostBootstrapper.StableDecimals
-    )
-
-    log.info(
-      `[ethereum] seed ${ethers.formatEther(nativeSeed)} ETH (nonce ${nonce})`
-    )
-    const ethTx = await deployer.sendTransaction({
-      to: reserveManagerAddress,
-      value: nativeSeed,
-      nonce: nonce++
-    })
-    await ethTx.wait()
-
-    const transferStable = async (
-      tokenAddress: string,
-      label: string
-    ): Promise<void> => {
-      log.info(
-        `[ethereum] seed ${ethers.formatUnits(stableSeed, 6)} ${label} (nonce ${nonce})`
-      )
-      const token = new ethers.Contract(
-        tokenAddress,
-        EthereumOutpostBootstrapper.Erc20Abi,
-        deployer
-      )
-      const tx = await token.transfer(reserveManagerAddress, stableSeed, {
-        nonce: nonce++
-      })
-      await tx.wait()
-    }
-    if (mockUsdcAddress != null) await transferStable(mockUsdcAddress, "USDC")
-    if (mockUsdtAddress != null) await transferStable(mockUsdtAddress, "USDT")
-
-    // LIQETH only if the LiqEth deploy went through (toggled off for outpost-only runs).
-    const { LiqEth: liqEthAddress } = addresses
-    if (liqEthAddress != null) {
-      const liqEthSeed = ethers.parseEther(
-        EthereumOutpostBootstrapper.NativeSeedEther
-      )
-      const liqEth = new ethers.Contract(
-        liqEthAddress,
-        EthereumOutpostBootstrapper.Erc20Abi,
-        deployer
-      )
-      const ownerLiqEthBalance: bigint = await liqEth.balanceOf(
-        deployer.address
-      )
-      if (ownerLiqEthBalance >= liqEthSeed) {
-        log.info(
-          `[ethereum] seed ${ethers.formatEther(liqEthSeed)} LIQETH (nonce ${nonce})`
-        )
-        const liqEthTx = await liqEth.transfer(
-          reserveManagerAddress,
-          liqEthSeed,
-          { nonce: nonce++ }
-        )
-        await liqEthTx.wait()
-      } else {
-        log.info(
-          `[ethereum] skip LIQETH seed (deployer balance ${ethers.formatEther(ownerLiqEthBalance)} < ${ethers.formatEther(liqEthSeed)})`
-        )
-      }
-    }
-    log.info("[ethereum] seedReserveManager complete")
-  }
-
-  /**
    * Seed the ETH outpost's batch-operator roster from the depot's REAL schedule
    * via `OPPInbound.installInitialRoster` — the SOL-376 `opp_bootstrap` shape.
    *
@@ -453,9 +333,12 @@ export class EthereumOutpostBootstrapper {
    *
    * @param seed - the depot's window as EVM addresses + the slot serving epoch 1.
    */
-  async oppBootstrap(seed: EthereumOutpostBootstrapper.OppBootstrapSeed): Promise<void> {
+  async oppBootstrap(
+    seed: EthereumOutpostBootstrapper.OppBootstrapSeed
+  ): Promise<void> {
     const { ethereumPath, deploymentsPath, rpcUrl } = this.config,
-      initialGroups = EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed),
+      initialGroups =
+        EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed),
       outpostAddressesFile = Path.join(
         deploymentsPath,
         EthereumOutpostBootstrapper.OutpostAddressesFile
@@ -476,22 +359,24 @@ export class EthereumOutpostBootstrapper {
         )[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey,
         provider
       ),
-      manager = loadOutpostContract<EthereumOutpostBootstrapper.OutpostManagerExecuteView>(
-        ethereumPath,
-        outpostAddresses,
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
-        deployer,
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        EthereumOutpostBootstrapper.OutpostManagerArtifactName
-      ),
-      oppInbound = loadOutpostContract<EthereumOutpostBootstrapper.OppInboundRosterView>(
-        ethereumPath,
-        outpostAddresses,
-        EthereumOutpostBootstrapper.OppInboundContractName,
-        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
-        deployer
-      ),
+      manager =
+        loadOutpostContract<EthereumOutpostBootstrapper.OutpostManagerExecuteView>(
+          ethereumPath,
+          outpostAddresses,
+          EthereumOutpostBootstrapper.OutpostManagerContractName,
+          [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
+          deployer,
+          EthereumOutpostBootstrapper.OutpostManagerContractName,
+          EthereumOutpostBootstrapper.OutpostManagerArtifactName
+        ),
+      oppInbound =
+        loadOutpostContract<EthereumOutpostBootstrapper.OppInboundRosterView>(
+          ethereumPath,
+          outpostAddresses,
+          EthereumOutpostBootstrapper.OppInboundContractName,
+          [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
+          deployer
+        ),
       oppInboundAddress = await oppInbound.getAddress(),
       activeGroup = seed.window.groups[seed.activeGroupIndex]
 
@@ -523,7 +408,9 @@ export class EthereumOutpostBootstrapper {
     } finally {
       provider.destroy()
     }
-    log.info("[ethereum] installInitialRoster: ETH outpost roster seeded on the depot's schedule")
+    log.info(
+      "[ethereum] installInitialRoster: ETH outpost roster seeded on the depot's schedule"
+    )
   }
 }
 
@@ -561,7 +448,10 @@ export namespace EthereumOutpostBootstrapper {
 
   /** The `OutpostManager` surface the seed drives — the post-handoff admin path. */
   export interface OutpostManagerExecuteView {
-    execute(target: string, data: string): Promise<ethers.ContractTransactionResponse>
+    execute(
+      target: string,
+      data: string
+    ): Promise<ethers.ContractTransactionResponse>
   }
 
   /** The `OPPInbound` surface the seed reads back through. */
@@ -602,16 +492,23 @@ export namespace EthereumOutpostBootstrapper {
    * @return the tuple, ready to ABI-encode as the call's one argument.
    * @throws on any of the rejections above.
    */
-  export function initialBatchOperatorGroups(seed: OppBootstrapSeed): InitialBatchOperatorGroups {
+  export function initialBatchOperatorGroups(
+    seed: OppBootstrapSeed
+  ): InitialBatchOperatorGroups {
     const { window, activeGroupIndex } = seed,
       { groups, epochDurationSec } = window
-    Assert.ok(groups.length > 0, "initial roster: at least one batch-operator group is required")
+    Assert.ok(
+      groups.length > 0,
+      "initial roster: at least one batch-operator group is required"
+    )
     Assert.ok(
       Number.isSafeInteger(epochDurationSec) && epochDurationSec > 0,
       `initial roster: epochDurationSec must be a positive integer (got ${epochDurationSec})`
     )
     Assert.ok(
-      Number.isSafeInteger(activeGroupIndex) && activeGroupIndex >= 0 && activeGroupIndex < groups.length,
+      Number.isSafeInteger(activeGroupIndex) &&
+        activeGroupIndex >= 0 &&
+        activeGroupIndex < groups.length,
       `initial roster: activeGroupIndex ${activeGroupIndex} is out of range for ${groups.length} group(s)`
     )
     return {
@@ -784,7 +681,10 @@ export namespace EthereumOutpostBootstrapper {
   ): void {
     const highest = Math.max(
       Constants.batchOperatorEthereumHdIndex(batchOperatorCount - 1),
-      Constants.underwriterEthereumHdIndex(batchOperatorCount, underwriterCount - 1)
+      Constants.underwriterEthereumHdIndex(
+        batchOperatorCount,
+        underwriterCount - 1
+      )
     )
     Assert.ok(
       highest < PanicAccountIndex,
@@ -830,17 +730,6 @@ export namespace EthereumOutpostBootstrapper {
   export const HardhatStderrTailChars = 1_000
   /** Chars of Hardhat stdout logged after a run. */
   export const HardhatStdoutTailChars = 500
-  /** Native ETH amount seeded into ReserveManager. */
-  export const NativeSeedEther = "100"
-  /** Stable-coin amount seeded into ReserveManager (whole units). */
-  export const StableSeedUnits = "100"
-  /** Decimals for the mock stable-coins (USDC / USDT). */
-  export const StableDecimals = 6
-  /** Minimal ERC-20 ABI for the custody-seeding transfers. */
-  export const Erc20Abi = [
-    "function transfer(address,uint256) returns (bool)",
-    "function balanceOf(address) view returns (uint256)"
-  ] as const
 
   /** Resolve the default (overridable) options. `accountCount` tracks the run
    *  anvil's `--accounts` so every generated account is pre-funded. */

@@ -12,9 +12,10 @@ that OPP envelopes circulate and that on-chain state stays consistent end to end
 The OPP message flow spans three chains:
 
 - **WIRE depot** (`nodeop` + `kiod`) — system contracts `sysio.epoch`, `sysio.msgch`,
-  `sysio.opreg`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, …
-- **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OperatorRegistry.sol`,
-  `ReserveManager.sol`, `StakingManager.sol` (+ `liqEth`).
+  `sysio.opreg`, `sysio.chalg`, `sysio.synd`, `sysio.bond`, `sysio.liq`, `sysio.swap`
+  (a depot-local AMM with no outpost participation), `sysio.andon`, `sysio.dclaim`, …
+- **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OutpostManager.sol`,
+  `SyndicationPool.sol`, `BAR.sol`, `StakingManager.sol` (an inert placeholder) (+ `liqEth`).
 - **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
   loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
   `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol
@@ -131,19 +132,11 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 |---|---|---|
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
-| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | **Disabled at launch (reserves/swaps withheld)** — Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | **Disabled at launch (reserves/swaps withheld)** — SWAP of non-native tokens (USDC / USDT / LIQ) |
-| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | **Disabled at launch (reserves/swaps withheld)** — Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
-| `flow-reserve-lifecycle` | `@wireio/test-flow-reserve-lifecycle` | **Disabled at launch (reserves/swaps withheld)** |
-| `flow-swap-from-wire` | `@wireio/test-flow-swap-from-wire` | **Disabled at launch (reserves/swaps withheld)** |
-| `flow-swap-to-wire` | `@wireio/test-flow-swap-to-wire` | **Disabled at launch (reserves/swaps withheld)** |
-| `flow-swap-private-reserves` | `@wireio/test-flow-swap-private-reserves` | **Disabled at launch (reserves/swaps withheld)** |
-| `flow-underwriter-slashing` | `@wireio/test-flow-underwriter-slashing` | **Disabled at launch (reserves/swaps withheld)** |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
@@ -169,7 +162,7 @@ The other seven enabled flows (`flow-batch-operator-slashing`,
 `flow-operator-collateral-deposit`, `flow-producer-registration`,
 `flow-yield-distribution`) submit no user LIQ syndication/desyndication. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
-disabled swap/reserve flows remain disabled and have no direct LIQ syndication call.
+former disabled swap/reserve flows have been removed.
 
 `WireSyndicationTool.planResolveEnvelope` is an explicit `sysio.bond::rslvvalid`
 shortcut for an unbonded OPEN request. It refuses provider-funded, challenged or
@@ -197,22 +190,11 @@ payout after the existing queued-redemption assertions. TypeScript compilation,
 stopped at the bootstrap toolchain check because the shell selected Solana 4.0.3;
 the successful runs above selected the installed pinned 4.2.0 toolchain explicitly.
 
-### Disabled reserve and swap flows
+### Removed reserve and swap flows
 
-Each of the eight disabled flows opts into `enableLaunchWithheldOperations: true`
-and exercises
-reserves/swaps, which the launch Solana program refuses: wire-solana `89565920`
-("Disable unaudited reserve and swap operations") returns `OperationDisabled`
-6086 at `InitReserve` during bootstrap. There is no launch replacement for these
-operations; they return when reserves/swaps are enabled after audit.
-
-Their `package.json` live-flow script is named `test:disabled` instead of `test`.
-Both local `scripts/run-flow.mjs` discovery (including exact names, short names,
-regex and the picker) and CI's `run-flows.mjs` require a `test` script, so these
-packages are skipped. To re-enable a flow after audit, rename `test:disabled`
-back to `test` in its `package.json` (one line per flow). All packages remain in
-`pnpm build`; root `pnpm test` still runs Jest and every `test:unit` script.
-These eight packages currently have no unit tests.
+The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
+flags have been deleted. The 13 remaining flows exercise supported functionality.
+Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows
 
@@ -418,7 +400,7 @@ wire-cluster-tool create \
   --producer-count=5 \
   --node-count=1 \
   --batch-operator-count=3 \
-  --underwriter-count=1 \
+  --underwriter-count=0 \
   --epoch-duration-sec=60 \
   --ethereum-path=/data/shared/code/wire-platform/wire-ethereum \
   --solana-path=/data/shared/code/wire-platform/wire-solana \
@@ -486,7 +468,7 @@ command comes first).
 | `--node-count` | `-n` | `1` | producer node **processes** to launch |
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
-| `--underwriter-count` | `-u` | `1` | underwriters |
+| `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
 | `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
@@ -495,8 +477,6 @@ command comes first).
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
-| `--enable-launch-withheld-operations` | | `false` | run the Solana outpost bootstrap calls the launch build withholds (`init_reserve`, `create_reserve_native`, mock SPL reserves); a flow that sets it (in its scenario defaults, when it needs the bootstrap-seeded Solana reserves or the mock SPL mints) requires a Solana program build without the launch restrictions, which answer these calls with `OperationDisabled` (6086). The flag does not decide which flows the launch program can run: the eight opted-in flows need withheld Solana operations, and `flow-yield-distribution` needs the withheld `add_attestation` instruction without opting in (see CLAUDE.md, "Flow authoring — launch-withheld operations") |
 | `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
@@ -575,11 +555,8 @@ config; the Solana program id is parsed from the IDL):
 }
 ```
 
-External mode ALSO requires an EXPLICIT `--underwriter-count 0`. The flag
-defaults to `1`, so omitting it asks for one underwriter — and an external
-cluster has no local outpost for an underwriter to bond collateral on, so
-`create` fails fast naming whichever cause applies ("you asked for N" vs "you
-omitted it and got the default").
+Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
+values are rejected; syndication bond providers do not need a daemon.
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)

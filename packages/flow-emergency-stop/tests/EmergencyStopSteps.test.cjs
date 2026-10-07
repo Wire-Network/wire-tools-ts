@@ -308,6 +308,8 @@ test("scenario plans both causes and outpost-first recovery without executing wr
     "backed-message",
     "backed-intake",
     "repair-message-admitted",
+    "reconcile-shortfall",
+    "reconciled-still-stopped",
     "clear-shortfall",
     "no-new-mismatch"
   ]
@@ -580,3 +582,57 @@ test("pre-clear verifications reject changed records or balances on either outpo
     await Assert.rejects(step.runner(ctx, step.input, signal))
   }
 })
+
+test("reconciliation attests current custody to the depot exactly once", async () => {
+  const ctx = context()
+  mock.method(
+    SolanaLiqSyndicationTool,
+    "readPoolBalance",
+    async () => 123456789012345678n
+  )
+  const calls = []
+  ctx.wire.getSysioContract = name => {
+    Assert.equal(name, "synd")
+    return {
+      actions: {
+        reconcile: {
+          invoke: async (data, options) => calls.push({ data, options })
+        }
+      }
+    }
+  }
+  await run(Action.reconcileSolana, ctx)
+  Assert.equal(calls.length, 1)
+  Assert.deepEqual(calls[0].data, {
+    chain_code: SyndicationScenario.Chain,
+    token_code: SyndicationScenario.Token,
+    reported: "123456789012345678"
+  })
+  Assert.ok(calls[0].options.authorization)
+})
+
+for (const defect of ["none", "incident", "cleared"]) {
+  test(`reconciliation verification requires resolved incident and separate stop: ${defect}`, async () => {
+    const {
+      ClusterBuild,
+      WireSyndicationTool
+    } = require("@wireio/cluster-tool")
+    const { EmergencyStopScenario } = require("../lib/EmergencyStopScenario.js")
+    const ctx = context(),
+      cluster = ClusterBuild.forContext(ctx)
+    new EmergencyStopScenario().plan(cluster)
+    const step = cluster.children
+      .find(phase => phase.name === "AutomaticDepotPull")
+      .steps.find(value => value.name === "reconciled-still-stopped")
+    mock.method(WireSyndicationTool, "readMismatches", async () =>
+      defect === "incident" ? [{ sequence: "1" }] : []
+    )
+    mock.method(WireSyndicationTool, "readCord", async () => ({
+      pulled: defect !== "cleared"
+    }))
+    if (defect === "none") {
+      await step.runner(ctx, step.input, signal)
+      Assert.deepEqual(ctx.outputs.assert(Constants.Mismatches), [])
+    } else await Assert.rejects(step.runner(ctx, step.input, signal))
+  })
+}

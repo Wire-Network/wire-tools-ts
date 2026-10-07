@@ -3,14 +3,14 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
-  EthereumCollateralTool,
+  OperatorDaemonArtifactsKey,
   FlowScenario,
   ProtocolTiming,
   Report,
   Steps,
   WireCollateralTool,
   WireOperatorProvisioningTool,
-  WireReserveTool,
+  Constants as DepotConstants,
   getLogger,
   matchesProtoEnum,
   packedSlugValue,
@@ -26,7 +26,6 @@ const log = getLogger(__filename)
 
 const { SysioOpregActiontype, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
-
 
 /** The doomed operator's node-owner-generated WIRE account, resolved from the key store by its label. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
@@ -53,7 +52,10 @@ async function readScheduleGroups(
 async function readWithdrawRemitChainCodes(
   ctx: ClusterBuildContext
 ): Promise<Set<number>> {
-  const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+  const operator = await WireCollateralTool.readOperatorRow(
+    ctx,
+    Constants.DoomedOperatorLabel
+  )
   const remits = (operator?.recent_actions ?? []).filter(
     entry =>
       matchesProtoEnum(
@@ -74,7 +76,7 @@ async function readWithdrawRemitChainCodes(
  * depot-native bond meets the required minimum, and that on termination the
  * whole bond is credited back to it and paid out on `claimremit`:
  *
- * 1. **ChainHealth** — WIRE produces blocks; anvil's `OperatorRegistry` has
+ * 1. **ChainHealth** — WIRE produces blocks; anvil's `OPP` has
  *    code; the SOL test-validator answers.
  * 2. **ProvisionOperator** — the ONE provisioning mechanism creates the doomed
  *    operator (unique WIRE key, ETH + SOL identities, authex links,
@@ -111,22 +113,28 @@ export class TerminationScenario extends FlowScenario {
     // Without a requirement `meets_role_min` refuses every non-bootstrapped
     // batch operator, so the UNKNOWN → ACTIVE assertions are meaningful only
     // against a minimum the flow installs.
-    requiredBatchOperatorCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)]
+    requiredBatchOperatorCollateral: [
+      WireCollateralTool.createWireRequirement(Constants.MinimumBond)
+    ]
   }
 
   plan(cluster: ClusterBuild): void {
     const quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
       scheduleWindowStepOptions = {
         timeoutMs:
-          Constants.scheduleWindowDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
+          Constants.scheduleWindowDeadlineMs() +
+          ProtocolTiming.PollDeadlineBufferMs
       },
       terminationStepOptions = {
         timeoutMs:
-          Constants.terminationDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
+          Constants.terminationDeadlineMs() +
+          ProtocolTiming.PollDeadlineBufferMs
       },
       // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`).
       remitClaimStepOptions = {
-        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(cluster.context.config.epochDurationSec)
+        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
+          cluster.context.config.epochDurationSec
+        )
       }
 
     // ── 1. Substrate health (WIRE / ETH outpost / SOL validator) ──
@@ -151,18 +159,14 @@ export class TerminationScenario extends FlowScenario {
       verifyStep(
         Actor.EthereumOutpost,
         "ethereum-outpost-reachable",
-        "anvil answers and OperatorRegistry has deployed code",
+        "anvil answers and OPP has deployed code",
         async ctx => {
-          const registry = EthereumCollateralTool.loadOperatorRegistry(
-            ctx,
-            ctx.ethereum.wallet.signer
-          )
-          const code = await ctx.ethereum.provider.getCode(
-            await registry.getAddress()
-          )
+          const address = ctx.outputs.assert(OperatorDaemonArtifactsKey)
+            .ethereumAddresses.OPP
+          const code = await ctx.ethereum.provider.getCode(address)
           Assert.ok(
             code.length > Constants.MinimumContractCodeLength,
-            `OperatorRegistry has no code on anvil (getCode returned ${code.length} chars)`
+            `OPP has no code on anvil (getCode returned ${code.length} chars)`
           )
         },
         quickStepOptions
@@ -211,7 +215,10 @@ export class TerminationScenario extends FlowScenario {
         "registered-status-unknown",
         "operator registered non-bootstrapped with status UNKNOWN (no deposits yet)",
         async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+          const operator = await WireCollateralTool.readOperatorRow(
+            ctx,
+            Constants.DoomedOperatorLabel
+          )
           Assert.ok(
             operator != null,
             `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
@@ -260,7 +267,10 @@ export class TerminationScenario extends FlowScenario {
         "below-minimum-stays-unknown",
         "status stays UNKNOWN while the bond is under the minimum",
         async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+          const operator = await WireCollateralTool.readOperatorRow(
+            ctx,
+            Constants.DoomedOperatorLabel
+          )
           Assert.ok(
             operator != null &&
               matchesProtoEnum(
@@ -303,7 +313,10 @@ export class TerminationScenario extends FlowScenario {
         "the bond meets the minimum → status is OPERATOR_STATUS_ACTIVE",
         async ctx => {
           // `deposit` re-evaluates eligibility inline, so one read after its Step is final.
-          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+          const operator = await WireCollateralTool.readOperatorRow(
+            ctx,
+            Constants.DoomedOperatorLabel
+          )
           Assert.ok(
             operator != null &&
               matchesProtoEnum(
@@ -368,7 +381,10 @@ export class TerminationScenario extends FlowScenario {
           await pollUntil(
             `${Constants.DoomedOperatorLabel} status flips to TERMINATED`,
             async () => {
-              const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+              const operator = await WireCollateralTool.readOperatorRow(
+                ctx,
+                Constants.DoomedOperatorLabel
+              )
               return (
                 operator != null &&
                 matchesProtoEnum(
@@ -389,7 +405,10 @@ export class TerminationScenario extends FlowScenario {
         "termination-row-populated",
         "terminated_at > 0 and status_reason non-empty on the operator row",
         async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+          const operator = await WireCollateralTool.readOperatorRow(
+            ctx,
+            Constants.DoomedOperatorLabel
+          )
           Assert.ok(
             operator != null,
             `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
@@ -429,7 +448,7 @@ export class TerminationScenario extends FlowScenario {
         async ctx => {
           const chainCodes = await readWithdrawRemitChainCodes(ctx)
           Assert.ok(
-            chainCodes.has(WireReserveTool.WireChainCode),
+            chainCodes.has(DepotConstants.WireChainCode),
             `${Constants.DoomedOperatorLabel} has no success-true WITHDRAW_REMIT for the WIRE chain`
           )
         },

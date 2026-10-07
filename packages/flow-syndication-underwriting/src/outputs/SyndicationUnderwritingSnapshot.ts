@@ -6,6 +6,4 @@ export interface SyndicationUnderwritingSnapshot {
   readonly bonder: bigint
   /** Pre-operation fees. */
   readonly fees: bigint
-  /** Pre-operation syndicated. */
-  readonly syndicated: bigint
 }

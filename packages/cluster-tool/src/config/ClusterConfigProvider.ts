@@ -159,7 +159,7 @@ export namespace ClusterConfigProvider {
   export const DefaultProducerCount = 21
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
-  export const DefaultUnderwriterCount = 1
+  export const DefaultUnderwriterCount = 0
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
@@ -222,7 +222,8 @@ export namespace ClusterConfigProvider {
       cooldownEpochs: options.cooldownEpochs ?? 1,
       terminateMaxConsecutiveMisses:
         options.terminateMaxConsecutiveMisses ?? null,
-      terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
+      terminateMaxPercentMisses24h:
+        options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
@@ -247,9 +248,6 @@ export namespace ClusterConfigProvider {
       awsClusterNodeConfig,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false,
-      enableLaunchWithheldOperations:
-        options.enableLaunchWithheldOperations ?? false,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
       // `resolve` is the CREATE path, so the tree it describes is always local;
@@ -452,11 +450,8 @@ export namespace ClusterConfigProvider {
    */
   function assertExternalOutpostTopology(
     options: ClusterBuildOptions,
-    externalOutposts: ExternalOutpostConfig
+    _externalOutposts: ExternalOutpostConfig
   ): void {
-    if (externalOutposts == null) {
-      return
-    }
     const { underwriterCount = DefaultUnderwriterCount } = options,
       cause =
         options.underwriterCount == null
@@ -464,8 +459,7 @@ export namespace ClusterConfigProvider {
           : `underwriterCount was set to ${options.underwriterCount}`
     Assert.ok(
       underwriterCount === 0,
-      `externalOutposts (--external-outpost-config) requires 0 underwriters, but ${cause}. ` +
-        "An external cluster has no local outpost to bond underwriter collateral on — pass an EXPLICIT --underwriter-count 0."
+      `Swap-underwriter daemons have been removed; underwriterCount must be 0, but ${cause}.`
     )
   }
 
@@ -548,7 +542,9 @@ export namespace ClusterConfigProvider {
    * @param options - The caller options (carries `bind`, `bindConfig`, counts).
    * @returns The resolved bind config.
    */
-  async function resolveBind(options: ClusterBuildOptions): Promise<BindConfig> {
+  async function resolveBind(
+    options: ClusterBuildOptions
+  ): Promise<BindConfig> {
     const { bind: cliBind = {} } = options,
       topology: ClusterTopologyOptions = {
         producerCount: options.nodeCount,
