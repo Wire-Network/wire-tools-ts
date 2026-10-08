@@ -12,6 +12,51 @@ const authority: SysioContracts.SysioSystemAuthorityType = {
 }
 
 describe("Steps.contracts.sysio.system", () => {
+  it.each([false, true])(
+    "linkauth uses explicit account authority and respects abort=%s",
+    async aborted => {
+      const ctx = fixtureContext()
+      const contract = ctx.wire.getSysioContract(
+        SysioContracts.SysioContractName.system
+      )
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      const invoke = jest
+        .spyOn(contract.actions.linkauth, "invoke")
+        .mockResolvedValue(undefined)
+      const authorization = [{ actor: "sysio.andon", permission: "active" }]
+      const data: SysioContracts.SysioSystemLinkauthAction = {
+        account: "sysio.andon",
+        code: "sysio.andon",
+        type: "pull",
+        requirement: "pull"
+      }
+      const step = Steps.contracts.sysio.system.planLinkauth(
+        Report.Actor.Sysio,
+        "link-pull",
+        "link pull",
+        {},
+        data,
+        authorization
+      )
+      expect(step.input).toEqual({
+        kind: "SystemContractSteps.LinkauthInput",
+        data,
+        authorization
+      })
+      expect(step.runner).toBe(Steps.contracts.sysio.system.runLinkauth)
+      const controller = new AbortController()
+      if (aborted) controller.abort()
+      const result = step.runner(ctx, step.input, controller.signal)
+      if (aborted) {
+        await expect(result).rejects.toThrow()
+        expect(invoke).not.toHaveBeenCalled()
+      } else {
+        await result
+        expect(invoke).toHaveBeenCalledWith(data, { authorization })
+      }
+      jest.restoreAllMocks()
+    }
+  )
   it("setemitcfg carries the emission-config struct (invoked as { cfg })", () => {
     const data: SysioContracts.SysioSystemEmissionConfigType = {
       t1_allocation: 0,

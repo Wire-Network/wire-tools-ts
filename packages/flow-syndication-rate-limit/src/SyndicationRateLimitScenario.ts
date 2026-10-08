@@ -32,22 +32,16 @@ async function waitNewEpoch(ctx: ClusterBuildContext): Promise<void> {
   )
 }
 
-/** Verify tick_bucket's capped refill, excluding frozen epochs, less this crank's release. */
+/** Verify tick_bucket's capped elapsed-epoch refill, less this crank's release. */
 function assertBucketRefill(
   previous: SysioContracts.SysioSyndBucketRowType,
   current: SysioContracts.SysioSyndBucketRowType,
   released: bigint
 ): void {
   const elapsed = BigInt(current.last_epoch - previous.last_epoch),
-    frozenBefore = BigInt(previous.frozen_mark),
-    frozenNow = BigInt(current.frozen_mark),
-    frozenSince = frozenNow > frozenBefore ? frozenNow - frozenBefore : 0n,
-    refillEpochs = elapsed > frozenSince ? elapsed - frozenSince : 0n,
-    refilled = BigInt(previous.level) + Constants.Refill * refillEpochs,
+    refilled = BigInt(previous.level) + Constants.Refill * elapsed,
     capacity = refilled < Constants.Burst ? refilled : Constants.Burst
   Assert.ok(elapsed >= 0n, "bucket epoch must not regress")
-  Assert.strictEqual(frozenBefore, 0n, "this scenario has no frozen epochs")
-  Assert.strictEqual(frozenNow, 0n, "this scenario has no frozen epochs")
   Assert.ok(released >= 0n && released <= capacity)
   Assert.strictEqual(BigInt(current.level), capacity - released)
 }

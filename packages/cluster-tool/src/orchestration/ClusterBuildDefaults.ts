@@ -28,7 +28,7 @@ import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps } from "./steps/index.js"
+import { Steps, SyndicationUserSteps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
 const log = getLogger(__filename)
@@ -63,6 +63,10 @@ const LiqKickerBps = 200
  * and `clear`, which move no funds; its resource policy pays for them.
  */
 const PanicAccountWireFunding = 0n
+/** RAM for the Andon child permissions and action links, beyond the deployment gift. */
+const AndonPermissionRamWeight = "0.0100 SYS"
+/** This policy adds permission RAM only; it allocates no CPU or network weight. */
+const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -765,10 +769,8 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── the depot's emergency stop ──
-    // `setpanic` needs an existing account, so the panic account is provisioned first,
-    // through the user path (the dev key, a policy from the bootstrap node owner above).
-    // The cord is armed before any cord reader carries traffic, and `sysio.synd` is a
-    // registered puller before its first envelope, so a custody shortfall pulls it.
+    // Provision the panic delegate before referencing it in native authorities.
+    // Arm both action links before traffic; privileged sysio.synd needs no registry.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "PanicAccount",
@@ -786,22 +788,75 @@ export namespace ClusterBuildDefaults {
     ClusterBuildPhase.create<C>(
       prerequisites,
       "EmergencyStop",
-      "Arm sysio.andon: the panic account and the sysio.synd puller"
+      "Arm sysio.andon with native pull and clear permissions"
     ).push(
-      Steps.contracts.sysio.andon.planSetpanic<C>(
+      SyndicationUserSteps.planResourcePolicy<C>(
         Actor.Sysio,
-        "set-panic-account",
-        `name ${Constants.PANIC_ACCOUNT} the panic account`,
+        "fund-andon-permission-ram",
+        "fund RAM for sysio.andon native permissions and action links",
         {},
-        { account: Constants.PANIC_ACCOUNT }
+        {
+          owner: SysioContractAccount[SysioContractName.andon],
+          issuer: Constants.BOOTSTRAP_NODE_OWNER,
+          net_weight: NoResourceWeight,
+          cpu_weight: NoResourceWeight,
+          ram_weight: AndonPermissionRamWeight,
+          time_block: 0,
+          network_gen: 0
+        }
       ),
-      Steps.contracts.sysio.andon.planAddpuller<C>(
-        Actor.Sysio,
-        "add-synd-puller",
-        "register sysio.synd as a puller, so a custody shortfall pulls the cord",
-        {},
-        { contract: SysioContractAccount[SysioContractName.synd] }
-      )
+      ...[
+        Steps.contracts.sysio.andon.Permission.pull,
+        Steps.contracts.sysio.andon.Permission.clear
+      ].flatMap(permission => [
+        Steps.contracts.sysio.system.planUpdateauth<C>(
+          Actor.Sysio,
+          `delegate-andon-${permission}`,
+          `delegate sysio.andon@${permission} to panic and governance`,
+          {},
+          {
+            account: SysioContractAccount[SysioContractName.andon],
+            permission,
+            parent: "active",
+            auth: {
+              threshold: 1,
+              keys: [],
+              // Fixed harness accounts are ordered by chain name value: andon.panic < sysio.
+              accounts: [
+                Constants.PANIC_ACCOUNT,
+                SysioContractAccount[SysioContractName.system]
+              ].map(actor => ({
+                permission: { actor, permission: "active" },
+                weight: 1
+              }))
+            }
+          },
+          [
+            {
+              actor: SysioContractAccount[SysioContractName.andon],
+              permission: "active"
+            }
+          ]
+        ),
+        Steps.contracts.sysio.system.planLinkauth<C>(
+          Actor.Sysio,
+          `link-andon-${permission}`,
+          `link sysio.andon::${permission} to its native permission`,
+          {},
+          {
+            account: SysioContractAccount[SysioContractName.andon],
+            code: SysioContractAccount[SysioContractName.andon],
+            type: permission,
+            requirement: permission
+          },
+          [
+            {
+              actor: SysioContractAccount[SysioContractName.andon],
+              permission: "active"
+            }
+          ]
+        )
+      ])
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
