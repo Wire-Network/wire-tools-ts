@@ -35,7 +35,7 @@ export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
  * artifacts: resolve its address from the `outpost-addrs.json` map (written by
  * `deployLocal.ts`), read the hardhat-emitted ABI artifact under
  * `<ethereumPath>/artifacts/contracts/<...artifactSubpath>/<contractName>.sol/
- * <contractName>.json`, and bind it to `signer` via {@link contractView}. The
+ * <contractName>.json`, and bind it to `runner` via {@link contractView}. The
  * ONE artifact-loading path every per-contract loader (`loadBar`,
  * `loadMockWireNodes`, `loadMockYieldEmitter`, …) delegates to.
  *
@@ -43,15 +43,20 @@ export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
  * @param outpostAddrs - The `outpost-addrs.json` address map.
  * @param contractName - The contract's name — its `outpostAddrs` key AND its `<Name>.sol/<Name>.json` artifact basename.
  * @param artifactSubpath - Directory segments under `artifacts/contracts` holding the contract's artifact dir.
- * @param signer - Signer the returned surface is bound to.
- * @returns The signer-bound contract surface, typed as `View`.
+ * @param runner - Signer (writes) or provider (reads) the returned surface is bound to.
+ * @param artifactSourceName - The Solidity file's basename when it is not the
+ *   contract's name (`liqEth/v1/liqEth.sol` declares `LiqEthToken`).
+ * @param artifactContractName - Compiled name when the deployment uses a stable alias.
+ * @returns The runner-bound contract surface, typed as `View`.
  */
 export function loadOutpostContract<View extends object>(
   ethereumPath: string,
   outpostAddrs: Record<string, string>,
   contractName: string,
   artifactSubpath: string[],
-  signer: ethers.Signer
+  runner: ethers.ContractRunner,
+  artifactSourceName: string = contractName,
+  artifactContractName: string = contractName
 ): View & ethers.BaseContract {
   const addr = outpostAddrs[contractName]
   Assert.ok(
@@ -65,8 +70,8 @@ export function loadOutpostContract<View extends object>(
     "artifacts",
     "contracts",
     ...artifactSubpath,
-    `${contractName}.sol`,
-    `${contractName}.json`
+    `${artifactSourceName}.sol`,
+    `${artifactContractName}.json`
   )
   Assert.ok(
     Fs.existsSync(artifactPath),
@@ -74,7 +79,7 @@ export function loadOutpostContract<View extends object>(
       `Run \`npx hardhat compile\` in wire-ethereum first.`
   )
   const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-  return contractView<View>(addr, artifact.abi, signer)
+  return contractView<View>(addr, artifact.abi, runner)
 }
 
 /**

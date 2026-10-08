@@ -17,7 +17,7 @@ export namespace NodeOwnerNftScenarioConstants {
   /** Bootstrapped batch operators stood up by the bootstrap. */
   export const BatchOperatorCount = 3
   /** Bootstrapped underwriters stood up by the bootstrap. */
-  export const UnderwriterCount = 1
+  export const UnderwriterCount = 0
 
   /** The dev K1 key each fixture owner account is created under (controls `owner@active`). */
   export const DEV_K1_PUBLIC_KEY = Constants.DEV_K1_PUBLIC_KEY
@@ -26,7 +26,8 @@ export namespace NodeOwnerNftScenarioConstants {
    * A second, distinct Wire K1 key (from `clio create key --k1`) — the
    * wrong-key claim names it while the account is NOT controlled by it.
    */
-  export const OtherWireKey = "PUB_K1_84yPGCSNRdSTrdpYnfzWun477PzuKR4L4R8eYumxqLjoG8s2Jo"
+  export const OtherWireKey =
+    "PUB_K1_84yPGCSNRdSTrdpYnfzWun477PzuKR4L4R8eYumxqLjoG8s2Jo"
 
   /** Happy-path owner — created under the dev key, registers CONFIRMED at tier 1. */
   export const HappyPathAccount = "nfta"

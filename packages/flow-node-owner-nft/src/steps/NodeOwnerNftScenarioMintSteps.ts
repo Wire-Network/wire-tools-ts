@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import {
   ClusterBuildContext,
   ClusterBuildStep,
-  EthereumCollateralTool,
+  OperatorDaemonArtifactsKey,
   loadMockWireNodes,
   mintNodeNFT,
   NodeOwnerTier,
@@ -10,8 +10,7 @@ import {
   Report,
   type ClusterBuildStepOptions,
   type MockWireNodesContract,
-  type StepInput,
-  ClusterConfigProvider
+  type StepInput
 } from "@wireio/cluster-tool"
 
 /**
@@ -43,9 +42,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
   ): MockWireNodesContract {
     return loadMockWireNodes(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      ctx.outputs.assert(OperatorDaemonArtifactsKey).ethereumAddresses,
       ctx.ethereum.wallet.signer
     )
   }

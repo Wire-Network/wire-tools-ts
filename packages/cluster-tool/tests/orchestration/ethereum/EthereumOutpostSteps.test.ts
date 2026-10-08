@@ -9,6 +9,7 @@ import {
   Steps
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
@@ -241,5 +242,67 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
         SeedEpochDurationSec
       )
     ).toThrow(/wireno\.aaaaa has no Ethereum key/)
+  })
+})
+
+describe("EthereumOutpostSteps.assertSyndicationPoolConfigured", () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  /** The configuration the deploy config names. */
+  const configured = (): EthereumSyndicationTool.PoolConfiguration => ({
+    maxSyndicationPerTransfer: ethers.parseEther("1000"),
+    yieldDeadband: 10_000_000n,
+    liqTokenCode: EthereumSyndicationTool.liqEthTokenCode(),
+    liqTokenPrecision: 18
+  })
+
+  /** Answer the two reads the check makes. */
+  function stubReads(
+    configuration: EthereumSyndicationTool.PoolConfiguration,
+    canCall: boolean
+  ): jest.SpyInstance {
+    jest
+      .spyOn(EthereumSyndicationTool, "readPoolConfiguration")
+      .mockResolvedValue(configuration)
+    return jest
+      .spyOn(EthereumSyndicationTool, "readCanCallPool")
+      .mockResolvedValue(canCall)
+  }
+
+  it("accepts the deploy config's values and a panic account that may pause and unpause", async () => {
+    const canCall = stubReads(configured(), true)
+    await expect(
+      EthereumOutpostSteps.assertSyndicationPoolConfigured(context())
+    ).resolves.toBeUndefined()
+    const panic = EthereumOutpostBootstrapper.anvilWallet(
+      EthereumOutpostBootstrapper.PanicAccountIndex
+    ).address
+    expect(canCall.mock.calls.map(([, account, fn]) => [account, fn])).toEqual([
+      [panic, EthereumSyndicationTool.PoolFunction.pause],
+      [panic, EthereumSyndicationTool.PoolFunction.unpause]
+    ])
+  })
+
+  it("refuses a pool whose maximum differs from the deploy config", async () => {
+    stubReads({ ...configured(), maxSyndicationPerTransfer: 0n }, true)
+    await expect(
+      EthereumOutpostSteps.assertSyndicationPoolConfigured(context())
+    ).rejects.toThrow(/configuration is not what the deploy config named/)
+  })
+
+  it("refuses a pool reporting another liq token", async () => {
+    stubReads({ ...configured(), liqTokenCode: 1n }, true)
+    await expect(
+      EthereumOutpostSteps.assertSyndicationPoolConfigured(context())
+    ).rejects.toThrow(/configuration is not what the deploy config named/)
+  })
+
+  it("refuses a panic account the access manager does not let pause", async () => {
+    stubReads(configured(), false)
+    await expect(
+      EthereumOutpostSteps.assertSyndicationPoolConfigured(context())
+    ).rejects.toThrow(/may not call SyndicationPool\.pause\(\)/)
   })
 })

@@ -164,7 +164,9 @@ describe("NodeopProcess", () => {
       NodeopProcess.create(manager, {
         node: node("keyless", NodeRole.producer, ["sysio"])
       })
-    ).rejects.toThrow(/requires one producer OperatorAccount per hosted producer/)
+    ).rejects.toThrow(
+      /requires one producer OperatorAccount per hosted producer/
+    )
   })
 
   // The BIOS shape, which an all-labels assertion rejected outright and took every e2e flow with
@@ -240,7 +242,10 @@ describe("NodeopProcess", () => {
       }
     }
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("two-producers", NodeRole.producer, ["defproducera", "defproducerb"]),
+      node: node("two-producers", NodeRole.producer, [
+        "defproducera",
+        "defproducerb"
+      ]),
       operators: [producerOperator("defproducera"), second]
     })
     expect(valuesOf(nodeop.args, "--producer-name")).toEqual([
@@ -259,11 +264,18 @@ describe("NodeopProcess", () => {
     // accounts' slots silently unproduced — the assert makes the positional assumption explicit.
     const other: OperatorAccount = {
       ...producerOperator("defproducerb"),
-      wire: { type: KeyType.K1, publicKey: "PUB_K1_other", privateKey: "PVT_K1_other" }
+      wire: {
+        type: KeyType.K1,
+        publicKey: "PUB_K1_other",
+        privateKey: "PVT_K1_other"
+      }
     }
     await expect(
       NodeopProcess.create(manager, {
-        node: node("split-keys", NodeRole.producer, ["defproducera", "defproducerb"]),
+        node: node("split-keys", NodeRole.producer, [
+          "defproducera",
+          "defproducerb"
+        ]),
         operators: [producerOperator("defproducera"), other]
       })
     ).rejects.toThrow(/share the node's block-signing K1/)
@@ -1134,15 +1146,10 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("peered", NodeRole.batch_operator)
     })
-    // 1 producer node + 3 batch ops + 1 underwriter + 1 API node + bios +
+    // 1 producer node + 3 batch ops + 1 API node + bios +
     // ad-hoc headroom
     const allowance =
-      1 +
-      3 +
-      1 +
-      1 +
-      NodeConfig.BiosNodeCount +
-      NodeConfig.AdHocDaemonPeerHeadroom
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
     )
@@ -1154,15 +1161,10 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("meshed", NodeRole.batch_operator)
     })
-    // 1 producer node + 3 batch ops + 1 underwriter + 1 API node + bios +
+    // 1 producer node + 3 batch ops + 1 API node + bios +
     // ad-hoc headroom
     const allowance =
-      1 +
-      3 +
-      1 +
-      1 +
-      NodeConfig.BiosNodeCount +
-      NodeConfig.AdHocDaemonPeerHeadroom
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--max-clients", String(allowance)])
     )

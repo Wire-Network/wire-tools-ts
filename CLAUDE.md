@@ -48,7 +48,7 @@ resolves the flow name, validates the three sibling-repo paths, wires the
 `WIRE_*` env vars, and drives the package's `test` script (which executes the
 built `lib/index.js`). The e2e gate
 (`wire-platform-build-system` → `run-flows.mjs`) discovers every `flow-*`
-package dynamically and runs them through a work-stealing pool
+package with a `test` script dynamically and runs them through a work-stealing pool
 (`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there —
 and never hand-invoke that pool locally.
 
@@ -89,7 +89,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (13 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -142,7 +142,8 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   ts-jest; `NODE_OPTIONS=--experimental-vm-modules` is wired into the test
   scripts for the ESM dynamic imports). Root `jest.config.ts` is
   multi-project.
-- **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
+- **Live flows use their `test` script; unit tests are separate** (Jest projects
+  or `test:unit`, both included by root `pnpm test`). A flow is verified by RUNNING its built
   `lib/index.js` against a live cluster (its `test` script does exactly that) —
   launched via `scripts/run-flow.mjs` and watched via
   `scripts/flow-heartbeat-monitor.mjs`, never invoked directly (see "Live flow
@@ -225,6 +226,13 @@ Running a flow means exactly two scripts, per
    armed DIRECTLY via a background Monitor, one instance per run; its stdout is
    the event stream and it self-concludes on flow exit or bail.
 
+OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
+by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
+when deliberately exercising paused outposts; it counts and quotes those exact
+refusals as NOISE, while preserving unrelated failures and all liveness bails.
+The liquidity flows run without this flag. It is distinct from
+`--expect-epoch-freeze`, which permits a deliberate epoch stall.
+
 NEVER wrap either script in session-local launchers/watchers, never invoke
 `lib/index.js` or `pnpm --filter <pkg> test` directly in a session, and extend
 the scripts (not new ones) when a run needs something they lack. Epoch stall =
@@ -292,9 +300,10 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-reserves` (default off —
-seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real / external
-depot leaves these unseeded), `--api-count <N>` (default 0 — plan N API nodes:
+requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off — seed the
+2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
+custody), `--enable-mock-syndication-import` (default off — import the mock
+bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -342,12 +351,47 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
-**Flow authoring — mock reserves.** A flow that reads the mock (chain, token)
-PRIMARY reserves sets `enableMockReserves: true` in its `Scenario.defaults` (the
-same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan()`.
-The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
-`EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
-so `regreserve` can never be called from a flow phase.
+**Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
+`sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
+symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
+`setconfig` and the kicker are registry setup a real depot performs too, so the
+bootstrap does those unconditionally. A flow needing the first bonder sets
+`enableMockSyndicationImport: true` in `Scenario.defaults`, never `plan()`:
+`importsynd` is epoch-zero only. Reload the unlinked bonder with
+`Steps.registry.readMockSyndicationBonder(ctx)` (durable label
+`Steps.registry.MockSyndicationBonderLabel`); link its ED/EM keys in the flow to
+sweep the parked import. Either mock shadow flag enables custody backing after
+all seeds, with one funding/deposit/donation per Step and final custody checks.
+Ethereum then seeds principal through `OutpostManager.execute` in a separate
+Step, preserving the pool configuration. Verification requires principal to equal
+the backing and custody to cover it before the epoch relay can realize yield.
+
+**Flow authoring — underwriting, syndication and the emergency stop.** The
+bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
+unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: the
+panic account `Constants.PANIC_ACCOUNT`, `sysio.andon::setpanic`,
+`addpuller(sysio.synd)`) and `SyndicationConfig` (after `LiqConfig`:
+`sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
+`Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
+fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not
+bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
+are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
+`planDesyndicate`); `WireSyndicationTool` reads the depot's syndication state and
+bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). On the
+outposts, the Ethereum deploy config names the panic account
+(`EthereumOutpostBootstrapper.PanicAccountIndex`), `maxSyndicationPerTransfer` and
+`yieldDeadband` (`verify-syndication-pool` reads them back), and the Solana surface
+runs `set-max-syndication --fresh` and `set_panic` to the harness panic keypair
+(`SolanaFundingTool.PanicKeypairName`). The outpost writes a flow drives —
+syndicating, donating custody, pulling the stop and paying a stored desyndication —
+are `SolanaLiqSyndicationTool` (`planSetFrozen`, `planDonateToPool`,
+`planPayPendingDesyndication`, which derives the relay's `pending_desyndication`
+PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
+`planSetPaused`, `planPayPendingDesyndication`).
+
+**Removed functionality.** The eight reserve/swap flow packages and their bootstrap
+flags have been deleted. Only batch operators run OPP daemons. Syndication bond
+providers act through `sysio.bond`; they do not run swap-underwriter daemons.
 
 **Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
 (and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in
@@ -359,7 +403,12 @@ the `ApiNodes` group right before `OperatorNodes`.
   (clients + `outputs` + `keyStore` + typed events), `OutputStore`,
   `ClusterBuildDefaults` (bootstrap phases), `steps/` palette, per-chain
   outpost bootstrappers, `outputs/` (typed cross-step values incl.
-  `OperatorAccount`, `ClusterKeyStore`).
+  `OperatorAccount`, `ClusterKeyStore`). On the Solana side the validator loads
+  ALL FOUR wire-solana programs at genesis and
+  `solana/SolanaLiqsolSurfaceSteps` runs wire-solana's own `anchor run init-*`
+  scripts (one Step each, via `SolanaAnchorScriptTool`) BEFORE the OPP outpost
+  bootstrap — `init-global-config` is what creates the `global_config` every
+  OPP admin op is gated on.
 - **`cluster/`** — slim `ClusterManager` (dirs/launch/destroy) +
   `processes/`: construction-safe `ManagedProcess` base (self-registers,
   graceful stop with cleared escalation timer) and
@@ -386,7 +435,10 @@ the `ApiNodes` group right before `OperatorNodes`.
 `.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos
 (`../wire-libraries-ts/packages/` → `sdk-core`/`shared`/`shared-node`;
 `wire-sysio/build/opp/typescript` → `@wireio/opp-typescript-models`). They
-link automatically on `pnpm install` when the siblings exist.
+link automatically on `pnpm install` when the siblings exist. A feature
+worktree developed against sibling WORKTREES points the hook at them —
+`WIRE_LIBRARIES_TS_PATH=<libs-worktree> WIRE_SYSIO_PATH=<sysio-worktree> pnpm install`
+— and the `Linked …` lines it prints are the record of what resolved.
 
 > **Never depend on `@wireio/opp-solidity-models` here** — it is
 > `wire-ethereum`-only (`opp-models-packages.md`).

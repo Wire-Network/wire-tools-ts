@@ -15,7 +15,7 @@ describe("EthereumNodeOwnerNftTool.loadBar", () => {
   let signer: ethers.Signer
 
   beforeAll(() => {
-    // A fake wire-ethereum root carrying only the hardhat BAR artifact.
+    // A fake wire-ethereum root carrying only the hardhat BARV2 artifact.
     ethereumPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "eth-repo-"))
     const artifactDir = Path.join(
       ethereumPath,
@@ -26,7 +26,7 @@ describe("EthereumNodeOwnerNftTool.loadBar", () => {
     )
     Fs.mkdirSync(artifactDir, { recursive: true })
     Fs.writeFileSync(
-      Path.join(artifactDir, "BAR.json"),
+      Path.join(artifactDir, "BARV2.json"),
       JSON.stringify({ abi: [] })
     )
     signer = ethers.Wallet.createRandom()
@@ -36,7 +36,7 @@ describe("EthereumNodeOwnerNftTool.loadBar", () => {
     Fs.rmSync(ethereumPath, { recursive: true, force: true })
   })
 
-  it("binds the artifact ABI to the deployed address from outpost-addrs", () => {
+  it("binds the BARV2 artifact ABI to the BAR deployment alias", () => {
     const contract = loadBar(ethereumPath, { BAR: BAR_ADDRESS }, signer)
     expect(contract.target).toBe(BAR_ADDRESS)
   })

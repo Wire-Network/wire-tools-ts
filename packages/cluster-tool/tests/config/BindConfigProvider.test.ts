@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals"
 import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
+import Os from "node:os"
 import Path from "node:path"
 import {
   BindConfigPortProtocol,
@@ -16,6 +17,7 @@ import { ListenAllAddress, Localhost } from "@wireio/cluster-tool/utils"
  */
 interface FakeGetPortOptions {
   port?: number
+  host?: string
   exclude?: Iterable<number>
 }
 
@@ -125,11 +127,13 @@ jest.unstable_mockModule("get-port", () => ({
  * on the host would steer which dynamic-range window these tests resolve).
  */
 const mockUdpTakenPorts = new Set<number>()
+const mockIpv6TakenPorts = new Set<number>()
 jest.mock("@wireio/cluster-tool/utils/netUtils", () => ({
   ...(jest.requireActual(
     "@wireio/cluster-tool/utils/netUtils"
   ) as typeof import("@wireio/cluster-tool/utils/netUtils")),
-  isUdpPortFree: jest.fn(async (port: number) => !mockUdpTakenPorts.has(port))
+  isUdpPortFree: jest.fn(async (port: number) => !mockUdpTakenPorts.has(port)),
+  isIpv6PortFree: jest.fn(async (port: number) => !mockIpv6TakenPorts.has(port))
 }))
 
 describe("BindConfigProvider", () => {
@@ -144,6 +148,7 @@ describe("BindConfigProvider", () => {
   beforeEach(() => {
     allocator.reset()
     mockUdpTakenPorts.clear()
+    mockIpv6TakenPorts.clear()
     // Fresh registry per test — resolve() registers its ports, and a leftover
     // registration would leak exclusions into the next test's outcome. The
     // scratch dir itself is installed by tests/jest.setup.ts.
@@ -386,9 +391,7 @@ describe("BindConfigProvider", () => {
         AdvertiseAddress
       )
       // Unpinned entries persist WITHOUT the key (single-host default).
-      expect(
-        "advertiseAddress" in config.nodeop.ports.producers[1]
-      ).toBe(false)
+      expect("advertiseAddress" in config.nodeop.ports.producers[1]).toBe(false)
     })
 
     it("claims one api pair per requested API node", async () => {
@@ -443,11 +446,15 @@ describe("BindConfigProvider", () => {
 
   describe("portLockPath", () => {
     // A mutex must be scoped to the state it guards. The registry is that
-    // state and it is env-overridable, so the lock has to follow it — a lock
-    // pinned to the OS temp dir made every jest worker queue on ONE mutex
-    // while each held its own mkdtemp registry, i.e. contend over nothing,
-    // and the rotating loser failed with `Lock file is already being held`.
-    it("lives INSIDE the registry it guards, so isolated registries never contend", () => {
+    // state and it is env-overridable, so the lock has to FOLLOW it — a lock
+    // pinned to one fixed tmpdir name made every jest worker queue on ONE
+    // mutex while each held its own mkdtemp registry, i.e. contend over
+    // nothing, and the rotating loser failed with `Lock file is already
+    // being held`. The lock is keyed by the registry path but does NOT live
+    // inside the registry dir: a sandboxing suite deletes that dir at
+    // teardown while `proper-lockfile`'s refresh timer still holds the lock,
+    // and the owning call would otherwise reject through onCompromised.
+    it("is distinct per registry, so isolated registries never contend", () => {
       const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
       try {
         process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-one"
@@ -455,9 +462,10 @@ describe("BindConfigProvider", () => {
         process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-two"
         const second = BindConfigProvider.portLockPath()
 
-        expect(Path.dirname(first)).toBe("/tmp/registry-one")
-        expect(Path.dirname(second)).toBe("/tmp/registry-two")
         expect(first).not.toBe(second)
+        // OUTSIDE the registries it keys on — nothing a fixture owns/deletes.
+        expect(Path.dirname(first)).toBe(Os.tmpdir())
+        expect(Path.dirname(second)).toBe(Os.tmpdir())
       } finally {
         process.env[BindConfigProvider.RegistryPathEnvVar] = previous
       }
@@ -466,15 +474,29 @@ describe("BindConfigProvider", () => {
     it("is ONE shared path when the registry is shared — the cross-process guarantee", () => {
       const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
       try {
-        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-shared"
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-shared"
         expect(BindConfigProvider.portLockPath()).toBe(
           BindConfigProvider.portLockPath()
         )
-        expect(Path.dirname(BindConfigProvider.portLockPath())).toBe(
-          BindConfigProvider.registryPath()
-        )
       } finally {
         process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+
+    it("normalizes equivalent registry spellings to one lock", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-normalized"
+        const absolute = BindConfigProvider.portLockPath()
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-normalized/"
+        expect(BindConfigProvider.portLockPath()).toBe(absolute)
+      } finally {
+        if (previous === undefined)
+          delete process.env[BindConfigProvider.RegistryPathEnvVar]
+        else process.env[BindConfigProvider.RegistryPathEnvVar] = previous
       }
     })
   })
@@ -798,19 +820,64 @@ describe("BindConfigProvider", () => {
         second = BindConfigProvider.claimAdHocPorts(bind, "otherprod")
       expect(first).not.toEqual(second)
       // A stop/restart of the same node must rebind where it was, not consume a second slot.
-      expect(BindConfigProvider.claimAdHocPorts(bind, "flowprod")).toEqual(first)
+      expect(BindConfigProvider.claimAdHocPorts(bind, "flowprod")).toEqual(
+        first
+      )
     })
 
     it("fails naming the count to raise when the pool is exhausted", async () => {
       const bind = await BindConfigProvider.resolve({}, { adHocCount: 1 })
       BindConfigProvider.claimAdHocPorts(bind, "flowprod")
-      expect(() => BindConfigProvider.claimAdHocPorts(bind, "otherprod")).toThrow(
-        /ad-hoc port pool exhausted.*adHocCount/s
-      )
+      expect(() =>
+        BindConfigProvider.claimAdHocPorts(bind, "otherprod")
+      ).toThrow(/ad-hoc port pool exhausted.*adHocCount/s)
     })
   })
 
   describe("pickPort", () => {
+    it("probes IPv4 using the wildcard rather than enumerating interfaces", async () => {
+      const getPort = await import("get-port")
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultKiod)
+      expect(getPort.default).toHaveBeenLastCalledWith(
+        expect.objectContaining({ host: ListenAllAddress })
+      )
+    })
+
+    it("rejects a pinned IPv6-only occupied port", async () => {
+      const port = BindConfigProvider.DefaultKiod
+      mockIpv6TakenPorts.add(port)
+      await expect(
+        BindConfigProvider.pickPort(port, null, new Set(), "test")
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
+    it("redraws an IPv6-only occupied preference", async () => {
+      const port = BindConfigProvider.DefaultKiod
+      mockIpv6TakenPorts.add(port)
+      expect(await BindConfigProvider.findAvailable(port)).not.toBe(port)
+    })
+
+    it("reports an IPv6-only occupied port as unavailable", async () => {
+      const port = BindConfigProvider.DefaultKiod
+      mockIpv6TakenPorts.add(port)
+      expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+    })
+
+    it("skips a range with an IPv6-only occupied port", async () => {
+      const first = BindConfigProvider.DefaultSolanaDynamicPortFirst
+      mockIpv6TakenPorts.add(first)
+      const getPort = await import("get-port")
+      jest.mocked(getPort.default).mockClear()
+      const window = await BindConfigProvider.findAvailableRange()
+      expect(window.first).toBe(
+        first + BindConfigProvider.SolanaDynamicPortRangeSize
+      )
+      // Stop probing the rejected window immediately; do not lock its tail.
+      expect(getPort.default).toHaveBeenCalledTimes(
+        BindConfigProvider.SolanaDynamicPortRangeSize + 1
+      )
+    })
+
     it("redraws an OS-assigned candidate that lands inside the claimed set", async () => {
       // get-port consults `exclude` only for explicit candidates — its port-0
       // (OS-assigned) fallback returns unchecked, so the OS can hand back a
