@@ -37,7 +37,7 @@ export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
  * `<ethereumPath>/artifacts/contracts/<...artifactSubpath>/<contractName>.sol/
  * <contractName>.json`, and bind it to `runner` via {@link contractView}. The
  * ONE artifact-loading path every per-contract loader (`loadBar`,
- * `loadMockWireNodes`, `loadMockYieldEmitter`, …) delegates to.
+ * `loadMockWireNodes`, …) delegates to.
  *
  * @param ethereumPath - The wire-ethereum repo root (artifact tree parent).
  * @param outpostAddrs - The `outpost-addrs.json` address map.
