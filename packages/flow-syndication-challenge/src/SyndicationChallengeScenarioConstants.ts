@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import {
   outputKey,
   ProtocolTiming,
+  Steps,
   SyndicationScenario
 } from "@wireio/cluster-tool"
 
@@ -46,7 +47,8 @@ export namespace SyndicationChallengeScenarioConstants {
     desynd_refill: 0,
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: String(Bounty),
-    challenge_extra: String(Extra)
+    challenge_extra: String(Extra),
+    min_desyndicate: Steps.registry.MinimumDesyndication
   }
   /** Fee-pot seed envelope. */
   export const SeedEpoch = outputKey<number>(

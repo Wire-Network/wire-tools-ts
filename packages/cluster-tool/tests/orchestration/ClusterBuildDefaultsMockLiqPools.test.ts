@@ -27,7 +27,7 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
     }
   }
 
-  it("always configures the swap, opens the shadow symbols and sets the kicker, in that order", async () => {
+  it("always configures the swap, opens the shadow symbols and configures syndication, in that order", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
     const names = collectPhaseNames(cluster.children)
     expect(names.indexOf("SwapConfig")).toBeGreaterThan(
@@ -36,11 +36,8 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
     expect(names.indexOf("ShadowLiqTokens")).toBe(
       names.indexOf("SwapConfig") + 1
     )
-    expect(names.indexOf("LiqConfig")).toBe(
-      names.indexOf("ShadowLiqTokens") + 1
-    )
     expect(names.indexOf("SyndicationConfig")).toBeGreaterThan(
-      names.indexOf("LiqConfig")
+      names.indexOf("ShadowLiqTokens")
     )
     expect(names).not.toContain("UnderwriterConfig")
     expect(names).not.toContain("ReserveConfig")
@@ -60,7 +57,7 @@ describe("ClusterBuildDefaults — mock-liq-pool gating", () => {
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MockLiqPools")
-    // gated phase follows the kicker and the per-pair syndication config, pre-EpochBootstrap
+    // gated phase follows the per-pair syndication config, pre-EpochBootstrap
     expect(names.indexOf("MockLiqPools")).toBe(
       names.indexOf("SyndicationConfig") + 1
     )

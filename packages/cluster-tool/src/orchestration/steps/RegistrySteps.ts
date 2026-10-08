@@ -118,6 +118,8 @@ export namespace RegistrySteps {
    * contract refuses a challenge whose charge is zero, so this is never 0.
    */
   export const SyndicationChallengeExtra = 1_000_000_000
+  /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
+  export const MinimumDesyndication = 1_000_000
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -474,7 +476,8 @@ export namespace RegistrySteps {
       desynd_refill: SyndicationBucketSize,
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
-      challenge_extra: SyndicationChallengeExtra
+      challenge_extra: SyndicationChallengeExtra,
+      min_desyndicate: MinimumDesyndication
     }))
 
   /** Seed chains + tokens + chain-token bindings. */

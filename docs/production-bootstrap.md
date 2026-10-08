@@ -327,7 +327,7 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `compute_bps` | `4000` | 40% → producers + batch ops |
 | `capex_bps` | `2000` | 20% → `sysio.ops` |
 | `governance_bps` | `1000` | 10% → `sysio.gov` |
-| *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`, drained by `fundclaim` |
+| *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`; no automatic LIQ or DClaim capital draw |
 | `producer_bps` | `7000` | compute split: 70% producers |
 | `batch_op_bps` | `3000` | compute split: 30% batch ops |
 | `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
@@ -444,7 +444,6 @@ contract/mint addresses via the same shapes.
     registered liq token: `{sym:"9,LIQETH", chain_code:slug("ETHEREUM"), token_code:slug("LIQETH")}` and
     `{sym:"9,LIQSOL", chain_code:slug("SOLANA"), token_code:slug("LIQSOL")}`. Syndicated outpost custody is
     minted 1:1 into these symbols.
-36. `sysio.liq::setkicker({bps:200})` — `[sysio.liq@active]` — the T5 yield kicker.
 37. **Underwriting + syndication rules:**
     - `sysio.bond::setconfig({hold_bps:1000})` — `[sysio.bond@active]` — the hold bond, in bps of a request's
       covered amount (the contract default, set explicitly).
@@ -459,6 +458,7 @@ contract/mint addresses via the same shapes.
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |
+| `min_desyndicate` | `1000000` | required gross return floor: 0.001 at nine decimals, shared by both pairs; an arbitrary launch choice based on 0.001 SOL |
 
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`

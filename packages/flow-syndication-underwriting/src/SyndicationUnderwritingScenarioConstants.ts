@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import {
   outputKey,
   ProtocolTiming,
+  Steps,
   SyndicationScenario
 } from "@wireio/cluster-tool"
 
@@ -38,7 +39,8 @@ export namespace SyndicationUnderwritingScenarioConstants {
     desynd_refill: "100000000000",
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
-    challenge_extra: "1000000000"
+    challenge_extra: "1000000000",
+    min_desyndicate: Steps.registry.MinimumDesyndication
   }
   /** Initial ledger and custody balances. */
   export const Before = outputKey<SyndicationUnderwritingSnapshot>(

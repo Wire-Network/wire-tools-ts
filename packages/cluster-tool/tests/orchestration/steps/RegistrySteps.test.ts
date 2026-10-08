@@ -143,6 +143,13 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       })
     })
 
+    it("uses the same 0.001 SOL equivalent gross minimum for both shadow tokens", () => {
+      expect(Steps.registry.MinimumDesyndication).toBe(1_000_000)
+      rows.forEach(row =>
+        expect(row.min_desyndicate).toBe(Steps.registry.MinimumDesyndication)
+      )
+    })
+
     it("takes the challenge window from ProtocolTiming and a non-zero challenge charge", () => {
       rows.forEach(row => {
         expect(row.window_sec).toBe(
