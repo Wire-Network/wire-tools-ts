@@ -69,8 +69,12 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
   it("materializes the config-referenced files into the canonical data dir", async () => {
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-    expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(true)
+    const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
+      ctx.config
+    )
+    expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(
+      true
+    )
     expect(
       Fs.existsSync(
         Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json")
@@ -93,11 +97,13 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     await Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
     const artifacts = ctx.outputs.get(OperatorDaemonArtifactsKey)
     expect(artifacts?.ethereumAddresses.OPP).toBe(OppAddress)
-    expect(artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))).toBe(
-      true
-    )
+    expect(
+      artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))
+    ).toBe(true)
     expect(artifacts?.solanaProgramId).toBe(ProgramId)
-    expect(artifacts?.solanaIdlFile).toContain(OperatorDaemonTool.SolanaIdlFilename)
+    expect(artifacts?.solanaIdlFile).toContain(
+      OperatorDaemonTool.SolanaIdlFilename
+    )
   })
 
   it("materialize fails fast when a referenced source file is absent", async () => {
@@ -131,13 +137,13 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
   it("publish fails when a required SOL IDL instruction is missing", async () => {
     Fs.writeFileSync(
       idlFile,
-      JSON.stringify({ address: ProgramId, instructions: [{ name: "epoch_in" }] })
+      JSON.stringify({ address: ProgramId, instructions: [] })
     )
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
     await expect(
       Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    ).rejects.toThrow(/missing the 'commit_underwrite' instruction/)
+    ).rejects.toThrow(/missing the 'epoch_in' instruction/)
   })
 
   describe("outbound-envelope bootstrap gate", () => {
@@ -258,9 +264,9 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     })
 
     it("pins the step ceiling ABOVE its inner poll budget", () => {
-      expect(
-        Steps.externalOutpost.OutboundEnvelopesTimeoutMs
-      ).toBeGreaterThan(Steps.externalOutpost.OutboundEnvelopesPollBudgetMs)
+      expect(Steps.externalOutpost.OutboundEnvelopesTimeoutMs).toBeGreaterThan(
+        Steps.externalOutpost.OutboundEnvelopesPollBudgetMs
+      )
     })
 
     it("planOutboundEnvelopesQueued defaults its ceiling to the named constant", () => {

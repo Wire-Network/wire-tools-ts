@@ -223,17 +223,19 @@ export namespace NodeopProcessSteps {
     ctx: ClusterBuildContext,
     node: NodeConfig
   ): OperatorAccount[] {
-    return match(node.role)
-      .with(NodeRole.bios, () => [
-        ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
-      ])
-      .with(NodeRole.producer, () => producerOperators(ctx, node))
-      .with(NodeRole.batch_operator, NodeRole.underwriter, () => [
-        ctx.keyStore.assertOperator(assertOperatorLabel(node))
-      ])
-      // An API node acts for no account: nothing to sign, nothing to resolve.
-      .with(NodeRole.api, () => [])
-      .exhaustive()
+    return (
+      match(node.role)
+        .with(NodeRole.bios, () => [
+          ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
+        ])
+        .with(NodeRole.producer, () => producerOperators(ctx, node))
+        .with(NodeRole.batch_operator, NodeRole.underwriter, () => [
+          ctx.keyStore.assertOperator(assertOperatorLabel(node))
+        ])
+        // An API node acts for no account: nothing to sign, nothing to resolve.
+        .with(NodeRole.api, () => [])
+        .exhaustive()
+    )
   }
 
   /**
@@ -253,7 +255,9 @@ export namespace NodeopProcessSteps {
     // `filter` would collapse the offender to "one of them", and naming it is the whole value of
     // this failure -- it says which provisioning step never ran.
     return asOption(node.producers)
-      .tap(labels => labels.forEach(label => ctx.keyStore.assertOperator(label)))
+      .tap(labels =>
+        labels.forEach(label => ctx.keyStore.assertOperator(label))
+      )
       .map(labels => labels.map(label => ctx.keyStore.operator(label)))
       .get()
   }
@@ -285,8 +289,16 @@ export namespace NodeopProcessSteps {
     const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = OperatorDaemonTool.networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config)
-    return node.role === NodeRole.batch_operator
-      ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
-      : OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
+    Assert.equal(
+      node.role,
+      NodeRole.batch_operator,
+      "Only batch operators run an OPP daemon"
+    )
+    return OperatorDaemonTool.batchOperatorArgs(
+      operator,
+      artifacts,
+      network,
+      keySourceFor
+    )
   }
 }

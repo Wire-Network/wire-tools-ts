@@ -127,12 +127,14 @@ const EthereumDeploymentsSubpath = "ethereum-deployments"
  * generated id is a fresh random string inside the Verify stale-port scan's
  * search space).
  */
-function programKeypair(): Keypair {
-  return Keypair.fromSeed(new Uint8Array(SolanaSeedLength).fill(SolanaSeedByte))
+function programKeypair(index = 0): Keypair {
+  return Keypair.fromSeed(
+    new Uint8Array(SolanaSeedLength).fill(SolanaSeedByte + index)
+  )
 }
 /** ed25519 seed length (bytes) for {@link programKeypair}. */
 const SolanaSeedLength = 32
-/** The single byte {@link programKeypair}'s seed repeats. */
+/** The single byte {@link programKeypair}'s seed repeats for the FIRST program. */
 const SolanaSeedByte = 7
 
 /**
@@ -174,9 +176,11 @@ function outpostIdl(programId: string) {
   return {
     address: programId,
     metadata: { name: SolanaOutpostProgramTool.ProgramName },
-    instructions: OperatorDaemonTool.RequiredSolanaIdlInstructions.map(name => ({
-      name
-    }))
+    instructions: OperatorDaemonTool.RequiredSolanaIdlInstructions.map(
+      name => ({
+        name
+      })
+    )
   }
 }
 
@@ -223,7 +227,10 @@ function shiftPorts(value: unknown, delta: number): unknown {
   if (Array.isArray(value)) return value.map(entry => shiftPorts(entry, delta))
   if (value != null && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, shiftPorts(entry, delta)])
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        shiftPorts(entry, delta)
+      ])
     )
   }
   return value
@@ -321,9 +328,15 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       ),
       { abi: [] }
     )
-    writeJsonFile(SolanaOutpostProgramTool.programKeypairFile(solanaPath), [
-      ...programKeypair().secretKey
-    ])
+    // The validator loads EVERY wire-solana program at genesis, so the rendered
+    // `start.sh` resolves a keypair per program — stage all of them, not just
+    // the OPP outpost host.
+    SolanaOutpostProgramTool.GenesisAnchorPrograms.forEach((program, index) =>
+      writeJsonFile(
+        SolanaOutpostProgramTool.programKeypairFile(solanaPath, program),
+        [...programKeypair(index).secretKey]
+      )
+    )
     writeJsonFile(
       SolanaOutpostProgramTool.programIdlFile(solanaPath),
       outpostIdl(programKeypair().publicKey.toBase58())
@@ -420,7 +433,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ctx.keyStore.pushNodes({
       index: 0,
       keys: {
-        wire: { type: KeyType.K1, publicKey: "PUB_K1_n0", privateKey: "PVT_K1_n0" },
+        wire: {
+          type: KeyType.K1,
+          publicKey: "PUB_K1_n0",
+          privateKey: "PVT_K1_n0"
+        },
         wireFinalizer: {
           type: KeyType.BLS,
           publicKey: "PUB_BLS_n0",
@@ -935,7 +952,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // kind (they are the cluster's chain-read surface), so they sit outside
     // this producing set.
     const producingNodes = NodeConfig.plan(merged).filter(
-      node => !NodeConfig.isOperatorRole(node.role) && node.role !== NodeRole.api
+      node =>
+        !NodeConfig.isOperatorRole(node.role) && node.role !== NodeRole.api
     )
     expect(producingNodes.length).toBeGreaterThan(0)
     producingNodes.forEach(node => {
@@ -1083,8 +1101,12 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(merged.externalOutposts.ethereum.rpcUrl).toBe(ExternalEthereumRpcUrl)
     expect(merged.externalOutposts.solana.rpcUrl).toBe(ExternalSolanaRpcUrl)
     expect(merged.externalOutposts.ethereum.chainId).toBe(ExternalChainId)
-    expect(merged.externalOutposts.ethereum.addressFile.startsWith(externalDir)).toBe(true)
-    expect(merged.externalOutposts.solana.idlFile.startsWith(externalDir)).toBe(true)
+    expect(
+      merged.externalOutposts.ethereum.addressFile.startsWith(externalDir)
+    ).toBe(true)
+    expect(merged.externalOutposts.solana.idlFile.startsWith(externalDir)).toBe(
+      true
+    )
 
     // The 4-field ETH client spec: id, provider, the AUTHORITATIVE endpoint,
     // and the config's REAL chain id (never the anvil default).
@@ -1172,7 +1194,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("persists debuggingServerEnabled:false when create-external-config --no-debugging-server is set", async () => {
-    const ctx = runContext(externalBindFile, PersistedFixture.signatureProvider, true)
+    const ctx = runContext(
+      externalBindFile,
+      PersistedFixture.signatureProvider,
+      true
+    )
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)
@@ -1191,7 +1217,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)
     // The local fixture has debuggingServerEnabled: true → inherited unchanged.
-    expect(ctx.outputs.assert(External.MergedConfigKey).debuggingServerEnabled).toBe(true)
+    expect(
+      ctx.outputs.assert(External.MergedConfigKey).debuggingServerEnabled
+    ).toBe(true)
   })
 
   it("Validate composes one verify step per cross-check (fail-fast order)", () => {
@@ -1275,7 +1303,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const ctx = runContext(bindFile)
     await External.runLoadExternalBind(ctx, null, signal)
     await expect(External.runVerifyNodeMapping(ctx, signal)).rejects.toThrow(
-      /cluster-state has 7 nodes but the external bind describes 6/
+      /cluster-state has 6 nodes but the external bind describes 5/
     )
   })
 
@@ -1352,7 +1380,10 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         const { ctx, scriptFile } = await emitWithCollidingDbSize()
         // The mask is POSITIONAL, not by value: an un-rebound local endpoint
         // carrying the identical digits must still hard-fail the scan.
-        Fs.appendFileSync(scriptFile, `\n# leftover endpoint: ${staleLocalPort}\n`)
+        Fs.appendFileSync(
+          scriptFile,
+          `\n# leftover endpoint: ${staleLocalPort}\n`
+        )
         await expect(External.runVerify(ctx, null, signal)).rejects.toThrow(
           new RegExp(`still contains the local bind port ${staleLocalPort}`)
         )
@@ -1438,7 +1469,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     /** An advertise address only the LOCAL bind carries; the external bind never does. */
     const localAdvertiseAddress = "10.60.7.10"
 
-    it.each(["producers", "batch", "underwriters", "api", "adHoc"] as const)(
+    it.each(["producers", "batch", "api", "adHoc"] as const)(
       "flags a leftover advertise address of a nodeop.ports.%s pair",
       async pairList => {
         const localBind = structuredClone(PersistedFixture.bind)
@@ -1663,8 +1694,6 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // Every emitted provider is an SSM ref…
     expect(emittedSecretIds.length).toBe(emittedProviderCount)
     // …and every one of them names a parameter create actually wrote.
-    emittedSecretIds.forEach(secretId =>
-      expect(published).toContain(secretId)
-    )
+    emittedSecretIds.forEach(secretId => expect(published).toContain(secretId))
   })
 })

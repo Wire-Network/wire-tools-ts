@@ -1,4 +1,3 @@
-import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
@@ -17,7 +16,7 @@ export namespace YieldDistributionScenarioConstants {
   /** Batch operators ferrying OPP envelopes (the old suite's `batchOperatorCount`). */
   export const BatchOperatorCount = 3
   /** Underwriters provisioned by the bootstrap (the old suite's `underwriterCount`). */
-  export const UnderwriterCount = 1
+  export const UnderwriterCount = 0
 
   /** The AuthEx-linked staker's WIRE account — its reward lands in `sysio.dclaim::pclaims`. */
   export const LinkedStakerAccount = "yield.lnk"
@@ -29,8 +28,6 @@ export namespace YieldDistributionScenarioConstants {
 
   /** Per-staker ETH-side reward (wei — the depot scales via PrecisionLib). */
   export const EthereumRewardPerStaker = 1_000_000n
-  /** Per-staker SOL-side reward (lamports). */
-  export const SolanaRewardPerStaker = 1_000_000n
   /** Informational share-in-bps stamped on every emission (100%). */
   export const FullShareBps = 10_000
   /** Informational WIRE epoch index stamped on every emission. */
@@ -40,13 +37,6 @@ export namespace YieldDistributionScenarioConstants {
   export const LinkedStakerExternalEpochRef = 1n
   /** The unlinked ETH staker's `external_epoch_ref` (counter value 2). */
   export const UnlinkedStakerExternalEpochRef = 2n
-  /** The SOL staker's `external_epoch_ref` (counter value 3). */
-  export const SolanaStakerExternalEpochRef = 3n
-
-  /** Registered chain slug code stamped on the SOL-side emission (must match the bootstrap registry seed). */
-  export const SolanaChainCode = SlugName.from("SOLANA")
-  /** Registered token slug code of the SOL-side reward token. */
-  export const SolanaTokenCode = SlugName.from("SOL")
 
   /** Deadline for an attestation to round-trip emitter → batchop ferry → depot
    *  table — a single outpost→depot hop (envelope class). */
@@ -68,7 +58,8 @@ export namespace YieldDistributionScenarioConstants {
    * Rejection signature of a replayed `external_epoch_ref` — the
    * `MockYieldEmitter` per-staker monotonic check reverts the tx.
    */
-  export const ReplayRejectionPattern = /externalEpochRef not monotonic|reverted/i
+  export const ReplayRejectionPattern =
+    /externalEpochRef not monotonic|reverted/i
 
   /** Settle window slept before asserting the replayed emission credited nothing. */
   export function dedupeSettleMs(): number {
