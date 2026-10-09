@@ -1,0 +1,11 @@
+{
+  "requestSchemaSha256": "fa4173178dae60ed85333f9ccd4dcf1db3b20dd2ca3af98813caf2544da33ddc",
+  "responseSchemaSha256": "f47a700a1ecf498bbe8c43cef4669ecb78847595edff68f8f8f69cec2b8e11e7",
+  "examples": {
+    "error.json": "d2caf2deb802bd1cbd2fe323f0dd185875828718a25fe281ae1f817704c1cd7f",
+    "request-paged.json": "3e7a5c30387544aa8132355404580d299ca5a7bf77242230ead218a1788dc169",
+    "request.json": "2b05933b431a3bc5f2ee4e49baeec8171ea97373abb4dd4087520fa9488ceb6f",
+    "response-paged.json": "8ed077656573aae2754e29cfa3dfaa510a27161482648e3bb1700d95812350f5",
+    "response.json": "62546970447b28690efb6e260dd7d0262d7680c18985e963a5263765cfd2a70d"
+  }
+}

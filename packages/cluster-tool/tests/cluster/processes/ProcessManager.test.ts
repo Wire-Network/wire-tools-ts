@@ -3,11 +3,11 @@ import Os from "node:os"
 import Path from "node:path"
 import type { ChildProcess } from "node:child_process"
 import { Readable } from "node:stream"
+import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
 import {
   ManagedProcess,
   ProcessManager,
-  ProcessSignalName,
   terminatePidsSync
 } from "@wireio/cluster-tool/cluster/processes"
 

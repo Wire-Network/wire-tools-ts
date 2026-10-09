@@ -2,12 +2,12 @@ import { execFileSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
 import Assert from "node:assert"
+import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { getValue, guard } from "@wireio/shared"
 import { getLogger } from "../../logging/Logger.js"
 import { currentDateStamp, mkdirs } from "../../utils/fsUtils.js"
 import { processCommandBasename } from "../../utils/processUtils.js"
 import type { ManagedProcess } from "./ManagedProcess.js"
-import { ProcessSignalName } from "./ProcessSignals.js"
 
 const log = getLogger("ProcessManager")
 
