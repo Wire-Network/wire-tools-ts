@@ -6,6 +6,7 @@ import {
   SolanaValidatorProcess
 } from "@wireio/cluster-tool/cluster/processes"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { BindConfigPortProtocol } from "@wireio/cluster-tool-shared"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
 describe("SolanaValidatorProcess", () => {
@@ -39,12 +40,16 @@ describe("SolanaValidatorProcess", () => {
   })
 
   it("passes an explicit --gossip-port verbatim (agave 4.x fixed-default gossip)", async () => {
+    const gossipPort = await BindConfigProvider.findAvailable(
+      BindConfigProvider.DefaultSolanaGossip,
+      BindConfigPortProtocol.udp
+    )
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",
-      gossipPort: 14_700
+      gossipPort
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining(["--gossip-port", "14700"])
+      expect.arrayContaining(["--gossip-port", String(gossipPort)])
     )
   })
 
@@ -119,12 +124,19 @@ describe("SolanaValidatorProcess", () => {
     })
   })
 
-  // resolveEnv takes the inherited filter as a PARAMETER, so the decision is
-  // testable without mutating this worker's environment.
   it("enables agave's program-log target when RUST_LOG is unset", () => {
-    expect(SolanaValidatorProcess.resolveEnv(undefined)).toEqual(
-      SolanaValidatorProcess.DefaultEnv
-    )
+    const inherited = process.env[SolanaValidatorProcess.RustLogEnvVar]
+    delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+    try {
+      // Explicit undefined invokes the parameter default and reads process.env.
+      expect(SolanaValidatorProcess.resolveEnv()).toEqual(
+        SolanaValidatorProcess.DefaultEnv
+      )
+    } finally {
+      if (inherited == null)
+        delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+      else process.env[SolanaValidatorProcess.RustLogEnvVar] = inherited
+    }
   })
 
   it("defers to an explicit RUST_LOG from the environment", () => {
@@ -181,6 +193,30 @@ describe("SolanaValidatorProcess", () => {
     })
     expect(validator.args).toEqual(
       expect.arrayContaining(["--limit-ledger-size", "250000"])
+    )
+  })
+
+  it("defaults --slots-per-epoch to a schedule that leaves Solana epoch 0 (the liqsol init underflows there)", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--slots-per-epoch",
+        String(SolanaValidatorProcess.DefaultSlotsPerEpoch)
+      ])
+    )
+    // agave's own default is what keeps a fresh validator at epoch 0 for days.
+    expect(SolanaValidatorProcess.DefaultSlotsPerEpoch).toBeLessThan(432_000)
+  })
+
+  it("passes an explicit --slots-per-epoch verbatim", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      slotsPerEpoch: 64
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining(["--slots-per-epoch", "64"])
     )
   })
 })

@@ -64,10 +64,10 @@ describe("SolanaOutpostProgramTool", () => {
     try {
       expect(SolanaOutpostProgramTool.programId(emptyPath)).toBeNull()
       expect(() => SolanaOutpostProgramTool.assertProgramId(emptyPath)).toThrow(
-        /program keypair missing.*patch-idl-errors/s
+        /program keypair missing.*build:programs/s
       )
       expect(() => SolanaOutpostProgramTool.readIdl(emptyPath)).toThrow(
-        /IDL missing.*patch-idl-errors/s
+        /IDL missing.*build:programs/s
       )
     } finally {
       Fs.rmSync(emptyPath, { recursive: true, force: true })
@@ -110,6 +110,41 @@ describe("SolanaOutpostProgramTool", () => {
     }
   })
 
+  it("loadReadOnlyProgram binds the connection with no wallet and camelCases the IDL", () => {
+    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-ro-"))
+    try {
+      const keypair = Keypair.generate()
+      Fs.mkdirSync(Path.join(programPath, "target", "idl"), { recursive: true })
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programIdlFile(programPath),
+        JSON.stringify({
+          address: keypair.publicKey.toBase58(),
+          metadata: { name: "liqsol_core", version: "0.1.0", spec: "0.1.0" },
+          instructions: [],
+          accounts: [{ name: "GlobalState", discriminator: [0, 1, 2, 3, 4, 5, 6, 7] }],
+          types: [
+            {
+              name: "GlobalState",
+              type: { kind: "struct", fields: [{ name: "liq_sequence", type: "u64" }] }
+            }
+          ]
+        })
+      )
+
+      const connection = new Connection(rpcUrl),
+        program = SolanaOutpostProgramTool.loadReadOnlyProgram(connection, programPath)
+      expect(program.programId.toBase58()).toBe(keypair.publicKey.toBase58())
+      expect(program.provider.connection).toBe(connection)
+      // No wallet: a read never signs, so none is constructed.
+      expect(program.provider.publicKey).toBeUndefined()
+      // The IDL says `GlobalState` / `liq_sequence`; `anchor.Program` converts
+      // both, which is why every coder key in the harness is camelCase.
+      expect(Object.keys(program.account)).toEqual(["globalState"])
+    } finally {
+      Fs.rmSync(programPath, { recursive: true, force: true })
+    }
+  })
+
   it("loadProgram carries the build remediation when the IDL is absent", () => {
     const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-noidl-"))
     try {
@@ -119,7 +154,7 @@ describe("SolanaOutpostProgramTool", () => {
           Keypair.generate(),
           emptyPath
         )
-      ).toThrow(/IDL missing.*patch-idl-errors/s)
+      ).toThrow(/IDL missing.*build:programs/s)
     } finally {
       Fs.rmSync(emptyPath, { recursive: true, force: true })
     }
@@ -134,5 +169,72 @@ describe("SolanaOutpostProgramTool", () => {
     } finally {
       Fs.rmSync(brokenPath, { recursive: true, force: true })
     }
+  })
+})
+
+describe("SolanaOutpostProgramTool multi-program artifacts", () => {
+  let solanaPath: string
+  beforeAll(() => {
+    solanaPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-programs-"))
+  })
+  afterAll(() => {
+    Fs.rmSync(solanaPath, { recursive: true, force: true })
+  })
+
+  it("names all four genesis programs, defaulting to the OPP outpost host", () => {
+    expect(SolanaOutpostProgramTool.AnchorProgram.liqsolCore).toBe(
+      SolanaOutpostProgramTool.ProgramName
+    )
+    expect([...SolanaOutpostProgramTool.GenesisAnchorPrograms]).toEqual([
+      "liqsol_core",
+      "liqsol_token",
+      "transfer_hook",
+      "validator_leaderboard"
+    ])
+  })
+
+  it("composes each program's artifact paths from its crate name", () => {
+    const program = SolanaOutpostProgramTool.AnchorProgram.transferHook
+    expect(
+      SolanaOutpostProgramTool.programKeypairFile(solanaPath, program)
+    ).toBe(Path.join(solanaPath, ".keys", "transfer_hook-keypair.json"))
+    expect(SolanaOutpostProgramTool.programSoFile(solanaPath, program)).toBe(
+      Path.join(solanaPath, "target", "deploy", "transfer_hook.so")
+    )
+    expect(SolanaOutpostProgramTool.programIdlFile(solanaPath, program)).toBe(
+      Path.join(solanaPath, "target", "idl", "transfer_hook.json")
+    )
+  })
+
+  it("assertIdlProgramId reads the address each IDL declares", () => {
+    const program = SolanaOutpostProgramTool.AnchorProgram.liqsolToken,
+      declared = Keypair.generate().publicKey
+    Fs.mkdirSync(Path.join(solanaPath, "target", "idl"), { recursive: true })
+    Fs.writeFileSync(
+      SolanaOutpostProgramTool.programIdlFile(solanaPath, program),
+      JSON.stringify({
+        address: declared.toBase58(),
+        metadata: { name: program, version: "0.1.0", spec: "0.1.0" },
+        instructions: []
+      })
+    )
+    expect(
+      SolanaOutpostProgramTool.assertIdlProgramId(
+        solanaPath,
+        program
+      ).toBase58()
+    ).toBe(declared.toBase58())
+  })
+
+  it("assertIdlProgramId throws when the IDL declares no address", () => {
+    const program = SolanaOutpostProgramTool.AnchorProgram.validatorLeaderboard
+    Fs.mkdirSync(Path.join(solanaPath, "target", "idl"), { recursive: true })
+    Fs.writeFileSync(
+      SolanaOutpostProgramTool.programIdlFile(solanaPath, program),
+      JSON.stringify({ metadata: { name: program }, instructions: [] })
+    )
+    expect(() =>
+      SolanaOutpostProgramTool.assertIdlProgramId(solanaPath, program)
+    ).toThrow(/declares no address/)
   })
 })

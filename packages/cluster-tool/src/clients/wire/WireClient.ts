@@ -372,7 +372,9 @@ export class WireClient {
       `get_supported_protocol_features failed: ${response.statusText}`
     )
     const features = await response.json()
-    return Array.isArray(features) ? (features as WireClient.ProtocolFeature[]) : []
+    return Array.isArray(features)
+      ? (features as WireClient.ProtocolFeature[])
+      : []
   }
 
   // ── RPC getters (v6 `.value` unwrap retained) ────────────────────────────
@@ -412,7 +414,9 @@ export class WireClient {
         asOption(entry)
           .map(present => ({
             version: Number(present.version),
-            producers: present.producers.map(producer => String(producer.producer_name))
+            producers: present.producers.map(producer =>
+              String(producer.producer_name)
+            )
           }))
           .getOrUndefined()
     return {
@@ -457,35 +461,6 @@ export class WireClient {
     const [amount] = rows[0].toString().split(" ")
     const [whole, frac = ""] = amount.split(".")
     return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
-  }
-
-  /**
-   * Pull `account`'s claimable WIRE from `sysio.reserv` — swap-to-WIRE payouts and swap-from-WIRE
-   * refunds.
-   *
-   * Those settlement paths credit a balance instead of transferring: `sysio.token::transfer`
-   * notifies its recipient, and the chain runs notified receivers with no exception isolation, so
-   * a pushed payout let the recipient abort the enclosing transaction — which for `refundwire`
-   * meant halting the epoch drain chain-wide. The claim carries the claimant's own authority, so a
-   * hostile recipient can only block itself.
-   *
-   * Throws when nothing is owed; check {@link getWireClaimable} first if that is not a failure.
-   */
-  async claimWire(account: string, permission = WireClient.ActivePermission) {
-    return this.invoke("sysio.reserv", "claimwire", { account }, [{ actor: account, permission }])
-  }
-
-  /**
-   * WIRE owed to `account` but not yet claimed, or 0n when there is no row.
-   *
-   * Raw `getTableRows` rather than the typed contract-table accessor
-   * (`prefer-typed-contract-table-accessors.md`) because `wireclaims` is new and does not reach
-   * the typed surface until `@wireio/sdk-core` publishes the regenerated `SysioContractTypes`.
-   * Switch to `getSysioContract(SysioContractName.reserv).tables.wireclaims.query()` once that
-   * version is released and this package's dependency is bumped.
-   */
-  async getWireClaimable(account: string): Promise<bigint> {
-    return this.claimableBalance("sysio.reserv", "wireclaims", "account", account)
   }
 
   /**
@@ -545,40 +520,52 @@ export class WireClient {
   // Convenience getters delegate to the typed contract-table accessor
   // (prefer-typed-contract-table-accessors.md) — never a raw getTableRows.
   getOperators() {
-    return this.getSysioContract(SysioContractName.opreg).tables.operators.query()
+    return this.getSysioContract(
+      SysioContractName.opreg
+    ).tables.operators.query()
   }
   getProducers() {
-    return this.getSysioContract(SysioContractName.system).tables.producers.query()
+    return this.getSysioContract(
+      SysioContractName.system
+    ).tables.producers.query()
   }
   getWithdrawQueue() {
-    return this.getSysioContract(SysioContractName.opreg).tables.wtdwqueue.query()
+    return this.getSysioContract(
+      SysioContractName.opreg
+    ).tables.wtdwqueue.query()
   }
   getEpochState() {
-    return this.getSysioContract(SysioContractName.epoch).tables.epochstate.query()
+    return this.getSysioContract(
+      SysioContractName.epoch
+    ).tables.epochstate.query()
   }
   getEpochConfig() {
-    return this.getSysioContract(SysioContractName.epoch).tables.epochcfg.query()
+    return this.getSysioContract(
+      SysioContractName.epoch
+    ).tables.epochcfg.query()
   }
   getChains() {
     return this.getSysioContract(SysioContractName.chains).tables.chains.query()
   }
   getMessages() {
-    return this.getSysioContract(SysioContractName.msgch).tables.messages.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.messages.query()
   }
   getEnvelopes() {
-    return this.getSysioContract(SysioContractName.msgch).tables.envelopes.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.envelopes.query()
   }
   getAttestations() {
-    return this.getSysioContract(SysioContractName.msgch).tables.attestations.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.attestations.query()
   }
   getOutboundEnvelopes() {
-    return this.getSysioContract(SysioContractName.msgch).tables.outenvelopes.query()
-  }
-  getUwRequests() {
-    return this.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
-  }
-  getLocks() {
-    return this.getSysioContract(SysioContractName.uwrit).tables.locks.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.outenvelopes.query()
   }
 
   /** Raw `clio get table` (positional account+table, scope via -S). */
@@ -594,7 +581,9 @@ export class WireClient {
   }
 
   /** Fetch a block by number/id via /v1/chain/get_block. */
-  async getBlock(blockNumOrId: number | string): Promise<WireClient.GetBlockResponse> {
+  async getBlock(
+    blockNumOrId: number | string
+  ): Promise<WireClient.GetBlockResponse> {
     const resp = await fetch(`${this.config.nodeopUrl}/v1/chain/get_block`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -606,9 +595,7 @@ export class WireClient {
   }
 
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
-  async getTransaction(
-    id: string
-  ): Promise<WireClient.GetTransactionResponse> {
+  async getTransaction(id: string): Promise<WireClient.GetTransactionResponse> {
     const resp = await fetch(
       `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
       {
@@ -836,10 +823,7 @@ export class WireClient {
   /** Head block time in epoch ms, or null when unreadable. */
   private async readHeadTimeMs(): Promise<number> {
     try {
-      // Chain times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would
-      // read a bare stamp as LOCAL time, so the `Z` is appended explicitly.
-      const { head_block_time } = await this.getInfo()
-      return Date.parse(`${head_block_time.replace(/Z$/, "")}Z`)
+      return WireClient.chainTimeMs((await this.getInfo()).head_block_time)
     } catch (error) {
       log.warn(`readHeadTimeMs failed: ${errorText(error)}`)
       return null
@@ -1001,6 +985,37 @@ export namespace WireClient {
   }
 
   /**
+   * A chain timestamp (`head_block_time`, a table's `time_point` cell) in epoch ms. Chain
+   * times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would read a bare stamp as
+   * LOCAL time, so the `Z` is appended explicitly.
+   *
+   * @param stamp - The chain's ISO-8601 stamp, with or without a trailing `Z`.
+   * @returns The instant in epoch ms (`NaN` for an unparseable stamp).
+   */
+  export function chainTimeMs(stamp: string): number {
+    return Date.parse(`${stamp.replace(/Z$/, "")}Z`)
+  }
+
+  /**
+   * The exact `get_table_rows` range of ONE row of a KV table keyed by a single `symbol_code`
+   * field: the node takes `lower_bound` inclusive and `upper_bound` EXCLUSIVE, so the range is
+   * `[code, code + 1)`. A row whose VALUE carries no identity (`sysio.liq::yieldidx`) can only be
+   * read this way — a lower bound alone hands back the NEXT symbol's row when the one asked for
+   * does not exist. Same JSON-object encoding as {@link nameKeyBound}; a bare code string fails
+   * at parse time exactly like a bare account name does.
+   */
+  export function symbolCodeKeyRange(
+    field: string,
+    code: string
+  ): TableQueryArgs {
+    const { value } = Asset.SymbolCode.from(code)
+    return {
+      lowerBound: JSON.stringify({ [field]: value.toString() }),
+      upperBound: JSON.stringify({ [field]: value.adding(1).toString() })
+    }
+  }
+
+  /**
    * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
    * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string
    * once it exceeds the JSON-safe integer range.
@@ -1024,7 +1039,8 @@ export namespace WireClient {
     skipWait?: boolean
     finality?: FinalityType
   }
-  export type ContractOf<Name extends SysioContractName> = SysioContractMapping[Name]
+  export type ContractOf<Name extends SysioContractName> =
+    SysioContractMapping[Name]
   export type ActionName<Name extends SysioContractName> = Extract<
     keyof ContractOf<Name>["actions"],
     string
@@ -1079,7 +1095,9 @@ export namespace WireClient {
     Name extends SysioContractName,
     Table extends TableName<Name>
   > {
-    query(args?: TableQueryArgs): Promise<TableQueryResult<TableRow<Name, Table>>>
+    query(
+      args?: TableQueryArgs
+    ): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
   export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {
@@ -1169,10 +1187,12 @@ export namespace WireClient {
       match(result.kind)
         .with(
           FinalityOutcome.unappliable,
-          () => `${label}: transaction can never apply (expiration window closed while absent)`
+          () =>
+            `${label}: transaction can never apply (expiration window closed while absent)`
         )
         .otherwise(
-          () => `${label}: finality unresolved — NOT re-pushed (the transaction may be applied)`
+          () =>
+            `${label}: finality unresolved — NOT re-pushed (the transaction may be applied)`
         ),
       { context: { ...result } }
     )

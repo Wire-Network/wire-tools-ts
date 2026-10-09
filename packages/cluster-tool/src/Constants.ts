@@ -1,5 +1,5 @@
 import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 
@@ -11,6 +11,10 @@ import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
  * `config/BindConfigProvider.ts`, which owns binding.
  */
 export namespace Constants {
+  /** Depot asset frame shared by native collateral and syndication. */
+  export const DepotPrecisionCap = 9
+  export const WireChainCode = Number(SlugName.from("WIRE"))
+  export const WireTokenCode = WireChainCode
   /** Seed for the deterministic dev K1 key pair (matches the genesis bios key). */
   const DefaultK1KeyPairSeed = "nathan"
 
@@ -113,10 +117,13 @@ export namespace Constants {
     "sysio.epoch",
     "sysio.opreg",
     "sysio.msgch",
-    "sysio.uwrit",
-    "sysio.reserv",
     "sysio.chalg",
     "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
+    "sysio.andon",
+    "sysio.bond",
+    "sysio.synd",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"
@@ -147,6 +154,13 @@ export namespace Constants {
 
   /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
   export const BOOTSTRAP_NODE_OWNER = "wireno"
+
+  /**
+   * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
+   * clear the depot's emergency stop. The bootstrap creates it (under the dev key) and
+   * names it with `sysio.andon::setpanic`, which requires an existing account.
+   */
+  export const PANIC_ACCOUNT = "andon.panic"
 
   /** Name of the kiod wallet the bootstrap creates and helpers re-open. */
   export const DEFAULT_WALLET_NAME = "default"
@@ -317,25 +331,34 @@ export namespace Constants {
     "sysio.epoch": "contracts/sysio.epoch",
     "sysio.opreg": "contracts/sysio.opreg",
     "sysio.msgch": "contracts/sysio.msgch",
-    "sysio.uwrit": "contracts/sysio.uwrit",
-    "sysio.reserv": "contracts/sysio.reserv",
     "sysio.chalg": "contracts/sysio.chalg",
-    "sysio.dclaim": "contracts/sysio.dclaim"
+    "sysio.dclaim": "contracts/sysio.dclaim",
+    "sysio.swap": "contracts/sysio.swap",
+    "sysio.liq": "contracts/sysio.liq",
+    "sysio.andon": "contracts/sysio.andon",
+    "sysio.bond": "contracts/sysio.bond",
+    "sysio.synd": "contracts/sysio.synd"
   } as const
 
   export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
 
-  /** OPP system accounts (need `sysio.code` on their active permission). */
+  /**
+   * OPP system accounts (need `sysio.code` on their active permission): every contract
+   * that sends inline actions under its own authority. `sysio.andon` is absent — it sends
+   * none.
+   */
   export const OPP_SYSTEM_ACCOUNTS = [
     "sysio.chains",
     "sysio.tokens",
     "sysio.epoch",
     "sysio.opreg",
     "sysio.msgch",
-    "sysio.uwrit",
-    "sysio.reserv",
     "sysio.chalg",
-    "sysio.dclaim"
+    "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
+    "sysio.bond",
+    "sysio.synd"
   ] as const
 
   /** Plugins loaded on a batch-operator node. */
@@ -345,13 +368,6 @@ export namespace Constants {
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
     "sysio::cron_plugin"
-  ] as const
-
-  /** Plugins loaded on an underwriter node. */
-  export const UNDERWRITER_PLUGINS = [
-    "sysio::underwriter_plugin",
-    "sysio::outpost_ethereum_client_plugin",
-    "sysio::outpost_solana_client_plugin"
   ] as const
 
   /** Lowercase ASCII alphabet — single-character operator-account suffixes (wraps via modulo). */
@@ -564,6 +580,14 @@ export namespace ProtocolTiming {
    * {@link CollateralVerifyBudgetMs} / {@link SingleHopBudgetMs} wait.
    */
   export const OutpostWriteBudgetMs = 60_000
+
+  /**
+   * The challenge window of every `sysio.synd` pair the bootstrap configures (s): one
+   * default 60 s epoch. A flow that bonds an envelope waits this long after the request
+   * is fully bonded before `sysio.bond::approve` succeeds, and a challenge must land
+   * within it. The contract refuses 0.
+   */
+  export const SyndicationChallengeWindowSec = 60
 
   /**
    * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),

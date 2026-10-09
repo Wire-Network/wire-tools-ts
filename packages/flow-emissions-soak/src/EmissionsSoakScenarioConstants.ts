@@ -50,7 +50,7 @@ export namespace EmissionsSoakScenarioConstants {
    */
   export const BatchOperatorCount = 21
   /** Bootstrapped underwriters in the bootstrap roster. */
-  export const UnderwriterCount = 1
+  export const UnderwriterCount = 0
 
   // ── Controlled stakers (the test holds their ETH wallets) ─────────────────
 

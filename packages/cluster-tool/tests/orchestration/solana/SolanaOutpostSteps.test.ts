@@ -1,5 +1,8 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { SolanaOutpostBootstrapper, Steps } from "@wireio/cluster-tool/orchestration"
+import {
+  SolanaOutpostBootstrapper,
+  Steps
+} from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { solanaNativePublicKey } from "@wireio/cluster-tool/utils"
 
@@ -43,16 +46,27 @@ describe("Steps.solanaOutpost.oppBootstrap", () => {
       batchOperator("batch-op-02", "batchopc")
     ]
     // The depot's epoch-1 group is a strict subset of the provisioned roster.
-    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(operators, ["batchopa", "batchopc"])
+    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(operators, [
+      "batchopa",
+      "batchopc"
+    ])
 
     // Roster = the group's operators only — the minimal signable seed...
     expect(seed.operators).toHaveLength(2)
-    expect(seed.operators[0].solAddress.toBase58()).toBe(solanaNativePublicKey(operators[0].solana))
-    expect(seed.operators[1].solAddress.toBase58()).toBe(solanaNativePublicKey(operators[2].solana))
+    expect(seed.operators[0].solAddress.toBase58()).toBe(
+      solanaNativePublicKey(operators[0].solana)
+    )
+    expect(seed.operators[1].solAddress.toBase58()).toBe(
+      solanaNativePublicKey(operators[2].solana)
+    )
     // ...group = the same members, in order, mapped to their SOL keys.
     expect(seed.groupMembers).toHaveLength(2)
-    expect(seed.groupMembers[0].toBase58()).toBe(solanaNativePublicKey(operators[0].solana))
-    expect(seed.groupMembers[1].toBase58()).toBe(solanaNativePublicKey(operators[2].solana))
+    expect(seed.groupMembers[0].toBase58()).toBe(
+      solanaNativePublicKey(operators[0].solana)
+    )
+    expect(seed.groupMembers[1].toBase58()).toBe(
+      solanaNativePublicKey(operators[2].solana)
+    )
     // Every roster entry is BATCH + ACTIVE with a positive wire-name encoding.
     seed.operators.forEach(operator => {
       expect(operator.role).toBe(OperatorType.BATCH)
@@ -67,15 +81,27 @@ describe("Steps.solanaOutpost.oppBootstrap", () => {
     // against a buffer that admits at most
     // `SolanaOutpostBootstrapper.MaxOppBootstrapGroupMembers` members.
     const operators = Array.from({ length: 21 }, (_, index) =>
-        batchOperator(`batch-op-${index}`, `batchop${String.fromCharCode(97 + index)}`)
+        batchOperator(
+          `batch-op-${index}`,
+          `batchop${String.fromCharCode(97 + index)}`
+        )
       ),
-      groupAccounts = [operators[0].account, operators[7].account, operators[20].account]
-    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(operators, groupAccounts)
+      groupAccounts = [
+        operators[0].account,
+        operators[7].account,
+        operators[20].account
+      ]
+    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(
+      operators,
+      groupAccounts
+    )
 
     expect(seed.operators).toHaveLength(groupAccounts.length)
     expect(seed.groupMembers).toHaveLength(groupAccounts.length)
     seed.groupMembers.forEach((member, index) =>
-      expect(member.toBase58()).toBe(seed.operators[index].solAddress.toBase58())
+      expect(member.toBase58()).toBe(
+        seed.operators[index].solAddress.toBase58()
+      )
     )
   })
 
@@ -84,20 +110,36 @@ describe("Steps.solanaOutpost.oppBootstrap", () => {
     // group in ONE transaction, so only the first `MaxOppBootstrapOperators`
     // are seeded.
     const operators = Array.from({ length: 9 }, (_, index) =>
-        batchOperator(`batch-op-${index}`, `batchop${String.fromCharCode(97 + index)}`)
+        batchOperator(
+          `batch-op-${index}`,
+          `batchop${String.fromCharCode(97 + index)}`
+        )
       ),
       groupAccounts = operators.map(operator => operator.account)
-    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(operators, groupAccounts)
+    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(
+      operators,
+      groupAccounts
+    )
 
-    expect(groupAccounts.length).toBeGreaterThan(Steps.solanaOutpost.MaxOppBootstrapOperators)
-    expect(seed.operators).toHaveLength(Steps.solanaOutpost.MaxOppBootstrapOperators)
-    expect(seed.groupMembers).toHaveLength(Steps.solanaOutpost.MaxOppBootstrapOperators)
+    expect(groupAccounts.length).toBeGreaterThan(
+      Steps.solanaOutpost.MaxOppBootstrapOperators
+    )
+    expect(seed.operators).toHaveLength(
+      Steps.solanaOutpost.MaxOppBootstrapOperators
+    )
+    expect(seed.groupMembers).toHaveLength(
+      Steps.solanaOutpost.MaxOppBootstrapOperators
+    )
     // The cap keeps the group's LEADING members, in order.
     seed.operators.forEach((operator, index) =>
-      expect(operator.solAddress.toBase58()).toBe(solanaNativePublicKey(operators[index].solana))
+      expect(operator.solAddress.toBase58()).toBe(
+        solanaNativePublicKey(operators[index].solana)
+      )
     )
     seed.groupMembers.forEach((member, index) =>
-      expect(member.toBase58()).toBe(seed.operators[index].solAddress.toBase58())
+      expect(member.toBase58()).toBe(
+        seed.operators[index].solAddress.toBase58()
+      )
     )
   })
 
@@ -105,12 +147,23 @@ describe("Steps.solanaOutpost.oppBootstrap", () => {
     // The 6th member is unprovisioned — beyond the cap it is never looked up,
     // so it cannot fail a seed it is not part of.
     const operators = Array.from({ length: 5 }, (_, index) =>
-        batchOperator(`batch-op-${index}`, `batchop${String.fromCharCode(97 + index)}`)
+        batchOperator(
+          `batch-op-${index}`,
+          `batchop${String.fromCharCode(97 + index)}`
+        )
       ),
-      groupAccounts = [...operators.map(operator => operator.account), "ghostop"]
+      groupAccounts = [
+        ...operators.map(operator => operator.account),
+        "ghostop"
+      ]
 
-    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(operators, groupAccounts)
-    expect(seed.operators).toHaveLength(Steps.solanaOutpost.MaxOppBootstrapOperators)
+    const seed = Steps.solanaOutpost.resolveOppBootstrapSeed(
+      operators,
+      groupAccounts
+    )
+    expect(seed.operators).toHaveLength(
+      Steps.solanaOutpost.MaxOppBootstrapOperators
+    )
   })
 
   it("pins MaxOppBootstrapOperators under the transaction-packet ceiling", () => {
@@ -131,7 +184,9 @@ describe("Steps.solanaOutpost.oppBootstrap", () => {
   it("throws a DISTINCT error when a group member carries no Solana key", () => {
     // Present in the roster but unprovisioned on SOL — a different failure from
     // "not found", and the message must say which.
-    const operators = [{ ...batchOperator("batch-op-00", "batchopa"), solana: null }]
+    const operators = [
+      { ...batchOperator("batch-op-00", "batchopa"), solana: null }
+    ]
     expect(() =>
       Steps.solanaOutpost.resolveOppBootstrapSeed(operators, ["batchopa"])
     ).toThrow(/batchopa has no Solana key/)

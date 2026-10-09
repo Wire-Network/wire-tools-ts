@@ -109,13 +109,9 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
     // funded, so an unfunded wallet cannot pay gas for its outbound deliveries
     // and the ETH outpost's envelope is never written (epoch stalls at 1).
     expect(funded.length).toBeGreaterThan(0)
-    expect(funded).toContain(`${Constants.batchOperatorLabel(0)}${EthereumFundingStepSuffix}`)
-  })
-
-  it("funds the underwriters too, not just the batch operators", async () => {
-    const cluster = await ClusterBuildDefaults.create(ssmOptions())
-    const funded = fundingSteps(collectStepNames(cluster.children))
-    expect(funded).toContain(`${Constants.underwriterLabel(0)}${EthereumFundingStepSuffix}`)
+    expect(funded).toContain(
+      `${Constants.batchOperatorLabel(0)}${EthereumFundingStepSuffix}`
+    )
   })
 
   it("composes NO ETH funding under the default KEY provider", async () => {
@@ -131,7 +127,11 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
       names.filter(name => name.endsWith("-airdrop-solana"))
     const keyCluster = await ClusterBuildDefaults.create(baseOptions())
     const ssmCluster = await ClusterBuildDefaults.create(ssmOptions())
-    expect(solanaAirdrops(collectStepNames(keyCluster.children)).length).toBeGreaterThan(0)
-    expect(solanaAirdrops(collectStepNames(ssmCluster.children)).length).toBeGreaterThan(0)
+    expect(
+      solanaAirdrops(collectStepNames(keyCluster.children)).length
+    ).toBeGreaterThan(0)
+    expect(
+      solanaAirdrops(collectStepNames(ssmCluster.children)).length
+    ).toBeGreaterThan(0)
   })
 })

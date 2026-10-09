@@ -167,7 +167,9 @@ export function loadBar(
     outpostAddrs,
     "BAR",
     ["outpost"],
-    signer
+    signer,
+    "BAR",
+    "BARV2"
   )
 }
 

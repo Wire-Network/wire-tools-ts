@@ -23,6 +23,7 @@ import {
   type EthereumOutpostInitialRoster
 } from "./EthereumOutpostBootstrapper.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
 
 /** Steps that deploy + seed the Ethereum (anvil) outpost. */
 export namespace EthereumOutpostSteps {
@@ -152,7 +153,7 @@ export namespace EthereumOutpostSteps {
   /**
    * Deploy the Ethereum outpost against the already-running run anvil
    * (`Steps.processes.anvil.start` must precede this in the phase): deploy the
-   * `wire-ethereum` contracts, seed the ReserveManager, and write the annotated
+   * `wire-ethereum` contracts and write the annotated
    * accounts file (later phases re-read `accounts.json` / `outpost-addrs.json`
    * from disk). Input-less — paths + the anvil port come from `ctx.config`.
    */
@@ -192,7 +193,9 @@ export namespace EthereumOutpostSteps {
         ctx.config.bind.anvil.port,
         toDialAddress(ctx.config.bind.anvil.address)
       ),
-      deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+      deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(
+        ctx.config
+      ),
       initialRoster
     }
   }
@@ -204,6 +207,10 @@ export namespace EthereumOutpostSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(
+      ctx.config.batchOperatorCount,
+      ctx.config.underwriterCount
+    )
     await new EthereumOutpostBootstrapper(
       bootstrapperOptions(ctx, await resolveInitialRoster(ctx))
     ).bootstrap()
@@ -220,13 +227,22 @@ export namespace EthereumOutpostSteps {
    * window is read off `sysio.epoch::epochstate` and the operators off
    * `ctx.keyStore` at run time.
    */
-  export function planOppBootstrap<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planOppBootstrap<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runOppBootstrap)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runOppBootstrap
+    )
   }
 
   /** Named runner — `EthereumOutpostBootstrapper.oppBootstrap`. */
@@ -248,7 +264,9 @@ export namespace EthereumOutpostSteps {
       epochState.current_batch_op_group,
       ctx.config.epochDurationSec
     )
-    await new EthereumOutpostBootstrapper(bootstrapperOptions(ctx, seed.window)).oppBootstrap(seed)
+    await new EthereumOutpostBootstrapper(
+      bootstrapperOptions(ctx, seed.window)
+    ).oppBootstrap(seed)
   }
 
   /**
@@ -274,7 +292,9 @@ export namespace EthereumOutpostSteps {
     activeGroupIndex: number,
     epochDurationSec: number
   ): EthereumOutpostBootstrapper.OppBootstrapSeed {
-    const operatorByAccount = new Map(batchOperators.map(operator => [operator.account, operator]))
+    const operatorByAccount = new Map(
+      batchOperators.map(operator => [operator.account, operator])
+    )
     return {
       window: {
         groups: window.map(accountNames =>
@@ -297,5 +317,49 @@ export namespace EthereumOutpostSteps {
       },
       activeGroupIndex
     }
+  }
+
+  /**
+   * Verify body — the deployed `SyndicationPool` carries the configuration the
+   * bootstrapper's deploy config named: the per-transfer maximum and the yield
+   * deadband ({@link EthereumOutpostBootstrapper.MaxSyndicationPerTransferWei},
+   * {@link EthereumOutpostBootstrapper.YieldDeadbandDepotUnits}), the liq
+   * token `LIQETH` at 18 decimals, and the panic account
+   * ({@link EthereumOutpostBootstrapper.PanicAccountIndex}) able to call
+   * `pause` and `unpause` on it.
+   *
+   * @param ctx - The build context.
+   * @throws On the first value that differs.
+   */
+  export async function assertSyndicationPoolConfigured<
+    C extends ClusterBuildContext
+  >(ctx: C): Promise<void> {
+    const configuration =
+        await EthereumSyndicationTool.readPoolConfiguration(ctx),
+      expected: EthereumSyndicationTool.PoolConfiguration = {
+        maxSyndicationPerTransfer: BigInt(
+          EthereumOutpostBootstrapper.MaxSyndicationPerTransferWei
+        ),
+        yieldDeadband: BigInt(
+          EthereumOutpostBootstrapper.YieldDeadbandDepotUnits
+        ),
+        liqTokenCode: EthereumSyndicationTool.liqEthTokenCode(),
+        liqTokenPrecision: EthereumSyndicationTool.LiqEthTokenPrecision
+      }
+    Assert.deepStrictEqual(
+      configuration,
+      expected,
+      "EthereumOutpostSteps: SyndicationPool's configuration is not what the deploy config named"
+    )
+    const panic = EthereumOutpostBootstrapper.anvilWallet(
+        EthereumOutpostBootstrapper.PanicAccountIndex
+      ).address,
+      { pause, unpause } = EthereumSyndicationTool.PoolFunction
+    await mapSeries([pause, unpause], async functionName =>
+      Assert.ok(
+        await EthereumSyndicationTool.readCanCallPool(ctx, panic, functionName),
+        `EthereumOutpostSteps: the panic account ${panic} may not call SyndicationPool.${functionName}()`
+      )
+    )
   }
 }
