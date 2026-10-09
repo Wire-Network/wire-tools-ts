@@ -1,0 +1,19 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/cjs",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    // `moduleResolution: node` does not read package `exports` subpaths, so the one
+    // subpath src imports (`@wireio/shared/node`, FileLogging) maps to its CommonJS types.
+    "paths": {
+      "@wireio/shared/node": ["./node_modules/@wireio/shared/lib/cjs/node/index.d.ts"]
+    }
+  },
+  "references": [
+    { "path": "../cluster-tool-shared/tsconfig.json" }
+  ],
+  "include": ["src", "src/**/*.json"]
+}

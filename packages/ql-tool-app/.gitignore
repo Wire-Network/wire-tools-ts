@@ -1,0 +1,3 @@
+# Electron crash dumps (an e2e or dev crash writes one into the working directory)
+core
+core.*

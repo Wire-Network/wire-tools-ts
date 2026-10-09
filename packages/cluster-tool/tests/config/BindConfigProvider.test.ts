@@ -5,10 +5,10 @@ import Os from "node:os"
 import Path from "node:path"
 import {
   BindConfigPortProtocol,
+  ProcessSignalName,
   type BindConfig
 } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
-import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
 import { ListenAllAddress, Localhost } from "@wireio/cluster-tool/utils"
 
 /**

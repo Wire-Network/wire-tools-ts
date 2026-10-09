@@ -4,6 +4,7 @@ import Path from "node:path"
 import Assert from "node:assert"
 import { isEmpty } from "lodash"
 import treeKill from "tree-kill"
+import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { Deferred, getValue } from "@wireio/shared"
 import { getLogger, type Logger } from "../../logging/Logger.js"
 import { mkdirs } from "../../utils/fsUtils.js"
@@ -11,7 +12,6 @@ import { scaleTimeoutMs, sleep } from "../../utils/asyncUtils.js"
 import { maskSecretArgs } from "../../utils/secretUtils.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { ProcessManager } from "./ProcessManager.js"
-import { ProcessSignalName } from "./ProcessSignals.js"
 
 /** Graceful stop signal — appbase (nodeop/kiod) treats SIGINT and SIGTERM
  *  identically (both run the full shutdown incl. the chainbase flush — see

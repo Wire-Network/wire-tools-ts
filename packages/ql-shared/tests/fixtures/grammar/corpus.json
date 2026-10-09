@@ -1,0 +1,229 @@
+[
+  {
+    "sql": "sElEcT owner AS \"Owner\", COUNT(*) AS records FROM \"sample.one\".positions WHERE amount >= -10.25 AND NOT (owner = 'alice' OR owner IS NULL) GROUP BY owner HAVING COUNT(*) > 1 ORDER BY records DESC LIMIT 0;",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:10"
+  },
+  {
+    "sql": "SELECT x FROM a.b; SELECT y FROM a.b",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:22"
+  },
+  {
+    "sql": "SELECT DISTINCT x FROM a.b",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:22"
+  },
+  {
+    "sql": "SELECT x+1 FROM a.b",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:22"
+  },
+  {
+    "sql": "SELECT SUM(x) FROM a.b",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:23"
+  },
+  {
+    "sql": "SELECT x FROM a.b -- comment",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:23"
+  },
+  {
+    "sql": "SELECT x FROM a.b LIMIT -1",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:23"
+  },
+  {
+    "sql": "SELECT x FROM a.b WHERE x = 1e2",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:24"
+  },
+  {
+    "sql": "SELECT x FROM a.b ORDER BY x, x DESC, x DESC",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:51"
+  },
+  {
+    "sql": "SELECT \"count\", \"limit\" AS \"order\" FROM \"select\" OWNER 'sysio.roa' ORDER BY \"order\"",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:64"
+  },
+  {
+    "sql": "SELECT count FROM sponsorcount OWNER 'sysio.roa'",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:71"
+  },
+  {
+    "sql": "SELECT owner FROM positions OWNER 'alice', bob",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:77"
+  },
+  {
+    "sql": "SELECT * FROM positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:83"
+  },
+  {
+    "sql": "SELECT * FROM alice.positions OWNER bob",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:83"
+  },
+  {
+    "sql": "SELECT * FROM positions OWNER 'alice', 'alice'",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:84"
+  },
+  {
+    "sql": "SELECT * FROM alice.positions JOIN bob.positions",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_language.cpp:84"
+  },
+  {
+    "sql": "SELECT * FROM sample.positions JOIN other.positions",
+    "expect": "syntaxError",
+    "source": "plugins/query_engine_plugin/test/test_query_http.cpp:283",
+    "line": 1,
+    "column": 32
+  },
+  {
+    "sql": "SELECT missing FROM sample.positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_http.cpp:290"
+  },
+  {
+    "sql": "SELECT beneficiary, COUNT(*) AS records, SUM(amount) AS total FROM sample.positions WHERE amount >= 10 GROUP BY beneficiary HAVING SUM(amount) > 100 ORDER BY total DESC LIMIT 20",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:24"
+  },
+  {
+    "sql": "SELECT beneficiary, SUM(amount) AS total FROM sample.positions GROUP BY beneficiary",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:46"
+  },
+  {
+    "sql": "SELECT COUNT(*) AS n FROM sample.positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:52"
+  },
+  {
+    "sql": "SELECT beneficiary, COUNT(*) AS n, SUM(amount) AS total FROM positions OWNER 'sample', 'other' GROUP BY beneficiary HAVING total > 100",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:59"
+  },
+  {
+    "sql": "SELECT amount FROM positions OWNER 'sample', 'other' WHERE key.id = 1",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:70"
+  },
+  {
+    "sql": "SELECT key.id AS id FROM sample.positions WHERE key.id = 1 OR key.id = 603",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:84"
+  },
+  {
+    "sql": "SELECT COUNT(*) AS n, COUNT(nullable) AS present, SUM(nullable) AS total, AVG(amount) AS mean, MIN(amount) AS low, MAX(amount) AS high FROM sample.positions HAVING n = 3",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:99"
+  },
+  {
+    "sql": "SELECT amount AS a FROM sample.positions ORDER BY a DESC LIMIT 1",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:123"
+  },
+  {
+    "sql": "SELECT SUM(amount) AS total FROM sample.positions LIMIT 0",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:128"
+  },
+  {
+    "sql": "SELECT SUM(amount) AS beneficiary FROM sample.positions GROUP BY beneficiary HAVING beneficiary > 1",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:131"
+  },
+  {
+    "sql": "SELECT beneficiary AS x, amount AS x FROM sample.positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:132"
+  },
+  {
+    "sql": "SELECT beneficiary FROM sample.positions HAVING beneficiary = 'alice'",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:133"
+  },
+  {
+    "sql": "SELECT * FROM sample.positions GROUP BY beneficiary",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:135"
+  },
+  {
+    "sql": "SELECT float_value FROM sample.wide WHERE float_value = 1.5",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:163"
+  },
+  {
+    "sql": "SELECT key.id AS id FROM sample.positions WHERE quantity != '1.0000 USD'",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:180"
+  },
+  {
+    "sql": "SELECT key.id AS id FROM sample.positions WHERE quantity < '1.0000 USD'",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:186"
+  },
+  {
+    "sql": "SELECT key.sequence AS n FROM sample.composite",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:456"
+  },
+  {
+    "sql": "SELECT * FROM other.positions ORDER BY key",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:684"
+  },
+  {
+    "sql": "SELECT key, COUNT(*) AS n FROM other.positions WHERE key = 'fixture' AND value = TRUE GROUP BY key HAVING key = 'fixture'",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:690"
+  },
+  {
+    "sql": "SELECT MIN(status) AS low, MAX(status) AS high FROM sample.positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:655"
+  },
+  {
+    "sql": "SELECT key.id AS id, COUNT(*) AS n, MIN(amount) AS lo, MAX(amount) AS hi, SUM(amount) AS total, AVG(amount) AS mean, COUNT(amount) AS present FROM sample.positions GROUP BY key.id HAVING n < 0",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:781"
+  },
+  {
+    "sql": "SELECT key.id AS id, created FROM sample.positions ORDER BY created DESC",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:801"
+  },
+  {
+    "sql": "SELECT * FROM sample.positions LIMIT 10",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/test/test_query_integration.cpp:716"
+  },
+  {
+    "sql": "SELECT beneficiary, SUM(amount) AS total FROM sample.positions GROUP BY beneficiary ORDER BY total DESC",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/README.md:39"
+  },
+  {
+    "sql": "SELECT beneficiary, COUNT(*) AS records, SUM(amount) AS total\nFROM positions OWNER 'sample', 'other'\nWHERE amount >= 10\nGROUP BY beneficiary\nHAVING total > 100\nORDER BY total DESC\nLIMIT 20",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/README.md:73"
+  },
+  {
+    "sql": "SELECT SUM(amount) AS total FROM sample.positions",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/README.md:121"
+  },
+  {
+    "sql": "SELECT beneficiary, COUNT(*) AS records, SUM(amount) AS total FROM positions OWNER 'sample' WHERE amount >= 10 GROUP BY beneficiary HAVING SUM(amount) > 100 ORDER BY total DESC LIMIT 20",
+    "expect": "valid",
+    "source": "plugins/query_engine_plugin/examples/request.json:6"
+  }
+]
