@@ -361,9 +361,8 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 Create the panic account first so the delegated authority can reference it.
 
 **Companion requirement:** deploy the native-permission Andon contract from wire-sysio #662 and use
-tooling that implements the sequence below. Older `ClusterBuildDefaults` / `AndonContractSteps` that
-invoke `setpanic` or `addpuller` must be updated before running this bootstrap against that contract;
-those actions no longer exist. This sequence supersedes that older harness configuration.
+matching SDK declarations. `ClusterBuildDefaults` implements the sequence below; its Andon steps
+declare the linked `sysio.andon@pull` and `@clear` permissions.
 
 28. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — then `sysio.roa::addpolicy({owner:"andon.panic",

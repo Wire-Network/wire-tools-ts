@@ -239,16 +239,14 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         token_code: Liqsol,
         direction: "SYNDICATION",
         level: 10,
-        last_epoch: 4,
-        frozen_mark: 0
+        last_epoch: 4
       },
       {
         chain_code: Solana,
         token_code: Liqsol,
         direction: SysioSyndBucketDirection.DESYNDICATION,
         level: 20,
-        last_epoch: 4,
-        frozen_mark: 0
+        last_epoch: 4
       }
     ])
     const syndication = await WireSyndicationTool.readBucket(
@@ -358,16 +356,10 @@ describe("WireSyndicationTool — sysio.bond and sysio.andon reads", () => {
     expect(rows.map(row => row.underwriter)).toEqual([Bonder, "bonder.b"])
   })
 
-  it("readCord and readAndonConfig return the singleton, or nothing before it exists", async () => {
-    const { ctx, clients } = stubbedContext(),
-      config: SysioContracts.SysioAndonAndonConfigType = {
-        panic: "andon.panic",
-        pullers: ["sysio.synd"]
-      }
+  it("readCord returns nothing before the singleton exists", async () => {
+    const { ctx, clients } = stubbedContext()
     serve(clients.andon.tables.cord, [])
-    serve(clients.andon.tables.andonconfig, [config])
     expect(await WireSyndicationTool.readCord(ctx)).toBeUndefined()
-    expect(await WireSyndicationTool.readAndonConfig(ctx)).toBe(config)
   })
 })
 
@@ -1067,16 +1059,8 @@ describe("WireSyndicationTool held-envelope and final health reads", () => {
     serve(clients.andon.tables.cord, [
       {
         pulled: true,
-        pulled_by: Bonder,
-        pulled_at: "",
         reason: "test",
-        pulled_at_epoch: 4,
-        cleared_by: "",
-        cleared_at: "",
-        note: "",
-        cleared_at_epoch: 0,
-        pull_count: 1,
-        frozen_epochs: 0
+        when: "2026-10-08T00:00:00"
       }
     ])
     await expect(
