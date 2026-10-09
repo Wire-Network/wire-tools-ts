@@ -1,9 +1,11 @@
 import Assert from "node:assert"
 
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
   AttestationType,
   DebugOutpostEndpointsType,
+  OperatorType,
   SyndicateLIQ
 } from "@wireio/opp-typescript-models"
 import { Asset, SlugName, SysioContracts } from "@wireio/sdk-core"
@@ -21,13 +23,14 @@ import {
   Steps,
   SyndicationUserSteps
 } from "../orchestration/index.js"
+import type { OperatorAccount } from "../orchestration/outputs/OperatorAccount.js"
 import { Report } from "../report/Report.js"
 import {
   SolanaFundingTool,
   SolanaLiqSyndicationTool,
   WireState
 } from "../tools/solana/index.js"
-import { WireSyndicationTool } from "../tools/wire/index.js"
+import { OperatorDaemonTool, WireSyndicationTool } from "../tools/wire/index.js"
 import { SolanaOutpostBootstrapper } from "../orchestration/solana/SolanaOutpostBootstrapper.js"
 import { pollUntil } from "../orchestration/StepTools.js"
 import { verifyStep } from "../orchestration/StepTools.js"
@@ -207,6 +210,62 @@ export abstract class SyndicationScenario extends FlowScenario {
     return group
   }
 
+  /**
+   * Hand the bonder's bonding to the batch operator plugin's underwriter role:
+   * materialize the bonder's underwriter identity, then start its daemon on its
+   * own node. From then on the daemon bonds each request `sysio.synd` issues
+   * once its outpost's record confirms the statement, cranks the queue, and
+   * approves and claims; the flow waits on those effects instead of pushing
+   * them. Plan it where the flow would first bond, so checks before it still
+   * see unbonded state.
+   *
+   * @param cluster - The build root.
+   * @param exposureCap - The daemon's LIQSOL exposure cap, as an asset. A cap
+   *   of one request's covered amount holds the next request until that bond
+   *   is paid back.
+   * @returns The self-registered Phase.
+   * @throws If the cluster reserves no ad-hoc port pair for the daemon
+   *   ({@link SyndicationScenario.AdHocDaemonCount}), or its signature
+   *   provider is not `KEY`: the bonder's keys are development keys no other
+   *   provider holds.
+   */
+  protected planUnderwriterStart(
+    cluster: ClusterBuild,
+    exposureCap: string
+  ): ClusterBuildPhase {
+    Assert.ok(
+      cluster.config.bind.nodeop.ports.adHoc.length >=
+        SyndicationScenario.AdHocDaemonCount,
+      `${this.name}: no ad-hoc port pair is reserved for the underwriter daemon — set adHocCount to ` +
+        "SyndicationScenario.AdHocDaemonCount in the scenario's defaults"
+    )
+    Assert.ok(
+      cluster.config.signatureProvider.type === SignatureProviderType.KEY,
+      `${this.name}: the bonder's underwriter daemon signs with development keys only the KEY ` +
+        `signature provider can render, not ${cluster.config.signatureProvider.type}`
+    )
+    return ClusterBuildPhase.create(
+      cluster,
+      "StartUnderwriter",
+      "Run the bonder as an underwriter daemon"
+    ).push(
+      SyndicationScenario.planUnderwriterMaterialization(
+        Actor.Underwriter,
+        "materialize-underwriter",
+        "materialize the bonder's underwriter identity",
+        {}
+      ),
+      OperatorDaemonTool.planDaemonStart(
+        Actor.Underwriter,
+        "start-underwriter",
+        "start the bonder's underwriter daemon",
+        {},
+        Steps.registry.MockSyndicationBonderLabel,
+        { underwriterExposureCaps: [exposureCap] }
+      )
+    )
+  }
+
   /** Restore the saved pair rules and verify the final safety invariant. */
   protected planFinish(cluster: ClusterBuild): ClusterBuildPhase {
     return ClusterBuildPhase.create(
@@ -261,6 +320,16 @@ export namespace SyndicationScenario {
   export const TokenCode = BigInt(SlugName.from(Token))
   /** Bonder account shared by isolated scenario clusters. */
   export const Bonder = "synd.bonder"
+  /**
+   * Ad-hoc port pairs a scenario that plans `planUnderwriterStart` reserves:
+   * one, for the underwriter daemon it starts.
+   *
+   * Reserved through `adHocCount` in the scenario's `defaults` rather than
+   * picked when the daemon spawns — a pair picked at spawn time never reaches
+   * the port registry, so a parallel resolver can hand the same port to a
+   * planned daemon before this one binds.
+   */
+  export const AdHocDaemonCount = 1
   /** Shortest supported depot epoch. */
   export const EpochDurationSec = 60
   /** Wallet funding including transaction headroom. */
@@ -291,6 +360,56 @@ export namespace SyndicationScenario {
   export const VerifyOptions = {
     timeoutMs:
       ProtocolTiming.SingleHopBudgetMs + ProtocolTiming.PollDeadlineBufferMs
+  }
+  /**
+   * Step options of a `planAwaitRequestBonded` Step: the wait's budget plus the
+   * poll deadline margin.
+   *
+   * @param finalizerCount - The cluster's `producerCount`.
+   * @returns The Step options.
+   */
+  export function requestBondedOptions(
+    finalizerCount: number
+  ): ClusterBuildStepOptions {
+    return {
+      timeoutMs:
+        WireSyndicationTool.requestBondedBudgetMs(finalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    }
+  }
+  /**
+   * Step options of a verify Step that waits one pass of the underwriter
+   * daemon: the pass budget plus the poll deadline margin.
+   *
+   * @param finalizerCount - The cluster's `producerCount`.
+   * @returns The Step options.
+   */
+  export function underwriterPassOptions(
+    finalizerCount: number
+  ): ClusterBuildStepOptions {
+    return {
+      timeoutMs:
+        WireSyndicationTool.underwriterPassBudgetMs(finalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    }
+  }
+  /**
+   * Step options of a `planAwaitRequestSettled` Step: the wait's budget plus
+   * the poll deadline margin.
+   *
+   * @param windowSec - The pair's challenge window, as its `setconfig` set it.
+   * @param finalizerCount - The cluster's `producerCount`.
+   * @returns The Step options.
+   */
+  export function requestSettledOptions(
+    windowSec: number,
+    finalizerCount: number
+  ): ClusterBuildStepOptions {
+    return {
+      timeoutMs:
+        WireSyndicationTool.requestSettledBudgetMs(windowSec, finalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    }
   }
   /** Configuration captured before scenario governance changes. */
   export const OriginalConfigKey =
@@ -382,6 +501,46 @@ export namespace SyndicationScenario {
     epoch: OutputKey<number>,
     request: OutputKey<SysioContracts.SysioBondApproveAction["request_id"]>
   ): ClusterBuildStep {
+    return planIntakeCheck(
+      actor,
+      name,
+      description,
+      options,
+      user,
+      amount,
+      epoch,
+      request,
+      ctx =>
+        WireSyndicationTool.readHeldEnvelope(
+          ctx,
+          Chain,
+          Token,
+          SysioSyndItemKind.SYNDICATION,
+          amount,
+          publicKey(ctx, user)
+        )
+    )
+  }
+  /**
+   * The verify Step both intake checks plan: poll `readIntake` until it finds
+   * the envelope, capture its epoch and request, then assert the syndication
+   * circulated.
+   *
+   * @param readIntake - Reads the intake's envelope; nothing while it is absent.
+   */
+  function planIntakeCheck(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    user: User,
+    amount: bigint,
+    epoch: OutputKey<number>,
+    request: OutputKey<SysioContracts.SysioBondApproveAction["request_id"]>,
+    readIntake: (
+      ctx: ClusterBuildContext
+    ) => Promise<SysioContracts.SysioSyndEnvelopeRowType>
+  ): ClusterBuildStep {
     return verifyStep(
       actor,
       name,
@@ -390,14 +549,7 @@ export namespace SyndicationScenario {
         await pollUntil(
           name,
           async () => {
-            const envelope = await WireSyndicationTool.readHeldEnvelope(
-              ctx,
-              Chain,
-              Token,
-              SysioSyndItemKind.SYNDICATION,
-              amount,
-              publicKey(ctx, user)
-            )
+            const envelope = await readIntake(ctx)
             if (!envelope) return false
             ctx.outputs.set(epoch, envelope.epoch_index)
             ctx.outputs.set(request, envelope.request_id)
@@ -406,26 +558,81 @@ export namespace SyndicationScenario {
           ProtocolTiming.SingleHopBudgetMs,
           PollMs
         )
-        const messages = (
-            await readEnvelopeAttestations(
-              oppDebuggingPath(ctx.config.clusterPath),
-              DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
-              AttestationType.SYNDICATE_LIQ
-            )
-          ).map(bytes => SyndicateLIQ.fromBinary(bytes)),
-          matching = messages.filter(
-            message =>
-              message.amount?.amount === amount &&
-              Buffer.from(message.user?.address).toString("hex") ===
-                publicKey(ctx, user)
-          )
-        Assert.ok(matching.length > 0, "missing decoded syndication")
-        Assert.ok(
-          matching.every(message => message.totalSyndicated >= amount),
-          "custody attestation is below its own syndication"
-        )
+        await assertCirculated(ctx, user, amount)
       },
       options
+    )
+  }
+  /** Assert `user`'s syndication of `amount` circulated with custody at or above it. */
+  async function assertCirculated(
+    ctx: ClusterBuildContext,
+    user: User,
+    amount: bigint
+  ): Promise<void> {
+    const messages = (
+        await readEnvelopeAttestations(
+          oppDebuggingPath(ctx.config.clusterPath),
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          AttestationType.SYNDICATE_LIQ
+        )
+      ).map(bytes => SyndicateLIQ.fromBinary(bytes)),
+      matching = messages.filter(
+        message =>
+          message.amount?.amount === amount &&
+          Buffer.from(message.user?.address).toString("hex") ===
+            publicKey(ctx, user)
+      )
+    Assert.ok(matching.length > 0, "missing decoded syndication")
+    Assert.ok(
+      matching.every(message => message.totalSyndicated >= amount),
+      "custody attestation is below its own syndication"
+    )
+  }
+  /**
+   * Wait for intake while an underwriter daemon runs, and capture the
+   * consensus epoch and request. The daemon can bond and release an envelope
+   * before a read sees it held, so the envelope is found by
+   * `WireSyndicationTool.readIssuedEnvelope` instead.
+   *
+   * @param actor - The Report actor.
+   * @param name - The Step name.
+   * @param description - The Step description.
+   * @param options - Step options.
+   * @param user - The syndicating participant.
+   * @param amount - The only syndication of the envelope, in base units.
+   * @param after - The key of an earlier envelope's epoch.
+   * @param epoch - The key the envelope's epoch is stored under.
+   * @param request - The key the envelope's request id is stored under.
+   * @returns The Step.
+   */
+  export function planVerifyIssuedIntake(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    user: User,
+    amount: bigint,
+    after: OutputKey<number>,
+    epoch: OutputKey<number>,
+    request: OutputKey<SysioContracts.SysioBondApproveAction["request_id"]>
+  ): ClusterBuildStep {
+    return planIntakeCheck(
+      actor,
+      name,
+      description,
+      options,
+      user,
+      amount,
+      epoch,
+      request,
+      ctx =>
+        WireSyndicationTool.readIssuedEnvelope(
+          ctx,
+          Chain,
+          Token,
+          ctx.outputs.assert(after),
+          amount
+        )
     )
   }
   /** Plan one explicit queue crank. */
@@ -444,6 +651,70 @@ export namespace SyndicationScenario {
       Bonder
     )
   }
+  /** Input for {@link planUnderwriterMaterialization}. */
+  export interface MaterializeUnderwriterInput extends StepInput {
+    readonly kind: "SyndicationScenario.MaterializeUnderwriterInput"
+    /** The bonder's durable key-store label. */
+    readonly label: string
+    /** The bonder's account on chain. */
+    readonly account: string
+  }
+
+  /**
+   * Materialize the bonder's UNDERWRITER identity into the key store, so its
+   * daemon can start: its WIRE key is the development key `planSetup` creates
+   * the account with, and its outpost keys are the imported position's ED and
+   * EM keys, which the daemon's read-only outpost clients name. No key is
+   * generated and nothing is written on chain.
+   *
+   * @param actor - The Report actor.
+   * @param name - The Step name.
+   * @param description - The Step description.
+   * @param options - Step options.
+   * @returns The Step.
+   */
+  export function planUnderwriterMaterialization(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<ClusterBuildContext, MaterializeUnderwriterInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SyndicationScenario.MaterializeUnderwriterInput",
+        label: Steps.registry.MockSyndicationBonderLabel,
+        account: Bonder
+      },
+      runUnderwriterMaterialization
+    )
+  }
+
+  /** Named runner — one key-store write: the bonder's underwriter identity. */
+  export async function runUnderwriterMaterialization<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    input: MaterializeUnderwriterInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const bonder = Steps.registry.readMockSyndicationBonder(ctx),
+      underwriter: OperatorAccount = {
+        label: input.label,
+        publicationLabel: input.label,
+        account: input.account,
+        type: OperatorType.UNDERWRITER,
+        wire: Constants.DEV_K1_KEY_PAIR,
+        ethereum: bonder.ethereum,
+        solana: bonder.solana
+      }
+    ctx.keyStore.setOperator(underwriter)
+  }
+
   /** Input names the saved row, keeping restoration in the Report. */
   export interface RestoreConfigInput extends StepInput {
     readonly kind: "SyndicationScenario.RestoreConfigInput"

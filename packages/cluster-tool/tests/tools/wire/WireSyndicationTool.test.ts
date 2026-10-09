@@ -653,6 +653,334 @@ describe("WireSyndicationTool.planBondEnvelope", () => {
   })
 })
 
+describe("WireSyndicationTool underwriter-daemon waits", () => {
+  const Underwriter = "synd.bonder",
+    Other = "other.bonder",
+    EnvelopeEpoch = 4
+
+  /** One `sysio.bond::bonds` row of the fixture request. */
+  function bond(
+    underwriter: string,
+    paid: boolean
+  ): SysioContracts.SysioBondBondRowType {
+    return {
+      request_id: String(RequestId),
+      underwriter,
+      amount: 5,
+      yield: { index_checkpoint: "0", owed_wire: 0 },
+      paid
+    }
+  }
+
+  it("isRequestBondedBy needs the whole cover and a bond of the underwriter", () => {
+    expect(
+      WireSyndicationTool.isRequestBondedBy(
+        request(5, 5, SysioBondRequestState.BONDED),
+        [bond(Underwriter, false)],
+        Underwriter
+      )
+    ).toBe(true)
+    // Part bonded, someone else's bond, or no request at all.
+    expect(
+      WireSyndicationTool.isRequestBondedBy(
+        request(5, 2, SysioBondRequestState.OPEN),
+        [bond(Underwriter, false)],
+        Underwriter
+      )
+    ).toBe(false)
+    expect(
+      WireSyndicationTool.isRequestBondedBy(
+        request(5, 5, SysioBondRequestState.BONDED),
+        [bond(Other, false)],
+        Underwriter
+      )
+    ).toBe(false)
+    expect(
+      WireSyndicationTool.isRequestBondedBy(undefined, [], Underwriter)
+    ).toBe(false)
+  })
+
+  it("isRequestSettledFor needs APPROVED with every bond of the underwriter paid", () => {
+    const approved = request(5, 5, SysioBondRequestState.APPROVED)
+    expect(
+      WireSyndicationTool.isRequestSettledFor(
+        approved,
+        [bond(Underwriter, true), bond(Other, false)],
+        Underwriter
+      )
+    ).toBe(true)
+    // A paid row prune already erased leaves none: still settled.
+    expect(
+      WireSyndicationTool.isRequestSettledFor(approved, [], Underwriter)
+    ).toBe(true)
+    expect(
+      WireSyndicationTool.isRequestSettledFor(
+        approved,
+        [bond(Underwriter, false)],
+        Underwriter
+      )
+    ).toBe(false)
+    expect(
+      WireSyndicationTool.isRequestSettledFor(
+        request(5, 5, SysioBondRequestState.BONDED),
+        [bond(Underwriter, true)],
+        Underwriter
+      )
+    ).toBe(false)
+    expect(
+      WireSyndicationTool.isRequestSettledFor(undefined, [], Underwriter)
+    ).toBe(false)
+  })
+
+  const bondedInput: WireSyndicationTool.AwaitRequestBondedInput = {
+    kind: "WireSyndicationTool.AwaitRequestBondedInput",
+    bonderAccount: Underwriter,
+    chainCode: Solana,
+    tokenCode: Liqsol,
+    epoch: EnvelopeEpoch
+  }
+
+  it("planAwaitRequestBonded plans one Step that pushes nothing", () => {
+    const step = WireSyndicationTool.planAwaitRequestBonded(
+      Report.Actor.Underwriter,
+      "first-bonded",
+      "the underwriter bonds the first request",
+      {},
+      Underwriter,
+      Solana,
+      Liqsol,
+      EnvelopeEpoch
+    )
+    expect(step.input).toEqual(bondedInput)
+    expect(step.runner).toBe(WireSyndicationTool.runAwaitRequestBonded)
+  })
+
+  it("runAwaitRequestBonded resolves once the underwriter has bonded the issued request", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, EnvelopeEpoch, SysioSyndEnvelopeState.REQUESTED)
+    ])
+    serve(clients.bond.tables.requests, [
+      request(5, 5, SysioBondRequestState.BONDED)
+    ])
+    serve(clients.bond.tables.bonds, [bond(Underwriter, false)])
+    await expect(
+      WireSyndicationTool.runAwaitRequestBonded(ctx, bondedInput, signal)
+    ).resolves.toBeUndefined()
+  })
+
+  it("runAwaitRequestBonded keeps polling while the request is still OPEN", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [
+      envelope(Solana, Liqsol, EnvelopeEpoch, SysioSyndEnvelopeState.REQUESTED)
+    ])
+    jest
+      .spyOn(clients.bond.tables.requests, "query")
+      .mockResolvedValueOnce({
+        rows: [request(5, 0, SysioBondRequestState.OPEN)],
+        more: false
+      })
+      .mockResolvedValue({
+        rows: [request(5, 5, SysioBondRequestState.BONDED)],
+        more: false
+      })
+    const bonds = jest
+      .spyOn(clients.bond.tables.bonds, "query")
+      .mockResolvedValue({ rows: [bond(Underwriter, false)], more: false })
+    await expect(
+      WireSyndicationTool.runAwaitRequestBonded(ctx, bondedInput, signal)
+    ).resolves.toBeUndefined()
+    expect(bonds).toHaveBeenCalledTimes(2)
+  })
+
+  it("runAwaitRequestBonded keeps polling while the envelope's request is unissued", async () => {
+    const { ctx, clients } = stubbedContext(),
+      envelopes = jest
+        .spyOn(clients.synd.tables.envelopes, "query")
+        .mockResolvedValueOnce({
+          rows: [
+            envelope(
+              Solana,
+              Liqsol,
+              EnvelopeEpoch,
+              SysioSyndEnvelopeState.WAITING
+            )
+          ],
+          more: false
+        })
+        .mockResolvedValue({
+          rows: [
+            envelope(
+              Solana,
+              Liqsol,
+              EnvelopeEpoch,
+              SysioSyndEnvelopeState.REQUESTED
+            )
+          ],
+          more: false
+        })
+    serve(clients.bond.tables.requests, [
+      request(5, 5, SysioBondRequestState.BONDED)
+    ])
+    serve(clients.bond.tables.bonds, [bond(Underwriter, false)])
+    await expect(
+      WireSyndicationTool.runAwaitRequestBonded(ctx, bondedInput, signal)
+    ).resolves.toBeUndefined()
+    expect(envelopes).toHaveBeenCalledTimes(2)
+  })
+
+  it("runAwaitRequestBonded refuses an aborted Step before any read", async () => {
+    const { ctx, clients } = stubbedContext(),
+      envelopes = jest.spyOn(clients.synd.tables.envelopes, "query")
+    await expect(
+      WireSyndicationTool.runAwaitRequestBonded(
+        ctx,
+        bondedInput,
+        AbortSignal.abort()
+      )
+    ).rejects.toThrow()
+    expect(envelopes).not.toHaveBeenCalled()
+  })
+
+  const settledInput: WireSyndicationTool.AwaitRequestSettledInput = {
+    kind: "WireSyndicationTool.AwaitRequestSettledInput",
+    bonderAccount: Underwriter,
+    requestId: RequestId
+  }
+
+  it("planAwaitRequestSettled plans one Step that pushes nothing", () => {
+    const step = WireSyndicationTool.planAwaitRequestSettled(
+      Report.Actor.Underwriter,
+      "first-settled",
+      "the first request settles",
+      {},
+      Underwriter,
+      RequestId
+    )
+    expect(step.input).toEqual(settledInput)
+    expect(step.runner).toBe(WireSyndicationTool.runAwaitRequestSettled)
+  })
+
+  it("runAwaitRequestSettled resolves once the request is APPROVED and the bond paid", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.bond.tables.requests, [
+      request(5, 5, SysioBondRequestState.APPROVED)
+    ])
+    serve(clients.bond.tables.bonds, [bond(Underwriter, true)])
+    await expect(
+      WireSyndicationTool.runAwaitRequestSettled(ctx, settledInput, signal)
+    ).resolves.toBeUndefined()
+  })
+
+  it("runAwaitRequestSettled refuses a request sysio.bond does not hold", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.bond.tables.requests, [])
+    await expect(
+      WireSyndicationTool.runAwaitRequestSettled(ctx, settledInput, signal)
+    ).rejects.toThrow(/absent; there is nothing to settle/)
+  })
+
+  it("runAwaitRequestSettled keeps polling while the underwriter's bond is unpaid", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.bond.tables.requests, [
+      request(5, 5, SysioBondRequestState.APPROVED)
+    ])
+    const bonds = jest
+      .spyOn(clients.bond.tables.bonds, "query")
+      .mockResolvedValueOnce({ rows: [bond(Underwriter, false)], more: false })
+      .mockResolvedValue({ rows: [bond(Underwriter, true)], more: false })
+    await expect(
+      WireSyndicationTool.runAwaitRequestSettled(ctx, settledInput, signal)
+    ).resolves.toBeUndefined()
+    expect(bonds).toHaveBeenCalledTimes(2)
+  })
+
+  it("budgets each wait from the daemon's pass: a poll plus the finality of what it reads and pushes", () => {
+    const FinalizerCount = 3,
+      WindowSec = 60
+    // One pass: the 15 s poll and two 78 s irreversibility budgets of three finalizers.
+    expect(WireSyndicationTool.underwriterPassBudgetMs(FinalizerCount)).toBe(
+      171_000
+    )
+    // The single-hop issue budget, then one pass.
+    expect(WireSyndicationTool.requestBondedBudgetMs(FinalizerCount)).toBe(
+      591_000
+    )
+    // The 60 s window and its 30 s margin, then one pass to approve and one to claim.
+    expect(
+      WireSyndicationTool.requestSettledBudgetMs(WindowSec, FinalizerCount)
+    ).toBe(432_000)
+    expect(WireSyndicationTool.UnderwriterPassFinalityWaitCount).toBe(2)
+    expect(WireSyndicationTool.RequestSettledPassCount).toBe(2)
+  })
+
+  it("grows every budget with the cluster's finalizers and the request's window", () => {
+    expect(WireSyndicationTool.underwriterPassBudgetMs(21)).toBeGreaterThan(
+      WireSyndicationTool.underwriterPassBudgetMs(3)
+    )
+    expect(WireSyndicationTool.requestBondedBudgetMs(21)).toBeGreaterThan(
+      WireSyndicationTool.requestBondedBudgetMs(3)
+    )
+    expect(WireSyndicationTool.requestSettledBudgetMs(120, 3)).toBe(
+      WireSyndicationTool.requestSettledBudgetMs(60, 3) +
+        60 * ProtocolTiming.MsPerSecond
+    )
+  })
+
+  it("runAwaitRequestSettled stops polling once the Step is aborted", async () => {
+    const { ctx, clients } = stubbedContext(),
+      controller = new AbortController()
+    serve(clients.bond.tables.requests, [
+      request(5, 5, SysioBondRequestState.APPROVED)
+    ])
+    // The first poll sees the bond unpaid and aborts the Step.
+    const bonds = jest
+      .spyOn(clients.bond.tables.bonds, "query")
+      .mockImplementation(async () => {
+        controller.abort()
+        return { rows: [bond(Underwriter, false)], more: false }
+      })
+    await expect(
+      WireSyndicationTool.runAwaitRequestSettled(
+        ctx,
+        settledInput,
+        controller.signal
+      )
+    ).rejects.toThrow()
+    expect(bonds).toHaveBeenCalledTimes(1)
+  })
+
+  it("runAwaitRequestBonded stops polling once the Step is aborted", async () => {
+    const { ctx, clients } = stubbedContext(),
+      controller = new AbortController()
+    // The first poll finds the request unissued and aborts the Step.
+    const envelopes = jest
+      .spyOn(clients.synd.tables.envelopes, "query")
+      .mockImplementation(async () => {
+        controller.abort()
+        return {
+          rows: [
+            envelope(
+              Solana,
+              Liqsol,
+              EnvelopeEpoch,
+              SysioSyndEnvelopeState.WAITING
+            )
+          ],
+          more: false
+        }
+      })
+    await expect(
+      WireSyndicationTool.runAwaitRequestBonded(
+        ctx,
+        bondedInput,
+        controller.signal
+      )
+    ).rejects.toThrow()
+    expect(envelopes).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("WireSyndicationTool.planApproveAndClaim", () => {
   /** The chain time the fixture request was bonded at. */
   const BondedAt = "2026-09-30T00:00:00.000"
@@ -936,6 +1264,159 @@ describe("WireSyndicationTool.isRequestIssued", () => {
       )
     ).toBe(false)
     expect(WireSyndicationTool.isRequestIssued(undefined)).toBe(false)
+  })
+})
+
+describe("WireSyndicationTool.readIssuedEnvelope", () => {
+  const SyndTotal = 500_000_000n,
+    AfterEpoch = 3,
+    IssuedEpoch = 5
+
+  /** One envelope row of `(chainCode, tokenCode)` whose syndications total `syndTotal`. */
+  function envelopeOf(
+    chainCode: string,
+    tokenCode: string,
+    epochIndex: number,
+    state: SysioContracts.SysioSyndEnvelopeState,
+    syndTotal: bigint
+  ): SysioContracts.SysioSyndEnvelopeRowType {
+    return {
+      ...envelope(chainCode, tokenCode, epochIndex, state),
+      synd_total: syndTotal.toString()
+    }
+  }
+
+  it("finds a released envelope by what outlives its release", async () => {
+    const { ctx, clients } = stubbedContext(),
+      released = envelopeOf(
+        Solana,
+        Liqsol,
+        IssuedEpoch,
+        SysioSyndEnvelopeState.DONE,
+        SyndTotal
+      )
+    serve(clients.synd.tables.envelopes, [
+      // The earlier envelope of the same total, a yield-only envelope, another pair's
+      // envelope of that epoch and total, and the one sought.
+      envelopeOf(
+        Solana,
+        Liqsol,
+        AfterEpoch,
+        SysioSyndEnvelopeState.DONE,
+        SyndTotal
+      ),
+      envelopeOf(Solana, Liqsol, 4, SysioSyndEnvelopeState.REQUESTED, 0n),
+      envelopeOf(
+        Ethereum,
+        Liqeth,
+        IssuedEpoch,
+        SysioSyndEnvelopeState.DONE,
+        SyndTotal
+      ),
+      released
+    ])
+    expect(
+      await WireSyndicationTool.readIssuedEnvelope(
+        ctx,
+        Solana,
+        Liqsol,
+        AfterEpoch,
+        SyndTotal
+      )
+    ).toEqual(released)
+  })
+
+  it("finds an envelope still held under its issued request", async () => {
+    const { ctx, clients } = stubbedContext(),
+      held = envelopeOf(
+        Solana,
+        Liqsol,
+        IssuedEpoch,
+        SysioSyndEnvelopeState.REQUESTED,
+        SyndTotal
+      )
+    serve(clients.synd.tables.envelopes, [held])
+    expect(
+      await WireSyndicationTool.readIssuedEnvelope(
+        ctx,
+        Solana,
+        Liqsol,
+        AfterEpoch,
+        SyndTotal
+      )
+    ).toEqual(held)
+  })
+
+  /** What the pair's table holds while the envelope cannot be found yet. */
+  const absentCases: [string, SysioContracts.SysioSyndEnvelopeRowType[]][] = [
+    ["in flight", []],
+    [
+      "waiting for its request",
+      [
+        envelopeOf(
+          Solana,
+          Liqsol,
+          IssuedEpoch,
+          SysioSyndEnvelopeState.WAITING,
+          SyndTotal
+        )
+      ]
+    ],
+    [
+      "of another total",
+      [
+        envelopeOf(
+          Solana,
+          Liqsol,
+          IssuedEpoch,
+          SysioSyndEnvelopeState.REQUESTED,
+          SyndTotal + 1n
+        )
+      ]
+    ],
+    [
+      "not past the earlier epoch",
+      [
+        envelopeOf(
+          Solana,
+          Liqsol,
+          AfterEpoch,
+          SysioSyndEnvelopeState.REQUESTED,
+          SyndTotal
+        )
+      ]
+    ]
+  ]
+
+  it.each(absentCases)(
+    "finds nothing while the envelope is %s",
+    async (_case, rows) => {
+      const { ctx, clients } = stubbedContext()
+      serve(clients.synd.tables.envelopes, rows)
+      expect(
+        await WireSyndicationTool.readIssuedEnvelope(
+          ctx,
+          Solana,
+          Liqsol,
+          AfterEpoch,
+          SyndTotal
+        )
+      ).toBeUndefined()
+    }
+  )
+
+  it("refuses a truncated read rather than report the envelope absent", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.synd.tables.envelopes, [], true)
+    await expect(
+      WireSyndicationTool.readIssuedEnvelope(
+        ctx,
+        Solana,
+        Liqsol,
+        AfterEpoch,
+        SyndTotal
+      )
+    ).rejects.toThrow(/envelopes has more/)
   })
 })
 

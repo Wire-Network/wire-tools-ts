@@ -3,6 +3,8 @@ import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 
+import type { WireKeyPair } from "./types/KeyPair.js"
+
 /**
  * Cross-cutting harness constants — development keys, system-account names,
  * token / ROA parameters, contract paths, plugin sets, operator-account-handle
@@ -37,6 +39,12 @@ export namespace Constants {
   export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
   /** Default sysio development public key (SYS prefix). */
   export const DEV_K1_PUBLIC_KEY = DefaultK1KeyPair.publicKeyWIF
+  /** The development K1 key as the WIRE key pair of an identity that signs with it. */
+  export const DEV_K1_KEY_PAIR: WireKeyPair = {
+    type: KeyType.K1,
+    publicKey: DEV_K1_PUBLIC_KEY,
+    privateKey: DEV_K1_PRIVATE_KEY
+  }
 
   /** Seed for the deterministic dev BLS key pair. */
   const DefaultBLSKeyPairSeed = "wire"

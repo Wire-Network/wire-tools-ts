@@ -41,6 +41,7 @@ import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/Bon
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
+import { OperatorDaemonTool } from "./OperatorDaemonTool.js"
 
 const {
   SysioContractName,
@@ -176,6 +177,34 @@ export namespace WireSyndicationTool {
       )
       ? envelope
       : undefined
+  }
+
+  /**
+   * Find the pair's first envelope past `afterEpoch` whose syndications total `syndTotal`,
+   * once its request is issued. These fields outlive the envelope's release, unlike the held
+   * item {@link readHeldEnvelope} looks for, so an envelope an underwriter daemon has already
+   * bonded and released is still found. An absent match is returned while the attestation is
+   * in flight or the request unissued; truncated reads are refused.
+   *
+   * @param chainCode - The outpost chain's codename.
+   * @param tokenCode - The liq token's codename.
+   * @param afterEpoch - The depot epoch the envelope must come after.
+   * @param syndTotal - The envelope's syndicated total, in base units.
+   * @returns The envelope row, or nothing while there is none yet.
+   */
+  export async function readIssuedEnvelope<C extends ClusterBuildContext>(
+    ctx: C,
+    chainCode: string,
+    tokenCode: string,
+    afterEpoch: number,
+    syndTotal: bigint
+  ): Promise<SysioContracts.SysioSyndEnvelopeRowType> {
+    return (await readEnvelopes(ctx, chainCode, tokenCode)).find(
+      envelope =>
+        envelope.epoch_index > afterEpoch &&
+        BigInt(envelope.synd_total) === syndTotal &&
+        isRequestIssued(envelope)
+    )
   }
 
   /** Plan the final solvency checkpoint shared by syndication flows. */
@@ -904,6 +933,291 @@ export namespace WireSyndicationTool {
         signer: account
       },
       signal
+    )
+  }
+
+  // ── waits on an underwriter daemon ───────────────────────────────────────
+
+  /**
+   * Irreversibility waits in one pass of an underwriter daemon: its node reads irreversible
+   * state, so what it acts on must be irreversible first, and so must what it pushes before
+   * its next pass builds on it. Changing it changes every budget below.
+   */
+  export const UnderwriterPassFinalityWaitCount = 2
+
+  /**
+   * One pass of an underwriter daemon (the batch operator plugin's underwriter role) (ms): a
+   * poll interval plus {@link UnderwriterPassFinalityWaitCount} irreversibility budgets of
+   * the cluster.
+   *
+   * @param finalizerCount - Finalizers in the cluster's genesis policy (its producer nodes).
+   * @returns The budget of one pass.
+   */
+  export function underwriterPassBudgetMs(finalizerCount: number): number {
+    return (
+      OperatorDaemonTool.BatchEpochPollMs +
+      UnderwriterPassFinalityWaitCount *
+        ProtocolTiming.irreversibilityBudgetMs(finalizerCount)
+    )
+  }
+
+  /**
+   * How long {@link runAwaitRequestBonded} waits (ms): the request's issue
+   * ({@link RequestIssuedBudgetMs}), then one daemon pass to bond it.
+   *
+   * @param finalizerCount - Finalizers in the cluster's genesis policy (its producer nodes).
+   * @returns The wait's budget.
+   */
+  export function requestBondedBudgetMs(finalizerCount: number): number {
+    return RequestIssuedBudgetMs + underwriterPassBudgetMs(finalizerCount)
+  }
+
+  /**
+   * Daemon passes that settle a request once its challenge window has passed: one to
+   * approve it, one to claim. Changing it changes how long {@link runAwaitRequestSettled}
+   * waits.
+   */
+  export const RequestSettledPassCount = 2
+
+  /**
+   * How long {@link runAwaitRequestSettled} waits (ms): the challenge window
+   * ({@link approveWindowBudgetMs}), then {@link RequestSettledPassCount} daemon passes.
+   *
+   * @param windowSec - The request's `window_sec`.
+   * @param finalizerCount - Finalizers in the cluster's genesis policy (its producer nodes).
+   * @returns The wait's budget.
+   */
+  export function requestSettledBudgetMs(
+    windowSec: number,
+    finalizerCount: number
+  ): number {
+    return (
+      approveWindowBudgetMs(windowSec) +
+      RequestSettledPassCount * underwriterPassBudgetMs(finalizerCount)
+    )
+  }
+
+  /**
+   * Whether `request` is fully bonded with a bond of `bonderAccount` among `bonds` (its
+   * `sysio.bond::bonds` rows).
+   *
+   * @param request - The request row, or nothing when it is absent.
+   * @param bonds - The request's bond rows.
+   * @param bonderAccount - The underwriter's on-chain account.
+   * @returns True once the underwriter has bonded the request.
+   */
+  export function isRequestBondedBy(
+    request: SysioContracts.SysioBondRequestRowType,
+    bonds: readonly SysioContracts.SysioBondBondRowType[],
+    bonderAccount: string
+  ): boolean {
+    return (
+      request != null &&
+      BigInt(request.bonded) >= BigInt(request.covered) &&
+      bonds.some(bond => bond.underwriter === bonderAccount)
+    )
+  }
+
+  /**
+   * Whether `request` is APPROVED and every bond of `bonderAccount` among `bonds` (its
+   * `sysio.bond::bonds` rows) is paid.
+   *
+   * @param request - The request row, or nothing when it is absent.
+   * @param bonds - The request's bond rows.
+   * @param bonderAccount - The underwriter's on-chain account.
+   * @returns True once the underwriter has been paid back.
+   */
+  export function isRequestSettledFor(
+    request: SysioContracts.SysioBondRequestRowType,
+    bonds: readonly SysioContracts.SysioBondBondRowType[],
+    bonderAccount: string
+  ): boolean {
+    return (
+      request != null &&
+      matchesProtoEnum(
+        request.state,
+        SysioBondRequestState,
+        SysioBondRequestState.APPROVED
+      ) &&
+      bonds
+        .filter(bond => bond.underwriter === bonderAccount)
+        .every(bond => bond.paid)
+    )
+  }
+
+  /** Input for {@link planAwaitRequestBonded}. */
+  export interface AwaitRequestBondedInput extends StepInput {
+    readonly kind: "WireSyndicationTool.AwaitRequestBondedInput"
+    /** The on-chain account the underwriter daemon bonds as. */
+    readonly bonderAccount: string
+    /** The outpost chain's codename (`SOLANA`). */
+    readonly chainCode: string
+    /** The liq token's codename (`LIQSOL`). */
+    readonly tokenCode: string
+    /** The depot epoch of the envelope, or the output an earlier Step records it under. */
+    readonly epoch: EnvelopeEpoch
+  }
+
+  /**
+   * Wait for an underwriter daemon to bond an envelope's request: the request is issued,
+   * fully bonded, and `bonderAccount` holds a bond on it. The daemon bonds the whole
+   * remainder once the outpost's record confirms the statement; this Step pushes nothing.
+   * Plan it before the bond can be paid back: the daemon prunes a paid bond's row.
+   *
+   * @param actor - The Report actor.
+   * @param name - The Step name.
+   * @param description - The Step description.
+   * @param options - Step options (size `timeoutMs` above {@link requestBondedBudgetMs}).
+   * @param bonderAccount - The on-chain account the underwriter daemon bonds as.
+   * @param chainCode - The outpost chain's codename.
+   * @param tokenCode - The liq token's codename.
+   * @param epoch - The envelope's depot epoch, or the key it is stored under.
+   * @returns The Step.
+   */
+  export function planAwaitRequestBonded<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    bonderAccount: string,
+    chainCode: string,
+    tokenCode: string,
+    epoch: EnvelopeEpoch
+  ): ClusterBuildStep<C, AwaitRequestBondedInput> {
+    return ClusterBuildStep.create<C, AwaitRequestBondedInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireSyndicationTool.AwaitRequestBondedInput",
+        bonderAccount,
+        chainCode,
+        tokenCode,
+        epoch
+      },
+      runAwaitRequestBonded
+    )
+  }
+
+  /**
+   * Named runner — poll until the envelope's request is fully bonded with a bond of
+   * `bonderAccount` on it.
+   *
+   * @throws If that does not happen within {@link requestBondedBudgetMs}, or the Step is
+   *   aborted.
+   */
+  export async function runAwaitRequestBonded<C extends ClusterBuildContext>(
+    ctx: C,
+    input: AwaitRequestBondedInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const { chainCode, tokenCode, bonderAccount } = input,
+      epochIndex = resolveEnvelopeEpoch(ctx, input.epoch)
+    await pollUntil(
+      `${bonderAccount} bonds the ${chainCode}/${tokenCode} epoch ${epochIndex} request`,
+      async () => {
+        signal.throwIfAborted()
+        const envelope = await readEnvelope(
+          ctx,
+          chainCode,
+          tokenCode,
+          epochIndex
+        )
+        if (!isRequestIssued(envelope)) return false
+        return isRequestBondedBy(
+          await readRequest(ctx, envelope.request_id),
+          await readBonds(ctx, envelope.request_id),
+          bonderAccount
+        )
+      },
+      requestBondedBudgetMs(ctx.config.producerCount),
+      RequestIssuedPollIntervalMs
+    )
+  }
+
+  /** Input for {@link planAwaitRequestSettled}. */
+  export interface AwaitRequestSettledInput extends StepInput {
+    readonly kind: "WireSyndicationTool.AwaitRequestSettledInput"
+    /** The on-chain account the underwriter daemon bonds as. */
+    readonly bonderAccount: string
+    /** The `sysio.bond` request, or the output an earlier Step records its id under. */
+    readonly requestId: RequestId
+  }
+
+  /**
+   * Wait for an underwriter daemon to settle a request it bonded: the request is APPROVED and
+   * every bond of `bonderAccount` on it is paid. The daemon approves once the challenge
+   * window has passed by chain time, then claims; this Step pushes nothing. A challenged
+   * request never satisfies it, however it is ruled.
+   *
+   * @param actor - The Report actor.
+   * @param name - The Step name.
+   * @param description - The Step description.
+   * @param options - Step options (size `timeoutMs` above {@link requestSettledBudgetMs}).
+   * @param bonderAccount - The on-chain account the underwriter daemon bonds as.
+   * @param requestId - The `sysio.bond` request.
+   * @returns The Step.
+   */
+  export function planAwaitRequestSettled<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    bonderAccount: string,
+    requestId: RequestId
+  ): ClusterBuildStep<C, AwaitRequestSettledInput> {
+    return ClusterBuildStep.create<C, AwaitRequestSettledInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireSyndicationTool.AwaitRequestSettledInput",
+        bonderAccount,
+        requestId
+      },
+      runAwaitRequestSettled
+    )
+  }
+
+  /**
+   * Named runner — poll until the request is APPROVED and every bond of `bonderAccount` on
+   * it is paid.
+   *
+   * @throws If the request is absent, does not settle within the request's
+   *   {@link requestSettledBudgetMs}, or the Step is aborted.
+   */
+  export async function runAwaitRequestSettled<C extends ClusterBuildContext>(
+    ctx: C,
+    input: AwaitRequestSettledInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const { bonderAccount } = input,
+      requestId = resolveRequestId(ctx, input.requestId),
+      request = await readRequest(ctx, requestId)
+    Assert.ok(
+      request != null,
+      `WireSyndicationTool: request ${requestId} is absent; there is nothing to settle`
+    )
+    await pollUntil(
+      `${bonderAccount} settles request ${requestId}`,
+      async () => {
+        signal.throwIfAborted()
+        return isRequestSettledFor(
+          await readRequest(ctx, requestId),
+          await readBonds(ctx, requestId),
+          bonderAccount
+        )
+      },
+      requestSettledBudgetMs(request.window_sec, ctx.config.producerCount),
+      ApproveWindowPollIntervalMs
     )
   }
 
