@@ -34,8 +34,8 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.42",
     "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.94",
-    "@wireio/shared": "^1.0.94",
+    "@wireio/sdk-core": "^1.0.95",
+    "@wireio/shared": "^1.0.95",
     "zod": "^4.4.3"
   },
   "devDependencies": {

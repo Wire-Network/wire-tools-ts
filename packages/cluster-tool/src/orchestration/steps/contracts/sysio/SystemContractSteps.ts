@@ -332,6 +332,65 @@ export namespace SystemContractSteps {
       .actions.updateauth.invoke(input.data, { authorization: input.authorization })
   }
 
+  /** Input for one native action-to-permission link. */
+  export interface LinkauthInput extends StepInput {
+    readonly kind: "SystemContractSteps.LinkauthInput"
+    readonly data: SysioContracts.SysioSystemLinkauthAction
+    readonly authorization: PermissionLevelType[]
+  }
+
+  /**
+   * Link an action to a permission, authorized by the account being modified.
+   *
+   * @param actor - Narrative subject in the step report.
+   * @param name - Unique step name.
+   * @param description - Description of the action link.
+   * @param options - Step execution options.
+   * @param data - Generated native linkauth action data.
+   * @param authorization - Authority of the account whose link is modified.
+   * @returns One action-link step with explicit authorization.
+   */
+  export function planLinkauth<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioSystemLinkauthAction,
+    authorization: PermissionLevelType[]
+  ): ClusterBuildStep<C, LinkauthInput> {
+    return ClusterBuildStep.create<C, LinkauthInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SystemContractSteps.LinkauthInput", data, authorization },
+      runLinkauth
+    )
+  }
+
+  /**
+   * Perform one linkauth with explicit account authorization.
+   *
+   * @param ctx - Cluster context supplying the system contract client.
+   * @param input - Action data and the account authorization.
+   * @param signal - Cancellation signal checked before submitting the action.
+   * @returns Completion of the action invocation.
+   */
+  export async function runLinkauth<C extends ClusterBuildContext>(
+    ctx: C,
+    input: LinkauthInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .actions.linkauth.invoke(input.data, {
+        authorization: input.authorization
+      })
+  }
+
   /** Input for {@link planRegproducer} — the generated `system::regproducer` data. */
   export interface RegproducerInput extends StepInput {
     readonly kind: "SystemContractSteps.RegproducerInput"
