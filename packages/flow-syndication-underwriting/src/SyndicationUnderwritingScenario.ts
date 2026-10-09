@@ -10,13 +10,14 @@ import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
   Report,
-  ProtocolTiming,
   SolanaLiqSyndicationTool,
   Steps,
   SyndicationScenario,
   SyndicationUserSteps,
   WireSyndicationTool,
   matchesProtoEnum,
+  pollStep,
+  pollUntil,
   readEnvelopeAttestations,
   verifyStep,
   type ClusterBuild,
@@ -40,10 +41,15 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
     epochDurationSec: SyndicationScenario.EpochDurationSec,
     producerCount: 3,
     batchOperatorCount: 3,
-    underwriterCount: 0
+    underwriterCount: 0,
+    // The bonder's underwriter daemon starts outside `NodeConfig.plan`; its
+    // ports are reserved with every planned node's.
+    adHocCount: SyndicationScenario.AdHocDaemonCount
   }
 
   plan(cluster: ClusterBuild): void {
+    // Every wait on the underwriter daemon is sized from the cluster's finalizers.
+    const finalizerCount = cluster.config.producerCount
     this.planSetup(cluster, [Constants.User, Constants.Unlinked])
     ClusterBuildPhase.create(
       cluster,
@@ -131,12 +137,7 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
               SysioSyndEnvelopeState.REQUESTED
             )
           )
-          Assert.strictEqual(
-            BigInt(request.covered),
-            ((Constants.Amount + SyndicationScenario.Increment - 1n) /
-              SyndicationScenario.Increment) *
-              SyndicationScenario.Increment
-          )
+          Assert.strictEqual(BigInt(request.covered), Constants.FirstCovered)
           Assert.strictEqual(
             await SyndicationScenario.readBalance(
               ctx,
@@ -201,32 +202,53 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         }
       )
     )
-    WireSyndicationTool.planBondEnvelope(
+    this.planUnderwriterStart(cluster, Constants.UnderwriterExposureCap)
+    ClusterBuildPhase.create(
       cluster,
       "BondFirst",
-      "bond the first request's remainder",
-      SyndicationScenario.VerifyOptions,
-      SyndicationScenario.Bonder,
-      SyndicationScenario.Chain,
-      SyndicationScenario.Token,
-      Constants.FirstEpoch
+      "The underwriter bonds the first request's remainder"
+    ).push(
+      WireSyndicationTool.planAwaitRequestBonded(
+        Actor.Underwriter,
+        "first-bonded",
+        "the underwriter bonds the first request",
+        SyndicationScenario.requestBondedOptions(finalizerCount),
+        SyndicationScenario.Bonder,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.FirstEpoch
+      )
     )
     ClusterBuildPhase.create(
       cluster,
       "ReleaseFirst",
-      "Release S minus the fee and issue the next request"
+      "The underwriter's crank releases S minus the fee and issues the next request"
     ).push(
-      SyndicationScenario.planCrank(
-        Actor.User,
-        "release-first",
-        "advance the syndication queue",
-        SyndicationScenario.WriteOptions
-      ),
       verifyStep(
         Actor.Sysio,
         "first-released-next-requested",
         "exact fee and linked credit; second request is now issued",
         async ctx => {
+          await pollUntil(
+            "the underwriter's crank releases the first envelope and issues the second request",
+            async () =>
+              BigInt(
+                (
+                  await SyndicationScenario.readEnvelope(
+                    ctx,
+                    Constants.FirstEpoch
+                  )
+                ).released
+              ) === Constants.Amount &&
+              WireSyndicationTool.isRequestIssued(
+                await SyndicationScenario.readEnvelope(
+                  ctx,
+                  Constants.SecondEpoch
+                )
+              ),
+            WireSyndicationTool.underwriterPassBudgetMs(finalizerCount),
+            SyndicationScenario.PollMs
+          )
           const before = ctx.outputs.assert(Constants.Before),
             fee =
               (Constants.Amount * BigInt(Constants.FeeBps)) /
@@ -258,16 +280,26 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
             )
           )
           ctx.outputs.set(Constants.SecondRequest, second.request_id)
-        }
+        },
+        SyndicationScenario.underwriterPassOptions(finalizerCount)
       )
     )
-    WireSyndicationTool.planApproveAndClaim(
+    ClusterBuildPhase.create(
       cluster,
       "ApproveFirst",
-      "wait for the challenge window, approve and return the bond",
-      SyndicationScenario.VerifyOptions,
-      SyndicationScenario.Bonder,
-      Constants.FirstRequest
+      "The underwriter approves after the challenge window and claims its bond"
+    ).push(
+      WireSyndicationTool.planAwaitRequestSettled(
+        Actor.Underwriter,
+        "first-settled",
+        "the first request is APPROVED and the bonder's bond paid",
+        SyndicationScenario.requestSettledOptions(
+          Constants.Config.window_sec,
+          finalizerCount
+        ),
+        SyndicationScenario.Bonder,
+        Constants.FirstRequest
+      )
     )
     ClusterBuildPhase.create(
       cluster,
@@ -278,38 +310,67 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         Actor.Underwriter,
         "approved-and-returned",
         "request APPROVED and bond balance restored",
-        {}
+        SyndicationScenario.underwriterPassOptions(finalizerCount)
       )
     )
-    WireSyndicationTool.planBondEnvelope(
+    ClusterBuildPhase.create(
       cluster,
       "BondSecond",
-      "bond the newly issued request",
-      SyndicationScenario.VerifyOptions,
-      SyndicationScenario.Bonder,
-      SyndicationScenario.Chain,
-      SyndicationScenario.Token,
-      Constants.SecondEpoch
+      "The underwriter bonds the newly issued request once the first bond is paid"
+    ).push(
+      WireSyndicationTool.planAwaitRequestBonded(
+        Actor.Underwriter,
+        "second-bonded",
+        "the underwriter bonds the second request",
+        SyndicationScenario.requestBondedOptions(finalizerCount),
+        SyndicationScenario.Bonder,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.SecondEpoch
+      )
     )
     ClusterBuildPhase.create(
       cluster,
       "ReleaseSecond",
-      "Drain the second envelope"
+      "The underwriter's crank drains the second envelope"
     ).push(
-      SyndicationScenario.planCrank(
-        Actor.User,
-        "release-second",
-        "advance the syndication queue",
-        SyndicationScenario.WriteOptions
+      verifyStep(
+        Actor.Sysio,
+        "second-released",
+        "the second envelope released its syndication",
+        pollStep.lift(
+          "the underwriter's crank releases the second envelope",
+          async ctx =>
+            BigInt(
+              (
+                await SyndicationScenario.readEnvelope(
+                  ctx,
+                  Constants.SecondEpoch
+                )
+              ).released
+            ) === Constants.LaterAmount,
+          WireSyndicationTool.underwriterPassBudgetMs(finalizerCount),
+          SyndicationScenario.PollMs
+        ),
+        SyndicationScenario.underwriterPassOptions(finalizerCount)
       )
     )
-    WireSyndicationTool.planApproveAndClaim(
+    ClusterBuildPhase.create(
       cluster,
       "ApproveSecond",
-      "approve and claim the second request",
-      SyndicationScenario.VerifyOptions,
-      SyndicationScenario.Bonder,
-      Constants.SecondRequest
+      "The underwriter approves and claims the second request"
+    ).push(
+      WireSyndicationTool.planAwaitRequestSettled(
+        Actor.Underwriter,
+        "second-settled",
+        "the second request is APPROVED and the bonder's bond paid",
+        SyndicationScenario.requestSettledOptions(
+          Constants.Config.window_sec,
+          finalizerCount
+        ),
+        SyndicationScenario.Bonder,
+        Constants.SecondRequest
+      )
     )
     ClusterBuildPhase.create(
       cluster,
@@ -324,54 +385,61 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         Constants.Unlinked.keypairName,
         Constants.LaterAmount
       ),
-      SyndicationScenario.planVerifyIntake(
+      SyndicationScenario.planVerifyIssuedIntake(
         Actor.Sysio,
-        "unlinked-held",
-        "verify held intake and its circulated custody attestation",
+        "unlinked-intake",
+        "verify intake and its circulated custody attestation",
         SyndicationScenario.VerifyOptions,
         Constants.Unlinked,
         Constants.LaterAmount,
+        Constants.SecondEpoch,
         Constants.ParkedEpoch,
         Constants.ParkedRequest
       )
     )
-    WireSyndicationTool.planBondEnvelope(
+    ClusterBuildPhase.create(
       cluster,
       "BondUnlinked",
-      "bond the unlinked recipient's request",
-      SyndicationScenario.VerifyOptions,
-      SyndicationScenario.Bonder,
-      SyndicationScenario.Chain,
-      SyndicationScenario.Token,
-      Constants.ParkedEpoch
+      "The underwriter bonds the unlinked recipient's request"
+    ).push(
+      WireSyndicationTool.planAwaitRequestBonded(
+        Actor.Underwriter,
+        "unlinked-bonded",
+        "the underwriter bonds the unlinked recipient's request",
+        SyndicationScenario.requestBondedOptions(finalizerCount),
+        SyndicationScenario.Bonder,
+        SyndicationScenario.Chain,
+        SyndicationScenario.Token,
+        Constants.ParkedEpoch
+      )
     )
     ClusterBuildPhase.create(
       cluster,
       "ParkAndLink",
-      "Release into parked, then deliver by createlink"
+      "The underwriter's crank releases into parked, then createlink delivers"
     ).push(
-      SyndicationScenario.planCrank(
-        Actor.User,
-        "park-unlinked",
-        "advance the syndication queue",
-        SyndicationScenario.WriteOptions
-      ),
       verifyStep(
         Actor.User,
         "parked-credit",
         "the net credit is parked and the account has zero",
         async ctx => {
-          const row = await WireSyndicationTool.readParked(
-            ctx,
-            SyndicationScenario.Token,
-            SysioSyndChainkind.CHAIN_KIND_SVM,
-            SyndicationScenario.publicKey(ctx, Constants.Unlinked)
-          )
-          Assert.strictEqual(
-            BigInt(row.balance),
+          const credit =
             Constants.LaterAmount -
-              (Constants.LaterAmount * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints
+            (Constants.LaterAmount * BigInt(Constants.FeeBps)) /
+              SyndicationScenario.BasisPoints
+          await pollUntil(
+            "the underwriter's crank parks the unlinked recipient's credit",
+            async () => {
+              const row = await WireSyndicationTool.readParked(
+                ctx,
+                SyndicationScenario.Token,
+                SysioSyndChainkind.CHAIN_KIND_SVM,
+                SyndicationScenario.publicKey(ctx, Constants.Unlinked)
+              )
+              return row != null && BigInt(row.balance) === credit
+            },
+            WireSyndicationTool.underwriterPassBudgetMs(finalizerCount),
+            SyndicationScenario.PollMs
           )
           Assert.strictEqual(
             await SyndicationScenario.readBalance(
@@ -380,7 +448,8 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
             ),
             0n
           )
-        }
+        },
+        SyndicationScenario.underwriterPassOptions(finalizerCount)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.User,
@@ -414,13 +483,22 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         }
       )
     )
-    WireSyndicationTool.planApproveAndClaim(
+    ClusterBuildPhase.create(
       cluster,
       "ApproveUnlinked",
-      "approve and claim the parked recipient's bond",
-      { timeoutMs: ProtocolTiming.SingleHopBudgetMs },
-      SyndicationScenario.Bonder,
-      Constants.ParkedRequest
+      "The underwriter approves and claims the parked recipient's bond"
+    ).push(
+      WireSyndicationTool.planAwaitRequestSettled(
+        Actor.Underwriter,
+        "unlinked-settled",
+        "the parked recipient's request is APPROVED and the bonder's bond paid",
+        SyndicationScenario.requestSettledOptions(
+          Constants.Config.window_sec,
+          finalizerCount
+        ),
+        SyndicationScenario.Bonder,
+        Constants.ParkedRequest
+      )
     )
     this.planFinish(cluster)
   }

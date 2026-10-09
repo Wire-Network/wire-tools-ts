@@ -23,6 +23,18 @@ export namespace SyndicationUnderwritingScenarioConstants {
   }
   /** Deliberately not an increment multiple, exercising covered rounding. */
   export const Amount = 2_000_000_001n
+  /** The first request's covered amount: {@link Amount} rounded up to the bond increment. */
+  export const FirstCovered =
+    ((Amount + SyndicationScenario.Increment - 1n) /
+      SyndicationScenario.Increment) *
+    SyndicationScenario.Increment
+  /**
+   * The underwriter daemon's LIQSOL exposure cap: exactly the first request's
+   * covered amount, so it bonds the second request only once the first bond is
+   * paid back. The third is syndicated after the second settles.
+   */
+  export const UnderwriterExposureCap =
+    SyndicationScenario.quantity(FirstCovered)
   /** Later syndication amount. */
   export const LaterAmount = 500_000_000n
   /** Nonzero fee rate. */
