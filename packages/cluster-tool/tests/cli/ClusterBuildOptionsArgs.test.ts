@@ -190,7 +190,6 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "epoch-duration-sec",
         "force",
         "bind-all",
-        "enable-mock-reserves",
         "chain-state-db-size-mb",
         "bind-kiod-port",
         "bind-kiod-address",
@@ -438,7 +437,10 @@ describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", ()
   })
 
   it("the environment (per-invocation operator intent) beats scenario defaults", () => {
-    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
+    const options = register(
+      { clusterPath: "/tmp/scenario-cluster" },
+      environment
+    )
     expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
   })
 
@@ -482,7 +484,9 @@ describe("toClusterBuildOptions reverse parse", () => {
       { "epoch-duration-sec": 60 },
       { requiredBatchOperatorCollateral }
     )
-    expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
+    expect(options.requiredBatchOperatorCollateral).toEqual(
+      requiredBatchOperatorCollateral
+    )
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
@@ -533,10 +537,23 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-liq-pools": true })
+        .enableMockLiqPools
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-liq-pools": false })
+        .enableMockLiqPools
+    ).toBe(false)
+  })
+
+  it("round trips the mock syndication import leaf", () => {
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": true })
+        .enableMockSyndicationImport
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": false })
+        .enableMockSyndicationImport
     ).toBe(false)
   })
 
@@ -588,8 +605,8 @@ describe("register → parse round-trip", () => {
     expect(options.epochDurationSec).toBe(60)
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
-    // no opt-in ⇒ the default-false mock-reserves flag survives as false
-    expect(options.enableMockReserves).toBe(false)
+    expect(options.enableMockLiqPools).toBe(false)
+    expect(options.enableMockSyndicationImport).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
@@ -614,7 +631,8 @@ describe("register → parse round-trip", () => {
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
-        enableMockReserves: true,
+        enableMockLiqPools: true,
+        enableMockSyndicationImport: true,
         chainStateDbSizeMb: 8_192,
         apiCount: 2,
         queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
@@ -631,8 +649,9 @@ describe("register → parse round-trip", () => {
     expect(options.terminateMaxConsecutiveMisses).toBe(5)
     expect(options.terminateMaxPercentMisses24h).toBe(99)
     expect(options.terminateWindowMs).toBe(3_600_000)
-    // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
-    expect(options.enableMockReserves).toBe(true)
+    // …and the one the liq-yield flow's pools ride
+    expect(options.enableMockLiqPools).toBe(true)
+    expect(options.enableMockSyndicationImport).toBe(true)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
     // …and a flow's API nodes + their query engine
@@ -706,11 +725,15 @@ describe("mergeSignatureProviderSSM", () => {
   })
 
   it("falls back to the options-file document's signatureProvider.ssm", () => {
-    const merged = mergeSignatureProviderSSM({}, {}, {
-      signatureProvider: {
-        ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+    const merged = mergeSignatureProviderSSM(
+      {},
+      {},
+      {
+        signatureProvider: {
+          ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+        }
       }
-    })
+    )
     expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
       "/from/{cluster}/{account}/{keyType}"
     )
@@ -760,7 +783,10 @@ describe("mergeSignatureProviderSSM", () => {
 describe("raw command-line reads", () => {
   it("readCommandLineFlag reads both `--flag value` and `--flag=value`", () => {
     expect(
-      readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)
+      readCommandLineFlag(
+        ["create", "--cluster-path", "/tmp/a"],
+        ClusterPathFlag
+      )
     ).toBe("/tmp/a")
     expect(
       readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)
@@ -768,18 +794,26 @@ describe("raw command-line reads", () => {
   })
 
   it("readCommandLineFlag returns null when the flag is absent", () => {
-    expect(readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)).toBeNull()
+    expect(
+      readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)
+    ).toBeNull()
   })
 
   it("hasCommandLineFlag sees the long form, the `=` form, and the short alias", () => {
-    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(true)
-    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(
+      true
+    )
+    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(
+      true
+    )
     expect(hasCommandLineFlag(["-d", "/x"], ClusterPathFlag)).toBe(true)
     expect(hasCommandLineFlag(["-d=/x"], ClusterPathFlag)).toBe(true)
   })
 
   it("hasCommandLineFlag is false for a flag that only arrives as a yargs default", () => {
-    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(false)
+    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(
+      false
+    )
   })
 })
 
@@ -817,7 +851,10 @@ describe("--cluster-build-options-file", () => {
         clusterPath: "/tmp/doc-cluster",
         epochDurationSec: 30,
         bindAll: true,
-        bind: { kiod: { port: 1234 }, nodeop: { ports: { bios: { http: 5555 } } } },
+        bind: {
+          kiod: { port: 1234 },
+          nodeop: { ports: { bios: { http: 5555 } } }
+        },
         logging: { levels: { console: "debug" } }
       })
     )
@@ -833,7 +870,9 @@ describe("--cluster-build-options-file", () => {
     const loaded = loadClusterBuildOptionsFile(
       writeDocument({
         nodeCount: 2,
-        bind: { nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } } }
+        bind: {
+          nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } }
+        }
       })
     )
     expect(loaded.bind?.nodeop?.ports?.producers?.[1]?.http).toBe(7001)
@@ -899,12 +938,16 @@ describe("--cluster-build-options-file", () => {
       })
     )
     expect(loaded.signatureProvider?.type).toBe(SignatureProviderType.SSM)
-    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
+    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      SecretIdPattern
+    )
   })
 
   it("rejects an unknown option, naming its dotted path", () => {
     expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))
+      loadClusterBuildOptionsFile(
+        writeDocument({ bind: { kiod: { prot: 1 } } })
+      )
     ).toThrow(/unknown option "bind\.kiod\.prot"/)
     expect(() =>
       loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))
@@ -947,7 +990,9 @@ describe("--cluster-build-options-file", () => {
   it("rejects awsClusterNodeConfig, pointing at its own flag", () => {
     expect(() =>
       loadClusterBuildOptionsFile(
-        writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } })
+        writeDocument({
+          awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] }
+        })
       )
     ).toThrow(new RegExp(`--${AWSClusterNodeConfigFlag}`))
   })
@@ -1030,6 +1075,8 @@ describe("--aws-cluster-node-config", () => {
       mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file })
         .awsClusterNodeConfig?.account
     ).toBe(AWSAccountName.test)
-    expect(mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig).toBeUndefined()
+    expect(
+      mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig
+    ).toBeUndefined()
   })
 })

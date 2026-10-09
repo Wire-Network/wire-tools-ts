@@ -4,11 +4,11 @@ const config = {
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
   // Sized to the loaded-host worst case for a port-resolving test (STYLE.md
-  // "Timing Budgets"): `ClusterConfigProvider.resolve` TCP/UDP-probes every
-  // daemon port and `findAvailableRange` sweeps a 64-port window — ~15s per
-  // test even standalone. Kept in sync with the ROOT jest.config.ts, which is
-  // the value multi-project mode actually honors; see its comment for why.
-  testTimeout: 120_000,
+  // "Timing Budgets"): 360s covers the FIRST concurrent resolve of a process,
+  // about 795 binds at up to ~324 ms each when 31 processes bind at once.
+  // Kept in sync with the ROOT jest.config.ts, which is the value
+  // multi-project mode actually honors; see its comment for the measurements.
+  testTimeout: 360_000,
   setupFiles: ["<rootDir>/tests/jest.setup.ts"],
   transform: {
     "^.+\\.ts$": [

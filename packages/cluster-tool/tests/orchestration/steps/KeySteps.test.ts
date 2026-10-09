@@ -11,7 +11,11 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider, NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
+import {
+  ClusterConfigProvider,
+  NodeConfig,
+  NodeRole
+} from "@wireio/cluster-tool/config"
 import {
   EthereumMnemonicKey,
   EthereumOutpostBootstrapper,
@@ -19,7 +23,10 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import type { WireFinalizerKeyPair } from "@wireio/cluster-tool/types/KeyPair"
-import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
+import {
+  fixtureConfig,
+  PersistedFixture
+} from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 /** The `SSMClient` constructor config — region-less means the ambient region. */
@@ -168,7 +175,10 @@ describe("Steps.keys", () => {
   function fakeExecutables(): Partial<ClusterConfig> {
     return {
       buildPath: dir,
-      executables: { ...PersistedFixture.executables, clio: Path.join(dir, "clio") }
+      executables: {
+        ...PersistedFixture.executables,
+        clio: Path.join(dir, "clio")
+      }
     }
   }
 
@@ -222,7 +232,7 @@ describe("Steps.keys", () => {
 
     it("enumerates the GENESIS identity, every producer ACCOUNT, and every operator — but NO producer node", () => {
       // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 21 producer ACCOUNTS × K1+BLS
-      // (42) + (3 batch + 1 underwriter) operators × 3 K1/EM/ED (12) = 57.
+      // (42) + 3 batch operators × 3 K1/EM/ED (9) = 54.
       //
       // The producer-account rows are the point: each account owns its finalizer key (a shared
       // one would fail `regfinkey`'s global uniqueness check), and BOTH halves of an account's
@@ -235,7 +245,7 @@ describe("Steps.keys", () => {
       const producerAccounts = NodeConfig.plan(config)
         .filter(node => node.role === NodeRole.producer)
         .flatMap(node => node.producers)
-      expect(publications).toHaveLength(15 + producerAccounts.length * 2)
+      expect(publications).toHaveLength(12 + producerAccounts.length * 2)
       NodeConfig.plan(config)
         .filter(node => node.role === NodeRole.producer)
         .forEach(node =>
@@ -331,9 +341,9 @@ describe("Steps.keys", () => {
     })
 
     it("carries no version when the cluster's SSM settings declare none", () => {
-      expect(publications.every(publication => publication.version == null)).toBe(
-        true
-      )
+      expect(
+        publications.every(publication => publication.version == null)
+      ).toBe(true)
     })
 
     it("renders the OPTIONAL {version} token when the pattern authors it, and carries it as the tag value", () => {
@@ -439,10 +449,10 @@ describe("Steps.keys", () => {
         config,
         Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
-      // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12. Producer ACCOUNTS are operator-source
+      // 3 batch operators × (K1 + EM + ED) = 9. Producer ACCOUNTS are operator-source
       // too, but publish in the beforeNodes phase (their nodes fetch those keys at launch), so
       // they are deliberately NOT here.
-      expect(phase.steps).toHaveLength(12)
+      expect(phase.steps).toHaveLength(9)
       expect(
         phase.steps.every(step => !step.name.startsWith("publish-defproducer"))
       ).toBe(true)
@@ -1116,7 +1126,11 @@ describe("Steps.keys", () => {
       // The walker's own batch-operator rows are the SAME shape — one renderer,
       // so a flow's id and a bootstrap id can never drift apart.
       expect(
-        Steps.keys.operatorKeyPublications(config, "batchop.a", OperatorType.BATCH)
+        Steps.keys.operatorKeyPublications(
+          config,
+          "batchop.a",
+          OperatorType.BATCH
+        )
       ).toEqual(
         Steps.keys
           .signatureProviderKeyPublications(config)
@@ -1126,15 +1140,20 @@ describe("Steps.keys", () => {
 
     it("knows which labels the bootstrap publishes itself — a flow's label is never among them", () => {
       expect(
-        Steps.keys.isPublishedAtBootstrap(config, Constants.batchOperatorLabel(0))
+        Steps.keys.isPublishedAtBootstrap(
+          config,
+          Constants.batchOperatorLabel(0)
+        )
       ).toBe(true)
       expect(
         Steps.keys.isPublishedAtBootstrap(config, Constants.underwriterLabel(0))
+      ).toBe(false)
+      expect(
+        Steps.keys.isPublishedAtBootstrap(config, NodeConfig.BiosName)
       ).toBe(true)
-      expect(Steps.keys.isPublishedAtBootstrap(config, NodeConfig.BiosName)).toBe(
-        true
+      expect(Steps.keys.isPublishedAtBootstrap(config, "depositoraaa")).toBe(
+        false
       )
-      expect(Steps.keys.isPublishedAtBootstrap(config, "depositoraaa")).toBe(false)
     })
   })
 

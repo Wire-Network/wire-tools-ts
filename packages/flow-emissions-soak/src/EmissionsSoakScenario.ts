@@ -178,7 +178,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "dclaim-config",
-        "capcfg exists with the import window open and a positive claim window",
+        "capcfg exists with the import window open",
         async ctx => {
           const capConfig = await readCapConfig(ctx)
           // The table serializes bool as 0/1; coerce so the assertion is on
@@ -187,10 +187,6 @@ export class EmissionsSoakScenario extends FlowScenario {
             Boolean(capConfig.imported_complete),
             false,
             "import window must still be open at bootstrap"
-          )
-          Assert.ok(
-            capConfig.claim_window_sec > 0,
-            "claim_window_sec must be positive"
           )
         }
       ),

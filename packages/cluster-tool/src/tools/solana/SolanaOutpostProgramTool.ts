@@ -1,13 +1,18 @@
 /**
  * SolanaOutpostProgramTool — single source of truth for the wire-solana
- * artifact layout of the Solana OPP outpost program. Since the clean-room
- * rewrite the outpost interface is hosted INSIDE the `liqsol_core` Anchor
- * program (`wire-solana/programs/liqsol-core/src/instructions/opp/`): the
- * compiled `.so`, the generated IDL, and the committed program keypair all
- * carry the `liqsol_core` name. Every harness consumer (validator preload,
+ * artifact layout of EVERY Anchor program the cluster loads. Since the
+ * clean-room rewrite the outpost interface is hosted INSIDE the `liqsol_core`
+ * Anchor program (`wire-solana/programs/liqsol-core/src/instructions/opp/`),
+ * so `liqsol_core` is this namespace's DEFAULT program; its three siblings
+ * (`liqsol_token`, `transfer_hook`, `validator_leaderboard`) carry the liqsol
+ * staking + syndication surface and resolve through the same functions by
+ * passing their {@link SolanaOutpostProgramTool.AnchorProgram} crate name.
+ *
+ * Every artifact of every program follows ONE layout keyed by that crate name
+ * — `.keys/<name>-keypair.json`, `target/deploy/<name>.so`,
+ * `target/idl/<name>.json` — and every harness consumer (validator preload,
  * outpost bootstrapper, daemon artifact preparation, flow Anchor loads)
- * resolves those artifacts through THIS namespace, never via hand-joined
- * paths.
+ * resolves them through THIS namespace, never via hand-joined paths.
  */
 
 import Assert from "node:assert"
@@ -27,38 +32,102 @@ export namespace SolanaOutpostProgramTool {
    * `wire-sysio/plugins/outpost_solana_client_plugin/include/sysio/outpost_solana_client_plugin.hpp`).
    */
   export const ProgramName = "liqsol_core"
+
   /**
-   * Subpath (under `wire-solana`) of the committed program keypair. Its pubkey
-   * equals the program's `declare_id!` — the validator preloads the `.so` at
-   * exactly this address via `--bpf-program`.
+   * The wire-solana Anchor programs by CRATE name — the shared basename of
+   * each program's `.keys` keypair, `target/deploy` `.so` and `target/idl`
+   * JSON. Deliberately a `const` object rather than an enum: the values are
+   * wire-solana's own crate spellings, not identity keys
+   * (`string-enum-value-equals-key.md`).
    */
-  export const ProgramKeypairSubpath = ".keys/liqsol_core-keypair.json"
-  /** Subpath (under `wire-solana`) of the compiled program `.so`. */
-  export const ProgramSoSubpath = "target/deploy/liqsol_core.so"
+  export const AnchorProgram = {
+    /** Hosts the OPP outpost interface AND the liqsol staking/syndication surface. */
+    liqsolCore: ProgramName,
+    /** Owns the liqSOL Token-2022 mint + its mint authority. */
+    liqsolToken: "liqsol_token",
+    /** The Token-2022 transfer hook the liqSOL mint delegates every transfer to. */
+    transferHook: "transfer_hook",
+    /** Validator leaderboard the liqsol staking surface reads + cranks. */
+    validatorLeaderboard: "validator_leaderboard"
+  } as const
+
+  /** One wire-solana Anchor program's crate name (see {@link AnchorProgram}). */
+  export type AnchorProgram = (typeof AnchorProgram)[keyof typeof AnchorProgram]
+
   /**
-   * Subpath (under `wire-solana`) of the generated Anchor IDL. Only valid
-   * after `anchor build` FOLLOWED BY `node scripts/opp/patch-idl-errors.js`
-   * (Anchor 0.31 emits a broken `errors` array otherwise — the OPP codes
-   * 6000-6056 the daemons surface would be missing).
+   * Every {@link AnchorProgram} the cluster's validator loads at genesis. All
+   * four are required: `liqsol_core` alone gives an OPP outpost with NO liqsol
+   * surface, so the `init-*` scripts that stand up the mint, the transfer hook,
+   * the distribution/stake state and the leaderboard have nothing to
+   * initialize against and every real `synd` / `report_liq_yield` path is
+   * unreachable.
    */
-  export const ProgramIdlSubpath = "target/idl/liqsol_core.json"
-  /** Remediation hint appended to every missing-artifact assertion. */
+  export const GenesisAnchorPrograms: ReadonlyArray<AnchorProgram> =
+    Object.values(AnchorProgram)
+
+  /** Subdirectory (under `wire-solana`) holding the committed program keypairs. */
+  export const KeysSubdirectory = ".keys"
+  /** Subdirectory (under `wire-solana`) holding the compiled program `.so` files. */
+  export const DeploySubdirectory = Path.join("target", "deploy")
+  /** Subdirectory (under `wire-solana`) holding the generated Anchor IDLs. */
+  export const IdlSubdirectory = Path.join("target", "idl")
+  /**
+   * Remediation hint appended to every missing-artifact assertion.
+   *
+   * Names the wire-solana build the harness actually DEPLOYS, not a bare
+   * `anchor build`: that repo's `build:programs` is what the platform gate runs
+   * and what produces every `.so` + patched IDL this namespace resolves. A
+   * hand-rolled `anchor build` can leave the tree in a state the harness cannot
+   * bootstrap from.
+   */
   export const BuildRemediationHint =
-    "(run 'anchor build && node scripts/opp/patch-idl-errors.js' in wire-solana)"
+    "(run the wire-solana build the harness deploys: 'npm install && npm run build:programs' in wire-solana)"
 
-  /** Absolute path of the committed program keypair under `solanaPath`. */
-  export function programKeypairFile(solanaPath: string): string {
-    return Path.join(solanaPath, ProgramKeypairSubpath)
+  /**
+   * Absolute path of a program's committed keypair under `solanaPath`. Its
+   * pubkey equals the program's `declare_id!` — the validator preloads the
+   * `.so` at exactly this address.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The absolute keypair file path.
+   */
+  export function programKeypairFile(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): string {
+    return Path.join(solanaPath, KeysSubdirectory, `${program}-keypair.json`)
   }
 
-  /** Absolute path of the compiled program `.so` under `solanaPath`. */
-  export function programSoFile(solanaPath: string): string {
-    return Path.join(solanaPath, ProgramSoSubpath)
+  /**
+   * Absolute path of a program's compiled `.so` under `solanaPath`.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The absolute `.so` file path.
+   */
+  export function programSoFile(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): string {
+    return Path.join(solanaPath, DeploySubdirectory, `${program}.so`)
   }
 
-  /** Absolute path of the generated program IDL under `solanaPath`. */
-  export function programIdlFile(solanaPath: string): string {
-    return Path.join(solanaPath, ProgramIdlSubpath)
+  /**
+   * Absolute path of a program's generated Anchor IDL under `solanaPath`. Only
+   * valid after wire-solana's own `npm run build:programs`, which regenerates
+   * the IDLs AND patches their `errors` array (Anchor 0.31 emits a broken one —
+   * the OPP codes 6000-6056 the daemons surface would be missing).
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The absolute IDL file path.
+   */
+  export function programIdlFile(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): string {
+    return Path.join(solanaPath, IdlSubdirectory, `${program}.json`)
   }
 
   /**
@@ -66,9 +135,16 @@ export namespace SolanaOutpostProgramTool {
    * keypair file is absent (tolerant path — callers that can proceed without
    * the program guard with `!= null`; {@link assertProgramId} is the throwing
    * form).
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The program id, or `null` when the keypair file is absent.
    */
-  export function programId(solanaPath: string): PublicKey {
-    const keypairFile = programKeypairFile(solanaPath)
+  export function programId(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): PublicKey {
+    const keypairFile = programKeypairFile(solanaPath, program)
     if (!Fs.existsSync(keypairFile)) return null
     const secretKey = Uint8Array.from(
       JSON.parse(Fs.readFileSync(keypairFile, "utf8"))
@@ -76,25 +152,68 @@ export namespace SolanaOutpostProgramTool {
     return Keypair.fromSecretKey(secretKey).publicKey
   }
 
-  /** Program id derived from the committed program keypair; throws when absent. */
-  export function assertProgramId(solanaPath: string): PublicKey {
-    const id = programId(solanaPath)
+  /**
+   * Program id derived from the committed program keypair; throws when absent.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The program id.
+   * @throws If the keypair file is absent.
+   */
+  export function assertProgramId(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): PublicKey {
+    const id = programId(solanaPath, program)
     Assert.ok(
       id != null,
-      `SolanaOutpostProgramTool: ${ProgramName} program keypair missing: ` +
-        `${programKeypairFile(solanaPath)} ${BuildRemediationHint}`
+      `SolanaOutpostProgramTool: ${program} program keypair missing: ` +
+        `${programKeypairFile(solanaPath, program)} ${BuildRemediationHint}`
     )
     return id
   }
 
-  /** Parse the generated program IDL; throws when the file is absent. */
-  export function readIdl(solanaPath: string): anchor.Idl {
-    const idlFile = programIdlFile(solanaPath)
+  /**
+   * Parse a generated program IDL; throws when the file is absent.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name (default: the OPP outpost host).
+   * @returns The parsed IDL.
+   * @throws If the IDL file is absent.
+   */
+  export function readIdl(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): anchor.Idl {
+    const idlFile = programIdlFile(solanaPath, program)
     Assert.ok(
       Fs.existsSync(idlFile),
-      `SolanaOutpostProgramTool: ${ProgramName} IDL missing: ${idlFile} ${BuildRemediationHint}`
+      `SolanaOutpostProgramTool: ${program} IDL missing: ${idlFile} ${BuildRemediationHint}`
     )
     return JSON.parse(Fs.readFileSync(idlFile, "utf8")) as anchor.Idl
+  }
+
+  /**
+   * The program id an IDL DECLARES (`address`) — what `anchor run`'s scripts
+   * resolve their program from, and what must equal the `.keys` id the
+   * validator loaded the `.so` at.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program's crate name.
+   * @returns The IDL-declared program id.
+   * @throws If the IDL file is absent or declares no `address`.
+   */
+  export function assertIdlProgramId(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): PublicKey {
+    const declared = readIdl(solanaPath, program).address
+    Assert.ok(
+      declared,
+      `SolanaOutpostProgramTool: ${program} IDL declares no address: ` +
+        `${programIdlFile(solanaPath, program)} ${BuildRemediationHint}`
+    )
+    return new PublicKey(declared)
   }
 
   /**
@@ -120,6 +239,34 @@ export namespace SolanaOutpostProgramTool {
       { commitment: SolanaClient.DefaultCommitment }
     )
     return new anchor.Program(readIdl(solanaPath), provider)
+  }
+
+  /**
+   * Build an Anchor `Program` bound to a CONNECTION-ONLY provider — everything
+   * a READ needs (`coder.accounts.decode`, `methods…instruction()`) and no
+   * wallet, keypair or signer. A pure value helper, called freely inside step
+   * runners and verify steps.
+   *
+   * `anchor.Program` is what converts the IDL to camelCase, so its coder keys
+   * accounts, fields and enum variants by their CAMELCASE spellings — the same
+   * spellings {@link SolanaAnchorEnumTool} encodes instruction arguments with.
+   * A bare `anchor.BorshCoder` over the raw IDL is NOT equivalent: it keys by
+   * the IDL's own `GlobalState` / `snake_case` names, and Anchor exports no
+   * converter to bridge the two. That is why a read builds a `Program` rather
+   * than a coder.
+   *
+   * @param connection - The Solana RPC connection reads are issued over.
+   * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
+   * @param program - The program's crate name.
+   * @returns The Anchor program bound to `connection`, with no wallet.
+   * @throws If the generated IDL is missing (see {@link readIdl}).
+   */
+  export function loadReadOnlyProgram(
+    connection: Connection,
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): anchor.Program<anchor.Idl> {
+    return new anchor.Program(readIdl(solanaPath, program), { connection })
   }
 
   /**
