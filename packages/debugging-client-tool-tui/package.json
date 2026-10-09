@@ -40,7 +40,7 @@
     "@wireio/debugging-client-shared": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.96",
+    "@wireio/sdk-core": "^1.0.97",
     "@wireio/shared": "^1.0.96",
     "bluebird": "^3.7.2",
     "eventemitter3": "^5.0.4",
