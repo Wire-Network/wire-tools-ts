@@ -360,16 +360,6 @@ export namespace WireSyndicationTool {
     return rows[0]
   }
 
-  /** READ the `sysio.andon::andonconfig` singleton (panic account, pullers); nothing before `setpanic`. */
-  export async function readAndonConfig<C extends ClusterBuildContext>(
-    ctx: C
-  ): Promise<SysioContracts.SysioAndonAndonConfigType> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.andon)
-      .tables.andonconfig.query({ limit: SingletonRowLimit })
-    return rows[0]
-  }
-
   // ── reads: the sysio.liq shadow ledger and the sysio.tokens registry ─────
 
   /**

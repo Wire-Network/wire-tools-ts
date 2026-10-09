@@ -37,7 +37,7 @@
     "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.50",
-    "@wireio/sdk-core": "^1.0.92",
+    "@wireio/sdk-core": "^1.0.95",
     "@wireio/shared": "^1.0.92",
     "bluebird": "^3.7.2",
     "eventemitter3": "^5.0.4",
