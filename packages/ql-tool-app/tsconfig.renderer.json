@@ -1,0 +1,14 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/renderer",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+  "references": [
+    { "path": "../ql-shared/tsconfig.cjs.json" }
+  ],
+  "include": ["src/common", "src/renderer"]
+}

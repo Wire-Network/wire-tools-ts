@@ -1,0 +1,12 @@
+{
+  "grammarFile": "plugins/query_engine_plugin/grammar/WireQuery.g4",
+  "grammarSha256": "8a34ac2746cff70d4a95e383829b19055895c457b400e5ba0ad3b66ef820d799",
+  "tool": "antlr-ng",
+  "toolVersion": "1.0.10",
+  "generatedSha256": {
+    "WireQueryLexer.ts": "00fca3017a21a122715adb6d334edc02fb9f8dd378495afc8155d64c00d55581",
+    "WireQueryListener.ts": "6dbfea24582f28e0b0db67fde4994422441222eb57f6b93f6ae3de2ce370af3c",
+    "WireQueryParser.ts": "2e2be7561274507f81f8a59750756b1055e3d0ffe29affaa40635ec49efd691a",
+    "WireQueryVisitor.ts": "0d8ee48b95ef1eb3a9365ad852c21f677b0d6d15a831f810b104f85ddb1aaf58"
+  }
+}

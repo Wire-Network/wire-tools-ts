@@ -1,13 +1,24 @@
 import Assert from "node:assert"
 
+import { identity } from "lodash"
+import { match, P } from "ts-pattern"
+
 import {
-  DebuggingDefaults,
+  JsonRPCProtocol,
   JsonRPCResponseEnvelopeSchemaCodec,
+  JsonRPCTransport,
+  JsonRPCTransportError,
+  JsonRPCTransportStage,
+  type JsonRPCRequestEnvelope,
+  type JsonRPCResponseEnvelope
+} from "@wireio/cluster-tool-shared"
+import {
   PlainJsonRpcResponseCodecs,
   type HandlerURIType,
   type InferredRequestType,
   type InferredResponseType
 } from "@wireio/debugging-shared"
+import { NestedError } from "@wireio/shared"
 
 /**
  * Strongly-typed JSON-RPC 2.0 client bound to a fully-qualified endpoint URL.
@@ -61,46 +72,23 @@ export class JsonRPCClient {
     params: InferredRequestType<P>
   ): Promise<InferredResponseType<P>> {
     const id = this.nextId++
-
-    const resp = await fetch(this.url, {
-      method: JsonRPCClient.HttpMethod,
-      headers: JsonRPCClient.Headers,
-      body: JSON.stringify(
-        {
-          jsonrpc: DebuggingDefaults.JsonrpcVersion,
-          method,
-          params,
-          id
-        },
-        JsonRPCClient.bigintReplacer
-      )
-    })
-
-    Assert.ok(
-      resp.ok,
-      `JSON-RPC POST failed: ${resp.status} ${resp.statusText}`
-    )
-
-    // Validate the response envelope structurally via the codec (replaces the
-    // hand-rolled `as ResponseEnvelope` cast); `result` stays opaque per-method.
-    const parsed: unknown = await resp.json()
-    if (!JsonRPCResponseEnvelopeSchemaCodec.check(parsed)) {
-      throw new Error("JSON-RPC response is not a valid response envelope")
+    let body: JsonRPCResponseEnvelope
+    try {
+      body = await JsonRPCTransport.invoke({
+        url: this.url,
+        request: { jsonrpc: JsonRPCProtocol.Version, method, params, id },
+        requestSerializer: JsonRPCClient.RequestSerializer,
+        responseCodec: JsonRPCResponseEnvelopeSchemaCodec,
+        fetchProvider: globalThis.fetch.bind(globalThis)
+      })
+    } catch (error) {
+      throw JsonRPCClient.transportError(error)
     }
-    const body = parsed
-
-    Assert.ok(
-      body.jsonrpc === DebuggingDefaults.JsonrpcVersion,
-      `Invalid JSON-RPC version in response: ${body.jsonrpc}`
-    )
-    Assert.ok(
-      body.id === id,
-      `JSON-RPC id mismatch: expected ${id}, got ${body.id}`
-    )
 
     if (body.error) {
-      throw new Error(
-        `JSON-RPC error ${body.error.code}: ${body.error.message}`
+      throw new NestedError(
+        `JSON-RPC error ${body.error.code}: ${body.error.message}`,
+        { context: { method, id, code: body.error.code } }
       )
     }
 
@@ -125,14 +113,53 @@ export namespace JsonRPCClient {
    */
   export const InitialRequestId = 1
 
-  /** HTTP verb used for every RPC invocation. */
-  export const HttpMethod = "POST" as const
+  /** Message of a response that is not a valid JSON-RPC envelope. */
+  export const InvalidEnvelopeMessage =
+    "JSON-RPC response is not a valid response envelope"
 
-  /** HTTP headers attached to every RPC invocation. */
-  export const Headers = {
-    "Content-Type": "application/json",
-    Accept: "application/json"
-  } as const
+  /** Prefix of a non-2xx (or bodiless) HTTP answer. */
+  export const PostFailedMessage = "JSON-RPC POST failed"
+
+  /** Writes the request envelope, rendering bigint params as decimal strings. */
+  export const RequestSerializer: JsonRPCTransport.RequestSerializer<JsonRPCRequestEnvelope> =
+    {
+      serialize: request => JSON.stringify(request, bigintReplacer)
+    }
+
+  /**
+   * Map a transport failure onto this client's errors: a bad HTTP status and an
+   * invalid envelope get their own message (the envelope failure keeps the zod
+   * issues as its cause); every other stage (fetch, read, id mismatch) is
+   * rethrown as the transport error itself, and a non-transport throw passes
+   * through unchanged.
+   *
+   * @param error - What the transport threw.
+   * @returns The error to throw.
+   */
+  export function transportError(error: unknown): unknown {
+    return match(error)
+      .with(P.instanceOf(JsonRPCTransportError), failed =>
+        match(failed.stage)
+          .with(
+            JsonRPCTransportStage.status,
+            () =>
+              new NestedError(`${PostFailedMessage}: ${failed.detail}`, {
+                cause: failed,
+                context: { url: failed.url, status: failed.status }
+              })
+          )
+          .with(
+            JsonRPCTransportStage.decode,
+            () =>
+              new NestedError(InvalidEnvelopeMessage, {
+                cause: failed,
+                context: { url: failed.url }
+              })
+          )
+          .otherwise(() => failed)
+      )
+      .otherwise(identity)
+  }
 
   /**
    * `JSON.stringify` replacer that turns `bigint` values into their

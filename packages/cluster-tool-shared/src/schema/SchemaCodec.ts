@@ -14,6 +14,8 @@ import { NestedError } from "@wireio/shared"
 export interface SchemaCodec<T> {
   /** Encode + pretty-print `value` to a JSON string. */
   serialize(value: T): string
+  /** Encode `value` to a compact, single-line JSON string (JSON-lines records, wire bodies). */
+  serializeCompact(value: T): string
   /**
    * Parse + validate + decode JSON `data` (text or UTF-8 bytes) into a `T`.
    *
@@ -23,6 +25,13 @@ export interface SchemaCodec<T> {
   deserialize(data: string | Uint8Array): T
   /** zod-built type guard: does `value` structurally satisfy the schema. */
   check(value: unknown): value is T
+  /**
+   * Validate + decode an ALREADY-PARSED value (no JSON step).
+   *
+   * @returns Right(decoded value), or Left(the ZodError carrying every issue) —
+   *   render it with {@link SchemaCodec.formatIssues}.
+   */
+  validate(value: unknown): Either<z.ZodError, T>
 }
 
 /**
@@ -36,6 +45,12 @@ export namespace SchemaCodec {
   /** Indent width for every serialized document (harness JSON is pretty-printed). */
   export const SerializeIndent = 2
 
+  /** Path label of an issue on the value itself. */
+  export const RootIssuePath = "(root)"
+
+  /** Separator between the clauses of {@link formatIssues}. */
+  export const IssueSeparator = "; "
+
   /** Discriminated safe-parse result of a `z.ZodType<T>` (name-stable via `ReturnType`). */
   type SafeParseResult<T> = ReturnType<z.ZodType<T>["safeParse"]>
 
@@ -43,12 +58,15 @@ export namespace SchemaCodec {
    * Create the {@link SchemaCodec} for `schema`.
    *
    * @param schema - The zod schema whose decoded type is `T`.
-   * @returns The codec exposing `serialize` / `deserialize` / `check`.
+   * @returns The codec exposing `serialize` / `serializeCompact` / `deserialize` / `check` / `validate`.
    */
   export function create<T>(schema: z.ZodType<T>): SchemaCodec<T> {
     return {
       serialize(value: T): string {
         return JSON.stringify(z.encode(schema, value), null, SerializeIndent)
+      },
+      serializeCompact(value: T): string {
+        return JSON.stringify(z.encode(schema, value))
       },
       deserialize(data: string | Uint8Array): T {
         const text =
@@ -57,8 +75,28 @@ export namespace SchemaCodec {
       },
       check(value: unknown): value is T {
         return schema.safeParse(value).success
+      },
+      validate(value: unknown): Either<z.ZodError, T> {
+        return toEither(schema.safeParse(value))
       }
     }
+  }
+
+  /**
+   * Render a `ZodError` as one `path: message` clause per issue (`(root)` for a
+   * root-level issue), joined by `; ` — the ONE issue formatter every
+   * validation message uses.
+   *
+   * @param error - The validation error.
+   * @returns The issue text.
+   */
+  export function formatIssues(error: z.ZodError): string {
+    return error.issues
+      .map(
+        issue =>
+          `${issue.path.length ? issue.path.join(".") : RootIssuePath}: ${issue.message}`
+      )
+      .join(IssueSeparator)
   }
 
   /** The ONE safeParse → `Either` bridge — every consumer chains off this. */
@@ -84,7 +122,7 @@ export namespace SchemaCodec {
       .getOrThrow()
     return toEither(schema.safeParse(parsed))
       .ifLeft(error => {
-        throw formatIssues(error, text)
+        throw validationError(error, text)
       })
       .getOrThrow()
   }
@@ -94,14 +132,8 @@ export namespace SchemaCodec {
    * cause (its issue tree + stack survive) — one `path: message` line per issue in
    * the message, the failing `text` in the context.
    */
-  function formatIssues(error: z.ZodError, text: string): NestedError {
-    const detail = error.issues
-      .map(
-        issue =>
-          `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`
-      )
-      .join("; ")
-    return new NestedError(`SchemaCodec: validation failed — ${detail}`, {
+  function validationError(error: z.ZodError, text: string): NestedError {
+    return new NestedError(`SchemaCodec: validation failed — ${formatIssues(error)}`, {
       cause: error,
       context: { text }
     })

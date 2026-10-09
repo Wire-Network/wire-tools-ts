@@ -1,0 +1,55 @@
+{
+  "name": "@wireio/ql-shared",
+  "version": "0.1.0",
+  "description": "WIRE QL shared core: query-engine protocol, client, values, paging, renderers, grammar tooling, catalog, profiles and file stores",
+  "private": false,
+  "type": "commonjs",
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "lib/cjs/index.d.ts",
+  "main": "lib/cjs/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/cjs/index.d.ts",
+      "default": "./lib/cjs/index.js"
+    },
+    "./node": {
+      "types": "./lib/cjs/node/index.d.ts",
+      "default": "./lib/cjs/node/index.js"
+    }
+  },
+  "files": [
+    "lib/cjs",
+    "README.md"
+  ],
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "bench": "TS_NODE_PROJECT=tests/bench/tsconfig.json TS_NODE_TRANSPILE_ONLY=true node --require ts-node/register tests/bench/LargeResult.bench.ts",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@3fv/prelude-ts": "^0.8.42",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.92",
+    "@wireio/shared": "^1.0.92",
+    "antlr4ng": "3.0.16",
+    "lodash": "^4.18.1",
+    "simple-wcswidth": "^1.1.2",
+    "ts-pattern": "^5.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.25",
+    "@types/node": "25.5.0",
+    "@wireio/cluster-tool": "workspace:*",
+    "ajv": "^8.20.0",
+    "ajv-draft-04": "^1.0.0",
+    "esbuild": "^0.28.2",
+    "ts-jest": "^29.4.6",
+    "typescript": "^6.0.2"
+  }
+}

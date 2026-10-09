@@ -1,0 +1,20 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "lib/test-cjs",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "jest", "@testing-library/jest-dom"],
+    "paths": {
+      "@wireio/ql-tool-app": ["./src"],
+      "@wireio/ql-tool-app/*": ["./src/*"]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.preload.json" },
+    { "path": "./tsconfig.renderer.json" }
+  ],
+  "include": ["tests", "etc/playwright"]
+}

@@ -45,6 +45,26 @@ describe("SchemaCodec", () => {
       ).toThrow(/age/)
     })
 
+    it("serializeCompact() writes one line", () => {
+      const text = PersonSchemaCodec.serializeCompact(person)
+      expect(text).toBe(JSON.stringify(person))
+      expect(text).not.toContain("\n")
+    })
+
+    it("validate() returns Right for a parsed value and Left(ZodError) otherwise", () => {
+      expect(PersonSchemaCodec.validate(person).getOrThrow()).toEqual(person)
+      const invalid = PersonSchemaCodec.validate({ name: "ada", age: -1 })
+      expect(invalid.isLeft()).toBe(true)
+      expect(invalid.getLeftOrThrow()).toBeInstanceOf(z.ZodError)
+    })
+
+    it("formatIssues() renders one path: message clause per issue, (root) for the value itself", () => {
+      const fieldIssues = PersonSchemaCodec.validate({ name: 1, age: -1 }).getLeftOrThrow(),
+        rootIssue = PersonSchemaCodec.validate(null).getLeftOrThrow()
+      expect(SchemaCodec.formatIssues(fieldIssues)).toMatch(/^name: .+; age: .+$/)
+      expect(SchemaCodec.formatIssues(rootIssue).startsWith(`${SchemaCodec.RootIssuePath}: `)).toBe(true)
+    })
+
     it("check() narrows a valid value and rejects an invalid one", () => {
       expect(PersonSchemaCodec.check(person)).toBe(true)
       expect(PersonSchemaCodec.check({ name: "ada" })).toBe(false)

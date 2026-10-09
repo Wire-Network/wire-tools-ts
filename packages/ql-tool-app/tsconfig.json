@@ -1,0 +1,10 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.preload.json" },
+    { "path": "./tsconfig.renderer.json" },
+    { "path": "./tsconfig.cjs.jest.json" }
+  ]
+}

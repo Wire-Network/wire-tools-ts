@@ -1,0 +1,67 @@
+{
+  "name": "@wireio/ql-tool-cli",
+  "version": "0.1.0",
+  "description": "WIRE QL command line (wql / wire-ql) and terminal workbench (wire-ql-tui) for the node query engine",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "types": "lib/esm/cli/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/esm/cli/main.d.ts",
+      "import": "./dist/bundle/wql.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "wql": "bin/wql",
+    "wire-ql": "bin/wql",
+    "wire-ql-tui": "bin/wire-ql-tui"
+  },
+  "files": [
+    "dist/bundle",
+    "lib/esm/**/*.d.ts",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "bundle": "node esbuild.config.cjs",
+    "build": "pnpm run compile && pnpm run bundle",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:unit": "pnpm run bundle && node --test tests/node/*.test.mjs",
+    "clean": "rm -rf lib dist",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@3fv/prelude-ts": "^0.8.42",
+    "@reduxjs/toolkit": "^2.13.0",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/ql-shared": "workspace:*",
+    "@wireio/shared": "^1.0.92",
+    "ink": "^8.0.0",
+    "lodash": "^4.18.1",
+    "react": "^19.3.0",
+    "react-redux": "^9.3.0",
+    "source-map-support": "^0.5.21",
+    "ts-pattern": "^5.9.0",
+    "yargs": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.25",
+    "@types/node": "25.5.0",
+    "@types/react": "^19.3.0",
+    "@types/react-test-renderer": "^19.3.0",
+    "@types/source-map-support": "^0.5.10",
+    "@types/yargs": "^17.0.35",
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/sdk-core": "^1.0.92",
+    "esbuild": "^0.28.2",
+    "react-test-renderer": "^19.3.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^6.0.2"
+  }
+}

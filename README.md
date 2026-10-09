@@ -258,15 +258,26 @@ pnpm test
 
 ### Commit checks
 
-Run `pnpm check` to execute the same gate as the pre-commit hook: full lint,
-TypeScript build, the runner regressions, all eight Jest projects, and every flow
-`test:unit` script. This does not launch live flows. The hook uses the mise-pinned
-toolchain when available; Node 24.9 or newer is required.
+Run `pnpm check` (or `./scripts/check.mjs`, which takes no arguments) to execute the
+same gate as the pre-commit hook. It runs five stages in order and stops at the first
+failure:
 
-Each stage reports its duration and prints progress every 30 seconds. Lint has a
-two-minute deadline; build and tests have a fifteen-minute deadline. A timeout or
+| # | Stage | Command | Deadline |
+|---|---|---|---|
+| 1 | `package-layout-check` | `./scripts/check-package-layout.mjs` — every package root holds only the standard layout | 2 min |
+| 2 | `wql-types-check` | `./scripts/generate-wql-types.mjs --check` — WIRE QL grammar + engine schema drift | 2 min |
+| 3 | `ql-app-icons-check` | `./scripts/generate-ql-app-icons.mjs --check` — desktop app icon drift | 2 min |
+| 4 | `lint` | `pnpm lint` | 2 min |
+| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
+
+This does not launch live flows. The hook uses the mise-pinned toolchain when
+available; Node 24.9 or newer is required.
+
+Each stage reports its duration and prints progress every 30 seconds. A timeout or
 interrupt terminates the stage's process group on Linux/WSL/macOS, escalating after
-five seconds, and fails the gate. No timeout is treated as a passing test.
+five seconds, and fails the gate. No timeout is treated as a passing test. A stage
+that exits 127 is reported as "could not start" (command not found), and a stage
+killed by a signal is reported with the signal's name.
 
 Jest defaults to two workers: CPU-count concurrency oversubscribes the host's
 socket-probing path on WSL. For a controlled comparison on another host, run

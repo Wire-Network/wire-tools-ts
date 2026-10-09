@@ -1,0 +1,12 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.cjs.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/preload",
+    "lib": ["ESNext", "DOM"]
+  },
+  "references": [
+    { "path": "../ql-shared/tsconfig.cjs.json" }
+  ],
+  "include": ["src/common", "src/preload"]
+}

@@ -1,0 +1,25 @@
+{
+  "svgSha256": "0807d4f6c657c73fefe57b0a467a629e31c8b553d3eafab1e89274435464495b",
+  "primaryHex": "#2F6BFF",
+  "resvgVersion": "2.6.2",
+  "sizes": [
+    16,
+    32,
+    48,
+    64,
+    128,
+    256,
+    512,
+    1024
+  ],
+  "pngSha256": {
+    "icon-16.png": "bc13f1d110716d8537b88f61775ebf7b37cccd8b0bdc03dfad97e9ce00af3ae9",
+    "icon-32.png": "dc82b673016f67e7a46adc5b43a5f1095384f90ad0053768f35b4be66532af8b",
+    "icon-48.png": "2c4024c81f73d073c1a4a00071f3db2236c1ebcd30ce33aa66b0d4776c434793",
+    "icon-64.png": "01b82ccc74fcd5f5139a0c9e6c749b53acebc18bc12232543ba3dae9820c0600",
+    "icon-128.png": "f55274de07f4cd904caca739689e309cae3b180b6b64b4aa97dae95a384690bc",
+    "icon-256.png": "1d7703ea78fb2015c0b9699c096d4b0794c07eff17bf48fa0f285e72d8f63c6d",
+    "icon-512.png": "8aa6d1f4cb0546845371fb10356a1116005f2bc2683dc9627d566ae711eb588a",
+    "icon-1024.png": "94625c459e7bac712a2aba71fb9b0be8c70d393e6bc6af7acde52ac77e372b21"
+  }
+}

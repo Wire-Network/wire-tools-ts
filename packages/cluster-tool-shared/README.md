@@ -27,13 +27,18 @@ typed against these declarations.
 | `src/config/ClusterConfig.ts` | `ClusterConfig` (the `cluster-config.json` shape) + `ClusterConfig*` nested family, `CollateralRequirement`, `ClusterExecutablePaths` |
 | `src/config/NodeopReadMode.ts` | `NodeopReadMode` — nodeop's `read-mode` values (`head` / `irreversible` / `speculative`) |
 | `src/config/QueryEngineConfig.ts` | `QueryEngineConfig` / `QueryEngineReadMode` / `QueryEngineLimits` — the query-engine config of a cluster's API nodes (persisted as `ClusterConfig.queryEngine`) and of a standalone `create-api-node` artifact: the read mode plus the twelve `query-*` limits, every member `null` unless set |
+| `src/process/ProcessSignals.ts` | `ProcessSignalName` (the POSIX signal identity enum) + `ProcessSignals` (name → number) / `ProcessSignalNumber` — the ONE signal spelling of the harness process managers and the `wql` CLI / TUI signal handlers |
+| `src/rpc/JsonRPCProtocol.ts` | `JsonRPCProtocol` (`Version` `"2.0"`, `HttpMethod`, `RequestHeaders`, the five standard `ErrorCode`s) + `JsonRPCVersionSchema` / `JsonRPCIdSchema` / `JsonRPCErrorSchema` / `JsonRPCResponseEnvelopeSchema` and its `SchemaCodec` — the ONE JSON-RPC 2.0 spelling shared by the debugging server/client and the query-engine client (server enums reference `ErrorCode` for the standard members) |
+| `src/rpc/JsonRPCTransport.ts` | `JsonRPCTransport.invoke` — the ONE JSON-RPC-over-HTTP pipeline (POST the serialized envelope → 2xx with a body → parse once → validate with the response codec → id check) returning the decoded envelope; each client branches on `result`/`error` and maps failures itself |
+| `src/rpc/JsonRPCTransportError.ts` | `JsonRPCTransportError` + `JsonRPCTransportStage` (`request` / `status` / `read` / `decode` / `id`) — the transport's typed failure, carrying the parsed body of a decode failure for client-specific probing |
 | `src/types/ChainTokenAmount.ts` | `ChainTokenAmount` — harness-local (chain, token) amount tuple |
 
 ## Design rules
 
-- **Data only.** No I/O, no process state, no resolution logic — those live in
-  `cluster-tool`'s providers. This package depends only on
-  `@wireio/opp-typescript-models`.
+- **Data only — one exception.** No process state and no resolution logic —
+  those live in `cluster-tool`'s providers. The single I/O surface is
+  `JsonRPCTransport.invoke`, the wire pipeline every JSON-RPC client shares; it
+  takes its `fetch` from the caller and holds no state.
 - **Derivations over mirrors.** Caller-option shapes are derived from the
   resolved shapes via `BindOverrides<T>` (recursive all-optional projection
   with pin-whole atoms) — never hand-written in parallel.
