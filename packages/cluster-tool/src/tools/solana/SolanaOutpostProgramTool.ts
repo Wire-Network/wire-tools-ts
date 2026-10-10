@@ -16,12 +16,18 @@
  */
 
 import Assert from "node:assert"
+import { execFileSync } from "node:child_process"
+import Crypto from "node:crypto"
 import Fs from "node:fs"
 import Path from "node:path"
+import { Either } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { getLogger, NestedError } from "@wireio/shared"
 
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
+
+const log = getLogger(__filename)
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -71,6 +77,12 @@ export namespace SolanaOutpostProgramTool {
   export const DeploySubdirectory = Path.join("target", "deploy")
   /** Subdirectory (under `wire-solana`) holding the generated Anchor IDLs. */
   export const IdlSubdirectory = Path.join("target", "idl")
+  /** Build stamp written by wire-solana for every deployable program. */
+  export const BuildManifestSubpath = Path.join(
+    DeploySubdirectory,
+    "wire-build-manifest.json"
+  )
+
   /**
    * Remediation hint appended to every missing-artifact assertion.
    *
@@ -82,6 +94,60 @@ export namespace SolanaOutpostProgramTool {
    */
   export const BuildRemediationHint =
     "(run the wire-solana build the harness deploys: 'npm install && npm run build:programs' in wire-solana)"
+
+  /** One program's entry in the wire-solana build manifest. */
+  export interface BuildManifestProgram {
+    /** Repo-relative path of the emitted binary. */
+    programBinaryPath: string
+    /** Byte length of the emitted binary. */
+    programBinaryLength: number
+    /** Hex sha256 of the emitted binary. */
+    programBinarySha256: string
+  }
+
+  /** The build manifest emitted alongside the compiled `.so`s. */
+  export interface BuildManifest {
+    /** Manifest format version. */
+    schemaVersion: number
+    /** SBPF arch the `.so`s were built for (`v0`…`v3`). */
+    arch: string
+    /**
+     * `git describe --tags --always --dirty` of the checkout the binaries were
+     * built from — see {@link assertProgramSoFile} for why the sha pair alone
+     * is not sufficient.
+     */
+    sourceDescribe: string
+    /** Per-program entries, keyed by the program's snake_case name. */
+    programs: Record<string, BuildManifestProgram>
+  }
+
+  /** Marker `git describe --dirty` appends when tracked files are modified. */
+  export const DirtyDescribeSuffix = "-dirty"
+
+  /**
+   * `git describe --tags --always --dirty` of a checkout — the same value the
+   * build records, so the two are directly comparable.
+   *
+   * @param repositoryPath - Repo root to describe.
+   * @returns The describe string, e.g. `devnet-v1.5.2-237-g12f95d37-dirty`.
+   */
+  export function describeCheckout(repositoryPath: string): string {
+    return Either.try(() =>
+      execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+        cwd: repositoryPath,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          "SolanaOutpostProgramTool: could not describe the wire-solana checkout",
+          { cause: error, context: { repositoryPath } }
+        )
+      })
+      .getOrThrow()
+      .trim()
+  }
 
   /**
    * Absolute path of a program's committed keypair under `solanaPath`. Its
@@ -128,6 +194,101 @@ export namespace SolanaOutpostProgramTool {
     program: AnchorProgram = ProgramName
   ): string {
     return Path.join(solanaPath, IdlSubdirectory, `${program}.json`)
+  }
+
+  /** Absolute path of the build manifest under `solanaPath`. */
+  export function buildManifestFile(solanaPath: string): string {
+    return Path.join(solanaPath, BuildManifestSubpath)
+  }
+
+  /** Parse the wire-solana build manifest; throws when the file is absent. */
+  export function readBuildManifest(solanaPath: string): BuildManifest {
+    const manifestFile = buildManifestFile(solanaPath)
+    Assert.ok(
+      Fs.existsSync(manifestFile),
+      `SolanaOutpostProgramTool: build manifest missing: ${manifestFile} ${BuildRemediationHint}`
+    )
+    return JSON.parse(Fs.readFileSync(manifestFile, "utf8")) as BuildManifest
+  }
+
+  /**
+   * Absolute path of the compiled `.so`, PROVEN to be the binary the recorded
+   * build emitted — called by `SolanaValidatorProcessSteps.runStart`, the one
+   * path that actually loads the binary on THIS host. The `start.sh` renderer
+   * takes the unverified {@link programSoFile} instead, because the script it
+   * emits runs later and often elsewhere; see that step's JSDoc.
+   *
+   * The validator is launched with `--upgradeable-program <id> <soFile>`, so
+   * whatever sits at that path IS what executes on chain. Existence alone is
+   * not enough: nothing in the harness rebuilds the program, and `target/` is
+   * git-ignored, so a `git checkout`/rebase moves the sources while the `.so`
+   * stays put and a stale binary from another branch deploys silently.
+   *
+   * Comparing the file's sha256 against the manifest the build wrote turns that
+   * into a startup error naming the mismatch. A wrong binary otherwise fails as
+   * undefined behavior at instruction entry — observed 2026-08-21 as
+   * `consumed 427 of 200000 compute units` / `Access violation writing 1 bytes
+   * at address 0x32` during the outpost's init-PDAs step, which reads as a
+   * program bug rather than a build-provenance one.
+   *
+   * The sha pair alone is NOT sufficient, because the `.so` and the manifest
+   * are written together and both live in gitignored `target/`: a branch switch
+   * leaves the pair behind intact and mutually consistent, so a sha-only check
+   * passes while the sources have moved. `sourceDescribe` closes that — the
+   * build stamps its `git describe` and this compares it against the current
+   * checkout. A DIRTY build is reported rather than rejected: two different
+   * dirty trees at one commit describe identically, so the stamp marks the
+   * binary unverifiable instead of pretending otherwise.
+   *
+   * @param solanaPath - The `wire-solana` repo root.
+   * @param program - The program to verify (default: the OPP outpost host).
+   * @returns Absolute path of the verified `.so`.
+   */
+  export function assertProgramSoFile(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): string {
+    const soFile = programSoFile(solanaPath, program)
+    Assert.ok(
+      Fs.existsSync(soFile),
+      `SolanaOutpostProgramTool: ${program} .so missing: ${soFile} ${BuildRemediationHint}`
+    )
+
+    // Structural integrity first (is this manifest about this binary?), then
+    // provenance (was that build made from these sources?) — so a malformed
+    // manifest reports itself rather than surfacing as a checkout mismatch.
+    const { arch, sourceDescribe, programs } = readBuildManifest(solanaPath),
+      recorded = programs?.[program]
+    Assert.ok(
+      recorded != null,
+      `SolanaOutpostProgramTool: build manifest has no ${program} entry: ` +
+        `${buildManifestFile(solanaPath)} ${BuildRemediationHint}`
+    )
+
+    const actual = Crypto.createHash("sha256")
+      .update(Fs.readFileSync(soFile))
+      .digest("hex")
+    Assert.ok(
+      actual === recorded.programBinarySha256,
+      `SolanaOutpostProgramTool: ${program} .so does not match the recorded ` +
+        `SBPF ${arch} build — ${soFile} is sha256 ${actual}, manifest records ` +
+        `${recorded.programBinarySha256}. The binary on disk was NOT produced by ` +
+        `that build ${BuildRemediationHint}`
+    )
+
+    const currentDescribe = describeCheckout(solanaPath)
+    Assert.ok(
+      sourceDescribe === currentDescribe,
+      `SolanaOutpostProgramTool: ${program} was built from a different checkout — ` +
+        `manifest records "${sourceDescribe}", ${solanaPath} is now "${currentDescribe}". ` +
+        `The binary predates the current sources ${BuildRemediationHint}`
+    )
+    if (sourceDescribe.endsWith(DirtyDescribeSuffix))
+      log.warn(
+        `${program} was built from a DIRTY checkout (${sourceDescribe}) — ` +
+          `its provenance cannot be verified beyond the commit`
+      )
+    return soFile
   }
 
   /**
