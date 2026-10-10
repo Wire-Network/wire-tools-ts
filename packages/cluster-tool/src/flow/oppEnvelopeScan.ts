@@ -14,10 +14,9 @@ import {
  * serialized OPP envelope bytes each side of a cross-chain edge emitted or
  * consumed (file naming: `<epoch>-<DIRECTION>-<checksum>.data`).
  *
- * Negative-assertion flows (variance revert, private-reserve gating) use these
- * to prove a `SWAP_REVERT` attestation circulated without pulling the full
- * proto decoder into the scenario: the attestation's type tag has a fixed,
- * unambiguous byte encoding inside the envelope payload.
+ * Flows use these to prove an attestation of a given type circulated without
+ * pulling the full proto decoder into the scenario: the attestation's type tag
+ * has a fixed, unambiguous byte encoding inside the envelope payload.
  */
 
 /**
@@ -85,26 +84,6 @@ export function envelopeDataContains(
         Buffer.from(needle)
       )
     )
-}
-
-/**
- * Whether a `SWAP_REVERT` attestation has circulated on `direction` — the
- * canonical negative-path proof for the variance-revert and private-reserve
- * gating flows.
- *
- * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
- * @param direction - The cross-chain edge to scan (default: depot → Ethereum).
- * @returns Whether any matching envelope carries a SWAP_REVERT attestation.
- */
-export function containsSwapRevert(
-  oppDebuggingDirectory: string,
-  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-): boolean {
-  return envelopeDataContains(
-    oppDebuggingDirectory,
-    direction,
-    attestationEntryTag(AttestationType.SWAP_REVERT)
-  )
 }
 
 /**

@@ -13,15 +13,12 @@ import {
   attestationEntryTag,
   containsDesyndicateLIQ,
   containsLIQYield,
-  containsSwapRevert,
   containsSyndicateLIQ,
   envelopeDataContains,
   readEnvelopeAttestations,
   varintBytes
 } from "@wireio/cluster-tool/flow"
 
-/** The known wire encoding of `ATTESTATION_TYPE_SWAP_REVERT` (60955). */
-const SwapRevertTagBytes = [0x08, 0x9b, 0xdc, 0x03]
 /** The known wire encoding of `ATTESTATION_TYPE_SYNDICATE_LIQ` (60963). */
 const SyndicateLIQTagBytes = [0x08, 0xa3, 0xdc, 0x03]
 /** The known wire encoding of `ATTESTATION_TYPE_LIQ_YIELD` (60964). */
@@ -83,19 +80,14 @@ describe("oppEnvelopeScan", () => {
       expect(varintBytes(0x7f)).toEqual([0x7f])
     })
     it("encodes multi-group values least-significant group first", () => {
-      expect(varintBytes(AttestationType.SWAP_REVERT)).toEqual(
-        SwapRevertTagBytes.slice(1)
+      expect(varintBytes(AttestationType.SYNDICATE_LIQ)).toEqual(
+        SyndicateLIQTagBytes.slice(1)
       )
     })
   })
 
   describe("attestationEntryTag", () => {
-    it("prefixes the field-1 varint tag to the enum's varint", () => {
-      expect([...attestationEntryTag(AttestationType.SWAP_REVERT)]).toEqual(
-        SwapRevertTagBytes
-      )
-    })
-    it("encodes each liq-syndication type distinctly", () => {
+    it("prefixes the field-1 varint tag to each liq-syndication type's varint", () => {
       expect([...attestationEntryTag(AttestationType.SYNDICATE_LIQ)]).toEqual(
         SyndicateLIQTagBytes
       )
@@ -108,58 +100,83 @@ describe("oppEnvelopeScan", () => {
     })
   })
 
-  describe("envelopeDataContains / containsSwapRevert", () => {
+  describe("envelopeDataContains", () => {
     it("is false for a missing directory", () => {
-      expect(containsSwapRevert(Path.join(oppDirectory, "absent"))).toBe(false)
+      expect(
+        envelopeDataContains(
+          Path.join(oppDirectory, "absent"),
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
     })
 
     it("is false when no artifact carries the pattern", () => {
       writeArtifact(
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
+        DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from([0x01, 0x02, 0x03])
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(false)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
     })
 
-    it("finds the SWAP_REVERT tag inside a matching-direction artifact", () => {
+    it("finds the tag inside a matching-direction artifact", () => {
       writeArtifact(
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
-        Buffer.from([0xff, ...SwapRevertTagBytes, 0xff])
+        DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+        Buffer.from([0xff, ...SyndicateLIQTagBytes, 0xff])
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(true)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(true)
     })
 
     it("ignores artifacts from other directions", () => {
       writeArtifact(
         DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
-        Buffer.from(SwapRevertTagBytes)
+        Buffer.from(SyndicateLIQTagBytes)
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(false)
       expect(
-        containsSwapRevert(
+        envelopeDataContains(
           oppDirectory,
-          DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
         )
       ).toBe(true)
     })
 
-    it("scans for arbitrary attestation tags via envelopeDataContains", () => {
+    it("distinguishes attestation types by their tag", () => {
       writeArtifact(
         DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-        Buffer.from([...attestationEntryTag(AttestationType.SWAP_REQUEST)])
+        Buffer.from([...attestationEntryTag(AttestationType.LIQ_YIELD)])
       )
       expect(
         envelopeDataContains(
           oppDirectory,
           DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-          attestationEntryTag(AttestationType.SWAP_REQUEST)
+          attestationEntryTag(AttestationType.LIQ_YIELD)
         )
       ).toBe(true)
       expect(
         envelopeDataContains(
           oppDirectory,
           DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-          attestationEntryTag(AttestationType.SWAP_REVERT)
+          attestationEntryTag(AttestationType.DESYNDICATE_LIQ)
         )
       ).toBe(false)
     })

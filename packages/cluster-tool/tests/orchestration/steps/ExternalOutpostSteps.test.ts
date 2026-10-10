@@ -37,9 +37,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       addressFile,
       JSON.stringify({
         OPP: OppAddress,
-        OPPInbound: "0x2222222222222222222222222222222222222222",
-        OperatorRegistry: "0x3333333333333333333333333333333333333333",
-        ReserveManager: "0x4444444444444444444444444444444444444444"
+        OPPInbound: "0x2222222222222222222222222222222222222222"
       })
     )
     Fs.writeFileSync(
