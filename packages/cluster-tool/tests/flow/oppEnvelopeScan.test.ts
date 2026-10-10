@@ -3,25 +3,24 @@ import Os from "node:os"
 import Path from "node:path"
 import {
   AttestationType,
-  DebugEnvelopeMetadataRecord,
   DebugOutpostEndpointsType,
-  Envelope,
-  LIQYield,
-  type AttestationEntry
+  LIQYield
 } from "@wireio/opp-typescript-models"
 import {
   attestationEntryTag,
   containsDesyndicateLIQ,
   containsLIQYield,
-  containsSwapRevert,
   containsSyndicateLIQ,
   envelopeDataContains,
   readEnvelopeAttestations,
   varintBytes
 } from "@wireio/cluster-tool/flow"
+import {
+  attestationEntry,
+  envelopeBytes,
+  writeOppArtifact
+} from "./oppArtifactFixture.js"
 
-/** The known wire encoding of `ATTESTATION_TYPE_SWAP_REVERT` (60955). */
-const SwapRevertTagBytes = [0x08, 0x9b, 0xdc, 0x03]
 /** The known wire encoding of `ATTESTATION_TYPE_SYNDICATE_LIQ` (60963). */
 const SyndicateLIQTagBytes = [0x08, 0xa3, 0xdc, 0x03]
 /** The known wire encoding of `ATTESTATION_TYPE_LIQ_YIELD` (60964). */
@@ -44,32 +43,6 @@ const FixtureLIQYieldTotalSyndicated = 500_000_000n
 describe("oppEnvelopeScan", () => {
   let oppDirectory: string
 
-  /**
-   * Write one artifact PAIR for `direction` carrying `payload`.
-   *
-   * Both halves, because the cluster writes both and the two scanners consume
-   * different ones: the byte-tag scan reads `.data` alone, while
-   * `readEnvelopeAttestations` goes through `readEnvelopeRecordsFromDir`, which
-   * enumerates `.metadata` keys and reads the pair.
-   */
-  function writeArtifact(
-    direction: DebugOutpostEndpointsType,
-    payload: Buffer,
-    epoch = 1
-  ): void {
-    const baseKey = `${String(epoch).padStart(8, "0")}-${DebugOutpostEndpointsType[direction]}-abcdef0123456789`
-    Fs.writeFileSync(Path.join(oppDirectory, `${baseKey}.data`), payload)
-    Fs.writeFileSync(
-      Path.join(oppDirectory, `${baseKey}.metadata`),
-      Buffer.from(
-        DebugEnvelopeMetadataRecord.toBinary({
-          checksum: BigInt(payload.length),
-          batchOpNames: []
-        })
-      )
-    )
-  }
-
   beforeEach(() => {
     oppDirectory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "opp-scan-test-"))
   })
@@ -83,19 +56,14 @@ describe("oppEnvelopeScan", () => {
       expect(varintBytes(0x7f)).toEqual([0x7f])
     })
     it("encodes multi-group values least-significant group first", () => {
-      expect(varintBytes(AttestationType.SWAP_REVERT)).toEqual(
-        SwapRevertTagBytes.slice(1)
+      expect(varintBytes(AttestationType.SYNDICATE_LIQ)).toEqual(
+        SyndicateLIQTagBytes.slice(1)
       )
     })
   })
 
   describe("attestationEntryTag", () => {
-    it("prefixes the field-1 varint tag to the enum's varint", () => {
-      expect([...attestationEntryTag(AttestationType.SWAP_REVERT)]).toEqual(
-        SwapRevertTagBytes
-      )
-    })
-    it("encodes each liq-syndication type distinctly", () => {
+    it("prefixes the field-1 varint tag to each liq-syndication type's varint", () => {
       expect([...attestationEntryTag(AttestationType.SYNDICATE_LIQ)]).toEqual(
         SyndicateLIQTagBytes
       )
@@ -108,58 +76,87 @@ describe("oppEnvelopeScan", () => {
     })
   })
 
-  describe("envelopeDataContains / containsSwapRevert", () => {
+  describe("envelopeDataContains", () => {
     it("is false for a missing directory", () => {
-      expect(containsSwapRevert(Path.join(oppDirectory, "absent"))).toBe(false)
+      expect(
+        envelopeDataContains(
+          Path.join(oppDirectory, "absent"),
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
     })
 
     it("is false when no artifact carries the pattern", () => {
-      writeArtifact(
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
+      writeOppArtifact(
+        oppDirectory,
+        DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from([0x01, 0x02, 0x03])
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(false)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
     })
 
-    it("finds the SWAP_REVERT tag inside a matching-direction artifact", () => {
-      writeArtifact(
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
-        Buffer.from([0xff, ...SwapRevertTagBytes, 0xff])
+    it("finds the tag inside a matching-direction artifact", () => {
+      writeOppArtifact(
+        oppDirectory,
+        DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+        Buffer.from([0xff, ...SyndicateLIQTagBytes, 0xff])
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(true)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(true)
     })
 
     it("ignores artifacts from other directions", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
-        Buffer.from(SwapRevertTagBytes)
+        Buffer.from(SyndicateLIQTagBytes)
       )
-      expect(containsSwapRevert(oppDirectory)).toBe(false)
       expect(
-        containsSwapRevert(
+        envelopeDataContains(
           oppDirectory,
-          DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
+          DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+        )
+      ).toBe(false)
+      expect(
+        envelopeDataContains(
+          oppDirectory,
+          DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
+          attestationEntryTag(AttestationType.SYNDICATE_LIQ)
         )
       ).toBe(true)
     })
 
-    it("scans for arbitrary attestation tags via envelopeDataContains", () => {
-      writeArtifact(
+    it("distinguishes attestation types by their tag", () => {
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-        Buffer.from([...attestationEntryTag(AttestationType.SWAP_REQUEST)])
+        Buffer.from([...attestationEntryTag(AttestationType.LIQ_YIELD)])
       )
       expect(
         envelopeDataContains(
           oppDirectory,
           DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-          attestationEntryTag(AttestationType.SWAP_REQUEST)
+          attestationEntryTag(AttestationType.LIQ_YIELD)
         )
       ).toBe(true)
       expect(
         envelopeDataContains(
           oppDirectory,
           DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-          attestationEntryTag(AttestationType.SWAP_REVERT)
+          attestationEntryTag(AttestationType.DESYNDICATE_LIQ)
         )
       ).toBe(false)
     })
@@ -167,7 +164,8 @@ describe("oppEnvelopeScan", () => {
 
   describe("containsDesyndicateLIQ", () => {
     it("defaults to the depot → Solana direction the redemption travels", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
         Buffer.from(DesyndicateLIQTagBytes)
       )
@@ -185,7 +183,8 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("does not match the two inbound liq types", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
         Buffer.from([...SyndicateLIQTagBytes, ...LIQYieldTagBytes])
       )
@@ -195,7 +194,8 @@ describe("oppEnvelopeScan", () => {
 
   describe("containsSyndicateLIQ / containsLIQYield", () => {
     it("default to the direction each type actually travels", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from([...SyndicateLIQTagBytes, ...LIQYieldTagBytes])
       )
@@ -210,7 +210,8 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("does not confuse the three adjacent enum values", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from(SyndicateLIQTagBytes)
       )
@@ -219,7 +220,8 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("does not match a syndication tag on the WRONG direction", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
         Buffer.from(SyndicateLIQTagBytes)
       )
@@ -233,7 +235,8 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("does not match a DESYNDICATE_LIQ tag as either outbound liq type", () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from(DesyndicateLIQTagBytes)
       )
@@ -243,27 +246,6 @@ describe("oppEnvelopeScan", () => {
   })
 
   describe("readEnvelopeAttestations", () => {
-    /** One `AttestationEntry` with its `dataSize` derived from the payload. */
-    function entry(type: AttestationType, data: Uint8Array): AttestationEntry {
-      return { type, dataSize: data.length, data }
-    }
-
-    /** A one-message envelope carrying `attestations`, serialized as a `.data` artifact would be. */
-    function envelopeBytes(attestations: AttestationEntry[]): Buffer {
-      return Buffer.from(
-        Envelope.toBinary({
-          envelopeHash: new Uint8Array(),
-          epochTimestamp: 0n,
-          epochIndex: 1,
-          epochEnvelopeIndex: 0,
-          previousEnvelopeHash: new Uint8Array(),
-          messages: [
-            { header: undefined, payload: { version: 0, attestations } }
-          ]
-        })
-      )
-    }
-
     /** The fixture `LIQYield` payload every case below round-trips. */
     const liqYieldPayload = LIQYield.toBinary({
       chainCode: FixtureLIQYieldChainCode,
@@ -287,11 +269,12 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("returns the payload of every matching attestation, decodable by its message class", async () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         envelopeBytes([
-          entry(AttestationType.SYNDICATE_LIQ, Uint8Array.of(1, 2)),
-          entry(AttestationType.LIQ_YIELD, liqYieldPayload)
+          attestationEntry(AttestationType.SYNDICATE_LIQ, Uint8Array.of(1, 2)),
+          attestationEntry(AttestationType.LIQ_YIELD, liqYieldPayload)
         ])
       )
       const payloads = await readEnvelopeAttestations(
@@ -308,9 +291,12 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("ignores other directions and other types", async () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-        envelopeBytes([entry(AttestationType.LIQ_YIELD, liqYieldPayload)])
+        envelopeBytes([
+          attestationEntry(AttestationType.LIQ_YIELD, liqYieldPayload)
+        ])
       )
       await expect(
         readEnvelopeAttestations(
@@ -329,14 +315,18 @@ describe("oppEnvelopeScan", () => {
     })
 
     it("skips an artifact that does not decode rather than throwing", async () => {
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
         Buffer.from([0xff, 0xff, 0xff, 0xff]),
         2
       )
-      writeArtifact(
+      writeOppArtifact(
+        oppDirectory,
         DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
-        envelopeBytes([entry(AttestationType.LIQ_YIELD, liqYieldPayload)]),
+        envelopeBytes([
+          attestationEntry(AttestationType.LIQ_YIELD, liqYieldPayload)
+        ]),
         3
       )
       await expect(

@@ -1,5 +1,15 @@
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { Keypair } from "@solana/web3.js"
+import { oppDebuggingPath } from "@wireio/debugging-shared"
+import {
+  AttestationType,
+  ChainKind,
+  DebugOutpostEndpointsType,
+  SyndicateLIQ
+} from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { SyndicationScenario } from "@wireio/cluster-tool/flow"
 import {
@@ -12,11 +22,22 @@ import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import {
+  attestationEntry,
+  envelopeBytes,
+  writeOppArtifact
+} from "./oppArtifactFixture.js"
 
 const signal = new AbortController().signal,
   { Actor } = Report,
   { SysioContractName } = SysioContracts,
-  account = "synd.user"
+  account = "synd.user",
+  /** The syndicated amount every decoded-intake case relays, in base units. */
+  intakeAmount = 2_000_000_001n,
+  /** The epoch the held fixture envelope reached consensus in. */
+  intakeEpoch = 4,
+  /** The bond request the held fixture envelope carries. */
+  intakeRequest = 11
 
 /** Expose shared composition to exercise its production setup and cleanup boundaries. */
 class Scenario extends SyndicationScenario {
@@ -238,5 +259,164 @@ describe("shared syndication user writes", () => {
       "missing wallet"
     )
     expect(link).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("decoded syndication intake", () => {
+  const user: SyndicationScenario.User = {
+    account,
+    keypairName: account,
+    linked: true
+  }
+  let clusterPath: string
+
+  /** A `SyndicateLIQ` from `wallet` for `amount`, as the Solana outpost relays it. */
+  function syndication(
+    wallet: Keypair,
+    amount: bigint,
+    totalSyndicated: bigint
+  ): Uint8Array {
+    return SyndicateLIQ.toBinary({
+      chainCode: 0n,
+      user: { kind: ChainKind.SVM, address: wallet.publicKey.toBytes() },
+      amount: { tokenCode: SyndicationScenario.TokenCode, amount },
+      sequence: 1n,
+      totalSyndicated
+    })
+  }
+
+  /** Persist one Solana → depot envelope carrying `syndications`. */
+  function relay(...syndications: Uint8Array[]): void {
+    writeOppArtifact(
+      oppDebuggingPath(clusterPath),
+      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+      envelopeBytes(
+        syndications.map(data =>
+          attestationEntry(AttestationType.SYNDICATE_LIQ, data)
+        )
+      )
+    )
+  }
+
+  /** The depot's held envelope row for the fixture intake. */
+  function heldEnvelope(): SysioContracts.SysioSyndEnvelopeRowType {
+    return {
+      chain_code: SyndicationScenario.Chain,
+      token_code: SyndicationScenario.Token,
+      epoch_index: intakeEpoch,
+      digest: "",
+      synd_total: intakeAmount.toString(),
+      yield_total: 0,
+      item_count: 1,
+      state: SysioContracts.SysioSyndEnvelopeState.HELD,
+      request_id: intakeRequest,
+      released: 0,
+      burned: 0,
+      outcome: SysioContracts.SysioSyndRequestOutcome.PENDING,
+      forfeit: 0,
+      bounty_returned: 0,
+      hold_share: 0,
+      hold_beneficiary: "",
+      share_pending: false
+    }
+  }
+
+  beforeEach(() => {
+    clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "synd-intake-test-"))
+  })
+  afterEach(() => {
+    Fs.rmSync(clusterPath, { recursive: true, force: true })
+  })
+
+  it("decodes only the user's syndication of the amount", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate()
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    relay(
+      syndication(wallet, intakeAmount, intakeAmount),
+      syndication(wallet, intakeAmount + 1n, intakeAmount + 1n),
+      syndication(Keypair.generate(), intakeAmount, intakeAmount)
+    )
+    const decoded = await SyndicationScenario.readDecodedSyndications(
+      ctx,
+      user,
+      intakeAmount
+    )
+    expect(decoded).toHaveLength(1)
+    expect(decoded[0].amount.amount).toBe(intakeAmount)
+    expect(Buffer.from(decoded[0].user.address)).toEqual(
+      wallet.publicKey.toBuffer()
+    )
+  })
+
+  it("decodes nothing before the relayed envelope is persisted", async () => {
+    const ctx = fixtureContext({ clusterPath })
+    jest
+      .spyOn(SolanaFundingTool, "loadKeypair")
+      .mockReturnValue(Keypair.generate())
+    relay()
+    await expect(
+      SyndicationScenario.readDecodedSyndications(ctx, user, intakeAmount)
+    ).resolves.toEqual([])
+  })
+
+  it("waits for the persisted attestation after the depot holds the envelope", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate(),
+      epoch = outputKey<number>("test.intake.epoch", "consensus epoch"),
+      request = outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+        "test.intake.request",
+        "bond request"
+      ),
+      step = SyndicationScenario.planVerifyIntake(
+        Actor.Sysio,
+        "verify-intake",
+        "verify intake",
+        {},
+        user,
+        intakeAmount,
+        epoch,
+        request
+      )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    // The depot holds the envelope from the first poll; the debugging plugin persists the
+    // relayed artifact only after that first read.
+    const read = jest
+      .spyOn(WireSyndicationTool, "readHeldEnvelope")
+      .mockImplementationOnce(async () => heldEnvelope())
+      .mockImplementation(async () => {
+        relay(syndication(wallet, intakeAmount, intakeAmount))
+        return heldEnvelope()
+      })
+    await step.runner(ctx, step.input, signal)
+    expect(read.mock.calls.length).toBeGreaterThan(1)
+    expect(ctx.outputs.get(epoch)).toBe(intakeEpoch)
+    expect(ctx.outputs.get(request)).toBe(intakeRequest)
+  })
+
+  it("refuses a custody attestation below its own syndication", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate(),
+      step = SyndicationScenario.planVerifyIntake(
+        Actor.Sysio,
+        "verify-intake",
+        "verify intake",
+        {},
+        user,
+        intakeAmount,
+        outputKey<number>("test.intake.epoch", "consensus epoch"),
+        outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+          "test.intake.request",
+          "bond request"
+        )
+      )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    jest
+      .spyOn(WireSyndicationTool, "readHeldEnvelope")
+      .mockResolvedValue(heldEnvelope())
+    relay(syndication(wallet, intakeAmount, intakeAmount - 1n))
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      "below its own syndication"
+    )
   })
 })

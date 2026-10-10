@@ -13,7 +13,7 @@ describe("ExternalOutpostConfig", () => {
   const config: ExternalOutpostConfig = {
     ethereum: {
       addressFile: "outpost-addrs.json",
-      abiFiles: ["eth-abis/OPP.json", "eth-abis/OperatorRegistry.json"],
+      abiFiles: ["eth-abis/OPP.json", "eth-abis/OPPInbound.json"],
       chainId: 1
     },
     solana: { idlFile: "solana-idls/opp_outpost.json" }

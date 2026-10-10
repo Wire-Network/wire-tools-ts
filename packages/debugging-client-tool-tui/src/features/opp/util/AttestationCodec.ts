@@ -1,23 +1,9 @@
 import {
-  AttestationProcessingError,
   AttestationType,
   BatchOperatorGroups,
-  ReserveBalanceSheet,
-  ChallengeOperatorHash,
-  ChallengeRequest,
-  DepositRevert,
   NodeOwnerRegistration,
   OperatorAction,
   Operators,
-  PretokenPurchase,
-  PretokenYield,
-  StakeResult,
-  StakeUpdate,
-  SwapRemit,
-  SwapRequest,
-  SwapRevert,
-  UnderwriteIntentCommit,
-  WireTokenPurchase,
   type AttestationEntry
 } from "@wireio/opp-typescript-models"
 
@@ -34,9 +20,9 @@ interface AttestationMessageType {
 /**
  * Single source of truth mapping every `AttestationType` enum value → the
  * `MessageType` that knows how to decode its `data` bytes. Unmapped values
- * (e.g. `UNSPECIFIED`, the few `STAKE`/`UNSTAKE` / pre-launch names for
- * which no companion class is exported by the generated package) fall
- * through to a raw-record render in the panel — no decode is attempted.
+ * (e.g. `UNSPECIFIED`, or a type whose payload has no registered message
+ * class here) fall through to a raw-record render in the panel — no decode is
+ * attempted.
  *
  * Keep the keys aligned with `AttestationType`'s identifiers; renames in the
  * generated package surface as compile errors here.
@@ -45,26 +31,11 @@ export const AttestationDecoders: Partial<
   Record<AttestationType, AttestationMessageType>
 > = {
   [AttestationType.OPERATOR_ACTION]: OperatorAction,
-  [AttestationType.PRETOKEN_PURCHASE]: PretokenPurchase,
-  [AttestationType.PRETOKEN_YIELD]: PretokenYield,
-  [AttestationType.RESERVE_BALANCE_SHEET]: ReserveBalanceSheet,
-  [AttestationType.STAKE_UPDATE]: StakeUpdate,
-  [AttestationType.WIRE_TOKEN_PURCHASE]: WireTokenPurchase,
-  [AttestationType.CHALLENGE_RESPONSE]: ChallengeOperatorHash,
-  [AttestationType.SWAP_REQUEST]: SwapRequest,
-  [AttestationType.SWAP_REMIT]: SwapRemit,
-  [AttestationType.CHALLENGE_REQUEST]: ChallengeRequest,
   [AttestationType.OPERATORS]: Operators,
   [AttestationType.BATCH_OPERATOR_GROUPS]: BatchOperatorGroups,
-  // The FULL registration payload (actor, keys, account, tier) — what BAR's
-  // commitNode emits and sysio.msgch's dispatch_node_owner_reg decodes; the
-  // legacy 3-field NodeOwnerReg message is no longer emitted by any outpost.
-  [AttestationType.NODE_OWNER_REG]: NodeOwnerRegistration,
-  [AttestationType.STAKE_RESULT]: StakeResult,
-  [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,
-  [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
-  [AttestationType.SWAP_REVERT]: SwapRevert,
-  [AttestationType.DEPOSIT_REVERT]: DepositRevert
+  // The registration payload (actor, keys, account, tier) — what BAR's
+  // commitNode emits and sysio.msgch's dispatch_node_owner_reg decodes.
+  [AttestationType.NODE_OWNER_REG]: NodeOwnerRegistration
 }
 
 /** Successful decode — the typed message the UI pretty-prints. */
