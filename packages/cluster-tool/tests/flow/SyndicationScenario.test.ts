@@ -1,19 +1,42 @@
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { Keypair } from "@solana/web3.js"
+import { oppDebuggingPath } from "@wireio/debugging-shared"
+import {
+  AttestationType,
+  ChainKind,
+  DebugEnvelopeMetadataRecord,
+  DebugOutpostEndpointsType,
+  Envelope,
+  OperatorType,
+  SyndicateLIQ
+} from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { SyndicationScenario } from "@wireio/cluster-tool/flow"
 import {
   ClusterBuild,
+  MockSyndicationBonderKey,
   Steps,
   SyndicationUserSteps,
-  outputKey
+  outputKey,
+  type ClusterBuildPhase
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
-import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+import {
+  OperatorDaemonTool,
+  WireSyndicationTool
+} from "@wireio/cluster-tool/tools/wire"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import { PersistedFixture } from "../config/clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
-const signal = new AbortController().signal,
+const UnderwriterExposureCap = "2.010000000 LIQSOL",
+  signal = new AbortController().signal,
   { Actor } = Report,
   { SysioContractName } = SysioContracts,
   account = "synd.user"
@@ -28,7 +51,311 @@ class Scenario extends SyndicationScenario {
   }
 }
 
+/** Expose the underwriter start and the phase it registers. */
+class UnderwriterScenario extends SyndicationScenario {
+  readonly name = "test-underwriter"
+  readonly description = "underwriter start fixture"
+  /** The phase the last `plan` registered. */
+  startPhase: ClusterBuildPhase
+  plan(cluster: ClusterBuild): void {
+    this.startPhase = this.planUnderwriterStart(cluster, UnderwriterExposureCap)
+  }
+}
+
 afterEach(() => jest.restoreAllMocks())
+
+describe("the bonder's underwriter daemon", () => {
+  it("plans one phase: materialize the identity, then start its daemon", () => {
+    const cluster = ClusterBuild.forContext(fixtureContext()),
+      scenario = new UnderwriterScenario()
+    scenario.plan(cluster)
+    expect(cluster.children.map(child => child.name)).toEqual([
+      "StartUnderwriter"
+    ])
+    const phase = scenario.startPhase
+    expect(phase.steps.map(step => step.name)).toEqual([
+      "materialize-underwriter",
+      "start-underwriter"
+    ])
+    expect(phase.steps[0].runner).toBe(
+      SyndicationScenario.runUnderwriterMaterialization
+    )
+    expect(phase.steps[1].runner).toBe(OperatorDaemonTool.runDaemonStart)
+    expect(phase.steps[1].input).toEqual({
+      kind: "OperatorDaemonTool.StartDaemonInput",
+      label: Steps.registry.MockSyndicationBonderLabel,
+      daemonOptions: { underwriterExposureCaps: [UnderwriterExposureCap] }
+    })
+  })
+
+  it("refuses to plan the start on a cluster that reserved no port pair for the daemon", () => {
+    const { bind } = PersistedFixture,
+      cluster = ClusterBuild.forContext(
+        fixtureContext({
+          bind: {
+            ...bind,
+            nodeop: {
+              ...bind.nodeop,
+              ports: { ...bind.nodeop.ports, adHoc: [] }
+            }
+          }
+        })
+      )
+    expect(SyndicationScenario.AdHocDaemonCount).toBe(1)
+    expect(() => new UnderwriterScenario().plan(cluster)).toThrow(/adHocCount/)
+    expect(cluster.children).toEqual([])
+  })
+
+  it("materializes the bonder as an underwriter with the account's key and its import keys", async () => {
+    const ctx = fixtureContext(),
+      { solana, ethereum } = fixtureOperatorAccount(
+        Steps.registry.MockSyndicationBonderLabel,
+        OperatorType.UNDERWRITER
+      )
+    ctx.outputs.set(MockSyndicationBonderKey, { solana, ethereum })
+    await SyndicationScenario.runUnderwriterMaterialization(
+      ctx,
+      {
+        kind: "SyndicationScenario.MaterializeUnderwriterInput",
+        label: Steps.registry.MockSyndicationBonderLabel,
+        account: SyndicationScenario.Bonder
+      },
+      signal
+    )
+    const underwriter = ctx.keyStore.assertOperator(
+      Steps.registry.MockSyndicationBonderLabel
+    )
+    expect(underwriter).toEqual(
+      expect.objectContaining({
+        account: SyndicationScenario.Bonder,
+        type: OperatorType.UNDERWRITER,
+        solana,
+        ethereum,
+        // planSetup creates the bonder's account with the development key.
+        wire: Constants.DEV_K1_KEY_PAIR
+      })
+    )
+  })
+
+  it("refuses to materialize an underwriter whose import keys were never made", async () => {
+    const ctx = fixtureContext()
+    await expect(
+      SyndicationScenario.runUnderwriterMaterialization(
+        ctx,
+        {
+          kind: "SyndicationScenario.MaterializeUnderwriterInput",
+          label: Steps.registry.MockSyndicationBonderLabel,
+          account: SyndicationScenario.Bonder
+        },
+        signal
+      )
+    ).rejects.toThrow(/has not been provisioned/)
+    expect(
+      ctx.keyStore.operator(Steps.registry.MockSyndicationBonderLabel)
+    ).toBeUndefined()
+  })
+
+  it("plans the materialization as one Step naming the bonder's label and account", () => {
+    const step = SyndicationScenario.planUnderwriterMaterialization(
+      Actor.Underwriter,
+      "materialize-underwriter",
+      "materialize the bonder's underwriter identity",
+      {}
+    )
+    expect(step.input).toEqual({
+      kind: "SyndicationScenario.MaterializeUnderwriterInput",
+      label: Steps.registry.MockSyndicationBonderLabel,
+      account: SyndicationScenario.Bonder
+    })
+    expect(step.runner).toBe(SyndicationScenario.runUnderwriterMaterialization)
+  })
+
+  it("refuses to plan the start under a signature provider that cannot render the bonder's keys", () => {
+    const cluster = ClusterBuild.forContext(
+      fixtureContext({
+        signatureProvider: { type: SignatureProviderType.KIOD, ssm: null }
+      })
+    )
+    expect(() => new UnderwriterScenario().plan(cluster)).toThrow(
+      /KEY signature provider/
+    )
+    expect(cluster.children).toEqual([])
+  })
+
+  it("gives each wait's Step the poll margin above the wait's own budget", () => {
+    const FinalizerCount = 3,
+      WindowSec = 120
+    expect(SyndicationScenario.requestBondedOptions(FinalizerCount)).toEqual({
+      timeoutMs:
+        WireSyndicationTool.requestBondedBudgetMs(FinalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    })
+    expect(SyndicationScenario.underwriterPassOptions(FinalizerCount)).toEqual({
+      timeoutMs:
+        WireSyndicationTool.underwriterPassBudgetMs(FinalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    })
+    expect(
+      SyndicationScenario.requestSettledOptions(WindowSec, FinalizerCount)
+    ).toEqual({
+      timeoutMs:
+        WireSyndicationTool.requestSettledBudgetMs(WindowSec, FinalizerCount) +
+        ProtocolTiming.PollDeadlineBufferMs
+    })
+    // Pinned once, so a change to the margin or a budget shows here: 591 s + 30 s.
+    expect(
+      SyndicationScenario.requestBondedOptions(FinalizerCount).timeoutMs
+    ).toBe(621_000)
+  })
+})
+
+describe("intake under a running underwriter daemon", () => {
+  const Amount = 500_000_000n,
+    AfterEpoch = 3,
+    IntakeEpoch = 5,
+    IntakeRequest = 3,
+    after = outputKey<number>("test.after", "earlier epoch"),
+    epoch = outputKey<number>("test.epoch", "intake epoch"),
+    request = outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+      "test.request",
+      "intake request"
+    ),
+    /** The released envelope of the unlinked recipient's syndication. */
+    released: SysioContracts.SysioSyndEnvelopeRowType = {
+      chain_code: SyndicationScenario.Chain,
+      token_code: SyndicationScenario.Token,
+      epoch_index: IntakeEpoch,
+      digest: "00".repeat(32),
+      synd_total: Amount.toString(),
+      yield_total: 0,
+      item_count: 1,
+      state: SysioContracts.SysioSyndEnvelopeState.DONE,
+      request_id: IntakeRequest,
+      released: Amount.toString(),
+      burned: 0,
+      outcome: SysioContracts.SysioSyndRequestOutcome.APPROVED,
+      forfeit: 0,
+      bounty_returned: 0,
+      hold_share: 0,
+      hold_beneficiary: "",
+      share_pending: false
+    }
+
+  /** The intake Step of the unlinked recipient. */
+  function planIntake() {
+    return SyndicationScenario.planVerifyIssuedIntake(
+      Actor.Sysio,
+      "unlinked-intake",
+      "verify intake",
+      {},
+      {
+        account: "synd.parked",
+        keypairName: "syndication-parked",
+        linked: false
+      },
+      Amount,
+      after,
+      epoch,
+      request
+    )
+  }
+
+  it("captures a released envelope's epoch and request, then still demands its attestation", async () => {
+    const ctx = fixtureContext(),
+      step = planIntake(),
+      read = jest
+        .spyOn(WireSyndicationTool, "readIssuedEnvelope")
+        .mockResolvedValue(released)
+    ctx.outputs.set(after, AfterEpoch)
+    // No envelope artifact was written under the fixture's cluster path.
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      "missing decoded syndication"
+    )
+    expect(read).toHaveBeenCalledWith(
+      ctx,
+      SyndicationScenario.Chain,
+      SyndicationScenario.Token,
+      AfterEpoch,
+      Amount
+    )
+    expect(ctx.outputs.assert(epoch)).toBe(IntakeEpoch)
+    expect(ctx.outputs.assert(request)).toBe(IntakeRequest)
+  })
+
+  it("passes once the syndication circulated with custody covering it", async () => {
+    const clusterPath = Fs.mkdtempSync(
+        Path.join(Os.tmpdir(), "syndication-intake-test-")
+      ),
+      oppDirectory = oppDebuggingPath(clusterPath),
+      ctx = fixtureContext({ clusterPath }),
+      keypair = Keypair.generate(),
+      step = planIntake(),
+      // The outpost's SYNDICATE_LIQ of this amount and wallet, as the depot's
+      // envelope artifact carries it.
+      syndication = SyndicateLIQ.toBinary(
+        SyndicateLIQ.create({
+          user: { kind: ChainKind.SVM, address: keypair.publicKey.toBytes() },
+          amount: { tokenCode: SyndicationScenario.TokenCode, amount: Amount },
+          totalSyndicated: Amount
+        })
+      ),
+      payload = Envelope.toBinary({
+        envelopeHash: new Uint8Array(),
+        epochTimestamp: 0n,
+        epochIndex: IntakeEpoch,
+        epochEnvelopeIndex: 0,
+        previousEnvelopeHash: new Uint8Array(),
+        messages: [
+          {
+            header: undefined,
+            payload: {
+              version: 0,
+              attestations: [
+                {
+                  type: AttestationType.SYNDICATE_LIQ,
+                  dataSize: syndication.length,
+                  data: syndication
+                }
+              ]
+            }
+          }
+        ]
+      }),
+      artifactKey = `${String(IntakeEpoch).padStart(8, "0")}-${DebugOutpostEndpointsType[DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT]}-abcdef0123456789`
+    Fs.mkdirSync(oppDirectory, { recursive: true })
+    Fs.writeFileSync(Path.join(oppDirectory, `${artifactKey}.data`), payload)
+    Fs.writeFileSync(
+      Path.join(oppDirectory, `${artifactKey}.metadata`),
+      DebugEnvelopeMetadataRecord.toBinary({
+        checksum: BigInt(payload.length),
+        batchOpNames: []
+      })
+    )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(keypair)
+    jest
+      .spyOn(WireSyndicationTool, "readIssuedEnvelope")
+      .mockResolvedValue(released)
+    ctx.outputs.set(after, AfterEpoch)
+    try {
+      await step.runner(ctx, step.input, signal)
+      expect(ctx.outputs.assert(epoch)).toBe(IntakeEpoch)
+      expect(ctx.outputs.assert(request)).toBe(IntakeRequest)
+    } finally {
+      Fs.rmSync(clusterPath, { recursive: true, force: true })
+    }
+  })
+
+  it("reads nothing before the earlier envelope's epoch is recorded", async () => {
+    const ctx = fixtureContext(),
+      step = planIntake(),
+      read = jest
+        .spyOn(WireSyndicationTool, "readIssuedEnvelope")
+        .mockResolvedValue(released)
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow()
+    expect(read).not.toHaveBeenCalled()
+    expect(ctx.outputs.get(epoch)).toBeNull()
+  })
+})
 
 describe("syndication scenario accounting", () => {
   it("plans setup and restoration without executing a write", () => {

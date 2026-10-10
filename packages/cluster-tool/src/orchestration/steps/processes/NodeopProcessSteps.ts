@@ -37,11 +37,7 @@ const BiosOperator: OperatorAccount = {
   publicationLabel: NodeConfig.BiosName,
   account: NodeConfig.BiosProducer,
   type: OperatorType.PRODUCER,
-  wire: {
-    type: KeyType.K1,
-    publicKey: Constants.DEV_K1_PUBLIC_KEY,
-    privateKey: Constants.DEV_K1_PRIVATE_KEY
-  },
+  wire: Constants.DEV_K1_KEY_PAIR,
   wireFinalizer: {
     type: KeyType.BLS,
     publicKey: Constants.DEV_BLS_PUBLIC_KEY,

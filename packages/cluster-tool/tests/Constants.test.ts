@@ -1,3 +1,4 @@
+import { KeyType } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 
 describe("Constants", () => {
@@ -5,6 +6,13 @@ describe("Constants", () => {
     it("derives a deterministic dev K1 public key (SYS-prefixed)", () => {
       expect(Constants.DEV_K1_PUBLIC_KEY).toMatch(/^SYS/)
       expect(Constants.DEV_K1_PRIVATE_KEY.length).toBeGreaterThan(0)
+    })
+    it("pairs the dev K1 keys as the WIRE key pair of an identity that signs with them", () => {
+      expect(Constants.DEV_K1_KEY_PAIR).toEqual({
+        type: KeyType.K1,
+        publicKey: Constants.DEV_K1_PUBLIC_KEY,
+        privateKey: Constants.DEV_K1_PRIVATE_KEY
+      })
     })
     it("derives a deterministic dev BLS public key (PUB_BLS-prefixed)", () => {
       expect(Constants.DEV_BLS_PUBLIC_KEY).toMatch(/^PUB_BLS/)
@@ -54,9 +62,15 @@ describe("Constants", () => {
       )
     })
     it("maps the underwriting, syndication and emergency-stop contract paths", () => {
-      expect(Constants.OPP_CONTRACT_PATHS["sysio.andon"]).toBe("contracts/sysio.andon")
-      expect(Constants.OPP_CONTRACT_PATHS["sysio.bond"]).toBe("contracts/sysio.bond")
-      expect(Constants.OPP_CONTRACT_PATHS["sysio.synd"]).toBe("contracts/sysio.synd")
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.andon"]).toBe(
+        "contracts/sysio.andon"
+      )
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.bond"]).toBe(
+        "contracts/sysio.bond"
+      )
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.synd"]).toBe(
+        "contracts/sysio.synd"
+      )
     })
     it("grants @sysio.code to sysio.bond and sysio.synd, never to sysio.andon (it sends no inline action)", () => {
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.bond")
@@ -201,9 +215,9 @@ describe("Constants", () => {
   describe("EMISSION_CONFIG_DEFAULTS", () => {
     it("keeps the category split under 10000 bps", () => {
       const c = Constants.EMISSION_CONFIG_DEFAULTS
-      expect(c.compute_bps + c.capex_bps + c.governance_bps).toBeLessThanOrEqual(
-        10_000
-      )
+      expect(
+        c.compute_bps + c.capex_bps + c.governance_bps
+      ).toBeLessThanOrEqual(10_000)
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
 
@@ -226,9 +240,15 @@ describe("Constants", () => {
     const WireSupplySubunits = 1_000_000_000_000_000_000
 
     it("sets tier allocations PER OWNER, not per tier", () => {
-      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
-      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_allocation).toBe(1_000_000_000_000_000)
-      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_allocation).toBe(100_000_000_000_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(
+        7_500_000_000_000_000
+      )
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_allocation).toBe(
+        1_000_000_000_000_000
+      )
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_allocation).toBe(
+        100_000_000_000_000
+      )
     })
 
     it("commits 341,500,000 WIRE at tier caps, inside the WIRE supply", () => {
@@ -297,9 +317,9 @@ describe("ProtocolTiming", () => {
       // Every flow bootstraps a handful of finalizers; the floor must not make
       // those runs materially slower to fail than the 60s they used to get.
       ;[1, 2, 3].forEach(count =>
-        expect(ProtocolTiming.irreversibilityBudgetMs(count)).toBeLessThanOrEqual(
-          80_000
-        )
+        expect(
+          ProtocolTiming.irreversibilityBudgetMs(count)
+        ).toBeLessThanOrEqual(80_000)
       )
     })
 

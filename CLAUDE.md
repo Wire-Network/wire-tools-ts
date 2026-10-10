@@ -377,7 +377,15 @@ fee or another bucket sets its own `synd::setconfig` in `plan()` — governance,
 bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
 `planDesyndicate`); `WireSyndicationTool` reads the depot's syndication state and
-bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). On the
+bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). A flow
+whose bonder runs as the batch operator plugin's underwriter role plans
+`SyndicationScenario.planUnderwriterStart` where it would first bond, and reserves
+the daemon's ports with `adHocCount: SyndicationScenario.AdHocDaemonCount` in
+`Scenario.defaults`: the daemon starts on its own node through
+`OperatorDaemonTool.planDaemonStart`, and the flow then waits on its effects
+(`WireSyndicationTool.planAwaitRequestBonded`, `planAwaitRequestSettled`) instead
+of pushing them. The bonder's keys are development keys, so such a flow runs under
+the `KEY` signature provider only. On the
 outposts, the Ethereum deploy config names the panic account
 (`EthereumOutpostBootstrapper.PanicAccountIndex`), `maxSyndicationPerTransfer` and
 `yieldDeadband` (`verify-syndication-pool` reads them back), and the Solana surface
@@ -390,8 +398,10 @@ PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
 `planSetPaused`, `planPayPendingDesyndication`).
 
 **Removed functionality.** The eight reserve/swap flow packages and their bootstrap
-flags have been deleted. Only batch operators run OPP daemons. Syndication bond
-providers act through `sysio.bond`; they do not run swap-underwriter daemons.
+flags have been deleted. The bootstrap starts OPP daemons for batch operators
+only. Syndication bond providers act through `sysio.bond`; the swap-underwriter
+daemon is gone, and a flow that automates its bonder starts the batch operator
+plugin's underwriter role itself (`planUnderwriterStart`).
 
 **Flow authoring — API nodes.** A flow that needs an API node sets `apiCount`
 (and, if needed, `queryEngine`) in its `Scenario.defaults`; the nodes start in

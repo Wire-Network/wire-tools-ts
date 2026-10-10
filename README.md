@@ -151,7 +151,7 @@ and outbound queue entries are intermediate checks.
 | --- | --- |
 | `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
 | `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
-| `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-underwriting` | The underwriter daemon's bonds release each successful deposit, including the initially unlinked destination |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -193,6 +193,8 @@ the successful runs above selected the installed pinned 4.2.0 toolchain explicit
 The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
 flags have been deleted. The 13 remaining flows exercise supported functionality.
 Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
+`flow-syndication-underwriting` runs its bonder as the batch operator plugin's
+underwriter role.
 
 ## Running flows
 
@@ -545,7 +547,9 @@ config; the Solana program id is parsed from the IDL):
 ```
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
-values are rejected; syndication bond providers do not need a daemon.
+values are rejected: the bootstrap plans no underwriter node. A flow that wants
+one starts its bonder's underwriter (the batch operator plugin's underwriter role)
+itself.
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)

@@ -11,6 +11,7 @@ import {
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
+import { Report } from "@wireio/cluster-tool/report"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
 import {
@@ -243,6 +244,8 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("runDaemonStart", () => {
+    const ExposureCaps = ["2.010000000 LIQSOL"]
+
     it("launches the daemon through NodeopProcess.startWithRecovery (dirty-chainbase resilient)", async () => {
       const ctx = fixtureContext()
       // The context's processManager getter requires the singleton's cluster
@@ -257,7 +260,11 @@ describe("OperatorDaemonTool", () => {
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
-          { kind: "OperatorDaemonTool.StartDaemonInput", label: "batchopbbbb" },
+          {
+            kind: "OperatorDaemonTool.StartDaemonInput",
+            label: "batchopbbbb",
+            daemonOptions: {}
+          },
           new AbortController().signal
         )
         // A flow rerun reuses the daemon's data dir, so this launch must go
@@ -278,6 +285,248 @@ describe("OperatorDaemonTool", () => {
       } finally {
         recoverySpy.mockRestore()
       }
+    })
+
+    it("launches an underwriter's daemon in the underwriter role, under its exposure caps", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const underwriter = fixtureOperatorAccount(
+        "synd.underwriter",
+        OperatorType.UNDERWRITER
+      )
+      ctx.keyStore.setOperator(underwriter)
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      const recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined)
+      try {
+        await OperatorDaemonTool.runDaemonStart(
+          ctx,
+          {
+            kind: "OperatorDaemonTool.StartDaemonInput",
+            label: underwriter.label,
+            daemonOptions: { underwriterExposureCaps: ExposureCaps }
+          },
+          new AbortController().signal
+        )
+        expect(recoverySpy).toHaveBeenCalledWith(
+          ctx.processManager,
+          expect.objectContaining({
+            operators: [underwriter],
+            node: expect.objectContaining({ role: NodeRole.underwriter }),
+            extraArgs: expect.arrayContaining([
+              "--batch-underwriter-account",
+              underwriter.account,
+              "--batch-underwriter-max-exposure",
+              ExposureCaps[0]
+            ])
+          })
+        )
+        expect(recoverySpy.mock.calls[0][1].extraArgs).not.toContain(
+          "--batch-operator-account"
+        )
+      } finally {
+        recoverySpy.mockRestore()
+      }
+    })
+
+    it("refuses an underwriter given no exposure cap, starting nothing", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const underwriter = fixtureOperatorAccount(
+        "synd.underwriter",
+        OperatorType.UNDERWRITER
+      )
+      ctx.keyStore.setOperator(underwriter)
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      const recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined)
+      try {
+        await expect(
+          OperatorDaemonTool.runDaemonStart(
+            ctx,
+            {
+              kind: "OperatorDaemonTool.StartDaemonInput",
+              label: underwriter.label,
+              daemonOptions: {}
+            },
+            new AbortController().signal
+          )
+        ).rejects.toThrow(/no exposure cap/)
+        expect(recoverySpy).not.toHaveBeenCalled()
+      } finally {
+        recoverySpy.mockRestore()
+      }
+    })
+
+    it("refuses an operator type that has no OPP daemon, starting nothing", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const producer = fixtureOperatorAccount(
+        "defproducera",
+        OperatorType.PRODUCER
+      )
+      ctx.keyStore.setOperator(producer)
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      const recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined)
+      try {
+        await expect(
+          OperatorDaemonTool.runDaemonStart(
+            ctx,
+            {
+              kind: "OperatorDaemonTool.StartDaemonInput",
+              label: producer.label,
+              daemonOptions: {}
+            },
+            new AbortController().signal
+          )
+        ).rejects.toThrow(/not an OPP operator/)
+        expect(recoverySpy).not.toHaveBeenCalled()
+      } finally {
+        recoverySpy.mockRestore()
+      }
+    })
+
+    it("is idempotent — a node already under the process manager is not relaunched", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const recoverySpy = jest
+          .spyOn(NodeopProcess, "startWithRecovery")
+          .mockResolvedValue(undefined),
+        // The process manager is one singleton: restore it for the next test.
+        runningSpy = jest
+          .spyOn(ctx.processManager, "get")
+          .mockReturnValue({} as never)
+      try {
+        await OperatorDaemonTool.runDaemonStart(
+          ctx,
+          {
+            kind: "OperatorDaemonTool.StartDaemonInput",
+            label: "synd.underwriter",
+            daemonOptions: { underwriterExposureCaps: ExposureCaps }
+          },
+          new AbortController().signal
+        )
+        expect(recoverySpy).not.toHaveBeenCalled()
+      } finally {
+        runningSpy.mockRestore()
+        recoverySpy.mockRestore()
+      }
+    })
+  })
+
+  describe("planDaemonStart", () => {
+    it("plans one Step naming the operator, with no role inputs unless given", () => {
+      const step = OperatorDaemonTool.planDaemonStart(
+        Report.Actor.BatchOperator,
+        "start-daemon",
+        "start the operator's daemon",
+        {},
+        "batchopbbbb"
+      )
+      expect(step.input).toEqual({
+        kind: "OperatorDaemonTool.StartDaemonInput",
+        label: "batchopbbbb",
+        daemonOptions: {}
+      })
+      expect(step.runner).toBe(OperatorDaemonTool.runDaemonStart)
+    })
+
+    it("carries a role's inputs as typed input, so the Report records them", () => {
+      const daemonOptions: OperatorDaemonTool.StartDaemonOptions = {
+          underwriterExposureCaps: ["2.010000000 LIQSOL"]
+        },
+        step = OperatorDaemonTool.planDaemonStart(
+          Report.Actor.Underwriter,
+          "start-underwriter",
+          "start the underwriter's daemon",
+          {},
+          "synd.underwriter",
+          daemonOptions
+        )
+      expect(step.input).toEqual({
+        kind: "OperatorDaemonTool.StartDaemonInput",
+        label: "synd.underwriter",
+        daemonOptions
+      })
+    })
+  })
+
+  describe("underwriterArgs", () => {
+    const underwriter = fixtureOperatorAccount(
+        "synd.underwriter",
+        OperatorType.UNDERWRITER
+      ),
+      ExposureCaps = ["2.010000000 LIQSOL", "1.000000000 LIQETH"],
+      args = OperatorDaemonTool.underwriterArgs(
+        underwriter,
+        artifacts,
+        network,
+        keySourceFor,
+        ExposureCaps
+      )
+
+    it("runs the underwriter role on the batch plugin set at irreversible read-mode", () => {
+      expect(valuesOf(args, `--${Constants.READ_MODE_OPTION}`)).toEqual([
+        NodeopReadMode.irreversible
+      ])
+      expect(valuesOf(args, "--plugin")).toEqual([
+        ...OperatorDaemonTool.BatchOperatorPlugins
+      ])
+    })
+
+    it("bonds as the underwriter's on-chain account under every cap, without relaying", () => {
+      expect(valuesOf(args, "--batch-underwriter-account")).toEqual([
+        underwriter.account
+      ])
+      expect(valuesOf(args, "--batch-underwriter-max-exposure")).toEqual(
+        ExposureCaps
+      )
+      expect(valuesOf(args, "--batch-operator-account")).toEqual([])
+    })
+
+    it("signs WIRE with the underwriter's own key and keeps both outpost clients", () => {
+      const providers = valuesOf(args, "--signature-provider")
+      expect(providers).toHaveLength(3)
+      expect(providers[0]).toBe(
+        `wire-${underwriter.wire.publicKey},wire,wire,${underwriter.wire.publicKey},KEY:${underwriter.wire.privateKey}`
+      )
+      expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([
+        `ETHEREUM,eth-${underwriter.account},${network.ethereumRpcUrl},31337`
+      ])
+      expect(valuesOf(args, "--outpost-solana-client")).toEqual([
+        `SOLANA,sol-${underwriter.account},${network.solanaRpcUrl}`
+      ])
+      expect(valuesOf(args, "--solana-idl-file")).toEqual([
+        artifacts.solanaIdlFile
+      ])
+    })
+
+    it("rejects a batch operator", () => {
+      expect(() =>
+        OperatorDaemonTool.underwriterArgs(
+          fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+          artifacts,
+          network,
+          keySourceFor,
+          ExposureCaps
+        )
+      ).toThrow(/not an underwriter/)
+    })
+
+    it("rejects an underwriter with no exposure cap, which would bond nothing", () => {
+      expect(() =>
+        OperatorDaemonTool.underwriterArgs(
+          underwriter,
+          artifacts,
+          network,
+          keySourceFor,
+          []
+        )
+      ).toThrow(/no exposure cap/)
     })
   })
 

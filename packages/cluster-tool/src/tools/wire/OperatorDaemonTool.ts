@@ -356,21 +356,25 @@ export namespace OperatorDaemonTool {
   }
 
   /**
-   * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
-   * the operator's own WIRE signature provider (its unique `wire` K1 — the
-   * `account`'s active key) + batch plugin config + both outpost client
-   * specs.
+   * The argv every OPP daemon shares around its role's own flags: irreversible
+   * read-mode, the plugin set, the identity's own WIRE signature provider (its
+   * `wire` K1, the `account`'s active key), the poll and delivery-timeout
+   * tuning, the debugging sink, both outpost clients and the Solana IDL.
+   *
+   * @param operator - The identity the daemon acts as.
+   * @param artifacts - The prepared outpost deploy artifacts.
+   * @param network - The endpoints the daemon dials.
+   * @param keySourceFor - Where each key's signature provider reads it from.
+   * @param roleArgs - The role's own flags, placed after the WIRE provider.
+   * @returns The daemon's extra args.
    */
-  export function batchOperatorArgs(
+  function daemonArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
     network: OperatorDaemonNetwork,
-    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor,
+    roleArgs: readonly string[]
   ): string[] {
-    Assert.ok(
-      operator.type === OperatorType.BATCH,
-      `batchOperatorArgs: ${operator.label} is a ${OperatorType[operator.type]}, not a batch operator`
-    )
     assertOutpostKeys(operator)
     return [
       ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
@@ -388,7 +392,7 @@ export namespace OperatorDaemonTool {
           keySourceFor(operator.label, KeyType.K1)
         )
       ),
-      ...pair("--batch-operator-account", operator.account),
+      ...roleArgs,
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
         "--batch-delivery-timeout-ms",
@@ -411,12 +415,96 @@ export namespace OperatorDaemonTool {
     ]
   }
 
+  /**
+   * The full extra-arg block for a BATCH OPERATOR daemon: {@link daemonArgs}
+   * with the relay's `--batch-operator-account`.
+   *
+   * @param operator - The batch operator the daemon relays as.
+   * @param artifacts - The prepared outpost deploy artifacts.
+   * @param network - The endpoints the daemon dials.
+   * @param keySourceFor - Where each key's signature provider reads it from.
+   * @returns The daemon's extra args.
+   */
+  export function batchOperatorArgs(
+    operator: OperatorAccount,
+    artifacts: OperatorDaemonArtifacts,
+    network: OperatorDaemonNetwork,
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
+  ): string[] {
+    Assert.ok(
+      operator.type === OperatorType.BATCH,
+      `batchOperatorArgs: ${operator.label} is a ${OperatorType[operator.type]}, not a batch operator`
+    )
+    return daemonArgs(
+      operator,
+      artifacts,
+      network,
+      keySourceFor,
+      pair("--batch-operator-account", operator.account)
+    )
+  }
+
+  /**
+   * The full extra-arg block for an UNDERWRITER daemon: {@link daemonArgs}
+   * with the batch operator plugin's underwriter role and no relay. The node
+   * bonds `sysio.synd`'s envelope requests as `underwriter.account@active`,
+   * verifying each against its outpost's record, and approves and claims them;
+   * it signs with its one WIRE provider, whose key must alone satisfy that
+   * permission once the node has synced.
+   *
+   * @param underwriter - The underwriter identity the daemon bonds as.
+   * @param artifacts - The prepared outpost deploy artifacts.
+   * @param network - The endpoints the daemon dials.
+   * @param keySourceFor - Where each key's signature provider reads it from.
+   * @param exposureCaps - One `--batch-underwriter-max-exposure` asset per
+   *   token it may bond (e.g. `100.000000000 LIQSOL`); a token with none is
+   *   never bonded. Required: asserted here.
+   * @returns The daemon's extra args.
+   */
+  export function underwriterArgs(
+    underwriter: OperatorAccount,
+    artifacts: OperatorDaemonArtifacts,
+    network: OperatorDaemonNetwork,
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor,
+    exposureCaps: StartDaemonOptions["underwriterExposureCaps"]
+  ): string[] {
+    Assert.ok(
+      underwriter.type === OperatorType.UNDERWRITER,
+      `underwriterArgs: ${underwriter.label} is a ${OperatorType[underwriter.type]}, not an underwriter`
+    )
+    Assert.ok(
+      exposureCaps != null && exposureCaps.length > 0,
+      `underwriterArgs: ${underwriter.label} has no exposure cap, so it would bond nothing`
+    )
+    return daemonArgs(underwriter, artifacts, network, keySourceFor, [
+      ...pair("--batch-underwriter-account", underwriter.account),
+      ...exposureCaps.flatMap(cap =>
+        pair("--batch-underwriter-max-exposure", cap)
+      )
+    ])
+  }
+
   // ── Step: start an operator's daemon (process spawn — its own Step) ───────
+
+  /**
+   * Per-role inputs of {@link planDaemonStart}. A role's args builder asserts
+   * the ones it needs.
+   */
+  export interface StartDaemonOptions {
+    /**
+     * UNDERWRITER — one `--batch-underwriter-max-exposure` asset per token the
+     * daemon may bond ({@link underwriterArgs}).
+     */
+    readonly underwriterExposureCaps?: readonly string[]
+  }
 
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
+    /** The operator's durable key-store label. */
     readonly label: string
+    /** The role's own inputs. */
+    readonly daemonOptions: StartDaemonOptions
   }
 
   /**
@@ -429,6 +517,19 @@ export namespace OperatorDaemonTool {
    * bootstrapped set, and its group's consensus needs it to relay. Bootstrap
    * operator nodes are planned by `NodeConfig.plan` instead; this Step is for
    * operators provisioned AFTER the plan (flow scenarios).
+   *
+   * An underwriter's `account` must already hold its key on chain: the plugin
+   * picks its signer once, after the node has synced, and shuts the node down
+   * when no configured key satisfies the account's permission. This Step
+   * returns when the node answers, before that.
+   *
+   * @param actor - The Report actor.
+   * @param name - The Step name.
+   * @param description - The Step description.
+   * @param options - Step options.
+   * @param label - The operator's durable key-store label.
+   * @param daemonOptions - The role's own inputs.
+   * @returns The Step.
    */
   export function planDaemonStart<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -437,14 +538,15 @@ export namespace OperatorDaemonTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    label: string
+    label: string,
+    daemonOptions: StartDaemonOptions = {}
   ): ClusterBuildStep<C, StartDaemonInput> {
     return ClusterBuildStep.create<C, StartDaemonInput>(
       actor,
       name,
       description,
       options,
-      { kind: "OperatorDaemonTool.StartDaemonInput", label },
+      { kind: "OperatorDaemonTool.StartDaemonInput", label, daemonOptions },
       runDaemonStart
     )
   }
@@ -463,9 +565,18 @@ export namespace OperatorDaemonTool {
       artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
-      daemonArgs = match(operator.type)
+      extraArgs = match(operator.type)
         .with(OperatorType.BATCH, () =>
           batchOperatorArgs(operator, artifacts, network, keySourceFor)
+        )
+        .with(OperatorType.UNDERWRITER, () =>
+          underwriterArgs(
+            operator,
+            artifacts,
+            network,
+            keySourceFor,
+            input.daemonOptions.underwriterExposureCaps
+          )
         )
         .otherwise(() => {
           throw new Error(
@@ -483,7 +594,7 @@ export namespace OperatorDaemonTool {
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node: NodeConfig.createAdHoc(ctx.config, operator, ports),
       operators: [operator],
-      extraArgs: daemonArgs
+      extraArgs
     })
     ctx.log.info(
       `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
