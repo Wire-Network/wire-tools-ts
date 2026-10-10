@@ -135,6 +135,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
+| `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
@@ -426,6 +427,22 @@ depot needs them too:
 | `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
 
 Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
+
+### The LIQ kicker
+
+`sysio.kicker` pays governance-budgeted T5 WIRE gifts to LIQ holders through
+`sysio.liq::addyield` (wire-sysio `contracts/sysio.system/EMISSIONS.md`). The bootstrap
+follows `docs/platform-bootstrap-config.md` ("Kicker deployment and earmark"):
+
+| Phase | What it does |
+|---|---|
+| `Kicker` | every `create`, after `SyndicationConfig` and any `MockLiqPools`: deploys `sysio.kicker` through `setsyscode` (privileged, so its inline `sysio.token::transfer` may draw from `sysio` under `sysio@active`), reads the privilege back, then `setconfig` with a 1,000,000 WIRE budget and a 60 s minimum interval (`Steps.registry.KickerConfiguration`; the contract default interval is one hour) |
+| `KickerPools` | only with `--enable-mock-liq-pools` (`addpool` refuses a token without its LIQ/WIRE yield pool): one `addpool` per LIQ token at the contract defaults, 200 bps, a one-WIRE `min_gift` and no daily ceiling |
+
+The `--wire-build-path` build must carry `contracts/sysio.kicker/sysio.kicker.{wasm,abi}`.
+At the mock pools' 10-token supply a gift accrues about 0.2 WIRE a year, so no kick pays at
+the default minimum; a flow that exercises a payment lowers it with `setpool` and
+restores it.
 
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:

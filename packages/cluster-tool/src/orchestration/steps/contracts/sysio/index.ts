@@ -4,6 +4,7 @@ import { BondContractSteps } from "./BondContractSteps.js"
 import { ChainsContractSteps } from "./ChainsContractSteps.js"
 import { DclaimContractSteps } from "./DclaimContractSteps.js"
 import { EpochContractSteps } from "./EpochContractSteps.js"
+import { KickerContractSteps } from "./KickerContractSteps.js"
 import { LiqContractSteps } from "./LiqContractSteps.js"
 import { MsgchContractSteps } from "./MsgchContractSteps.js"
 import { OpregContractSteps } from "./OpregContractSteps.js"
@@ -27,6 +28,7 @@ export namespace SysioContractSteps {
   export import chains = ChainsContractSteps
   export import dclaim = DclaimContractSteps
   export import epoch = EpochContractSteps
+  export import kicker = KickerContractSteps
   export import liq = LiqContractSteps
   export import msgch = MsgchContractSteps
   export import opreg = OpregContractSteps

@@ -53,6 +53,10 @@ describe("Constants", () => {
         expect.arrayContaining(["sysio.andon", "sysio.bond", "sysio.synd"])
       )
     })
+    it("creates the kicker account, which is privileged rather than granted @sysio.code", () => {
+      expect(Constants.SYSTEM_ACCOUNTS).toContain("sysio.kicker")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.kicker")
+    })
     it("maps the underwriting, syndication and emergency-stop contract paths", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.andon"]).toBe("contracts/sysio.andon")
       expect(Constants.OPP_CONTRACT_PATHS["sysio.bond"]).toBe("contracts/sysio.bond")

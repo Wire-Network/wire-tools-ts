@@ -112,6 +112,76 @@ describe("Steps.registry", () => {
       expect(rows.find(row => row.pair_symbol === "9,LIQETHP")).toBeDefined()
     })
   })
+
+  describe("planKicker", () => {
+    it("deploys sysio.kicker through setsyscode, reads its privilege back, then configures it", () => {
+      const phase = Steps.registry.planKicker(
+        newBuild(),
+        "Kicker",
+        "deploy and configure the kicker",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "deploy-kicker",
+        "verify-kicker-privileged",
+        "configure-kicker"
+      ])
+      expect(phase.steps.every(step => step.actor === Report.Actor.Sysio)).toBe(true)
+      const [deploy, privileged, configure] = phase.steps
+      expect(deploy.input).toEqual(
+        expect.objectContaining({
+          kind: "ContractSteps.DeployInput",
+          contract: "kicker",
+          mode: Steps.contract.DeployMode.system
+        })
+      )
+      expect(privileged.input).toEqual({
+        kind: "ContractSteps.VerifyPrivilegedInput",
+        account: "sysio.kicker"
+      })
+      expect(configure.input).toEqual({
+        kind: "KickerContractSteps.SetconfigInput",
+        data: Steps.registry.KickerConfiguration
+      })
+    })
+
+    it("configures a one-million-WIRE budget and a one-minute minimum interval", () => {
+      expect(Steps.registry.KickerConfiguration).toEqual({
+        cfg: { budget_remaining: 1_000_000_000_000_000, min_interval_sec: 60 }
+      })
+    })
+  })
+
+  describe("planKickerPools", () => {
+    it("adds one pool per shadow at the contract defaults: 200 bps, one-WIRE minimum, no daily ceiling", () => {
+      expect(Steps.registry.KickerPoolRegistrations).toEqual([
+        { sym: "LIQETH", rate_bps: 200, min_gift: 1_000_000_000, max_gift_per_day: 0 },
+        { sym: "LIQSOL", rate_bps: 200, min_gift: 1_000_000_000, max_gift_per_day: 0 }
+      ])
+    })
+
+    it("returns a Phase of one Sysio addpool step per shadow", () => {
+      const phase = Steps.registry.planKickerPools(
+        newBuild(),
+        "KickerPools",
+        "start each token's accrual",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "add-kicker-pool-liqeth",
+        "add-kicker-pool-liqsol"
+      ])
+      phase.steps.forEach((step, index) => {
+        expect(step.actor).toBe(Report.Actor.Sysio)
+        expect(step.input).toEqual({
+          kind: "KickerContractSteps.AddpoolInput",
+          data: Steps.registry.KickerPoolRegistrations[index]
+        })
+      })
+    })
+  })
 })
 
 describe("Steps.registry — underwriting and syndication configuration", () => {
