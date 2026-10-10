@@ -439,6 +439,25 @@ describe("WireClient", () => {
     })
   })
 
+  describe("isPrivileged", () => {
+    it("reads get_account's privileged flag for the named account", async () => {
+      const client = new WireClient(config),
+        getAccount = jest
+          .spyOn(client.api.v1.chain, "get_account")
+          .mockResolvedValue({ privileged: true } as never)
+      expect(await client.isPrivileged("sysio.kicker")).toBe(true)
+      expect(getAccount).toHaveBeenCalledWith("sysio.kicker")
+    })
+
+    it("is false for an unprivileged account", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_account")
+        .mockResolvedValue({ privileged: false } as never)
+      expect(await client.isPrivileged("alice")).toBe(false)
+    })
+  })
+
   describe("getProducerSchedule", () => {
     it("projects sdk-core's Name-typed entries onto plain producer names, in slot order", async () => {
       const client = new WireClient(config)

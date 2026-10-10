@@ -31,12 +31,15 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { ProtocolTiming } from "../../Constants.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { ContractSteps } from "./ContractSteps.js"
 import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
+import { KickerContractSteps } from "./contracts/sysio/KickerContractSteps.js"
 import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { SyndContractSteps } from "./contracts/sysio/SyndContractSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
+  SysioContractAccount,
   SysioContractName,
   SysioChainsChainkind,
   SysioTokensTokenkind,
@@ -120,6 +123,34 @@ export namespace RegistrySteps {
   export const SyndicationChallengeExtra = 1_000_000_000
   /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
   export const MinimumDesyndication = 1_000_000
+
+  /**
+   * `sysio.kicker`'s governance earmark on the cluster (WIRE base units): one million
+   * WIRE. `setconfig` REPLACES the remaining budget; the draw is further capped by the
+   * treasury balance net of pending emissions, unclaimed pay and the remaining emission
+   * ceiling, which on the cluster leaves hundreds of millions of WIRE free, so this
+   * earmark is what bounds the gifts. Changing it changes how much a flow can draw.
+   */
+  export const KickerBudget = 1_000_000_000_000_000
+  /**
+   * `sysio.kicker`'s minimum unpaid interval on the cluster (s): one minute, the
+   * `sysio.epoch` duration floor, so a flow sees a payable interval within an epoch.
+   * The contract's own default is one hour (`kicker_math::default_min_interval_sec`);
+   * a real depot sets its interval by governance, and on a real depot it is a floor
+   * on keeper cadence, not a schedule.
+   */
+  export const KickerMinIntervalSec = 60
+  /** Each LIQ token's annual simple rate (bps): the contract default, 2 %. */
+  export const KickerRateBps = 200
+  /**
+   * Each LIQ token's minimum gift (WIRE base units): the contract default, one WIRE.
+   * At the mock pools' 10-token supply the gift accrues ~0.2 WIRE a year, so no kick
+   * pays at this minimum; a flow that exercises a payment lowers it with `setpool`
+   * and restores this value.
+   */
+  export const KickerMinGift = 1_000_000_000
+  /** Each LIQ token's daily spend ceiling (WIRE base units): 0, the contract's "no ceiling". */
+  export const KickerMaxGiftPerDay = 0
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -458,6 +489,32 @@ export namespace RegistrySteps {
     }))
 
   /**
+   * The bootstrap's `sysio.kicker::setconfig` — {@link KickerBudget} and
+   * {@link KickerMinIntervalSec}. Shared by {@link planKicker} and its unit test.
+   */
+  export const KickerConfiguration: SysioContracts.SysioKickerSetconfigAction = {
+    cfg: {
+      budget_remaining: KickerBudget,
+      min_interval_sec: KickerMinIntervalSec
+    }
+  }
+
+  /**
+   * The `sysio.kicker::addpool` rows — one per shadow, in
+   * {@link ShadowLiqTokenPairs} order, at the contract's default rate, minimum gift
+   * and (absent) daily ceiling. `addpool` refuses a token without its LIQ/WIRE
+   * yield pool, so these follow {@link MockLiqPoolRegistrations}. Shared by
+   * {@link planKickerPools} (one Report step per row) and its unit test.
+   */
+  export const KickerPoolRegistrations: SysioContracts.SysioKickerAddpoolAction[] =
+    ShadowLiqTokenPairs.map(([, tokenCodename]) => ({
+      sym: tokenCodename,
+      rate_bps: KickerRateBps,
+      min_gift: KickerMinGift,
+      max_gift_per_day: KickerMaxGiftPerDay
+    }))
+
+  /**
    * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
    * {@link runSeedRegistry} registers, in {@link ShadowLiqTokenPairs} order. A pair with no
    * row releases no syndication and accepts no desyndication, so a real depot configures
@@ -697,6 +754,90 @@ export namespace RegistrySteps {
           `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
           options,
           MockLiqPoolRegistrations[index]
+        )
+    )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase standing up `sysio.kicker`: deploy it privileged through
+   * `setsyscode`, read the privilege back (its `kick` draws from `sysio` with an
+   * inline transfer under `sysio@active`, which only a privileged contract may
+   * send), then `setconfig` with {@link KickerConfiguration}. Registry setup a
+   * real depot performs too (`docs/platform-bootstrap-config.md`, "Kicker
+   * deployment and earmark"), so the bootstrap composes it unconditionally, after
+   * the emission config and any yield pool exist. Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every step.
+   * @returns The self-registered kicker phase.
+   */
+  export function planKicker<C extends ClusterBuildContext = ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const account = SysioContractAccount[SysioContractName.kicker],
+      steps: ClusterBuildStep.Any<C>[] = [
+        ContractSteps.planDeploy<C>(
+          Report.Actor.Sysio,
+          "deploy-kicker",
+          "setsyscode sysio.kicker (privileged)",
+          options,
+          SysioContractName.kicker,
+          ContractSteps.DeployMode.system
+        ),
+        ContractSteps.planVerifyPrivileged<C>(
+          Report.Actor.Sysio,
+          "verify-kicker-privileged",
+          `${account} is privileged, so kick may draw from sysio under sysio@active`,
+          options,
+          account
+        ),
+        KickerContractSteps.planSetconfig<C>(
+          Report.Actor.Sysio,
+          "configure-kicker",
+          `set the kicker's ${KickerBudget}-unit WIRE budget and ${KickerMinIntervalSec} s minimum interval`,
+          options,
+          KickerConfiguration
+        )
+      ]
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase of per-token `sysio.kicker::addpool` steps
+   * ({@link KickerPoolRegistrations}), which start each LIQ token's accrual clock.
+   * `addpool` requires the token's LIQ/WIRE yield pool, which only
+   * {@link planMockLiqPools} registers on a cluster, so the bootstrap composes
+   * this phase exactly when it composes that one, after it and after
+   * {@link planKicker}. Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every addpool step.
+   * @returns The self-registered pool phase.
+   */
+  export function planKickerPools<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = KickerPoolRegistrations.map(
+      registration =>
+        KickerContractSteps.planAddpool<C>(
+          Report.Actor.Sysio,
+          `add-kicker-pool-${registration.sym.toLowerCase()}`,
+          `start ${registration.sym}'s kicker accrual at ${registration.rate_bps} bps`,
+          options,
+          registration
         )
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)

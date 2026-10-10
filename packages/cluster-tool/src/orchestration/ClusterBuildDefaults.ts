@@ -1014,6 +1014,26 @@ export namespace ClusterBuildDefaults {
         {}
       )
     }
+    // The LIQ kicker, in the order `docs/platform-bootstrap-config.md` gives a
+    // deployment: deployed privileged and configured after the emission config
+    // (`Emissions`) and every `regliqpool`, then one `addpool` per LIQ token.
+    // Deploy + budget are registry setup a real depot performs too —
+    // unconditional; `addpool` needs the token's yield pool, so it rides
+    // exactly the bootstraps that seed the pools.
+    Steps.registry.planKicker<C>(
+      prerequisites,
+      "Kicker",
+      "Deploy sysio.kicker privileged and set its budget",
+      {}
+    )
+    if (config.enableMockLiqPools) {
+      Steps.registry.planKickerPools<C>(
+        prerequisites,
+        "KickerPools",
+        "Start each LIQ token's kicker accrual",
+        {}
+      )
+    }
     if (config.enableMockSyndicationImport) {
       Steps.registry.planMockSyndicationImport<C>(
         prerequisites,

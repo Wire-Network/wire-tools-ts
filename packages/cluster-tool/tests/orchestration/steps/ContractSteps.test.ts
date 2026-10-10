@@ -49,3 +49,45 @@ describe("Steps.contract.grantSysioCode", () => {
     expect(typeof step.runner).toBe("function")
   })
 })
+
+describe("Steps.contract.verifyPrivileged", () => {
+  function step() {
+    return Steps.contract.planVerifyPrivileged(
+      Report.Actor.Sysio,
+      "verify-kicker-privileged",
+      "sysio.kicker is privileged",
+      {},
+      "sysio.kicker"
+    )
+  }
+
+  /** A context whose chain answers `privileged` for every account. */
+  function contextWith(privileged: boolean) {
+    const isPrivileged = jest.fn(async (_account: string) => privileged)
+    return { ctx: { wire: { isPrivileged } } as never, isPrivileged }
+  }
+
+  it("carries the target account as typed input", () => {
+    const verify = step()
+    expect(verify.actor).toBe(Report.Actor.Sysio)
+    expect(verify.input.kind).toBe("ContractSteps.VerifyPrivilegedInput")
+    expect(verify.input.account).toBe("sysio.kicker")
+  })
+
+  it("passes when the chain marks the account privileged", async () => {
+    const verify = step(),
+      { ctx, isPrivileged } = contextWith(true)
+    await expect(
+      Steps.contract.runVerifyPrivileged(ctx, verify.input, new AbortController().signal)
+    ).resolves.toBeUndefined()
+    expect(isPrivileged).toHaveBeenCalledWith("sysio.kicker")
+  })
+
+  it("fails, naming the account, when it is not privileged", async () => {
+    const verify = step(),
+      { ctx } = contextWith(false)
+    await expect(
+      Steps.contract.runVerifyPrivileged(ctx, verify.input, new AbortController().signal)
+    ).rejects.toThrow("sysio.kicker is not privileged")
+  })
+})

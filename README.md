@@ -427,6 +427,22 @@ depot needs them too:
 
 Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
 
+### The LIQ kicker
+
+`sysio.kicker` pays governance-budgeted T5 WIRE gifts to LIQ holders through
+`sysio.liq::addyield` (wire-sysio `contracts/sysio.system/EMISSIONS.md`). The bootstrap
+follows `docs/platform-bootstrap-config.md` ("Kicker deployment and earmark"):
+
+| Phase | What it does |
+|---|---|
+| `Kicker` | every `create`, after `SyndicationConfig` and any `MockLiqPools`: deploys `sysio.kicker` through `setsyscode` (privileged, so its inline `sysio.token::transfer` may draw from `sysio` under `sysio@active`), reads the privilege back, then `setconfig` with a 1,000,000 WIRE budget and a 60 s minimum interval (`Steps.registry.KickerConfiguration`; the contract default interval is one hour) |
+| `KickerPools` | only with `--enable-mock-liq-pools` (`addpool` refuses a token without its LIQ/WIRE yield pool): one `addpool` per LIQ token at the contract defaults, 200 bps, a one-WIRE `min_gift` and no daily ceiling |
+
+The `--wire-build-path` build must carry `contracts/sysio.kicker/sysio.kicker.{wasm,abi}`.
+At the mock pools' 10-token supply a gift accrues about 0.2 WIRE a year, so no kick pays at
+the default minimum; a flow that exercises a payment lowers it with `setpool` and
+restores it.
+
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:
 
