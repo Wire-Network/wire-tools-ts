@@ -80,8 +80,8 @@ describe("decodeAttestation", () => {
   })
 
   it.each([
-    60950, 60958, 3001, 3002, 3004, 43520, 60928, 60934, 60951, 60952, 60955,
-    60962
+    60950, 60958, 3001, 3002, 3004, 43520, 60928, 60932, 60934, 60945, 60951,
+    60952, 60955, 60962
   ])(
     "renders removed wire type %s as raw without blocking active decoding",
     type => {

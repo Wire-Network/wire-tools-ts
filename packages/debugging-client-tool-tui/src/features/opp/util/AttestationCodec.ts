@@ -1,8 +1,6 @@
 import {
   AttestationType,
   BatchOperatorGroups,
-  ChallengeOperatorHash,
-  ChallengeRequest,
   NodeOwnerRegistration,
   OperatorAction,
   Operators,
@@ -33,8 +31,6 @@ export const AttestationDecoders: Partial<
   Record<AttestationType, AttestationMessageType>
 > = {
   [AttestationType.OPERATOR_ACTION]: OperatorAction,
-  [AttestationType.CHALLENGE_RESPONSE]: ChallengeOperatorHash,
-  [AttestationType.CHALLENGE_REQUEST]: ChallengeRequest,
   [AttestationType.OPERATORS]: Operators,
   [AttestationType.BATCH_OPERATOR_GROUPS]: BatchOperatorGroups,
   // The registration payload (actor, keys, account, tier) — what BAR's
