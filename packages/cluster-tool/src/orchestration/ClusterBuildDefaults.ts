@@ -53,12 +53,6 @@ const WireSupply = "1000000000.000000000 WIRE"
 /** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
 const WireSymbol = "9,WIRE"
 /**
- * `sysio.liq`'s T5 kicker: the share of every yield intake requested from T5
- * and folded into the same index bump, in basis points. Mirrors the contract
- * default, so a cluster pays yield the way the network will.
- */
-const LiqKickerBps = 200
-/**
  * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
  * and `clear`, which move no funds; its resource policy pays for them.
  */
@@ -972,7 +966,7 @@ export namespace ClusterBuildDefaults {
     )
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
     // the swap's governance + system token, one shadow symbol per registered liq
-    // token, the T5 kicker. Registry setup a real depot performs too — unconditional.
+    // token. Registry setup a real depot performs too — unconditional.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "SwapConfig",
@@ -997,19 +991,6 @@ export namespace ClusterBuildDefaults {
       "ShadowLiqTokens",
       "Open the shadow liq symbols on sysio.liq",
       {}
-    )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "LiqConfig",
-      "Configure sysio.liq"
-    ).push(
-      Steps.contracts.sysio.liq.planSetkicker<C>(
-        Actor.Sysio,
-        "configure-liq-kicker",
-        "set the T5 yield kicker",
-        {},
-        { bps: LiqKickerBps }
-      )
     )
     // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
     // sysio.synd rules, and the verify of the syndication preconditions. A pair with

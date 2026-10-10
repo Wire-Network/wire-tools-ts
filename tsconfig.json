@@ -21,7 +21,6 @@
     { "path": "./packages/flow-batch-operator-slashing/tsconfig.json" },
     { "path": "./packages/flow-node-owner-nft/tsconfig.json" },
     { "path": "./packages/flow-emissions-soak/tsconfig.json" },
-    { "path": "./packages/flow-yield-distribution/tsconfig.json" },
     { "path": "./packages/flow-liq-syndication/tsconfig.json" },
     { "path": "./packages/flow-liq-yield/tsconfig.json" },
     { "path": "./packages/flow-syndication-underwriting/tsconfig.json" },
