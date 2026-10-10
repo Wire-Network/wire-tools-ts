@@ -22,6 +22,7 @@
     { "path": "./packages/flow-node-owner-nft/tsconfig.json" },
     { "path": "./packages/flow-emissions-soak/tsconfig.json" },
     { "path": "./packages/flow-liq-syndication/tsconfig.json" },
+    { "path": "./packages/flow-liq-kicker/tsconfig.json" },
     { "path": "./packages/flow-liq-yield/tsconfig.json" },
     { "path": "./packages/flow-syndication-underwriting/tsconfig.json" },
     { "path": "./packages/flow-emergency-stop/tsconfig.json" },
