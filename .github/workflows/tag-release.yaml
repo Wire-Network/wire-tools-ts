@@ -131,8 +131,8 @@ jobs:
   # One installer build per OS, all from the resolved commit. electron-builder
   # only builds a platform's installers on that platform (dmg needs macOS,
   # nsis is built natively on Windows), so this is a matrix of three runners.
-  # Only ql-tool-app's own workspace dependencies are built: the webpack
-  # bundles in dist/app consume @wireio/ql-shared's lib/ output.
+  # The webpack bundles in dist/app consume @wireio/ql-shared's lib/ output,
+  # which the repository build emits.
   package-app:
     name: Package ql-tool-app (${{ matrix.platform }})
     needs: resolve
@@ -172,10 +172,13 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install and build the app's workspace dependencies
+      # The repository build (`tsc -b` over every project reference) is the build
+      # path the gate exercises; it emits ql-shared's lib/ that the app's webpack
+      # bundles consume.
+      - name: Install and build the workspace
         run: |
           pnpm install
-          pnpm --filter "@wireio/ql-shared..." run build
+          pnpm build
 
       # package:<platform> downloads the Electron binary (setup:electron), builds
       # the webpack bundles and runs electron-builder for this OS's targets.
