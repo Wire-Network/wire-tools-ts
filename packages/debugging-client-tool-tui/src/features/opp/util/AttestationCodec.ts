@@ -13,7 +13,6 @@ import {
   PretokenYield,
   StakeResult,
   StakeUpdate,
-  StakingReward,
   SwapRemit,
   SwapRequest,
   SwapRevert,
@@ -61,7 +60,6 @@ export const AttestationDecoders: Partial<
   // commitNode emits and sysio.msgch's dispatch_node_owner_reg decodes; the
   // legacy 3-field NodeOwnerReg message is no longer emitted by any outpost.
   [AttestationType.NODE_OWNER_REG]: NodeOwnerRegistration,
-  [AttestationType.STAKING_REWARD]: StakingReward,
   [AttestationType.STAKE_RESULT]: StakeResult,
   [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,
   [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
