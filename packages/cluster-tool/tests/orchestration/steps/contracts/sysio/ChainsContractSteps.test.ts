@@ -15,9 +15,7 @@ describe("Steps.contracts.sysio.chains", () => {
       // setoutpost once the daemon artifacts resolve.
       outpost: {
         opp_addr: "",
-        opp_inbound_addr: "",
-        operator_registry_addr: "",
-        source_deposit_addr: ""
+        opp_inbound_addr: ""
       }
     }
     const step = Steps.contracts.sysio.chains.planRegchain(

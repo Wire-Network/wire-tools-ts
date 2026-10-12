@@ -102,15 +102,12 @@ const ExternalEthereumRpcUrl = "https://ethereum-rpc.external.example/"
 const ExternalSolanaRpcUrl = "https://solana-rpc.external.example/"
 
 /**
- * The deployed ETH outpost addresses the operator daemons' argv resolves
- * through — every key `OperatorDaemonTool.assertAddress` demands (batch reads
- * OPP + OPPInbound, underwriter reads OperatorRegistry + ReserveManager).
+ * The deployed ETH outpost addresses the batch-operator daemon's argv resolves
+ * through (OPP + OPPInbound).
  */
 const OutpostAddresses = {
   OPP: "0x1111111111111111111111111111111111111111",
-  OPPInbound: "0x2222222222222222222222222222222222222222",
-  OperatorRegistry: "0x3333333333333333333333333333333333333333",
-  ReserveManager: "0x4444444444444444444444444444444444444444"
+  OPPInbound: "0x2222222222222222222222222222222222222222"
 }
 
 /** The one hardhat artifact the ABI generation needs (`ethereumAbiFiles.length > 0`). */

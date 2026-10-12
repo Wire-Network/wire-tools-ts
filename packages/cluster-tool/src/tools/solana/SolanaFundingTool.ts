@@ -40,10 +40,6 @@ const log = getLogger(__filename)
  * `@solana/spl-token`'s `createMint`, which relies on a WebSocket subscription
  * for confirmation the test validator doesn't reliably serve) and confirmed via
  * the polling {@link confirmSignature}.
- *
- * Recipient ATAs for swap *destinations* are NOT pre-created — the on-chain
- * `handle_swap_remit` SPL branch creates them on demand with the Reserve PDA as
- * rent payer.
  */
 export namespace SolanaFundingTool {
   /** Minimum SPL mint decimal scale. */
