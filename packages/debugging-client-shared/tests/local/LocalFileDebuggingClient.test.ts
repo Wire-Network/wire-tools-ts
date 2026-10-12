@@ -202,14 +202,24 @@ describe("LocalFileDebuggingClient", () => {
     it("emits a diff for newly-discovered sources", async () => {
       const events: ProcessLivenessEvent[] = []
       const sub = await client.subscribe(StreamTopic.ProcessLiveness, {})
-      sub.on("event", e => events.push(e))
-      fixture.writePid("data/node_bios", "nodeop", process.pid)
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.ProcessLivenessPollMs + 200)
-      )
-      sub.close(ClosedReason.ClientRequested)
-      const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
-      expect(allLabels).toContain("nodeop")
+      // A poll also awaits filesystem reads; observing its event avoids racing
+      // that work against a fixed delay on a busy runner. Jest bounds the wait.
+      const discovered = new Promise<void>(resolve => {
+        sub.on("event", event => {
+          events.push(event)
+          if (event.setSnapshots.some(snapshot => snapshot.label === "nodeop")) {
+            resolve()
+          }
+        })
+      })
+      try {
+        fixture.writePid("data/node_bios", "nodeop", process.pid)
+        await discovered
+        const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
+        expect(allLabels).toContain("nodeop")
+      } finally {
+        sub.close(ClosedReason.ClientRequested)
+      }
     }, 10_000)
   })
 
