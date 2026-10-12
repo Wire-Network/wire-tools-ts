@@ -80,6 +80,14 @@ and never hand-invoke that pool locally.
   `release/prep-v*` PR is still open (one release in flight at a time), and
   `tag-release.yaml` auto-triggers when a release PR merges —
   `workflow_dispatch` remains the manual/recovery path for both.
+  `tag-release.yaml` builds the `ql-tool-app` installers (`package-app` matrix:
+  Linux AppImage + deb, macOS dmg arm64 + x64, Windows nsis; unsigned) before the
+  `release` Environment gate, publishes every non-private package to npm
+  (`ql-shared` and `ql-tool-cli` included), and attaches the installers to the
+  GitHub release. `gh workflow run tag-release.yaml --ref <branch> -f dry_run=true`
+  runs the same flow on that branch without the Environment gate and changes
+  nothing: npm publish runs with `--dry-run`, and the tag and release are only
+  reported (the installers stay as the run's `ql-tool-app-*` artifacts).
 
 ## Monorepo Structure
 

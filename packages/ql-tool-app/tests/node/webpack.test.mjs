@@ -92,3 +92,17 @@ test("webpack and electron-builder read ONE app identity", () => {
   Assert.equal(manifest.desktopName, identity.DesktopName)
   Assert.equal(manifest.homepage, identity.Homepage)
 })
+
+test("installer names carry executable, version, OS and architecture for the release", () => {
+  const identity = require(Path.join(packagePath, "etc", "app-identity", "app-identity.cjs")),
+    builder = require(Path.join(packagePath, "etc", "electron-builder", "electron-builder.config.cjs")),
+    [dmg] = builder.mac.target
+  Assert.equal(builder.artifactName, `${identity.ExecutableName}-\${version}-\${os}-\${arch}.\${ext}`)
+  Assert.doesNotMatch(builder.artifactName, /\s/)
+  Assert.deepEqual(builder.linux.target, ["AppImage", "deb"])
+  Assert.equal(dmg.target, "dmg")
+  Assert.deepEqual([...dmg.arch].sort(), ["arm64", "x64"])
+  Assert.equal(builder.mac.identity, null, "macOS builds stay unsigned")
+  Assert.deepEqual(builder.win.target, ["nsis"])
+  Assert.equal(builder.publish, null, "the release workflow uploads installers, not electron-builder")
+})
