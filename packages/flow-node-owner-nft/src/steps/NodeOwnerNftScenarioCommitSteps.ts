@@ -2,8 +2,7 @@ import Assert from "node:assert"
 import {
   ClusterBuildContext,
   ClusterBuildStep,
-  ClusterConfigProvider,
-  EthereumCollateralTool,
+  OperatorDaemonArtifactsKey,
   NodeOwnerTier,
   Report,
   approveNodeEscrow,
@@ -42,12 +41,12 @@ export namespace NodeOwnerNftScenarioCommitSteps {
    * @param ctx - The build context (ethereum path + anvil client).
    * @returns The signer-bound contract surface.
    */
-  export function resolveBar<C extends ClusterBuildContext>(ctx: C): BarContract {
+  export function resolveBar<C extends ClusterBuildContext>(
+    ctx: C
+  ): BarContract {
     return loadBar(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      ctx.outputs.assert(OperatorDaemonArtifactsKey).ethereumAddresses,
       ctx.ethereum.wallet.signer
     )
   }

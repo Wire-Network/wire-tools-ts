@@ -6,6 +6,7 @@
  */
 import Assert from "node:assert"
 import Dgram from "node:dgram"
+import Net from "node:net"
 import { Deferred, guard } from "@wireio/shared"
 
 /**
@@ -140,6 +141,30 @@ export function toDialAddress(address: string): string {
     address.length === 0
     ? Localhost
     : address
+}
+
+/**
+ * Check a registry candidate for IPv6 TCP listeners, independently of IPv4.
+ * An IPv6 wildcard conflicts with specific IPv6 listeners, including v6-only
+ * listeners that the allocator's IPv4 probe cannot see. Hosts with IPv6 disabled
+ * have no IPv6 listener to collide with. Other errors fail closed.
+ *
+ * @param port - Candidate selected by BindConfigProvider.
+ * @returns Whether IPv6 permits this candidate.
+ */
+export function isIpv6PortFree(port: number): Promise<boolean> {
+  return Deferred.useCallback<boolean>(deferred => {
+    const probe = Net.createServer()
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      guard(() => probe.close())
+      deferred.resolve(
+        error.code === "EAFNOSUPPORT" || error.code === "EADDRNOTAVAIL"
+      )
+    })
+    probe.listen({ port, host: ListenAllAddressV6, ipv6Only: true }, () =>
+      probe.close(() => deferred.resolve(true))
+    )
+  }).promise
 }
 
 /**

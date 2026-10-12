@@ -48,7 +48,9 @@ export interface ConfirmSignatureOptions {
 
 /**
  * Poll `getSignatureStatus(signature)` until the transaction is
- * confirmed/finalized, it reports an error, or `deadlineMs` elapses (then
+ * confirmed/finalized WITHOUT an error, it reports an error (thrown at once: a
+ * transaction the runtime processed with an error is still included in a
+ * block, so it reaches those statuses too), or `deadlineMs` elapses (then
  * throws). Each status RPC is bounded by `rpcTimeoutMs` via {@link withTimeout}
  * so a hung validator makes the individual poll reject rather than block
  * forever — the deadline budget is always honoured.
@@ -103,13 +105,19 @@ export async function confirmSignature(
       )
     pollCount++
 
+    // The error is checked FIRST: a transaction the runtime processed with an
+    // error is still included in a block, so its status reaches `confirmed`
+    // and `finalized` too, and returning on the status would report an
+    // on-chain failure as success (flow-liq-yield run 4: a liqSOL deposit
+    // refused by `EpochRewardsActive` passed as OK, and the next step found
+    // the ATA it never created).
+    if (txError)
+      throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
     if (
       confirmationStatus === SolanaClient.ConfirmationStatus.confirmed ||
       confirmationStatus === SolanaClient.ConfirmationStatus.finalized
     )
       return
-    if (txError)
-      throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
 
     if (options.rebroadcast && Date.now() - lastRebroadcast >= rebroadcastMs) {
       await withTimeout(

@@ -263,3 +263,117 @@ describe("EthereumOutpostBootstrapper.oppBootstrap", () => {
     ).rejects.toThrow(/activeGroupIndex 3 is out of range/)
   })
 })
+
+describe("EthereumOutpostBootstrapper deploy configs", () => {
+  const rpcUrl = "http://anvil.invalid",
+    deploymentsPath = "/tmp/cluster/data/ethereum-deployments",
+    roster: EthereumOutpostInitialRoster = {
+      groups: [[AnvilAccount1Address]],
+      epochDurationSec: SeedEpochDurationSec
+    },
+    /** The panic account, derived independently of the code under test. */
+    panicAccount = ethers.HDNodeWallet.fromPhrase(
+      EthereumOutpostBootstrapper.AnvilMnemonic,
+      undefined,
+      `${EthereumOutpostBootstrapper.DerivationPath}${EthereumOutpostBootstrapper.PanicAccountIndex}`
+    ).address
+
+  it("reserves the last prefunded anvil account for the panic account", () => {
+    expect(EthereumOutpostBootstrapper.PanicAccountIndex).toBe(49)
+    // Clear of the deployer and of every index the flows name (35–47) and the
+    // swap users (32 up).
+    expect(EthereumOutpostBootstrapper.PanicAccountIndex).toBeGreaterThan(47)
+    expect(
+      EthereumOutpostBootstrapper.anvilWallet(
+        EthereumOutpostBootstrapper.PanicAccountIndex
+      ).address
+    ).toBe(panicAccount)
+    expect(EthereumOutpostBootstrapper.anvilWallet(0).address).toBe(
+      AnvilAccount0Address
+    )
+  })
+
+  it("writes the outpost config with the three syndication keys as decimal strings", () => {
+    const config = EthereumOutpostBootstrapper.outpostDeployConfig(
+      rpcUrl,
+      AnvilAccount0PrivateKey,
+      deploymentsPath,
+      panicAccount,
+      roster
+    )
+    expect(JSON.parse(JSON.stringify(config))).toEqual({
+      url: rpcUrl,
+      key: AnvilAccount0PrivateKey,
+      addressFile: Path.join(deploymentsPath, "outpost-addrs.json"),
+      gasLimitFile: Path.join(deploymentsPath, "outpost-gas-limits.json"),
+      useMockAggregator: true,
+      initialOperatorGroups: [[AnvilAccount1Address]],
+      epochDurationSec: SeedEpochDurationSec,
+      panicAccount,
+      // deployOutpost.ts accepts digits only; 1,000 liqETH in wei and 0.01
+      // liqETH in depot units.
+      maxSyndicationPerTransfer: "1000000000000000000000",
+      yieldDeadband: "10000000"
+    })
+    expect(ethers.parseEther("1000").toString()).toBe(
+      config.maxSyndicationPerTransfer
+    )
+  })
+
+  it("writes the liqETH config with the panic account every DeployScript grants", () => {
+    expect(
+      JSON.parse(
+        JSON.stringify(
+          EthereumOutpostBootstrapper.liqEthDeployConfig(
+            rpcUrl,
+            AnvilAccount0PrivateKey,
+            deploymentsPath,
+            panicAccount
+          )
+        )
+      )
+    ).toEqual({
+      url: rpcUrl,
+      key: AnvilAccount0PrivateKey,
+      addressFile: Path.join(deploymentsPath, "liqeth-addrs.json"),
+      gasLimitFile: Path.join(deploymentsPath, "liqeth-gas-limits.json"),
+      entryQueue: 47,
+      dailyRateBPS: 283,
+      rewardCooldown: 100,
+      withdrawalDelay: 50,
+      panicAccount
+    })
+  })
+
+  it("keeps the two address files the deploy clears before every run", () => {
+    expect([...EthereumOutpostBootstrapper.StaleDeployArtifactFiles]).toEqual([
+      "liqeth-addrs.json",
+      "outpost-addrs.json"
+    ])
+  })
+})
+
+describe("EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount", () => {
+  it("accepts every roster whose operator indices stay below the panic account", () => {
+    // emissions-soak's 21 batch operators + 1 underwriter reach index 22.
+    expect(() =>
+      EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(21, 1)
+    ).not.toThrow()
+    expect(() =>
+      EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(3, 0)
+    ).not.toThrow()
+    // The last free index: 45 + 3 + 1 = 49 is the panic account's, 48 is not.
+    expect(() =>
+      EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(45, 3)
+    ).not.toThrow()
+  })
+
+  it("refuses a roster whose last operator lands on the panic account", () => {
+    expect(() =>
+      EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(45, 4)
+    ).toThrow(/reach HD index 49, which is not below the panic account's 49/)
+    expect(() =>
+      EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(49, 0)
+    ).toThrow(/not below the panic account's/)
+  })
+})

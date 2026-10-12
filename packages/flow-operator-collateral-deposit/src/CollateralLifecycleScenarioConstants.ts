@@ -1,19 +1,25 @@
-import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
-
 /**
- * Constants for the collateral-lifecycle flow. Twice the minimum bond is deposited
- * on BOTH outpost chains (all-chain collateral invariant), half the ETH bond is
- * withdrawn while retaining the minimum. Every poll deadline uses extension-inclusive
- * epochs ({@link ProtocolTiming.effectiveEpochSec}) so the flow scales with the
- * epoch duration and survives extended epochs.
+ * Constants for the collateral-lifecycle flow. The operator bonds WIRE on the depot
+ * through `sysio.opreg::deposit`, withdraws half of it, and pulls the matured withdrawal
+ * with `claimremit`. Every amount is in depot atomic units (WIRE has 9 decimals). The one
+ * epoch-bound wait — the withdrawal maturing into a claim — is `WireCollateralTool`'s
+ * remit-claim deadline, derived from the cluster's resolved epoch duration, so the flow scales
+ * with the epoch duration and survives extended epochs.
  */
 export namespace CollateralLifecycleScenarioConstants {
   /** The flow's NON-bootstrapped batch operator's durable harness `label` handle (its on-chain `account` is node-owner-generated). */
   export const DepositorLabel = "depositor"
-  /** Anvil-mnemonic HD index for the depositor's ETH wallet (past every bootstrap slot). */
+  /**
+   * Anvil-mnemonic HD index for the depositor's ETH identity (past every bootstrap slot). The
+   * identity backs its Ethereum authex link and pays its daemon's Ethereum delivery gas from
+   * anvil's prefunded range.
+   */
   export const DepositorEthereumHdIndex = 35
-  /** Lamports airdropped to the depositor's SOL keypair (bond + fees headroom). */
+  /**
+   * Lamports airdropped to the depositor's SOL keypair: its daemon pays the fee on every
+   * Solana `epoch_in` delivery once the schedule picks it up. Changing it changes how many
+   * deliveries the daemon can pay for.
+   */
   export const DepositorAirdropLamports = 5_000_000_000n
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
@@ -28,49 +34,15 @@ export namespace CollateralLifecycleScenarioConstants {
    */
   export const AdHocDaemonCount = 1
 
-  /** Minimum collateral retained per chain to keep the depositor eligible to relay. */
-  export const MinimumBond = 1_000_000n
-  /** Collateral bonded per chain (raw outpost units — wei / lamports). */
-  export const BondAmount = 2_000_000n
-  /** ETH bond released mid-flow (half — leaves exactly the required minimum). */
-  export const WithdrawAmount = 1_000_000n
-  /** Escrow expected on the ETH outpost after the withdraw remit. */
+  /** WIRE bonded on the depot — 2 WIRE. */
+  export const BondAmount = 2_000_000_000n
+  /** WIRE withdrawn mid-flow — half the bond. */
+  export const WithdrawAmount = 1_000_000_000n
+  /** The `(WIRE, WIRE)` balance row once the withdrawal has flushed. */
   export const ExpectedRemainingBalance = BondAmount - WithdrawAmount
-
-  /** Registered chain slug codes (must match the bootstrap registry seed). */
-  export const EthereumChainCode = SlugName.from("ETHEREUM")
-  export const SolanaChainCode = SlugName.from("SOLANA")
-  /** Registered token slug codes. */
-  export const EthereumTokenCode = SlugName.from("ETH")
-  export const SolanaTokenCode = SlugName.from("SOL")
-
-  /** Epochs budgeted for a deposit/withdraw REQUEST to relay + settle on the depot. */
-  export const RelayEpochBudget = 9
-  /** Epochs budgeted for the withdraw wait window + flush + REMIT propagation. */
-  export const RemitEpochBudget = 12
-
-  /** Interval for long-running chain-state polls (ms). */
-  export const PollIntervalMs = 3_000
-  /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
-  export const PollDeadlineBufferMs = 30_000
-  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
-  export const MsPerSecond = 1_000
-
-  /** Deadline for depot-side relay effects (balance row / status / queue row). */
-  export function relayDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RelayEpochBudget *
-      MsPerSecond
-    )
-  }
-
-  /** Deadline for the withdraw wait window + flush + outpost remit. */
-  export function remitDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RemitEpochBudget *
-      MsPerSecond
-    )
-  }
+  /**
+   * The batch-operator minimum the flow installs: exactly what remains after the withdrawal,
+   * so the operator stays ACTIVE on the remainder while the bond alone clears it.
+   */
+  export const MinimumBond = ExpectedRemainingBalance
 }

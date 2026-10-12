@@ -2,7 +2,10 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
 
 const createMock = jest.fn()
 
@@ -111,7 +114,8 @@ describe("createCreateCommand", () => {
     expect(options.has("cluster-path")).toBe(true)
     expect(options.has("build-path")).toBe(true)
     expect(options.has("epoch-duration-sec")).toBe(true)
-    expect(options.has("enable-mock-reserves")).toBe(true)
+    expect(options.has("enable-mock-reserves")).toBe(false)
+    expect(options.has("enable-launch-withheld-operations")).toBe(false)
     expect(options.has("api-count")).toBe(true)
     expect(options.has(toQueryEngineFlag("readMode"))).toBe(true)
     // out-of-shape flags — registered so `.strict()` accepts them + `--help` lists them
@@ -126,7 +130,9 @@ describe("createCreateCommand", () => {
       batchOperatorCount: 9
     })
     const commandLine = ["create", `--${ClusterBuildOptionsFileFlag}`, file]
-    expect(registeredDefault(commandLine, "cluster-path")).toBe("/tmp/from-file")
+    expect(registeredDefault(commandLine, "cluster-path")).toBe(
+      "/tmp/from-file"
+    )
     expect(registeredDefault(commandLine, "epoch-duration-sec")).toBe(42)
     expect(registeredDefault(commandLine, "batch-operator-count")).toBe(9)
   })
@@ -157,7 +163,10 @@ describe("createCreateCommand", () => {
   it("keeps the loaded document per-command — a second command sees none of it", () => {
     const file = writeOptionsFile({ epochDurationSec: 42 })
     expect(
-      registeredDefault(["create", `--${ClusterBuildOptionsFileFlag}`, file], "epoch-duration-sec")
+      registeredDefault(
+        ["create", `--${ClusterBuildOptionsFileFlag}`, file],
+        "epoch-duration-sec"
+      )
     ).toBe(42)
     // a fresh command built from a bare command line falls back to the CLI default
     expect(registeredDefault(["create"], "epoch-duration-sec")).toBe(60)

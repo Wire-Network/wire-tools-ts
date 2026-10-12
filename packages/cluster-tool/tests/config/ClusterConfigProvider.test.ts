@@ -128,11 +128,14 @@ describe("ClusterConfigProvider", () => {
   describe("toSecretId", () => {
     it("renders the canonical 4-segment {cluster}/{account}/{keyType} pattern", () => {
       expect(
-        ClusterConfigProvider.toSecretId("/wire/{cluster}/{account}/{keyType}", {
-          cluster: AWSAccountName.test,
-          account: "batchop.a",
-          keyType: "K1"
-        })
+        ClusterConfigProvider.toSecretId(
+          "/wire/{cluster}/{account}/{keyType}",
+          {
+            cluster: AWSAccountName.test,
+            account: "batchop.a",
+            keyType: "K1"
+          }
+        )
       ).toBe("/wire/test/batchop.a/K1")
     })
 
@@ -263,9 +266,8 @@ describe("ClusterConfigProvider", () => {
 
   describe("signatureProviderSource", () => {
     it("KEY → the inline default source for every key (byte-identical)", () => {
-      const source = ClusterConfigProvider.signatureProviderSource(
-        fixtureConfig()
-      )
+      const source =
+        ClusterConfigProvider.signatureProviderSource(fixtureConfig())
       expect(source("node_00", KeyType.K1)).toEqual({
         type: SignatureProviderType.KEY
       })
@@ -308,7 +310,8 @@ describe("ClusterConfigProvider", () => {
             type: SignatureProviderType.SSM,
             ssm: {
               awsRegions: ["us-east-1"],
-              awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}/{version}",
+              awsSecretIdPattern:
+                "/wire/{cluster}/{account}/{keyType}/{version}",
               version: "v7"
             }
           },
@@ -684,9 +687,8 @@ describe("ClusterConfigProvider", () => {
     })
 
     it("merges a PARTIAL bind config over resolver defaults (file pins the kiod port)", async () => {
-      const kiodPort = await BindConfigProvider.findAvailable(
-        PartialMergeKiodPin
-      )
+      const kiodPort =
+        await BindConfigProvider.findAvailable(PartialMergeKiodPin)
       // findAvailable LOCKS the port in get-port's in-process cache. Release
       // the locks so resolve's PINNED draw can re-acquire the very port the
       // registry just vetted — without this the pin fails deterministically.
@@ -720,7 +722,10 @@ describe("ClusterConfigProvider", () => {
 
     it("accepts an explicit flag when the document does not author clusterPath", () => {
       expect(() =>
-        ClusterConfigProvider.assertClusterPathSource({ epochDurationSec: 60 }, true)
+        ClusterConfigProvider.assertClusterPathSource(
+          { epochDurationSec: 60 },
+          true
+        )
       ).not.toThrow()
       expect(() =>
         ClusterConfigProvider.assertClusterPathSource(null, true)
@@ -769,14 +774,10 @@ describe("ClusterConfigProvider", () => {
       ).rejects.toThrow(/underwriterCount was set to 3/)
     })
 
-    it("rejects an OMITTED underwriterCount — the default is ONE underwriter, not zero", async () => {
-      await expect(
-        ClusterConfigProvider.resolve(externalOptions())
-      ).rejects.toThrow(
-        new RegExp(
-          `underwriterCount was omitted, which defaults to ${ClusterConfigProvider.DefaultUnderwriterCount}`
-        )
-      )
+    it("defaults to no retired swap-underwriter daemons", async () => {
+      const config = await ClusterConfigProvider.resolve(externalOptions())
+      expect(config.underwriterCount).toBe(0)
+      expect(config.bind.nodeop.ports.underwriters).toEqual([])
     })
 
     it("accepts an EXPLICIT underwriterCount of 0", async () => {
@@ -787,7 +788,7 @@ describe("ClusterConfigProvider", () => {
       expect(config.externalOutposts).not.toBeNull()
     })
 
-    it("leaves LOCAL mode's underwriters untouched", async () => {
+    it("defaults local mode to zero retired daemons", async () => {
       const config = await ClusterConfigProvider.resolve({
         clusterPath: Path.join(environment.rootPath, "local-cluster"),
         buildPath: environment.buildPath,

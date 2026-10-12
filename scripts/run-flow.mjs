@@ -5,10 +5,10 @@
  * Usage:
  *   ./scripts/run-flow.mjs [name-or-pattern] [options]
  *
- *   name-or-pattern   Either an exact flow name (e.g. `flow-swap-with-underwriting`,
- *                     or the short form `swap-with-underwriting`) or a regex pattern
+ *   name-or-pattern   Either an exact flow name (e.g. `flow-operator-collateral-deposit`,
+ *                     or the short form `operator-collateral-deposit`) or a regex pattern
  *                     matched against the discovered flow names. When omitted, an
- *                     interactive picker lists every flow under `packages/flow-*`.
+ *                     interactive picker lists runnable flows under `packages/flow-*`.
  *
  * Options (each falls back to the matching env var; one of the two is required):
  *   --wire-build-path <dir>   wire-sysio build dir (env: WIRE_BUILD_PATH) — must contain bin/nodeop
@@ -20,8 +20,8 @@
  *
  * Examples:
  *   ./scripts/run-flow.mjs                       # interactive picker
- *   ./scripts/run-flow.mjs swap                  # regex match → picks/prompts among matches
- *   ./scripts/run-flow.mjs flow-swap-with-underwriting --wire-build-path ~/wire-sysio/build/release \
+ *   ./scripts/run-flow.mjs collateral            # regex match → picks/prompts among matches
+ *   ./scripts/run-flow.mjs flow-operator-collateral-deposit --wire-build-path ~/wire-sysio/build/release \
  *       --ethereum-path ~/wire-ethereum --solana-path ~/wire-solana
  */
 
@@ -43,25 +43,35 @@ const flowsGlob = path.join(repoRoot, "packages", "flow-*")
 // ---------------------------------------------------------------------------
 
 /**
- * Discover every flow package under `packages/flow-*`, dynamically — new flows
- * are picked up automatically, there is no static list to maintain.
+ * Discover flow packages with a `test` script, matching the CI gate.
+ * Packages without one are disabled and excluded from every selection path.
  *
  * @return {Promise<Array<{ name: string, short: string, dir: string, pkgName: string, description: string }>>}
  *   one entry per flow, sorted by name.
  */
 async function discoverFlows() {
   const dirs = await glob(flowsGlob, { onlyDirectories: true })
-  const flows = dirs.map(dir => {
+  const flows = dirs.flatMap(dir => {
     const name = path.basename(dir)
     const pkgJsonPath = path.join(dir, "package.json")
     const pkg = fs.existsSync(pkgJsonPath) ? fs.readJsonSync(pkgJsonPath) : {}
-    return {
-      name,
-      short: name.replace(/^flow-/, ""),
-      dir,
-      pkgName: pkg.name ?? name,
-      description: pkg.description ?? ""
+    if (!pkg.scripts?.test) {
+      echo(
+        chalk.yellow(
+          `Skipping ${name}: disabled (no test script; see README.md).`
+        )
+      )
+      return []
     }
+    return [
+      {
+        name,
+        short: name.replace(/^flow-/, ""),
+        dir,
+        pkgName: pkg.name ?? name,
+        description: pkg.description ?? ""
+      }
+    ]
   })
   return flows.sort((a, b) => a.name.localeCompare(b.name))
 }

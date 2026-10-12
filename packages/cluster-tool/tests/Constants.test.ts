@@ -48,6 +48,25 @@ describe("Constants", () => {
         "contracts/sysio.opreg"
       )
     })
+    it("creates the underwriting, syndication and emergency-stop accounts", () => {
+      expect(Constants.SYSTEM_ACCOUNTS).toEqual(
+        expect.arrayContaining(["sysio.andon", "sysio.bond", "sysio.synd"])
+      )
+    })
+    it("maps the underwriting, syndication and emergency-stop contract paths", () => {
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.andon"]).toBe("contracts/sysio.andon")
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.bond"]).toBe("contracts/sysio.bond")
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.synd"]).toBe("contracts/sysio.synd")
+    })
+    it("grants @sysio.code to sysio.bond and sysio.synd, never to sysio.andon (it sends no inline action)", () => {
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.bond")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.synd")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.andon")
+    })
+    it("names a panic account outside the sysio.* system namespace", () => {
+      expect(Constants.PANIC_ACCOUNT).toBe("andon.panic")
+      expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.PANIC_ACCOUNT)
+    })
   })
 
   describe("plugin sets", () => {
@@ -339,5 +358,15 @@ describe("ProtocolTiming — producer rounds + outpost writes", () => {
     expect(ProtocolTiming.OutpostWriteBudgetMs).toBeLessThan(
       ProtocolTiming.CollateralVerifyBudgetMs
     )
+  })
+})
+
+describe("ProtocolTiming — the syndication challenge window", () => {
+  it("is one default 60 s epoch", () => {
+    expect(ProtocolTiming.SyndicationChallengeWindowSec).toBe(60)
+  })
+
+  it("is never 0, which sysio.synd::setconfig refuses", () => {
+    expect(ProtocolTiming.SyndicationChallengeWindowSec).toBeGreaterThan(0)
   })
 })

@@ -65,9 +65,7 @@ describe("NodeConfig", () => {
         NodeRole.underwriter
       ])
       expect(
-        Object.values(NodeRole).filter(role =>
-          NodeConfig.isOperatorRole(role)
-        )
+        Object.values(NodeRole).filter(role => NodeConfig.isOperatorRole(role))
       ).toEqual([...NodeConfig.OperatorRoles])
     })
   })
@@ -81,14 +79,13 @@ describe("NodeConfig", () => {
     // Driven off `NodeRole` so a new role is covered by construction. LOCAL is
     // the regression pin: the harness's WireClient reads traces off producer[0],
     // so a role-blind tightening here breaks every flow.
-    it.each(Object.values(NodeRole))(
-      "keeps it on a LOCAL cluster's %s node",
-      role => {
-        expect(NodeConfig.runsTraceApiPlugin(nodeOfRole(localNodes, role))).toBe(
-          true
-        )
-      }
-    )
+    it.each(
+      Object.values(NodeRole).filter(role => role !== NodeRole.underwriter)
+    )("keeps it on a LOCAL cluster's %s node", role => {
+      expect(NodeConfig.runsTraceApiPlugin(nodeOfRole(localNodes, role))).toBe(
+        true
+      )
+    })
 
     it.each([NodeRole.bios, NodeRole.producer])(
       "drops it from the production-shaped EXTERNAL tree's %s node",
@@ -99,7 +96,7 @@ describe("NodeConfig", () => {
       }
     )
 
-    it.each([NodeRole.batch_operator, NodeRole.underwriter, NodeRole.api])(
+    it.each([NodeRole.batch_operator, NodeRole.api])(
       "keeps it on an EXTERNAL cluster's %s node (operators are non-public; API nodes are the chain-read surface)",
       role => {
         expect(
@@ -121,7 +118,9 @@ describe("NodeConfig", () => {
         fixtureConfig({ deploymentKind: ClusterDeploymentKind.external })
       )
 
-    it.each(Object.values(NodeRole))("answers for a %s node", role => {
+    it.each(
+      Object.values(NodeRole).filter(role => role !== NodeRole.underwriter)
+    )("answers for a %s node", role => {
       const node = nodeOfRole(local, role)
       expect(NodeConfig.runsQueryEnginePlugin(node)).toBe(role === NodeRole.api)
       expect(NodeConfig.runsProducerApiPlugin(node)).toBe(role !== NodeRole.api)
@@ -129,14 +128,13 @@ describe("NodeConfig", () => {
 
     // Unlike the trace-api gate, neither predicate reads the deployment kind:
     // an EXTERNAL tree answers exactly as a local one.
-    it.each(Object.values(NodeRole))(
-      "answers the same for an EXTERNAL cluster's %s node",
-      role => {
-        const node = nodeOfRole(external, role)
-        expect(NodeConfig.runsQueryEnginePlugin(node)).toBe(role === NodeRole.api)
-        expect(NodeConfig.runsProducerApiPlugin(node)).toBe(role !== NodeRole.api)
-      }
-    )
+    it.each(
+      Object.values(NodeRole).filter(role => role !== NodeRole.underwriter)
+    )("answers the same for an EXTERNAL cluster's %s node", role => {
+      const node = nodeOfRole(external, role)
+      expect(NodeConfig.runsQueryEnginePlugin(node)).toBe(role === NodeRole.api)
+      expect(NodeConfig.runsProducerApiPlugin(node)).toBe(role !== NodeRole.api)
+    })
   })
 
   describe("producerName", () => {
@@ -234,17 +232,15 @@ describe("NodeConfig", () => {
     const nodes = NodeConfig.plan(fixtureConfig())
 
     it("plans bios + producer + operator + api nodes from the bind topology", () => {
-      expect(nodes).toHaveLength(7) // 1 bios + 1 producer + 3 batch + 1 underwriter + 1 api
+      expect(nodes).toHaveLength(6) // 1 bios + 1 producer + 3 batch + 1 api
       expect(nodes[0].role).toBe(NodeRole.bios)
       expect(nodes[0].name).toBe(NodeConfig.BiosName)
       const operators = nodes.filter(n => NodeConfig.isOperatorRole(n.role))
-      expect(operators).toHaveLength(4)
-      expect(
-        operators.filter(n => n.batchOperatorLabel !== null)
-      ).toHaveLength(3)
-      expect(operators.filter(n => n.underwriterLabel !== null)).toHaveLength(
-        1
+      expect(operators).toHaveLength(3)
+      expect(operators.filter(n => n.batchOperatorLabel !== null)).toHaveLength(
+        3
       )
+      expect(operators.filter(n => n.underwriterLabel !== null)).toHaveLength(0)
     })
 
     it("gives each operator node its EXPLICIT kind, alongside its durable label", () => {
@@ -255,7 +251,7 @@ describe("NodeConfig", () => {
         ),
         underwriters = nodes.filter(n => n.role === NodeRole.underwriter)
       expect(batchOperators).toHaveLength(3)
-      expect(underwriters).toHaveLength(1)
+      expect(underwriters).toHaveLength(0)
       batchOperators.forEach(n => {
         expect(n.batchOperatorLabel).not.toBeNull()
         expect(n.underwriterLabel).toBeNull()
@@ -268,9 +264,7 @@ describe("NodeConfig", () => {
 
     it("meshes the non-operator set — bios + producers + api nodes peer with each other", () => {
       const mesh = nodes.filter(n => !NodeConfig.isOperatorRole(n.role))
-      mesh.forEach(n =>
-        expect(n.peerEndpoints).toHaveLength(mesh.length - 1)
-      )
+      mesh.forEach(n => expect(n.peerEndpoints).toHaveLength(mesh.length - 1))
     })
 
     it("attaches each operator to exactly ONE producer, not the mesh", () => {
@@ -313,15 +307,15 @@ describe("NodeConfig", () => {
       expect(batchOps).toContain("batchop.a")
       expect(
         nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
-      ).toBe("uwrit.a")
+      ).toBeUndefined()
     })
 
     describe("api nodes", () => {
-      it("appends api nodes AFTER the underwriters, continuing the node_NN numbering", () => {
+      it("appends api nodes AFTER the batch operators, continuing the node_NN numbering", () => {
         const api = nodes.filter(n => n.role === NodeRole.api)
         expect(api).toHaveLength(1)
-        expect(api[0].name).toBe("node_05") // bios, node_00 producer, 01-03 batch, 04 underwriter
-        expect(api[0].index).toBe(5)
+        expect(api[0].name).toBe("node_04") // bios, node_00 producer, 01-03 batch
+        expect(api[0].index).toBe(4)
         expect(api[0].producers).toEqual([])
         expect(api[0].batchOperatorLabel).toBeNull()
         expect(api[0].underwriterLabel).toBeNull()
@@ -506,13 +500,14 @@ describe("NodeConfig", () => {
     // deadline kv here would resurrect on the post-bootstrap form the very
     // value its argv deliberately omits (a CLI flag only wins when emitted).
     // Every role, because the ini is role-blind for these keys.
-    it.each(["max-transaction-time", "abi-serializer-max-time-ms", "http-max-response-time-ms"])(
-      "renders NO `%s` kv on any role's ini",
-      key => {
-        expect(nodes.length).toBeGreaterThan(0)
-        nodes.forEach(node => expect(node.ini.render()).not.toContain(key))
-      }
-    )
+    it.each([
+      "max-transaction-time",
+      "abi-serializer-max-time-ms",
+      "http-max-response-time-ms"
+    ])("renders NO `%s` kv on any role's ini", key => {
+      expect(nodes.length).toBeGreaterThan(0)
+      nodes.forEach(node => expect(node.ini.render()).not.toContain(key))
+    })
 
     // SHARED-25 AC#4 (D3): the ini plugin LINE follows the same gate the argv
     // does, so a published tree cannot load the plugin through `--config-dir`
@@ -672,14 +667,15 @@ describe("NodeConfig", () => {
         })
     })
 
-    it.each(Object.values(NodeRole).filter(role => role !== NodeRole.api))(
-      "keeps the query engine plugin OFF a %s node's ini",
-      role => {
-        expect(nodeOfRole(nodes, role).ini.render()).not.toContain(
-          Constants.QUERY_ENGINE_PLUGIN
-        )
-      }
-    )
+    it.each(
+      Object.values(NodeRole).filter(
+        role => role !== NodeRole.api && role !== NodeRole.underwriter
+      )
+    )("keeps the query engine plugin OFF a %s node's ini", role => {
+      expect(nodeOfRole(nodes, role).ini.render()).not.toContain(
+        Constants.QUERY_ENGINE_PLUGIN
+      )
+    })
 
     it("keeps read-mode explicit on operators (irreversible) and absent on bios / producer / api nodes", () => {
       const operators = nodes.filter(n => NodeConfig.isOperatorRole(n.role))
@@ -739,9 +735,7 @@ describe("NodeConfig", () => {
       const { loggers } = JSON.parse(node.logging.render())
       expect(loggers.length).toBeGreaterThan(0)
       loggers.forEach((logger: RenderedLogger) =>
-        expect(logger.level).toBe(
-          NodeConfigLoggingRenderer.NodeopLogLevel.warn
-        )
+        expect(logger.level).toBe(NodeConfigLoggingRenderer.NodeopLogLevel.warn)
       )
     })
 
@@ -917,14 +911,20 @@ describe("NodeConfig — ad-hoc nodes", () => {
 
   describe("createAdHoc", () => {
     it("composes a PRODUCING node for a producer: its one account, the producer role, the producer mesh", () => {
-      const producer = fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod"),
+      const producer = fixtureOperatorAccount(
+          "flowprod",
+          OperatorType.PRODUCER,
+          "flowprod"
+        ),
         node = NodeConfig.createAdHoc(cluster, producer, ports)
       expect(node.role).toBe(NodeRole.producer)
       expect(node.producers).toEqual(["flowprod"])
       expect(node.name).toBe(NodeConfig.adHocNodeName("flowprod"))
       expect(node.index).toBe(NodeConfig.AdHocIndex)
       expect(node.ports).toBe(ports)
-      expect(node.peerEndpoints).toEqual(NodeConfig.producerPeerEndpoints(cluster))
+      expect(node.peerEndpoints).toEqual(
+        NodeConfig.producerPeerEndpoints(cluster)
+      )
       expect(node.batchOperatorLabel).toBeNull()
       expect(node.underwriterLabel).toBeNull()
       expect(node.cluster).toBe(cluster)
@@ -939,7 +939,10 @@ describe("NodeConfig — ad-hoc nodes", () => {
       // would read as a label that resolves to nothing. Producing for the ON-CHAIN account is
       // still guaranteed -- `NodeopProcess.buildArgs` renders `--producer-name` from the
       // OperatorAccount, which is asserted in NodeopProcess.test.ts.
-      const producer = fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
+      const producer = fixtureOperatorAccount(
+          "flowprod",
+          OperatorType.PRODUCER
+        ),
         node = NodeConfig.createAdHoc(cluster, producer, ports)
       expect(node.producers).toEqual([producer.label])
       expect(node.producers).not.toEqual([producer.account])
@@ -954,11 +957,16 @@ describe("NodeConfig — ad-hoc nodes", () => {
       expect(node.batchOperatorLabel).toBe("batchop.x")
       expect(node.underwriterLabel).toBeNull()
       expect(node.name).toBe(NodeConfig.adHocNodeName("batchop.x"))
-      expect(node.peerEndpoints).toEqual(NodeConfig.producerPeerEndpoints(cluster))
+      expect(node.peerEndpoints).toEqual(
+        NodeConfig.producerPeerEndpoints(cluster)
+      )
     })
 
     it("composes a non-producing UNDERWRITER node carrying the operator's label", () => {
-      const operator = fixtureOperatorAccount("uwrit.x", OperatorType.UNDERWRITER),
+      const operator = fixtureOperatorAccount(
+          "uwrit.x",
+          OperatorType.UNDERWRITER
+        ),
         node = NodeConfig.createAdHoc(cluster, operator, ports)
       expect(node.role).toBe(NodeRole.underwriter)
       expect(node.producers).toEqual([])

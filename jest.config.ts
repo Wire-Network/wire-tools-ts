@@ -1,27 +1,19 @@
 import type { Config } from "jest"
 
 const config: Config = {
-  // In multi-project mode jest honors testTimeout from the ROOT config only —
-  // the per-project value (cluster-tool/jest.config.ts, same rationale) is
-  // ignored here.
-  //
-  // Sized to the LOADED-HOST worst case for a port-resolving test, per
-  // STYLE.md "Timing Budgets". The cost is real probing, not waiting:
-  // `ClusterConfigProvider.resolve` claims every daemon port (each TCP-probed,
-  // UDP-role ones probed twice) and `findAvailableRange` sweeps a 64-port
-  // window — ~15s per test even with the suite running ALONE. Under the full
-  // 8-project run that comfortably exceeds a 30s ceiling.
-  //
-  // An undershot ceiling does NOT fail cleanly here, which is why this is
-  // sized generously rather than trimmed: a test killed mid-`withFileLock`
-  // leaves `proper-lockfile`'s refresh timer holding the port lock while the
-  // suite's fixture removes its temp registry dir, and the `onCompromised`
-  // hook then throws `ENOENT … wire-cluster-ports.lock.lock` — a second,
-  // unrelated-looking failure class produced entirely by the first.
-  //
-  // A generous ceiling adds no wall clock to a healthy run: a passing test
-  // returns the moment it finishes.
-  testTimeout: 120_000,
+  // Port-heavy suites compete at the host syscall boundary; CPU-count workers
+  // (31 on the development host) multiply probe latency and TS worker memory.
+  // Keep the complete suite, with bounded concurrency. CLI --maxWorkers still
+  // overrides this when benchmarking on another host.
+  maxWorkers: 2,
+  // Multi-project Jest honors this ROOT timeout, not per-project values.
+  // Keep headroom for loaded WSL hosts: every registry probe is a real syscall,
+  // and the longest config suites allocate many complete cluster topologies.
+  // Registry locks live outside fixture directories; an actual compromise rejects
+  // its owning withFileLock call. Neither protection cancels already-running work.
+  // Do not shorten this to hide resource contention; pnpm check also supervises
+  // the whole process group.
+  testTimeout: 360_000,
   projects: [
     "packages/cluster-tool-shared",
     "packages/cluster-tool",

@@ -191,7 +191,7 @@ describe("SolanaFundingTool step factories", () => {
   it("loadDeployerKeypair throws when the persisted keypair is absent", () => {
     expect(() =>
       SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")
-    ).toThrow(/deployer keypair not found/)
+    ).toThrow(/SOL keypair "deployer" not found/)
   })
 })
 
@@ -266,5 +266,73 @@ describe("SolanaFundingTool.solMintAddress", () => {
     expect(() =>
       SolanaFundingTool.solMintAddress("/no/such/data", 123n)
     ).toThrow(/mock SPL mints not found/)
+  })
+})
+
+describe("SolanaFundingTool named keypairs", () => {
+  /** A durable handle distinct from the deployer's. */
+  const UserName = "liq-syndication-user"
+  let dataPath: string
+  beforeAll(() => {
+    dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sol-named-keys-"))
+  })
+  afterAll(() => {
+    Fs.rmSync(dataPath, { recursive: true, force: true })
+  })
+
+  it("composes <dataPath>/sol-<name>-keypair.json, with the deployer as one of them", () => {
+    expect(SolanaFundingTool.keypairFile(dataPath, UserName)).toBe(
+      Path.join(dataPath, `sol-${UserName}-keypair.json`)
+    )
+    expect(
+      SolanaFundingTool.keypairFile(
+        dataPath,
+        SolanaFundingTool.DeployerKeypairName
+      )
+    ).toBe(SolanaFundingTool.deployerKeypairFile(dataPath))
+    expect(SolanaFundingTool.DeployerKeypairFilename).toBe(
+      "sol-deployer-keypair.json"
+    )
+  })
+
+  it("createKeypair is get-or-create: the second call reads the persisted file back", () => {
+    const first = SolanaFundingTool.createKeypair(dataPath, UserName),
+      second = SolanaFundingTool.createKeypair(dataPath, UserName)
+    expect(second.publicKey.toBase58()).toBe(first.publicKey.toBase58())
+    expect(
+      SolanaFundingTool.loadKeypair(dataPath, UserName).publicKey.toBase58()
+    ).toBe(first.publicKey.toBase58())
+  })
+
+  it("gives different handles different identities", () => {
+    expect(
+      SolanaFundingTool.createKeypair(dataPath, "other-user").publicKey.toBase58()
+    ).not.toBe(
+      SolanaFundingTool.createKeypair(dataPath, UserName).publicKey.toBase58()
+    )
+  })
+
+  it("loadKeypair throws for a handle that was never created", () => {
+    expect(() => SolanaFundingTool.loadKeypair(dataPath, "absent")).toThrow(
+      /SOL keypair "absent" not found/
+    )
+  })
+
+  it("planKeypairAirdrop builds a typed step with a named runner", () => {
+    const step = SolanaFundingTool.planKeypairAirdrop(
+      Report.Actor.User,
+      "airdrop-user",
+      "top the user up",
+      {},
+      UserName,
+      7n
+    )
+    expect(step.actor).toBe(Report.Actor.User)
+    expect(step.input).toEqual({
+      kind: "SolanaFundingTool.KeypairAirdropInput",
+      keypairName: UserName,
+      floorLamports: 7n
+    })
+    expect(step.runner).toBe(SolanaFundingTool.runKeypairAirdrop)
   })
 })

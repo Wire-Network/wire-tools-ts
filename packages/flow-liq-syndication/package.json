@@ -1,0 +1,22 @@
+{
+  "name": "@wireio/test-flow-liq-syndication",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: real liqsol syndication fully settles in the destination wallet and reported yield is released",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.96",
+    "@wireio/opp-typescript-models": "^1.0.51"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -12,10 +12,14 @@ that OPP envelopes circulate and that on-chain state stays consistent end to end
 The OPP message flow spans three chains:
 
 - **WIRE depot** (`nodeop` + `kiod`) — system contracts `sysio.epoch`, `sysio.msgch`,
-  `sysio.opreg`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, …
-- **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OperatorRegistry.sol`,
-  `ReserveManager.sol`, `StakingManager.sol` (+ `liqEth`).
-- **Solana outpost** (`solana-test-validator`) — the `opp-outpost` Anchor program (+ `liqsol-*`).
+  `sysio.opreg`, `sysio.chalg`, `sysio.synd`, `sysio.bond`, `sysio.liq`, `sysio.swap`
+  (a depot-local AMM with no outpost participation), `sysio.andon`, `sysio.dclaim`, …
+- **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OutpostManager.sol`,
+  `SyndicationPool.sol`, `BAR.sol`, `StakingManager.sol` (an inert placeholder) (+ `liqEth`).
+- **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
+  loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
+  `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol
+  surface stood up by wire-solana's own `anchor run init-*` scripts.
 
 ## Where this repo fits in the platform
 
@@ -26,7 +30,7 @@ nothing on-chain itself, it orchestrates the already-built artifacts of:
 |---|---|---|
 | `wire-sysio` | `nodeop`, `kiod`, `clio`, system-contract `.wasm`/`.abi` | CMake / Ninja |
 | `wire-ethereum` | outpost Solidity contracts + `deployLocal.ts` | Hardhat |
-| `wire-solana` | `opp-outpost` program `.so` + IDL | Anchor |
+| `wire-solana` | the four Anchor programs' `.so` + IDL (`liqsol_core` — which hosts the OPP outpost interface — plus `liqsol_token`, `transfer_hook`, `validator_leaderboard`) + the `init-*` scripts | Anchor |
 
 All four are checked out together as a single workspace via Google's `repo` tool.
 **For cloning and syncing the platform, follow
@@ -42,12 +46,12 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 
 | Tool | Pinned version | Why | Install |
 |---|---|---|---|
-| **Node.js** | `>= 22` | runs the harness + flow tests | [nodejs.org](https://nodejs.org/) or [nvm](https://github.com/nvm-sh/nvm) |
+| **Node.js** | `>= 24.9` | runs the harness + flow tests | [nodejs.org](https://nodejs.org/) or [nvm](https://github.com/nvm-sh/nvm) |
 | **pnpm** | `10.32.1` | the only supported package manager | `corepack enable && corepack prepare pnpm@10.32.1 --activate` |
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
 | **Solana CLI (`solana-test-validator`)** | `4.2.0` (Agave) | local Solana validator for the SOL outpost | see below |
-| **Anchor (`anchor`) via `avm`** | `0.31.0` | builds + loads the `opp-outpost` program | see below |
+| **Anchor (`anchor`) via `avm`** | `0.31.0` | builds the four wire-solana programs; `anchor run` drives their `init-*` scripts during the bootstrap | see below |
 
 > The Solana / Anchor / Rust versions are pinned by `wire-solana`
 > (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "4.2.0"`;
@@ -107,8 +111,10 @@ ls ../wire-sysio/build/release/bin/nodeop      # sanity check
 # 2. wire-ethereum — compile the outpost contracts
 cd ../wire-ethereum && pnpm install && pnpm build      # npx hardhat compile
 
-# 3. wire-solana — build the opp-outpost program (.so + IDL)
-cd ../wire-solana && anchor build
+# 3. wire-solana — the four programs' .so + IDL, and the deps `anchor run` needs
+#    `build:programs` is the build the platform gate runs and the build the
+#    harness deploys; a bare `anchor build` is NOT equivalent.
+cd ../wire-solana && npm install && npm run build:programs
 ```
 
 ## Install & build this repo
@@ -126,15 +132,69 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 |---|---|---|
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
-| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
-| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
-| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` → `sysio.dclaim::onreward` → `fundclaim` |
+| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
+| `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
+| `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
+
+### LIQ settlement audit — syndication-underwriting
+
+A successful syndication finishes only when its fee-adjusted principal is liquid
+in the destination WIRE wallet. A successful desyndication finishes only when the
+external recipient receives the exact return. Held intake, parked credit, burns,
+and outbound queue entries are intermediate checks.
+
+| Enabled flow | Settlement obligation |
+| --- | --- |
+| `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
+| `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
+| `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
+| `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
+| `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
+
+The other seven enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
+`flow-operator-collateral-deposit`, `flow-producer-registration`,
+`flow-yield-distribution`) submit no user LIQ syndication/desyndication. Imported
+bootstrap collateral and reward funding have their own assertions. The eight
+former disabled swap/reserve flows have been removed.
+
+`WireSyndicationTool.planResolveEnvelope` is an explicit `sysio.bond::rslvvalid`
+shortcut for an unbonded OPEN request. It refuses provider-funded, challenged or
+invalid requests, and never replaces the real bond-provider flows. Native
+`sysio_synd_tests/generic_governance_and_provider_release_have_identical_settlement`
+compares both paths on EC1/NTA and EC2/NTB: linked/parked delivery, fee rounding,
+freeze, partial release, same-epoch budgets, yield release, and external returns.
+Collateral, challenge windows and bounty ownership intentionally differ; existing
+bond tests cover those obligations. Matching settlement does not make the
+shortcut a test of provider participation or external relay liveness.
+
+Validation on 2026-10-02 used fresh clusters, the canonical runner and heartbeat,
+and Solana 4.2.0. All changed live flows passed:
+
+| Flow | Successful report steps | Elapsed |
+| --- | ---: | ---: |
+| `flow-liq-syndication` | 226 | 10m 31s |
+| `flow-syndication-challenge` | 270 | 12m 39s |
+| `flow-syndication-rate-limit` | 268 | 24m 05s |
+| `flow-emergency-stop` | 312 | 20m 31s |
+
+The rate-limit flow's final external-wallet check waited another 139 seconds for
+payout after the existing queued-redemption assertions. TypeScript compilation,
+53 shared-helper tests and 32 focused flow tests passed. The first live attempts
+stopped at the bootstrap toolchain check because the shell selected Solana 4.0.3;
+the successful runs above selected the installed pinned 4.2.0 toolchain explicitly.
+
+### Removed reserve and swap flows
+
+The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
+flags have been deleted. The 13 remaining flows exercise supported functionality.
+Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows
 
@@ -145,12 +205,12 @@ flags to the helper script below):
 |---|---|
 | `WIRE_BUILD_PATH` | `wire-sysio` build dir (must contain `bin/nodeop`), e.g. `../wire-sysio/build/release` |
 | `WIRE_ETH_PATH` | `wire-ethereum` repo root (must contain `hardhat.config.ts`) |
-| `WIRE_SOLANA_PATH` | `wire-solana` repo root (built `opp-outpost`) |
+| `WIRE_SOLANA_PATH` | `wire-solana` repo root (its four programs built, `node_modules` installed — the bootstrap runs `anchor run init-*` there) |
 | `WIRE_CLUSTER_PATH` | *(optional)* cluster data dir; the harness generates a fresh temp dir per run when unset |
 
 ### Option A — the `run-flow.mjs` helper (THE canonical way)
 
-[`scripts/run-flow.mjs`](scripts/run-flow.mjs) discovers the flow packages
+[`scripts/run-flow.mjs`](scripts/run-flow.mjs) discovers flow packages with a `test` script
 dynamically, lets you pick one by name / regex (or interactively), validates the
 sibling-repo paths, wires the env vars, and drives the matching package's `test`
 script. **This is the canonical flow runner** — sessions/automation MUST use it
@@ -161,18 +221,18 @@ and every live run is paired with the heartbeat monitor (see
 ```bash
 # Usage: ./scripts/run-flow.mjs [name-or-pattern] [options]
 
-# Interactive picker over every packages/flow-* (no argument):
+# Interactive picker over enabled packages/flow-* (no argument):
 ./scripts/run-flow.mjs \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path   ../wire-ethereum \
   --solana-path     ../wire-solana
 
 # Exact name (full or short form):
-./scripts/run-flow.mjs flow-swap-with-underwriting --wire-build-path … --ethereum-path … --solana-path …
-./scripts/run-flow.mjs swap-with-underwriting       --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs flow-operator-collateral-deposit --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs operator-collateral-deposit       --wire-build-path … --ethereum-path … --solana-path …
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
-./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
+./scripts/run-flow.mjs collateral --wire-build-path … --ethereum-path … --solana-path …
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
@@ -191,11 +251,44 @@ export WIRE_ETH_PATH=../wire-ethereum
 export WIRE_SOLANA_PATH=../wire-solana
 
 pnpm --filter @wireio/test-flow-operator-collateral-deposit test
-pnpm --filter @wireio/test-flow-swap-with-underwriting       test
 
-# Every flow at once (long — builds first):
+# Unit tests only (builds first; no live flows):
 pnpm test
 ```
+
+### Commit checks
+
+Run `pnpm check` to execute the same gate as the pre-commit hook: full lint,
+TypeScript build, the runner regressions, all eight Jest projects, and every flow
+`test:unit` script. This does not launch live flows. The hook uses the mise-pinned
+toolchain when available; Node 24.9 or newer is required.
+
+Each stage reports its duration and prints progress every 30 seconds. Lint has a
+two-minute deadline; build and tests have a fifteen-minute deadline. A timeout or
+interrupt terminates the stage's process group on Linux/WSL/macOS, escalating after
+five seconds, and fails the gate. No timeout is treated as a passing test.
+
+Jest defaults to two workers: CPU-count concurrency oversubscribes the host's
+socket-probing path on WSL. For a controlled comparison on another host, run
+`NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --maxWorkers=4` after building.
+Keep the test inventory unchanged when comparing times.
+
+The port allocator probes IPv4 and IPv6 wildcards separately, instead of every
+NIC, and stops scanning a candidate port window as soon as one port rejects it.
+Registry locking, reserved-port exclusions, pinned-port rejection, and UDP checks
+are retained. Real socket regressions cover IPv4 and IPv6-only listener collisions.
+On the WSL development host (2026-10-02), one default 83-port allocation took
+9.44 seconds with the committed allocator and 3.35 seconds with these changes
+(sequential runs with an otherwise idle test harness). This measures allocation,
+not the entire hook; test-suite time also includes compilation and process tests.
+
+The integrated lock fixes from PRs #76 and #100 keep the mutex outside the
+registry directory, keyed by its normalized path, with a 30-second stale threshold
+for short critical sections. Actual lock compromise rejects the owning operation
+with the original cause; it does not cancel or roll back its underlying work.
+The existing long-operation lock settings remain unchanged. Separate test
+registries isolate bookkeeping, not network namespaces: concurrent live clusters
+must continue sharing the host registry.
 
 ### Monitoring a live flow run
 
@@ -216,6 +309,13 @@ plugin-layer failures) instead of letting a dead run burn its full `pollUntil`
 deadline. It self-concludes when the flow exits. `--interval-seconds` /
 `--epoch-duration-seconds` are the only tuning knobs; everything else derives
 from the cluster's `cluster-config.json`.
+
+OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
+by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
+when deliberately exercising paused outposts; it counts and quotes those exact
+refusals as NOISE, while preserving unrelated failures and all liveness bails.
+The liquidity flows run without this flag. It is distinct from
+`--expect-epoch-freeze`, which permits a deliberate epoch stall.
 
 Rules of the road (binding for sessions/automation; see
 `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
@@ -300,7 +400,7 @@ wire-cluster-tool create \
   --producer-count=5 \
   --node-count=1 \
   --batch-operator-count=3 \
-  --underwriter-count=1 \
+  --underwriter-count=0 \
   --epoch-duration-sec=60 \
   --ethereum-path=/data/shared/code/wire-platform/wire-ethereum \
   --solana-path=/data/shared/code/wire-platform/wire-solana \
@@ -314,6 +414,37 @@ chains; `run` starts the cluster from that saved config and **blocks until you
 ```bash
 wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 ```
+
+### Underwriting, syndication and the emergency stop
+
+Every `create` sets these up on the depot; no flag gates them, because a real
+depot needs them too:
+
+| Phase | What it does |
+|---|---|
+| `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
+| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
+| `EmergencyStop` | `sysio.andon::setpanic(andon.panic)`, then `addpuller(sysio.synd)`, so a custody shortfall pulls the cord — both before any liq token is registered |
+| `SyndicationConfig` | after `LiqConfig`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+
+`setpanic` and `addpuller` run after the four cord readers are deployed, not
+before them as `docs/contract-upgrade-order.md` orders a live upgrade: the panic
+account must exist first, and the bootstrap creates it only once the bootstrap
+node owner can grant its resource policy, which is after `OPPContracts`. The
+order is still safe, because what the rule protects is traffic: a reader that
+runs before `setpanic` reads the cord as clear, and during the bootstrap no
+traffic reaches the readers: the liq tokens are registered only after
+`EmergencyStop`, and no envelope is accepted until `EpochBootstrap` starts the
+first epoch. By then the panic account is named and `sysio.synd` is a registered
+puller.
+
+Each outpost gets its own emergency stop and per-transfer syndication maximum
+in local mode:
+
+| Phase | What it does |
+|---|---|
+| `EthereumOutpost` | the deploy config names `panicAccount` (anvil HD index 49, granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
+| `SolanaLiqsolSurface` | `set-max-syndication --fresh` right after `init-global-config` (a new outpost's maximum is 0, which refuses every `synd`), then `set_panic` naming the harness panic keypair (`<cluster>/data/sol-panic-keypair.json`), then `verify-emergency-stop` |
 
 ### Common options (every command)
 
@@ -332,20 +463,22 @@ command comes first).
 |---|---|---|---|
 | `--build-path` | | **(required)** | `wire-sysio` build dir (with `bin/nodeop`) |
 | `--ethereum-path` | | **(required)** | `wire-ethereum` repo root; bootstraps `anvil` + outpost deploy |
-| `--solana-path` | | **(required)** | `wire-solana` repo root; bootstraps `solana-test-validator` + `opp-outpost` |
+| `--solana-path` | | **(required)** | `wire-solana` repo root; bootstraps `solana-test-validator`, loads all four Anchor programs at genesis, runs the `init-*` scripts, then deploys the OPP outpost |
 | `--force` | | `false` | overwrite an existing cluster directory |
 | `--node-count` | `-n` | `1` | producer node **processes** to launch |
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
-| `--underwriter-count` | `-u` | `1` | underwriters |
+| `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
 | `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
+| `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |
 | `--terminate-max-consecutive-misses` | | — | consecutive missed-delivery termination threshold |
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
+| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
@@ -422,11 +555,8 @@ config; the Solana program id is parsed from the IDL):
 }
 ```
 
-External mode ALSO requires an EXPLICIT `--underwriter-count 0`. The flag
-defaults to `1`, so omitting it asks for one underwriter — and an external
-cluster has no local outpost for an underwriter to bond collateral on, so
-`create` fails fast naming whichever cause applies ("you asked for N" vs "you
-omitted it and got the default").
+Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
+values are rejected; syndication bond providers do not need a daemon.
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
@@ -638,3 +768,29 @@ handled. Keep them in mind when touching any of these areas:
   own registered pids on exit (with a `/proc` recycled-pid guard). A host-wide
   `pkill nodeop` from any tooling would kill *every* parallel run's nodes —
   see the incident note in `ProcessManager.ts`.
+
+### Mock syndication import and custody backing
+
+Flows that need the first bonder set `enableMockSyndicationImport: true` in
+`Scenario.defaults`. The `MockSyndicationImport` phase runs after
+`SyndicationConfig` and any `MockLiqPools` seed, before `EpochBootstrap`.
+It generates an unlinked ED/EM bonder, imports each position in its own Step,
+and calls `importdone`. `Steps.registry.readMockSyndicationBonder(ctx)` reloads
+its keys from the durable `mock-syndication-bonder` label; its Solana keypair
+also follows the `sol-<label>-keypair.json` convention. No WIRE account or
+authex link is created: positions stay parked until the flow links the keys.
+
+Either mock flag enables `MockShadowBackingSolana` and
+`MockShadowBackingEthereum`. Each reads custody and the depot's full outstanding
+shadow after all seeds. If custody is short, it acquires and donates only the
+difference between outstanding shadow and current custody; if already covered, the write Steps move no funds. A final
+verify Step re-reads both sides. Solana airdrop, deposit and donation and
+Ethereum deposit and donation are separate Report Steps. The default bootstrap
+imports no positions and performs none of these backing writes.
+
+Ethereum also seeds `syndicatedPrincipal` in depot units through
+`OutpostManager.execute(pool, initializeSyndication(...))`, signed by the local
+deployer who holds the manager's configuration role. This separate Step preserves
+the current chain code, token code, precision and deadband. The final verification
+requires principal to equal the backing and custody to cover it, so the epoch
+relay's `realizeYield()` does not count the imported backing as new yield.

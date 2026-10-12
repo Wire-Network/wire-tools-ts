@@ -105,13 +105,8 @@ describe("ClusterState", () => {
       expect(persistedRoleOf(NodeRole.producer)).toBe(
         ClusterStateNodeRole.producer
       )
-      // The snapshot records a node's PROCESS kind, so BOTH operator kinds
-      // land on its single `operator` member — the persisted shape is
-      // deliberately unchanged by the depot-side role split.
+      // The snapshot records the batch daemon as an operator process.
       expect(persistedRoleOf(NodeRole.batch_operator)).toBe(
-        ClusterStateNodeRole.operator
-      )
-      expect(persistedRoleOf(NodeRole.underwriter)).toBe(
         ClusterStateNodeRole.operator
       )
       // An API node keeps its OWN persisted kind: it is neither a producer (no
@@ -229,7 +224,6 @@ describe("ClusterState", () => {
       ctx.keyStore.setOperator(materialized)
       expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
     })
-
   })
 
   describe("§5.6 — an SSM cluster persists key REFERENCES, never key material", () => {
@@ -308,7 +302,9 @@ describe("ClusterState", () => {
         record => record.account === producer
       )
       expect(entry.wire.awsSecretId).toBe(`/wire/test/${node.name}/K1`)
-      expect(entry.wireFinalizer.awsSecretId).toBe(`/wire/test/${node.name}/BLS`)
+      expect(entry.wireFinalizer.awsSecretId).toBe(
+        `/wire/test/${node.name}/BLS`
+      )
       expect(entry.wire.privateKey).toBeUndefined()
       expect(entry.wireFinalizer.privateKey).toBeUndefined()
     })
@@ -320,7 +316,9 @@ describe("ClusterState", () => {
         )
       // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
       // read these regardless of who holds the secret.
-      expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe("SIG_BLS_node0")
+      expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe(
+        "SIG_BLS_node0"
+      )
       expect(operator?.ethereum?.address).toBe(BatchOperator.ethereum.address)
       expect(keys.nodes[0].wire.publicKey).toBe("PUB_K1_node0")
     })

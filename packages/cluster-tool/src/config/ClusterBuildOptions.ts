@@ -59,15 +59,16 @@ export interface ClusterBuildOptions {
   // network binding
   bindAll?: boolean
   bind?: BindOptions
-  // mock data seeding
   /**
-   * Seed the 8 mock (chain, token) PRIMARY reserves at bootstrap
-   * (`--enable-mock-reserves`). Default `false` at every layer — an
-   * external / real-world depot gets NO fake reserves unless a caller (or a
-   * flow's scenario `defaults`) opts in. The depot contract gates `regreserve`
+   * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
+   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an
+   * external / real-world depot mints NO unbacked shadow unless a caller (or a
+   * flow's scenario `defaults`) opts in. The depot contract gates `regliqpool`
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
-  enableMockReserves?: boolean
+  enableMockLiqPools?: boolean
+  /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
+  enableMockSyndicationImport?: boolean
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit
@@ -82,6 +83,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  // solana-test-validator tuning
+  /**
+   * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
+   * {@link DefaultSolanaSlotsPerEpoch} default — agave's own default leaves the
+   * validator at Solana epoch 0 for ~2 days, which the liqsol surface cannot be
+   * initialized against.
+   */
+  solanaSlotsPerEpoch?: number
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

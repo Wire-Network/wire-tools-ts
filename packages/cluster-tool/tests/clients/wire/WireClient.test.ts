@@ -187,36 +187,39 @@ describe("WireClient", () => {
         .spyOn(client, "getTableRows")
         .mockImplementation(async (query: any) => {
           captured.push(query)
-          return { rows: [{ account: "wirercpt", balance: "1234" }], more: false } as never
+          return {
+            rows: [{ account_name: "wirercpt", balance: "1234" }],
+            more: false
+          } as never
         })
 
     it("sends a lower bound and NO upper bound", async () => {
       const client = new WireClient(config),
         captured: any[] = []
       rowsFor(client, captured)
-      await client.getWireClaimable("wirercpt")
+      await client.getPayClaimable("wirercpt")
       const [query] = captured
-      expect(query.lowerBound).toBe(WireClient.nameKeyBound("account", "wirercpt"))
+      expect(query.lowerBound).toBe(
+        WireClient.nameKeyBound("account_name", "wirercpt")
+      )
       expect(query.upperBound).toBeUndefined()
     })
 
     it("returns the balance when the row belongs to the account", async () => {
       const client = new WireClient(config)
       rowsFor(client, [])
-      expect(await client.getWireClaimable("wirercpt")).toBe(1234n)
+      expect(await client.getPayClaimable("wirercpt")).toBe(1234n)
     })
 
     it("returns 0n when the walk lands on the NEXT account's row", async () => {
       // lower_bound returns the first row at-or-after the key, so an account with no row reads
       // back a stranger's. Without the identity check this reported someone else's balance.
       const client = new WireClient(config)
-      jest
-        .spyOn(client, "getTableRows")
-        .mockResolvedValue({
-          rows: [{ account: "wireother", balance: "999" }],
-          more: false
-        } as never)
-      expect(await client.getWireClaimable("wirercpt")).toBe(0n)
+      jest.spyOn(client, "getTableRows").mockResolvedValue({
+        rows: [{ account_name: "wireother", balance: "999" }],
+        more: false
+      } as never)
+      expect(await client.getPayClaimable("wirercpt")).toBe(0n)
     })
 
     it("returns 0n when the table has no rows at all", async () => {
@@ -224,19 +227,21 @@ describe("WireClient", () => {
       jest
         .spyOn(client, "getTableRows")
         .mockResolvedValue({ rows: [], more: false } as never)
-      expect(await client.getWireClaimable("wirercpt")).toBe(0n)
+      expect(await client.getPayClaimable("wirercpt")).toBe(0n)
     })
 
     it("reads payclaims through its own key + row field names", async () => {
       const client = new WireClient(config),
         captured: any[] = []
-      jest.spyOn(client, "getTableRows").mockImplementation(async (query: any) => {
-        captured.push(query)
-        return {
-          rows: [{ account_name: "wirercpt", balance: "77" }],
-          more: false
-        } as never
-      })
+      jest
+        .spyOn(client, "getTableRows")
+        .mockImplementation(async (query: any) => {
+          captured.push(query)
+          return {
+            rows: [{ account_name: "wirercpt", balance: "77" }],
+            more: false
+          } as never
+        })
       expect(await client.getPayClaimable("wirercpt")).toBe(77n)
       expect(captured[0].table).toBe("payclaims")
       expect(captured[0].lowerBound).toBe(
@@ -261,7 +266,9 @@ describe("WireClient", () => {
     it("carries the name's raw uint64 as a decimal string", () => {
       // key_types is ["uint64"], and a name's raw value exceeds Number.MAX_SAFE_INTEGER, so it
       // must not ride as a JSON number.
-      const { account } = JSON.parse(WireClient.nameKeyBound("account", "wirercpt"))
+      const { account } = JSON.parse(
+        WireClient.nameKeyBound("account", "wirercpt")
+      )
       expect(typeof account).toBe("string")
       expect(account).toMatch(/^[0-9]+$/)
       expect(BigInt(account)).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER))
@@ -269,15 +276,54 @@ describe("WireClient", () => {
 
     it("honours the per-table key field name", () => {
       // wireclaims keys on `account`; payclaims keys on `account_name`. One helper, two shapes.
-      expect(Object.keys(JSON.parse(WireClient.nameKeyBound("account_name", "wirercpt")))).toEqual([
-        "account_name"
-      ])
+      expect(
+        Object.keys(
+          JSON.parse(WireClient.nameKeyBound("account_name", "wirercpt"))
+        )
+      ).toEqual(["account_name"])
     })
 
     it("round-trips distinct accounts to distinct bounds", () => {
       expect(WireClient.nameKeyBound("account", "wirercpt")).not.toBe(
         WireClient.nameKeyBound("account", "wireno.aaa")
       )
+    })
+  })
+
+  describe("symbolCodeKeyRange", () => {
+    // sysio.liq's symbol-keyed KV tables (stat, liqpending, yieldidx) key on ONE uint64
+    // `symbol_code`. The node takes `lower_bound` inclusive and `upper_bound` EXCLUSIVE, and a
+    // bare code string fails at parse time (`Unexpected char '76' in "LIQSOL"`) exactly like a
+    // bare account name does — which is what took flow-liq-yield's first yield read down.
+    it("spans exactly [code, code + 1) as JSON objects keyed by the ABI key field", () => {
+      const { lowerBound, upperBound } = WireClient.symbolCodeKeyRange(
+          "symbol_code",
+          "LIQSOL"
+        ),
+        lower = JSON.parse(lowerBound),
+        upper = JSON.parse(upperBound)
+      expect(Object.keys(lower)).toEqual(["symbol_code"])
+      expect(Object.keys(upper)).toEqual(["symbol_code"])
+      expect(typeof lower.symbol_code).toBe("string")
+      expect(BigInt(upper.symbol_code)).toBe(BigInt(lower.symbol_code) + 1n)
+    })
+
+    it("carries the code's raw uint64, so two codes' ranges never overlap", () => {
+      const at = (bound: string): bigint =>
+          BigInt(JSON.parse(bound).symbol_code),
+        sol = WireClient.symbolCodeKeyRange("symbol_code", "LIQSOL"),
+        eth = WireClient.symbolCodeKeyRange("symbol_code", "LIQETH")
+      expect(at(sol.lowerBound)).not.toBe(at(eth.lowerBound))
+      expect(
+        at(sol.lowerBound) >= at(eth.upperBound) ||
+          at(sol.upperBound) <= at(eth.lowerBound)
+      ).toBe(true)
+    })
+
+    it("refuses a code that is not a symbol code", () => {
+      expect(() =>
+        WireClient.symbolCodeKeyRange("symbol_code", "liqsol")
+      ).toThrow()
     })
   })
 
@@ -396,16 +442,18 @@ describe("WireClient", () => {
   describe("getProducerSchedule", () => {
     it("projects sdk-core's Name-typed entries onto plain producer names, in slot order", async () => {
       const client = new WireClient(config)
-      jest.spyOn(client.api.v1.chain, "get_producer_schedule").mockResolvedValue({
-        active: {
-          version: 3,
-          producers: [
-            { producer_name: "defproducera" },
-            { producer_name: "defproducerb" }
-          ]
-        },
-        pending: { version: 4, producers: [{ producer_name: "flowprod" }] }
-      } as never)
+      jest
+        .spyOn(client.api.v1.chain, "get_producer_schedule")
+        .mockResolvedValue({
+          active: {
+            version: 3,
+            producers: [
+              { producer_name: "defproducera" },
+              { producer_name: "defproducerb" }
+            ]
+          },
+          pending: { version: 4, producers: [{ producer_name: "flowprod" }] }
+        } as never)
       const schedule = await client.getProducerSchedule()
       expect(schedule.active).toEqual({
         version: 3,
@@ -415,5 +463,23 @@ describe("WireClient", () => {
       // No proposed schedule in flight → nothing is invented for it.
       expect(schedule.proposed).toBeUndefined()
     })
+  })
+})
+
+describe("WireClient.chainTimeMs", () => {
+  it("reads a zone-less chain stamp as UTC", () => {
+    expect(WireClient.chainTimeMs("2026-09-30T00:00:01.500")).toBe(
+      Date.UTC(2026, 8, 30, 0, 0, 1, 500)
+    )
+  })
+
+  it("accepts a stamp that already carries the Z", () => {
+    expect(WireClient.chainTimeMs("2026-09-30T00:00:01.500Z")).toBe(
+      WireClient.chainTimeMs("2026-09-30T00:00:01.500")
+    )
+  })
+
+  it("answers NaN for a stamp that is not a time", () => {
+    expect(WireClient.chainTimeMs("not a time")).toBeNaN()
   })
 })
