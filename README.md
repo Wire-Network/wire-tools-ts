@@ -133,7 +133,6 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
-| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
@@ -157,10 +156,9 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
 
-The other seven enabled flows (`flow-batch-operator-slashing`,
+The other six enabled flows (`flow-batch-operator-slashing`,
 `flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
-`flow-operator-collateral-deposit`, `flow-producer-registration`,
-`flow-yield-distribution`) submit no user LIQ syndication/desyndication. Imported
+`flow-operator-collateral-deposit`, `flow-producer-registration`) exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
@@ -424,19 +422,10 @@ depot needs them too:
 |---|---|
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
-| `EmergencyStop` | `sysio.andon::setpanic(andon.panic)`, then `addpuller(sysio.synd)`, so a custody shortfall pulls the cord — both before any liq token is registered |
-| `SyndicationConfig` | after `LiqConfig`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+| `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
+| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
 
-`setpanic` and `addpuller` run after the four cord readers are deployed, not
-before them as `docs/contract-upgrade-order.md` orders a live upgrade: the panic
-account must exist first, and the bootstrap creates it only once the bootstrap
-node owner can grant its resource policy, which is after `OPPContracts`. The
-order is still safe, because what the rule protects is traffic: a reader that
-runs before `setpanic` reads the cord as clear, and during the bootstrap no
-traffic reaches the readers: the liq tokens are registered only after
-`EmergencyStop`, and no envelope is accepted until `EpochBootstrap` starts the
-first epoch. By then the panic account is named and `sysio.synd` is a registered
-puller.
+Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
 
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:

@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import {
   outputKey,
   ProtocolTiming,
+  Steps,
   SyndicationScenario
 } from "@wireio/cluster-tool"
 
@@ -47,7 +48,8 @@ export namespace SyndicationRateLimitScenarioConstants {
     desynd_refill: 0,
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
-    challenge_extra: "1000000000"
+    challenge_extra: "1000000000",
+    min_desyndicate: Steps.registry.MinimumDesyndication
   }
   /** A's envelope epoch. */
   export const Epoch = outputKey<number>("rate.epoch", "burst envelope epoch")

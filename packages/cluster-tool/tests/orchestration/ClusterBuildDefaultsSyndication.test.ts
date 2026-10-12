@@ -58,7 +58,6 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       "EmergencyStop",
       "Registry",
       "ShadowLiqTokens",
-      "LiqConfig",
       "SyndicationConfig",
       "EpochBootstrap"
     ])
@@ -69,7 +68,7 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       names.indexOf("PanicAccount") + 1
     )
     expect(names.indexOf("SyndicationConfig")).toBe(
-      names.indexOf("LiqConfig") + 1
+      names.indexOf("ShadowLiqTokens") + 1
     )
   })
 

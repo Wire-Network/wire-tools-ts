@@ -369,8 +369,8 @@ the backing and custody to cover it before the epoch relay can realize yield.
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
 unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: the
-panic account `Constants.PANIC_ACCOUNT`, `sysio.andon::setpanic`,
-`addpuller(sysio.synd)`) and `SyndicationConfig` (after `LiqConfig`:
+panic account `Constants.PANIC_ACCOUNT`, funded native `pull`/`clear` permissions
+and action links) and `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
 `Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
 fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not

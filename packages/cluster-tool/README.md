@@ -384,8 +384,7 @@ A flow is a `FlowScenario` composed onto the same engine via
 `flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
 `flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
 `flow-producer-registration`, `flow-syndication-challenge`,
-`flow-syndication-rate-limit`, `flow-syndication-underwriting`,
-`flow-yield-distribution` — for end-to-end examples.
+`flow-syndication-rate-limit`, `flow-syndication-underwriting` — for end-to-end examples.
 
 ---
 

@@ -40,7 +40,8 @@ describe("Steps.contracts.sysio.synd", () => {
       desynd_refill: 1_000_000_000_000,
       window_sec: 60,
       bounty: 0,
-      challenge_extra: 1_000_000_000
+      challenge_extra: 1_000_000_000,
+      min_desyndicate: 1_000_000
     }
     const step = Steps.contracts.sysio.synd.planSetconfig(
       Report.Actor.Sysio,
@@ -68,7 +69,8 @@ describe("Steps.contracts.sysio.synd", () => {
       desynd_refill: 1_000_000_000_000,
       window_sec: 60,
       bounty: 0,
-      challenge_extra: 1_000_000_000
+      challenge_extra: 1_000_000_000,
+      min_desyndicate: 1_000_000
     }
     await Steps.contracts.sysio.synd.runSetconfig(
       ctx,
@@ -313,7 +315,8 @@ describe("Steps.contracts.sysio.synd", () => {
       desynd_refill: 1_000_000_000_000,
       window_sec: 60,
       bounty: 0,
-      challenge_extra: 1_000_000_000
+      challenge_extra: 1_000_000_000,
+      min_desyndicate: 1_000_000
     }
     controller.abort()
     await expect(

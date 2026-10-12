@@ -118,6 +118,8 @@ export namespace RegistrySteps {
    * contract refuses a challenge whose charge is zero, so this is never 0.
    */
   export const SyndicationChallengeExtra = 1_000_000_000
+  /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
+  export const MinimumDesyndication = 1_000_000
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -474,7 +476,8 @@ export namespace RegistrySteps {
       desynd_refill: SyndicationBucketSize,
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
-      challenge_extra: SyndicationChallengeExtra
+      challenge_extra: SyndicationChallengeExtra,
+      min_desyndicate: MinimumDesyndication
     }))
 
   /** Seed chains + tokens + chain-token bindings. */
@@ -548,20 +551,17 @@ export namespace RegistrySteps {
       code: "ETHEREUM",
       outpost: {
         opp_addr: ethAddress("OPP"),
-        opp_inbound_addr: ethAddress("OPPInbound"),
-        operator_registry_addr: "",
-        source_deposit_addr: ""
+        opp_inbound_addr: ethAddress("OPPInbound")
       }
     })
-    // One Solana program serves every role, so it goes in `opp_addr` alone —
-    // `sysio.chains` rejects an SVM row that fills the role-specific fields.
+    // One Solana program receives inbound and emits outbound envelopes, so it
+    // goes in `opp_addr` alone — `sysio.chains` rejects an SVM row that sets
+    // `opp_inbound_addr`.
     await chains.actions.setoutpost.invoke({
       code: "SOLANA",
       outpost: {
         opp_addr: artifacts.solanaProgramId,
-        opp_inbound_addr: "",
-        operator_registry_addr: "",
-        source_deposit_addr: ""
+        opp_inbound_addr: ""
       }
     })
   }
@@ -751,9 +751,7 @@ export namespace RegistrySteps {
     // daemons skip a chain whose addresses are not set yet.
     const emptyOutpost: SysioContracts.SysioChainsOutpostAddrsType = {
       opp_addr: "",
-      opp_inbound_addr: "",
-      operator_registry_addr: "",
-      source_deposit_addr: ""
+      opp_inbound_addr: ""
     }
     const chainRegistrations: SysioContracts.SysioChainsRegchainAction[] = [
       {

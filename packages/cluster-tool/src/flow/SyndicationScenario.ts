@@ -371,6 +371,36 @@ export namespace SyndicationScenario {
     Assert.ok(row, "missing scenario envelope")
     return row
   }
+  /**
+   * The decoded `SyndicateLIQ` attestations the Solana outpost relayed to the depot for `user`'s
+   * wallet and `amount`, read from the cluster's OPP debugging artifacts.
+   *
+   * @param ctx - The build context whose cluster path holds the artifacts.
+   * @param user - The syndicating user, identified by their persisted wallet.
+   * @param amount - The syndicated amount, in base units.
+   * @return Every matching attestation; empty until the debugging plugin has persisted the
+   *   envelope that carries one.
+   */
+  export async function readDecodedSyndications(
+    ctx: ClusterBuildContext,
+    user: User,
+    amount: bigint
+  ): Promise<SyndicateLIQ[]> {
+    const wallet = publicKey(ctx, user)
+    return (
+      await readEnvelopeAttestations(
+        oppDebuggingPath(ctx.config.clusterPath),
+        DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+        AttestationType.SYNDICATE_LIQ
+      )
+    )
+      .map(bytes => SyndicateLIQ.fromBinary(bytes))
+      .filter(
+        message =>
+          message.amount?.amount === amount &&
+          Buffer.from(message.user?.address).toString("hex") === wallet
+      )
+  }
   /** Wait for intake, prove it is held and capture the consensus epoch and request. */
   export function planVerifyIntake(
     actor: Report.Actor,
@@ -387,6 +417,7 @@ export namespace SyndicationScenario {
       name,
       description,
       async ctx => {
+        let matching: SyndicateLIQ[] = []
         await pollUntil(
           name,
           async () => {
@@ -399,6 +430,10 @@ export namespace SyndicationScenario {
               publicKey(ctx, user)
             )
             if (!envelope) return false
+            // The debugging plugin persists the relayed envelope after the depot accepts it, so
+            // the decoded attestation can trail the held row; wait for both.
+            matching = await readDecodedSyndications(ctx, user, amount)
+            if (matching.length === 0) return false
             ctx.outputs.set(epoch, envelope.epoch_index)
             ctx.outputs.set(request, envelope.request_id)
             return true
@@ -406,20 +441,6 @@ export namespace SyndicationScenario {
           ProtocolTiming.SingleHopBudgetMs,
           PollMs
         )
-        const messages = (
-            await readEnvelopeAttestations(
-              oppDebuggingPath(ctx.config.clusterPath),
-              DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
-              AttestationType.SYNDICATE_LIQ
-            )
-          ).map(bytes => SyndicateLIQ.fromBinary(bytes)),
-          matching = messages.filter(
-            message =>
-              message.amount?.amount === amount &&
-              Buffer.from(message.user?.address).toString("hex") ===
-                publicKey(ctx, user)
-          )
-        Assert.ok(matching.length > 0, "missing decoded syndication")
         Assert.ok(
           matching.every(message => message.totalSyndicated >= amount),
           "custody attestation is below its own syndication"

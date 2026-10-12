@@ -319,7 +319,7 @@ Each `flow-*` package is a standalone scenario that bootstraps its own cluster. 
 | `flow-batch-operator-slashing` | `flow-liq-syndication` | `flow-syndication-challenge` |
 | `flow-batch-operator-termination` | `flow-liq-yield` | `flow-syndication-rate-limit` |
 | `flow-emergency-stop` | `flow-node-owner-nft` | `flow-syndication-underwriting` |
-| `flow-emissions-soak` | `flow-operator-collateral-deposit` | `flow-yield-distribution` |
+| `flow-emissions-soak` | `flow-operator-collateral-deposit` | |
 | `flow-producer-registration` | | |
 
 Launch one with `scripts/run-flow.mjs` and watch it with `scripts/flow-heartbeat-monitor.mjs` (one monitor

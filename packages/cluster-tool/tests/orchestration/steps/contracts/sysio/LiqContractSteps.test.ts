@@ -31,21 +31,6 @@ describe("Steps.contracts.sysio.liq", () => {
     expect(typeof step.runner).toBe("function")
   })
 
-  it("setkicker carries the liq::setkicker data", () => {
-    const data: SysioContracts.SysioLiqSetkickerAction = { bps: 200 }
-    const step = Steps.contracts.sysio.liq.planSetkicker(
-      Report.Actor.Sysio,
-      "configure-liq-kicker",
-      "set the T5 yield kicker",
-      {},
-      data
-    )
-    expect(step.input.kind).toBe("LiqContractSteps.SetkickerInput")
-    expect(step.input.data).toBe(data)
-    expect(step.input.data.bps).toBe(200)
-    expect(typeof step.runner).toBe("function")
-  })
-
   it("regliqpool carries the liq::regliqpool data", () => {
     const data: SysioContracts.SysioLiqRegliqpoolAction = {
       chain_code: "SOLANA",
@@ -116,7 +101,9 @@ describe("Steps.contracts.sysio.liq", () => {
     /** A fixture context whose `getSysioContract` hands back one shared `sysio.liq` client. */
     function liqContext() {
       const ctx = fixtureContext(),
-        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.liq)
+        contract = ctx.wire.getSysioContract(
+          SysioContracts.SysioContractName.liq
+        )
       jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
       return { ctx, contract }
     }
@@ -125,7 +112,9 @@ describe("Steps.contracts.sysio.liq", () => {
 
     it("pushes liq::recredit under the contract's own authority", async () => {
       const { ctx, contract } = liqContext(),
-        invoke = jest.spyOn(contract.actions.recredit, "invoke").mockResolvedValue(undefined)
+        invoke = jest
+          .spyOn(contract.actions.recredit, "invoke")
+          .mockResolvedValue(undefined)
       await Steps.contracts.sysio.liq.runRecredit(
         ctx,
         { kind: "LiqContractSteps.RecreditInput", data },
@@ -136,7 +125,9 @@ describe("Steps.contracts.sysio.liq", () => {
 
     it("pushes nothing once the step is aborted", async () => {
       const { ctx, contract } = liqContext(),
-        invoke = jest.spyOn(contract.actions.recredit, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.recredit, "invoke")
+          .mockResolvedValue(undefined),
         controller = new AbortController()
       controller.abort()
       await expect(

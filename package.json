@@ -20,7 +20,7 @@
     "@types/node": "25.5.0",
     "@types/proper-lockfile": "^4.1.4",
     "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.96",
+    "@wireio/sdk-core": "^1.0.97",
     "@wireio/shared": "^1.0.96",
     "@wireio/shared-node": "^1.0.96",
     "eslint": "^10.7.0",
