@@ -37,6 +37,25 @@ Features:
 
 ## Installation
 
+### From a release
+
+Every `wire-tools-ts` GitHub release carries the installers, named
+`wire-ql-<version>-<os>-<arch>.<ext>`:
+
+| Platform | File | Install |
+|---|---|---|
+| Linux (x64) | `wire-ql-<version>-linux-x86_64.AppImage` | `chmod +x` it and run it |
+| Linux (x64, Debian/Ubuntu) | `wire-ql-<version>-linux-amd64.deb` | `sudo apt install ./wire-ql-<version>-linux-amd64.deb` |
+| macOS (Apple silicon / Intel) | `wire-ql-<version>-mac-arm64.dmg` / `wire-ql-<version>-mac-x64.dmg` | open the dmg and drag WIRE QL to Applications |
+| Windows (x64) | `wire-ql-<version>-win-x64.exe` | run the installer |
+
+The installers are not code-signed yet. macOS blocks an unsigned app on first launch:
+right-click WIRE QL in Applications → **Open**, or run
+`xattr -dr com.apple.quarantine "/Applications/WIRE QL.app"`. Windows SmartScreen shows
+"Windows protected your PC": choose **More info → Run anyway**.
+
+### From source
+
 Build from the `wire-tools-ts` repository root:
 
 ```bash
