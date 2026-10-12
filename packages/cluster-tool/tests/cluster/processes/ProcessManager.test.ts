@@ -18,7 +18,8 @@ class FakeProcess extends ManagedProcess {
     label: string,
     private readonly exePath = "/bin/true",
     private readonly argv: string[] = [],
-    private readonly ready = true
+    private readonly ready = true,
+    private readonly verifyBudgetMs = FakeProcess.VerifyTimeoutMs
   ) {
     super(manager, { label, kind: ManagedProcess.Kind.anvil })
   }
@@ -32,7 +33,7 @@ class FakeProcess extends ManagedProcess {
     return Promise.resolve(this.ready)
   }
   protected get verifyTimeoutMs(): number {
-    return 50
+    return this.verifyBudgetMs
   }
   protected get verifyIntervalMs(): number {
     return 10
@@ -41,6 +42,19 @@ class FakeProcess extends ManagedProcess {
   capture(stream: NodeJS.ReadableStream): void {
     this.captureOutput(stream)
   }
+}
+
+namespace FakeProcess {
+  /** Verify window for cases that EXPECT the verify timeout — kept short so they fail fast. */
+  export const VerifyTimeoutMs = 50
+  /**
+   * Verify window for a child that dies before ready. `exited` settles on the
+   * child's `close`, which a loaded host can deliver well after 50ms — so a
+   * short window would race the death and report the timeout instead. This
+   * window is long enough that only the exit-before-ready path can end the
+   * verify loop, and still below jest's 30s test timeout.
+   */
+  export const ExitBeforeReadyVerifyTimeoutMs = 20_000
 }
 
 describe("ProcessManager + ManagedProcess", () => {
@@ -349,7 +363,14 @@ describe("ProcessManager + ManagedProcess", () => {
       // budget instead of burning it and reporting the generic timeout line
       // (a crashed daemon and a slow boot must be distinguishable from the
       // failure message alone).
-      const process = new FakeProcess(manager, "dies", "/bin/false", [], false)
+      const process = new FakeProcess(
+        manager,
+        "dies",
+        "/bin/false",
+        [],
+        false,
+        FakeProcess.ExitBeforeReadyVerifyTimeoutMs
+      )
       const startedAt = Date.now()
       await expect(process.start()).rejects.toThrow(
         /exited \(code 1\) before passing verifyReady/
@@ -364,9 +385,10 @@ describe("ProcessManager + ManagedProcess", () => {
           label: string,
           exePath: string,
           argv: string[],
-          private readonly detail: () => Promise<string>
+          private readonly detail: () => Promise<string>,
+          verifyBudgetMs = FakeProcess.VerifyTimeoutMs
         ) {
-          super(manager, label, exePath, argv, false)
+          super(manager, label, exePath, argv, false, verifyBudgetMs)
         }
         protected override startupFailureDetail(): Promise<string> {
           return this.detail()
@@ -374,8 +396,12 @@ describe("ProcessManager + ManagedProcess", () => {
       }
 
       it("is appended to the exit-before-ready rejection", async () => {
-        const process = new DetailProcess("detail-exit", "/bin/false", [], () =>
-          Promise.resolve("DETAIL-MARKER: holder pid 4242")
+        const process = new DetailProcess(
+          "detail-exit",
+          "/bin/false",
+          [],
+          () => Promise.resolve("DETAIL-MARKER: holder pid 4242"),
+          FakeProcess.ExitBeforeReadyVerifyTimeoutMs
         )
         await expect(process.start()).rejects.toThrow(
           /exited \(code 1\)[\s\S]*DETAIL-MARKER: holder pid 4242/
@@ -396,8 +422,12 @@ describe("ProcessManager + ManagedProcess", () => {
       })
 
       it("a throwing detail probe never masks the primary error", async () => {
-        const process = new DetailProcess("detail-throws", "/bin/false", [], () =>
-          Promise.reject(new Error("probe exploded"))
+        const process = new DetailProcess(
+          "detail-throws",
+          "/bin/false",
+          [],
+          () => Promise.reject(new Error("probe exploded")),
+          FakeProcess.ExitBeforeReadyVerifyTimeoutMs
         )
         await expect(process.start()).rejects.toThrow(
           /exited \(code 1\) before passing verifyReady/
