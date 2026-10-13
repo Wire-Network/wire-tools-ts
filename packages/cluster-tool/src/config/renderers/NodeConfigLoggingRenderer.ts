@@ -144,6 +144,7 @@ export namespace NodeConfigLoggingRenderer {
     "transient_trx_failure_tracing",
     "state_history",
     "vote",
-    "transaction"
+    "transaction",
+    "query"
   ] as const
 }

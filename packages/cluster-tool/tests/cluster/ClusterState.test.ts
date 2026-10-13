@@ -105,15 +105,13 @@ describe("ClusterState", () => {
       expect(persistedRoleOf(NodeRole.producer)).toBe(
         ClusterStateNodeRole.producer
       )
-      // The snapshot records a node's PROCESS kind, so BOTH operator kinds
-      // land on its single `operator` member — the persisted shape is
-      // deliberately unchanged by the depot-side role split.
+      // The snapshot records the batch daemon as an operator process.
       expect(persistedRoleOf(NodeRole.batch_operator)).toBe(
         ClusterStateNodeRole.operator
       )
-      expect(persistedRoleOf(NodeRole.underwriter)).toBe(
-        ClusterStateNodeRole.operator
-      )
+      // An API node keeps its OWN persisted kind: it is neither a producer (no
+      // keys, no `resumeProduction`) nor an operator (no daemon args).
+      expect(persistedRoleOf(NodeRole.api)).toBe(ClusterStateNodeRole.api)
     })
 
     it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
@@ -142,6 +140,23 @@ describe("ClusterState", () => {
         state = ClusterState.capture(ctx)
       ClusterState.save(ctx.config, state)
       expect(ClusterState.load(ctx.config)).toEqual(state)
+    })
+
+    it("keeps the api node row through the round-trip", () => {
+      const ctx = seededContext()
+      ClusterState.save(ctx.config, ClusterState.capture(ctx))
+      const apiRows = ClusterState.load(ctx.config).nodes.filter(
+        node => node.role === ClusterStateNodeRole.api
+      )
+      // The fixture plans one API node: no producers, no operator identity.
+      expect(apiRows).toHaveLength(1)
+      expect(apiRows[0].producers).toEqual([])
+      expect(apiRows[0].batchOperatorLabel).toBeNull()
+      expect(apiRows[0].underwriterLabel).toBeNull()
+      expect(apiRows[0].ports).toEqual({
+        http: ctx.config.bind.nodeop.ports.api[0].http,
+        p2p: ctx.config.bind.nodeop.ports.api[0].p2p
+      })
     })
 
     it("the on-disk file carries no private key material", () => {
@@ -209,7 +224,6 @@ describe("ClusterState", () => {
       ctx.keyStore.setOperator(materialized)
       expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
     })
-
   })
 
   describe("§5.6 — an SSM cluster persists key REFERENCES, never key material", () => {
@@ -288,7 +302,9 @@ describe("ClusterState", () => {
         record => record.account === producer
       )
       expect(entry.wire.awsSecretId).toBe(`/wire/test/${node.name}/K1`)
-      expect(entry.wireFinalizer.awsSecretId).toBe(`/wire/test/${node.name}/BLS`)
+      expect(entry.wireFinalizer.awsSecretId).toBe(
+        `/wire/test/${node.name}/BLS`
+      )
       expect(entry.wire.privateKey).toBeUndefined()
       expect(entry.wireFinalizer.privateKey).toBeUndefined()
     })
@@ -300,7 +316,9 @@ describe("ClusterState", () => {
         )
       // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
       // read these regardless of who holds the secret.
-      expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe("SIG_BLS_node0")
+      expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe(
+        "SIG_BLS_node0"
+      )
       expect(operator?.ethereum?.address).toBe(BatchOperator.ethereum.address)
       expect(keys.nodes[0].wire.publicKey).toBe("PUB_K1_node0")
     })

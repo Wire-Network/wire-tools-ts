@@ -3,7 +3,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import type * as anchor from "@coral-xyz/anchor"
 import { NestedError } from "@wireio/shared"
-import type { SysioContracts } from "@wireio/sdk-core"
+import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -17,6 +17,7 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { pollUntil, verifyStep } from "../StepTools.js"
+import { packedSlugValue, slugValue } from "../../utils/slugUtils.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/index.js"
 
 const log = getLogger(__filename)
@@ -32,18 +33,9 @@ const log = getLogger(__filename)
  */
 export namespace ExternalOutpostSteps {
   /** ETH outpost address keys the daemons require (parity with local prep). */
-  const RequiredEthereumAddressKeys = [
-    "OPP",
-    "OPPInbound",
-    "OperatorRegistry",
-    "ReserveManager"
-  ] as const
+  const RequiredEthereumAddressKeys = ["OPP", "OPPInbound"] as const
   /** SOL outpost IDL instructions the daemons require (parity with local prep). */
-  const RequiredSolanaIdlInstructions = [
-    "epoch_in",
-    "commit_underwrite",
-    "request_swap"
-  ] as const
+  const RequiredSolanaIdlInstructions = ["epoch_in"] as const
 
   /** Minimum head-block advance that proves the depot is producing blocks. */
   export const HeadAdvanceMinBlocks = 2
@@ -114,7 +106,9 @@ export namespace ExternalOutpostSteps {
       "ExternalOutpostSteps.planMaterialize requires config.externalOutposts (external-outpost mode only)"
     )
     const dataPath = ctx.config.dataPath,
-      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
+        ctx.config
+      ),
       abiDir = Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath),
       idlDir = Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath),
       materialize = (source: string, destination: string): void => {
@@ -397,20 +391,29 @@ export namespace ExternalOutpostSteps {
   >(ctx: C, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const { rows: chains } = await ctx.wire.getChains(),
-      outposts = chains.filter(chain => !chain.is_depot),
-      chainCode = (code: SysioContracts.SysioChainsSlugNameType): string =>
-        String(code.value)
+      outposts = chains.filter(chain => !chain.is_depot)
     Assert.ok(
       outposts.length > 0,
       "runOutboundEnvelopesQueued: sysio.chains::chains has no registered outpost (non-depot) chain"
     )
-    const expected = outposts.map(outpost => chainCode(outpost.code))
+    // Compare PACKED values, and decode each side with the decoder for its own
+    // carrier. `chains.code` is a `slug_name` ABI field — the `{value}` wrapper
+    // before the depot registers the builtin, the canonical spelling after —
+    // while `outenvelopes.chain_code` is declared `uint64` and renders as a
+    // number, or a quoted decimal past 0xffffffff, which every real chain code
+    // exceeds. Stringifying both used to work only because both happened to
+    // land on the same decimal; once `code` becomes "ETH" that coincidence is
+    // gone and no comparison on spellings can hold.
+    const expected = outposts.map(outpost => slugValue(outpost.code)),
+      expectedLabel = expected.map(code => SlugName.toString(code)).join(", ")
     try {
       await pollUntil(
-        `an outbound envelope is queued for every registered outpost (${expected.join(", ")})`,
+        `an outbound envelope is queued for every registered outpost (${expectedLabel})`,
         async () => {
           const { rows: outbound } = await ctx.wire.getOutboundEnvelopes(),
-            queued = new Set(outbound.map(row => String(row.chain_code)))
+            queued = new Set(
+              outbound.map(row => packedSlugValue(row.chain_code))
+            )
           return expected.every(code => queued.has(code))
         },
         OutboundEnvelopesPollBudgetMs,
@@ -431,7 +434,10 @@ export namespace ExternalOutpostSteps {
       )
       throw new NestedError(
         "external-outpost bootstrap gate: the depot queued no outbound envelope for every registered outpost",
-        { cause: error, context: { expected, depotEnvelopeCount } }
+        {
+          cause: error,
+          context: { expected: expectedLabel, depotEnvelopeCount }
+        }
       )
     }
   }

@@ -58,38 +58,6 @@ export function slugNameToLittleEndianBuffer(value: number | bigint): Buffer {
 }
 
 /**
- * The numeric value of a slug cell as returned by a depot KV table read.
- *
- * The carrier is split by ABI shape, which is what removes the ambiguity the
- * previous string-sniffing decoder could not resolve:
- *
- * - A **bare string** is a `slug_name`-typed field, and the depot's ABI builtin
- *   renders it as the decoded slug. It is parsed as a SLUG, never as a decimal.
- *   That matters because the slug alphabet contains digits: `"7"` is a real code
- *   whose packed value is `149533581377536`, and `"101"` / `"1E3"` / `"0X10"`
- *   are ordinary codes that JS numeric syntax silently reinterprets. Preferring
- *   the decimal reading mis-decoded every one of them.
- * - A **`{ value }` wrapper** is the TRANSITIONAL shape a pre-builtin depot
- *   emits, carrying the packed `u64` directly — so its inner value stays
- *   numeric. This arm goes away once no depot emits the wrapper.
- * - A **bare number** is an already-packed value from `SlugName.from`.
- *
- * A code field DECLARED `uint64` (a proto-derived attestation payload) is a
- * different carrier and goes through {@link packedSlugValue} — it renders as a
- * decimal, which this function would misread as a slug spelling.
- *
- * Throws on an unrecognised shape rather than returning `Number.NaN`: `NaN`
- * never equals itself, so a `NaN` slug silently matches zero rows in a filter
- * predicate — which surfaces minutes later as a poll timeout instead of at the
- * decode that caused it. An invalid slug spelling throws for the same reason.
- *
- * @param raw - The slug cell as returned by a table query (unknown shape).
- * @returns The slug's packed numeric value.
- * @throws If `raw` is not a recognised slug carrier, or is not a valid slug.
- * @example
- *   rows.filter(row => slugValue(row.chain_code) === SlugName.from("ETHEREUM"))
- */
-/**
  * The numeric value of a code field declared `uint64` rather than `slug_name`.
  *
  * Proto-derived payloads carry codes as a packed `uint64` — `OperatorAction`'s
@@ -118,6 +86,39 @@ export function packedSlugValue(raw: unknown): number {
     })
 }
 
+/**
+ * The numeric value of a slug cell as returned by a depot KV table read.
+ *
+ * The carrier is split by ABI shape, which is what removes the ambiguity the
+ * previous string-sniffing decoder could not resolve:
+ *
+ * - A **bare string** is a `slug_name`-typed field, and the depot's ABI builtin
+ *   renders it as the decoded slug. It is parsed as a SLUG, never as a decimal —
+ *   and that is unambiguous because a code must START with a letter
+ *   (`fc::slug_name_traits::leading_alphabet`), so no legal spelling can also be
+ *   read as a number. Before that rule existed the alphabet's digits made `"7"`
+ *   both a code and a decimal, and `"1E3"` / `"0X10"` collided with JS numeric
+ *   syntax; the leading rule deletes the collision rather than resolving it.
+ * - A **`{ value }` wrapper** is the TRANSITIONAL shape a pre-builtin depot
+ *   emits, carrying the packed `u64` directly — so its inner value stays
+ *   numeric. This arm goes away once no depot emits the wrapper.
+ * - A **bare number** is an already-packed value from `SlugName.from`.
+ *
+ * A code field DECLARED `uint64` (a proto-derived attestation payload) is a
+ * different carrier and goes through {@link packedSlugValue} — it renders as a
+ * decimal, which this function would misread as a slug spelling.
+ *
+ * Throws on an unrecognised shape rather than returning `Number.NaN`: `NaN`
+ * never equals itself, so a `NaN` slug silently matches zero rows in a filter
+ * predicate — which surfaces minutes later as a poll timeout instead of at the
+ * decode that caused it. An invalid slug spelling throws for the same reason.
+ *
+ * @param raw - The slug cell as returned by a table query (unknown shape).
+ * @returns The slug's packed numeric value.
+ * @throws If `raw` is not a recognised slug carrier, or is not a valid slug.
+ * @example
+ *   rows.filter(row => slugValue(row.chain_code) === SlugName.from("ETHEREUM"))
+ */
 export function slugValue(raw: unknown): number {
   return match(raw)
     .with(P.number, identity)

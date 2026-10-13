@@ -3,10 +3,16 @@ import Os from "node:os"
 import Path from "node:path"
 import {
   ClusterFiles,
-  DefaultChainStateDbSizeMb
+  DefaultChainStateDbSizeMb,
+  NodeopReadMode
 } from "@wireio/cluster-tool-shared"
+import { camelCase } from "lodash"
 import type { Argv } from "yargs"
 import { Constants } from "@wireio/cluster-tool"
+import {
+  applyClusterBuildOptionsArgs,
+  toQueryEngineFlag
+} from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
 import {
   createCreateApiNodeCommand,
@@ -14,7 +20,11 @@ import {
   toApiNodeOptions,
   type CreateApiNodeArgv
 } from "@wireio/cluster-tool/cli/CreateApiNodeCommand"
-import { ApiNodeConfig, ApiNodeIniRenderer } from "@wireio/cluster-tool/config"
+import {
+  ApiNodeConfig,
+  ApiNodeIniRenderer,
+  QueryEngineConfigProvider
+} from "@wireio/cluster-tool/config"
 import { toIniLine } from "@wireio/cluster-tool/utils"
 
 /** A captured `.option()` config — only the fields this suite asserts on. */
@@ -24,6 +34,7 @@ interface RecordedOption {
   array?: boolean
   default?: unknown
   describe?: string
+  choices?: readonly string[]
 }
 
 /** The recorder pair returned by {@link createYargsRecorder}. */
@@ -61,6 +72,16 @@ function recordBuilder(): YargsRecorder {
 }
 
 const HttpServerAddress = "0.0.0.0:8888"
+
+/** The prefix every query-engine flag carries (spelled here as an independent oracle). */
+const QueryEngineFlagPrefix = "query-engine-"
+
+/** The `--query-engine-*` flags a recorder captured, sorted. */
+function queryEngineFlagsOf(options: Map<string, RecordedOption>): string[] {
+  return [...options.keys()]
+    .filter(flag => flag.startsWith(QueryEngineFlagPrefix))
+    .sort()
+}
 
 describe("createCreateApiNodeCommand", () => {
   it("names itself with the create-api-node enum member and carries a non-empty describe", () => {
@@ -123,7 +144,7 @@ describe("createCreateApiNodeCommand", () => {
     })
   })
 
-  it("registers NOTHING beyond its own ten flags (no shared create surface)", () => {
+  it("registers NOTHING beyond its own flags (no shared create surface)", () => {
     const { options } = recordBuilder()
     expect([...options.keys()].sort()).toEqual(
       [
@@ -136,11 +157,71 @@ describe("createCreateApiNodeCommand", () => {
         "http-threads",
         "output-path",
         "p2p-peer-address",
-        "transaction-finality-status-max-storage-size-gb"
+        "transaction-finality-status-max-storage-size-gb",
+        "query-engine-read-mode",
+        "query-engine-worker-threads",
+        "query-engine-max-in-flight",
+        "query-engine-max-query-bytes",
+        "query-engine-timeout-ms",
+        "query-engine-max-capture-ms",
+        "query-engine-max-abi-bytes",
+        "query-engine-max-scan-rows",
+        "query-engine-max-raw-bytes",
+        "query-engine-max-memory-bytes",
+        "query-engine-max-groups",
+        "query-engine-max-result-rows",
+        "query-engine-max-response-bytes"
       ].sort()
     )
     expect(options.has("build-path")).toBe(false)
     expect(options.has("cluster-path")).toBe(false)
+  })
+
+  it("registers --query-engine-read-mode as a head | irreversible choice with NO default", () => {
+    const option = recordBuilder().options.get(toQueryEngineFlag("readMode"))
+    expect(option).toBeDefined()
+    expect(option.type).toBe("string")
+    expect(option.choices).toEqual([
+      NodeopReadMode.head,
+      NodeopReadMode.irreversible
+    ])
+    expect(option.default).toBeUndefined()
+    expect(option.demandOption).toBeUndefined()
+    expect(option.describe).toContain(Constants.READ_MODE_OPTION)
+  })
+
+  it("registers one number flag per query-engine limit from the shared table, none with a default", () => {
+    const { options } = recordBuilder()
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) => {
+      const registered = options.get(toQueryEngineFlag(member))
+      expect(registered).toBeDefined()
+      expect(registered.type).toBe("number")
+      expect(registered.default).toBeUndefined()
+      expect(registered.demandOption).toBeUndefined()
+      expect(registered.describe).toContain(option)
+    })
+  })
+
+  it("registers the SAME --query-engine-* flags, read-mode choices, and describe text as create", () => {
+    const apiNode = recordBuilder().options,
+      create = createYargsRecorder()
+    // An EMPTY environment keeps a developer shell's WIRE_* exports out of the
+    // registration.
+    applyClusterBuildOptionsArgs(create.argv, {}, {})
+    expect(queryEngineFlagsOf(apiNode)).toEqual(
+      queryEngineFlagsOf(create.options)
+    )
+    // The read mode plus one flag per plugin limit.
+    expect(queryEngineFlagsOf(apiNode)).toHaveLength(
+      Constants.QUERY_ENGINE_LIMIT_OPTIONS.length + 1
+    )
+    expect(apiNode.get(toQueryEngineFlag("readMode")).choices).toEqual(
+      create.options.get(toQueryEngineFlag("readMode")).choices
+    )
+    // …and ONE wording: both commands take every describe from the same helper.
+    queryEngineFlagsOf(apiNode).forEach(flag =>
+      expect(apiNode.get(flag).describe).toBe(create.options.get(flag).describe)
+    )
   })
 
   it("sets NO yargs default — defaults have exactly one home (ApiNodeConfig.resolve)", () => {
@@ -195,7 +276,7 @@ describe("createCreateApiNodeCommand", () => {
 })
 
 describe("toApiNodeOptions", () => {
-  it("nests the tuning leaves into their own group", () => {
+  it("nests the tuning and query-engine leaves into their own groups", () => {
     const argv: CreateApiNodeArgv = {
       outputPath: "/tmp/out",
       httpServerAddress: HttpServerAddress,
@@ -206,7 +287,9 @@ describe("toApiNodeOptions", () => {
       httpMaxInFlightRequests: 500,
       httpThreads: 16,
       agentName: "custom-api",
-      genesisJson: "/tmp/genesis.json"
+      genesisJson: "/tmp/genesis.json",
+      queryEngineReadMode: NodeopReadMode.irreversible,
+      queryEngineMaxInFlight: 8
     }
     expect(toApiNodeOptions(argv)).toEqual({
       outputPath: "/tmp/out",
@@ -220,8 +303,33 @@ describe("toApiNodeOptions", () => {
         httpMaxInFlightRequests: 500,
         httpThreads: 16,
         agentName: "custom-api"
-      }
+      },
+      // `toEqual` ignores the members whose flags were omitted (undefined).
+      queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
     })
+  })
+
+  it("maps every --query-engine-* flag onto its queryEngine member", () => {
+    // One distinct plain count per limit (base + index), so a member read from
+    // the wrong flag is caught. The argv keys are yargs' own camelCase of each
+    // registered flag.
+    const limitValueBase = 100,
+      argv = {
+        outputPath: "/tmp/out",
+        httpServerAddress: HttpServerAddress,
+        queryEngineReadMode: NodeopReadMode.irreversible,
+        ...Object.fromEntries(
+          Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ member }, index) => [
+            camelCase(toQueryEngineFlag(member)),
+            limitValueBase + index
+          ])
+        )
+      } as CreateApiNodeArgv,
+      { queryEngine } = toApiNodeOptions(argv)
+    expect(queryEngine.readMode).toBe(NodeopReadMode.irreversible)
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member }, index) =>
+      expect(queryEngine[member]).toBe(limitValueBase + index)
+    )
   })
 
   it("leaves an omitted flag undefined so resolve supplies its default", () => {
@@ -232,8 +340,15 @@ describe("toApiNodeOptions", () => {
     expect(options.chainStateDbSizeMb).toBeUndefined()
     expect(options.genesisJsonFile).toBeUndefined()
     expect(options.tuning.httpThreads).toBeUndefined()
+    expect(options.queryEngine.readMode).toBeUndefined()
+    expect(options.queryEngine.maxInFlight).toBeUndefined()
     expect(ApiNodeConfig.resolve(options).tuning.httpThreads).toBe(
       ApiNodeConfig.DefaultHttpThreads
+    )
+    // An unset query-engine member resolves to "unset" — nodeop's / the
+    // plugin's own default, never a harness-chosen value.
+    expect(ApiNodeConfig.resolve(options).queryEngine).toEqual(
+      QueryEngineConfigProvider.createDefaultOptions()
     )
   })
 })
@@ -331,6 +446,44 @@ describe("runCreateApiNode", () => {
     )
   })
 
+  it("renders the set query-engine members and the plugin line into config.ini", () => {
+    const result = runCreateApiNode({
+        outputPath: Path.join(dir, "query-engine"),
+        httpServerAddress: HttpServerAddress,
+        queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
+      }),
+      ini = Fs.readFileSync(result.configFile, "utf-8")
+    expect(ini).toContain("read-mode = irreversible")
+    expect(ini).toContain("query-max-in-flight = 8")
+    expect(ini).toContain(
+      toIniLine(ApiNodeIniRenderer.PluginOption, Constants.QUERY_ENGINE_PLUGIN)
+    )
+  })
+
+  it("renders the plugin line but NO read-mode line for a defaults-only run", () => {
+    const result = runCreateApiNode({
+        outputPath: Path.join(dir, "query-engine-defaults"),
+        httpServerAddress: HttpServerAddress
+      }),
+      ini = Fs.readFileSync(result.configFile, "utf-8")
+    expect(ini).toContain(
+      toIniLine(ApiNodeIniRenderer.PluginOption, Constants.QUERY_ENGINE_PLUGIN)
+    )
+    expect(ini).not.toContain("read-mode")
+  })
+
+  it("rejects an invalid query-engine limit INSTEAD of writing anything", () => {
+    const outputPath = Path.join(dir, "invalid-query-engine")
+    expect(() =>
+      runCreateApiNode({
+        outputPath,
+        httpServerAddress: HttpServerAddress,
+        queryEngine: { maxGroups: 0 }
+      })
+    ).toThrow(/query-max-groups/)
+    expect(Fs.existsSync(outputPath)).toBe(false)
+  })
+
   it("propagates a resolve assertion INSTEAD of writing anything", () => {
     const outputPath = Path.join(dir, "invalid")
     expect(() =>
@@ -365,16 +518,18 @@ describe("createCreateApiNodeCommand handler (end to end)", () => {
         outputPath,
         httpServerAddress: HttpServerAddress,
         p2pPeerAddress: ["10.0.0.6:9876"],
-        httpThreads: 16
+        httpThreads: 16,
+        queryEngineMaxInFlight: 8
       })
       const configFile = Path.join(outputPath, ClusterFiles.NodeConfigFilename),
         startScriptFile = Path.join(outputPath, "start.sh")
       expect(Fs.existsSync(configFile)).toBe(true)
       expect(Fs.existsSync(startScriptFile)).toBe(true)
-      // The argv actually reached the resolver: a nested tuning flag and a
-      // repeatable peer both survive the mapping.
+      // The argv actually reached the resolver: a nested tuning flag, a
+      // query-engine flag, and a repeatable peer all survive the mapping.
       const ini = Fs.readFileSync(configFile, "utf-8")
       expect(ini).toContain(toIniLine(ApiNodeIniRenderer.HttpThreadsOption, 16))
+      expect(ini).toContain("query-max-in-flight = 8")
       expect(ini).toContain(
         toIniLine(ApiNodeIniRenderer.P2pPeerAddressOption, "10.0.0.6:9876")
       )

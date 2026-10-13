@@ -20,6 +20,7 @@ const config: ExternalClusterConfig = {
         producers: [{ http: 8988, p2p: 9976 }],
         batch: [],
         underwriters: [],
+        api: [],
         adHoc: []
       }
     },

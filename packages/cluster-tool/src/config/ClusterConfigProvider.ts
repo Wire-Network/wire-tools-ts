@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
+import { asOption } from "@3fv/prelude-ts"
 import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
@@ -9,6 +10,7 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
@@ -20,7 +22,8 @@ import {
   type ClusterSignatureProviderConfig,
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
-  type ExternalOutpostConfig
+  type ExternalOutpostConfig,
+  type QueryEngineConfig
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
@@ -55,6 +58,7 @@ import type {
 // module-init, so whichever module loads first the other is complete by the
 // time a value is dereferenced.
 import { NodeConfig } from "./NodeConfig.js"
+import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
 
@@ -94,6 +98,42 @@ function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
 }
 
 /**
+ * The API-node count — a non-negative safe integer, so `range()` cannot size the
+ * bind arrays off a fraction and `peerCapacity` cannot go fractional or negative.
+ *
+ * @param options - The caller's options (its `apiCount`, if any).
+ * @returns The count to plan.
+ */
+function assertApiCount(options: ClusterBuildOptions): number {
+  const { apiCount = ClusterConfigProvider.DefaultApiCount } = options
+  Assert.ok(
+    Number.isSafeInteger(apiCount) && apiCount >= 0,
+    `ClusterConfigProvider: apiCount must be a non-negative safe integer — got ${apiCount}`
+  )
+  return apiCount
+}
+
+/**
+ * A query-engine setting with no API node to read it is a misconfiguration,
+ * not a default: every set member requires at least one planned API node.
+ *
+ * @param apiCount - The planned API-node count.
+ * @param queryEngine - The resolved query-engine config.
+ */
+function assertQueryEngineUse(
+  apiCount: number,
+  queryEngine: QueryEngineConfig
+): void {
+  const setMembers = Object.entries(queryEngine)
+    .filter(([, value]) => value != null)
+    .map(([member]) => member)
+  Assert.ok(
+    apiCount > 0 || setMembers.length === 0,
+    `ClusterConfigProvider: query-engine settings (${setMembers.join(", ")}) require at least one API node — set apiCount (--api-count)`
+  )
+}
+
+/**
  * Hydrates and persists the cluster configuration — the behavior half of the
  * plain-data `ClusterConfig` shape (`@wireio/cluster-tool-shared`). Plain
  * `ClusterConfig` values flow through the harness; this provider owns the
@@ -119,7 +159,9 @@ export namespace ClusterConfigProvider {
   export const DefaultProducerCount = 21
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
-  export const DefaultUnderwriterCount = 1
+  export const DefaultUnderwriterCount = 0
+  /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
+  export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
 
   /**
@@ -132,10 +174,17 @@ export namespace ClusterConfigProvider {
   export async function resolve(
     options: ClusterBuildOptions
   ): Promise<ClusterConfig> {
-    // Roster shape first: it is pure arithmetic, and rejecting here means an
-    // illegal topology never claims a cluster's worth of ports (nor holds the
-    // host-global bind lock) on its way to failing.
+    // Pure validation first — the roster shape, the API-node count, and the
+    // query-engine settings are arithmetic over the options, and rejecting here
+    // means an illegal topology never claims a cluster's worth of ports (nor
+    // holds the host-global bind lock) on its way to failing.
     const batchOperatorCount = assertBatchOperatorSchedule(options),
+      apiCount = assertApiCount(options),
+      queryEngine = asOption(
+        QueryEngineConfigProvider.resolve(options.queryEngine)
+      )
+        .tap(resolved => assertQueryEngineUse(apiCount, resolved))
+        .get(),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -163,6 +212,7 @@ export namespace ClusterConfigProvider {
       nodeCount: options.nodeCount ?? DefaultNodeCount,
       batchOperatorCount,
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
+      apiCount,
       epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,
       batchOpGroups: options.batchOpGroups ?? null,
@@ -172,7 +222,8 @@ export namespace ClusterConfigProvider {
       cooldownEpochs: options.cooldownEpochs ?? 1,
       terminateMaxConsecutiveMisses:
         options.terminateMaxConsecutiveMisses ?? null,
-      terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
+      terminateMaxPercentMisses24h:
+        options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
@@ -197,12 +248,16 @@ export namespace ClusterConfigProvider {
       awsClusterNodeConfig,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false,
+      enableMockLiqPools: options.enableMockLiqPools ?? false,
+      enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,
       chainStateDbSizeMb:
-        options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb
+        options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
+      queryEngine,
+      solanaSlotsPerEpoch:
+        options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }
   }
 
@@ -395,11 +450,8 @@ export namespace ClusterConfigProvider {
    */
   function assertExternalOutpostTopology(
     options: ClusterBuildOptions,
-    externalOutposts: ExternalOutpostConfig
+    _externalOutposts: ExternalOutpostConfig
   ): void {
-    if (externalOutposts == null) {
-      return
-    }
     const { underwriterCount = DefaultUnderwriterCount } = options,
       cause =
         options.underwriterCount == null
@@ -407,8 +459,7 @@ export namespace ClusterConfigProvider {
           : `underwriterCount was set to ${options.underwriterCount}`
     Assert.ok(
       underwriterCount === 0,
-      `externalOutposts (--external-outpost-config) requires 0 underwriters, but ${cause}. ` +
-        "An external cluster has no local outpost to bond underwriter collateral on — pass an EXPLICIT --underwriter-count 0."
+      `Swap-underwriter daemons have been removed; underwriterCount must be 0, but ${cause}.`
     )
   }
 
@@ -491,12 +542,15 @@ export namespace ClusterConfigProvider {
    * @param options - The caller options (carries `bind`, `bindConfig`, counts).
    * @returns The resolved bind config.
    */
-  async function resolveBind(options: ClusterBuildOptions): Promise<BindConfig> {
+  async function resolveBind(
+    options: ClusterBuildOptions
+  ): Promise<BindConfig> {
     const { bind: cliBind = {} } = options,
       topology: ClusterTopologyOptions = {
         producerCount: options.nodeCount,
         batchOperatorCount: options.batchOperatorCount,
         underwriterCount: options.underwriterCount,
+        apiCount: options.apiCount,
         adHocCount: options.adHocCount,
         bindAll: options.bindAll
       },
@@ -555,6 +609,11 @@ export namespace ClusterConfigProvider {
       "underwriters",
       bind.nodeop.ports.underwriters.length,
       topology.underwriterCount ?? DefaultUnderwriterCount
+    )
+    expect(
+      "api",
+      bind.nodeop.ports.api.length,
+      topology.apiCount ?? DefaultApiCount
     )
     expect(
       "adHoc",

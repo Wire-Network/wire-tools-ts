@@ -1,0 +1,13 @@
+{
+  "contractName": "DepositManager",
+  "sourceName": "contracts/liqEth/v1/DepositManager.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "deposit",
+      "outputs": [],
+      "stateMutability": "payable",
+      "type": "function"
+    }
+  ]
+}

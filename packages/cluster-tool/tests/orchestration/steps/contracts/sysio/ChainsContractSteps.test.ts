@@ -1,12 +1,12 @@
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 
 describe("Steps.contracts.sysio.chains", () => {
   it("regchain carries the chains::regchain data", () => {
     const data: SysioContracts.SysioChainsRegchainAction = {
       kind: SysioContracts.SysioChainsChainkind.CHAIN_KIND_WIRE,
-      code: { value: SlugName.from("WIRE") },
+      code: "WIRE",
       external_chain_id: 0,
       name: "Wire (depot)",
       description: "The WIRE depot chain itself",
@@ -15,9 +15,7 @@ describe("Steps.contracts.sysio.chains", () => {
       // setoutpost once the daemon artifacts resolve.
       outpost: {
         opp_addr: "",
-        opp_inbound_addr: "",
-        operator_registry_addr: "",
-        source_deposit_addr: ""
+        opp_inbound_addr: ""
       }
     }
     const step = Steps.contracts.sysio.chains.planRegchain(

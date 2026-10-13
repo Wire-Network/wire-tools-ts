@@ -20,7 +20,7 @@
  * The six probes, per beat:
  *   1. chain liveness            — `clio get info` → head_block_num
  *   2. operators table           — `sysio.opreg::operators` (v6 `-S` scope, fields under `.value`)
- *   3. epoch state singleton     — `sysio.epoch::epochstate` → current_epoch_index
+ *   3. epoch state singleton     — `sysio.epoch::epochstate` → index + start/next timestamps
  *   4. msgch outbound envelopes  — `sysio.msgch::envelopes` row count
  *   5. opp-debugging artifacts   — total + per-direction `.metadata` counts + delta
  *   6. aggregate cluster log     — action-receipt top-3 + the TWO failure classes:
@@ -31,7 +31,13 @@
  * The bails (print `BAIL: <reason>`, SIGINT the watched flow, exit 1):
  *   - bootstrap never completes — epoch still null/0 past the deadline since first liveness
  *   - epoch stall — same epoch as the previous beat AND still unchanged after a re-probe
- *   - opp-debugging zero delta on ANY beat once epoch >= 1 (first occurrence)
+ *   - opp-debugging zero delta on the FIRST beat at/past the first epoch's
+ *     start + epoch duration (controller ruling for self-check 6). Before
+ *     that wall-clock boundary, zero delta is marked growth=first-epoch-boundary
+ *     in HB and does not bail. The boundary never resets on epoch advance.
+ *     It comes from epochstate.current_epoch_start / next_epoch_start and
+ *     cluster-config epochDurationSec (or --epoch-duration-seconds). The
+ *     bootstrap-never-completes rule is unchanged.
  *   - one direction frozen for 2 consecutive beats while the others advance
  *     (only after all four directions have a non-zero baseline)
  *   - FATAL count growing across 2 consecutive beats
@@ -41,8 +47,14 @@
  * Usage:
  *   node scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster> [options]
  *   (run `--help` for the full option list and a pairing example)
+ * Options:
+ *   --expect-freeze   only for flow-emergency-stop: classify exact OutpostFrozen
+ *                     (0x17c7) / EnforcedPause refusals as NOISE. Default: FATAL.
+ *                     Does not disable any liveness bail.
  */
 
+import { createInterface } from "node:readline"
+import { fileURLToPath } from "node:url"
 import { argv, chalk, echo, fs, glob, path, $, sleep } from "zx"
 
 // ---------------------------------------------------------------------------
@@ -190,10 +202,25 @@ const RegistrySyncLagPattern =
  * `externalEpochRef` to prove `MockYieldEmitter` enforces monotonicity. NOISE
  * (an expected, self-contained rejection), never FATAL — the revert otherwise
  * matches the generic `execution reverted` FATAL signature and false-bails a
- * healthy flow on its growth.
+ * healthy flow on its growth. Emergency-stop refusals are NOT covered here:
+ * those are FATAL unless the monitor explicitly receives --expect-freeze.
  */
 const NegativeTestRevertPattern =
   "MockYieldEmitter: externalEpochRef not monotonic"
+
+/** Exact freeze reasons; a longer hex code or a containing identifier is not a match. */
+const FreezeRefusalSource = String.raw`custom program error: 0x17c7(?![0-9a-fA-F])|\bEnforcedPause\b(?:\(\))?`
+const FreezeRefusalPattern = new RegExp(FreezeRefusalSource)
+
+/**
+ * Strip ONLY an expected refusal and directly attached failure wrappers, not
+ * its entire line. Any independent failure left on the line stays FATAL.
+ * Unknown wrapper shapes remain conservative: they still count as failures.
+ */
+const FreezeFailurePattern = new RegExp(
+  String.raw`(?:(?:execution reverted|Program [\w.:/-]+ failed|simulation failed|Error processing Instruction [0-9]+|InstructionError|batch_operator|underwriter|outpost_(?:ethereum|solana)_client):\s*)*(?:${FreezeRefusalSource})`,
+  "g"
+)
 
 /**
  * FATAL exclusions: the echo wrappers PLUS `sysio_assert_message` — a
@@ -461,7 +488,8 @@ function readClusterConfig(clusterConfigPath) {
     return {
       clioExecutable,
       producerUrl: `http://${producerHost}:${producerHttpPort}`,
-      identityCount
+      identityCount,
+      epochDurationSeconds: config?.epochDurationSec ?? DefaultEpochDurationSeconds
     }
   } catch {
     return null // mid-write JSON — same as absent; the next beat re-reads
@@ -584,19 +612,19 @@ async function probeOperators(clioExecutable, url) {
 }
 
 /**
- * Probe 3 — the `sysio.epoch::epochstate` singleton → current_epoch_index.
+ * Probe 3 — the `sysio.epoch::epochstate` singleton, including chain timestamps.
  *
  * @param {string} clioExecutable resolved clio binary.
  * @param {string} url the producer HTTP URL.
- * @return {Promise<number | null>} the epoch index, or null while the
+ * @return {Promise<object | null>} the epoch row, or null while the
  *   table/row doesn't exist yet (pre-bootstrap) or the probe fails.
  */
 async function probeEpochState(clioExecutable, url) {
   const rows = await clioGetTableRows(clioExecutable, url, SysioEpochAccount, EpochStateTable, SysioEpochAccount, 1)
-  const rawIndex = kvRowValue(rows?.[0])?.current_epoch_index
-  if (rawIndex == null) return null
-  const epochIndex = Number(rawIndex)
-  return Number.isFinite(epochIndex) ? epochIndex : null
+  const row = kvRowValue(rows?.[0])
+  if (row?.current_epoch_index == null) return null
+  const epochIndex = Number(row.current_epoch_index)
+  return Number.isFinite(epochIndex) ? { ...row, current_epoch_index: epochIndex } : null
 }
 
 /**
@@ -668,17 +696,16 @@ function emptyLogProbe() {
 }
 
 /**
- * Grep the aggregate log for the probe-6 surface: top-N action receipts,
- * FATAL lines (count + tail), NOISE count + last quoted message. Runs through
- * grep pipelines (never an in-memory read) so large logs stay cheap; NOISE is
- * counted without buffering its lines — it reaches tens of thousands on
- * 9-operator clusters, which is exactly WHY it is classed as noise.
+ * Probe top-N action receipts, FATAL count/tail and NOISE count/last reason.
+ * Stream failure classification one line at a time, retaining only the tails;
+ * expected refusals can coexist with unrelated failures on the same line.
  *
  * @param {string} clusterLogFile the aggregate cluster log path.
+ * @param {boolean} expectFreeze whether this run deliberately freezes outposts.
  * @return {Promise<{ actionReceipts: string[], fatalCount: number, fatalTail: string[], noiseCount: number, noiseTail: string }>}
  *   the parsed probe result.
  */
-async function probeAggregateLog(clusterLogFile) {
+export async function probeAggregateLog(clusterLogFile, expectFreeze = false) {
   const receiptsResult =
     await $`grep -oE ${ActionReceiptPattern} ${clusterLogFile} | sort | uniq -c | sort -rn | head -n ${String(TopActionReceipts)}`
       .nothrow()
@@ -692,31 +719,30 @@ async function probeAggregateLog(clusterLogFile) {
       return `${action}:${count}`
     })
 
-  const fatalResult = await $`grep -E ${FatalSignaturePattern} ${clusterLogFile} | grep -vE ${FatalExcludePattern}`
-    .nothrow()
-    .quiet()
-  const fatalLines = fatalResult.stdout.split("\n").filter(line => line.length > 0)
-
-  const noiseCountResult =
-    await $`grep -E ${NoiseSignaturePattern} ${clusterLogFile} | grep -cvE ${EchoWrapperExcludePattern}`
-      .nothrow()
-      .quiet()
-  const noiseCount = Number(noiseCountResult.stdout.trim()) || 0
-
-  const noiseTailResult =
-    await $`grep -E ${NoiseTailSourcePattern} ${clusterLogFile} | grep -vE ${TrxEchoExcludePattern} | tail -n 1`
-      .nothrow()
-      .quiet()
-  const noiseTailMatch = noiseTailResult.stdout.match(new RegExp(`${NoiseTailSourcePattern}: .*`))
-  const noiseTail = (noiseTailMatch?.[0] ?? "").slice(0, NoiseTailMaxLength)
-
-  return {
-    actionReceipts,
-    fatalCount: fatalLines.length,
-    fatalTail: fatalLines.slice(-FatalTailLines),
-    noiseCount,
-    noiseTail
+  const result = { ...emptyLogProbe(), actionReceipts }
+  const fatalPattern = new RegExp(FatalSignaturePattern)
+  const fatalExcludePattern = new RegExp(FatalExcludePattern)
+  const echoPattern = new RegExp(EchoWrapperExcludePattern)
+  const noisePattern = new RegExp(NoiseSignaturePattern)
+  const noiseTailPattern = new RegExp(`(?:${NoiseTailSourcePattern}).*`)
+  const lines = createInterface({ input: fs.createReadStream(clusterLogFile), crlfDelay: Infinity })
+  for await (const line of lines) {
+    if (echoPattern.test(line)) continue
+    const freeze = line.match(FreezeRefusalPattern)
+    const residual = expectFreeze ? line.replace(FreezeFailurePattern, "") : line
+    if ((!expectFreeze && freeze != null) ||
+        (fatalPattern.test(residual) && !fatalExcludePattern.test(residual))) {
+      result.fatalCount++
+      result.fatalTail.push(line)
+      if (result.fatalTail.length > FatalTailLines) result.fatalTail.shift()
+    }
+    if (noisePattern.test(line) || (expectFreeze && freeze != null)) {
+      result.noiseCount++
+      const reason = expectFreeze && freeze != null ? freeze[0] : line.match(noiseTailPattern)?.[0]
+      if (reason != null) result.noiseTail = reason.slice(0, NoiseTailMaxLength)
+    }
   }
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -740,6 +766,9 @@ ${chalk.bold("Options:")}
   --epoch-duration-seconds <n>   the cluster's epoch duration (default: ${DefaultEpochDurationSeconds});
                                  scales the bootstrap-deadline bail and labels
                                  the epoch-stall bail
+  --expect-freeze                ONLY flow-emergency-stop: exact OutpostFrozen
+                                 (0x17c7) / EnforcedPause refusals become NOISE.
+                                 Default FATAL. All liveness bails remain enabled.
   --expect-epoch-freeze          the flow INTENTIONALLY freezes the epoch as its
                                  mechanism (flow-batch-operator-slashing holds the
                                  contested epoch across the dispute lifecycle);
@@ -750,6 +779,8 @@ ${chalk.bold("Options:")}
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+  growth=first-epoch-boundary(until=<UTC>): zero delta before the first epoch's
+                            start + configured duration; reported without a bail
   NOISE-TAIL: / FAIL-TAIL:  quote lines when the class deltas are positive
   BAIL: <reason>            a red flag fired → SIGINTs the flow, exits 1
                             (cluster dir preserved for forensics)
@@ -798,203 +829,258 @@ function resolveNumberOption(flagName, defaultValue) {
   return value
 }
 
-if (argv.help === true || argv.h === true) {
-  printUsage()
-  process.exit(0)
+/** Parse ABI time_point strings as UTC, including strings without a zone suffix. */
+function epochTimestampMs(value) {
+  if (typeof value !== "string" || value.length === 0) return null
+  const timestamp = Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`)
+  return Number.isFinite(timestamp) ? timestamp : null
 }
 
-const clusterPath = resolveClusterPath()
-const intervalSeconds = resolveNumberOption("interval-seconds", DefaultIntervalSeconds)
-const epochDurationSeconds = resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
 /**
- * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes the epoch as
- * part of its mechanism — flow-batch-operator-slashing holds the contested epoch
- * index across the entire dispute → vote → resolve → slash lifecycle by making
- * the sole active batch-op group SBP-less (it never delivers, so depot consensus
- * cannot advance and the epoch is paused for the dispute). Suppresses the three
- * epoch-ADVANCEMENT bails (epoch-stall, opp zero-growth, direction-plateau) that
- * would otherwise false-kill such a flow. The FATAL-signature and
- * bootstrap-never-completes bails STILL fire — a real plugin/execution failure
- * is still caught. Default off; every other flow's monitoring is unchanged.
+ * Establish the one-time initial growth boundary from chain time, never the
+ * monitor's observation time. A late attachment at epoch > 1 is already past
+ * the first epoch; missing timestamps fail closed rather than grant new grace.
+ * next_epoch_start can recover the start using the configured chain duration;
+ * an explicit monitor duration override then applies to that recovered start.
  */
-const expectEpochFreeze = argv["expect-epoch-freeze"] === true
-
-const clusterConfigPath = path.join(clusterPath, ClusterConfigFilename)
-const oppDebuggingDir = path.join(clusterPath, OppDebuggingSubdir)
-
-/**
- * Bootstrap deadline: the epoch must reach >= 1 within this many seconds of
- * first chain liveness. Scaled by the cluster's provisioned identity count
- * (see {@link BootstrapPerIdentitySeconds}) because a 21-producer / 21-batch-op
- * bootstrap legitimately takes many times longer than the dev default's — a
- * flat floor would SIGINT it mid-bootstrap.
- *
- * @param {number} identityCount producers + batch operators + underwriters.
- * @return {number} the deadline, in seconds of chain liveness.
- */
-function bootstrapDeadlineSeconds(identityCount) {
-  return Math.max(
-    BootstrapDeadlineFloorSeconds,
-    epochDurationSeconds * 3,
-    identityCount * BootstrapPerIdentitySeconds
-  )
+export function firstEpochGrowthDeadlineMs(epochState, epochDurationSeconds, configuredDurationSeconds = epochDurationSeconds) {
+  const index = epochState?.current_epoch_index
+  if (index == null || index < 1) return null
+  if (index > 1) return 0
+  const currentStart = epochTimestampMs(epochState.current_epoch_start)
+  const nextStart = epochTimestampMs(epochState.next_epoch_start)
+  const start = currentStart ?? (nextStart == null ? null : nextStart - configuredDurationSeconds * 1000)
+  return start == null ? 0 : start + epochDurationSeconds * 1000
 }
 
-// ---------------------------------------------------------------------------
-// Heartbeat loop
-// ---------------------------------------------------------------------------
+/**
+ * Self-check 6: mark the initial partial-epoch cycle, then bail on the FIRST
+ * zero-growth cycle at/past its chain-time boundary. The caller retains the
+ * first deadline across epoch changes. Epoch null/0 keeps its bootstrap rule.
+ */
+export function oppGrowthBailReason(epochIndex, oppDelta, oppTotal, nowMs, deadlineMs, expectEpochFreeze = false) {
+  if (epochIndex == null || epochIndex < 1 || oppDelta > 0 || expectEpochFreeze) return null
+  if (deadlineMs != null && nowMs < deadlineMs) return null
+  return `opp-debugging zero growth (total=${oppTotal}) on a post-bootstrap heartbeat`
+}
 
-let previousEpochIndex = -1
-let previousOppTotal = 0
-let previousFatalCount = 0
-let previousNoiseCount = 0
-let fatalGrowthStreak = 0
-let firstLivenessTimestamp = null
-const previousDirectionCounts = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
-const directionFreezeStreaks = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
-const startTimestamp = Date.now()
-
-while (true) {
-  await sleep(intervalSeconds * 1000)
-  const now = Date.now()
-  const elapsedSeconds = Math.round((now - startTimestamp) / 1000)
-
-  if (!(await isFlowAlive(clusterPath))) {
-    console.log(`FLOW-EXITED at t=${elapsedSeconds}s (heartbeat ending)`)
+/** Run the CLI heartbeat; importing the log probe does not start a monitor. */
+async function main() {
+  if (argv.help === true || argv.h === true) {
+    printUsage()
     process.exit(0)
   }
 
-  const clusterConfig = readClusterConfig(clusterConfigPath)
-  if (clusterConfig == null) {
-    console.log(`HB t=${elapsedSeconds}s (pre-config)`)
-    continue
+  const clusterPath = resolveClusterPath()
+  const intervalSeconds = resolveNumberOption("interval-seconds", DefaultIntervalSeconds)
+  const epochDurationSeconds = resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
+  /**
+   * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes the epoch as
+   * part of its mechanism — flow-batch-operator-slashing holds the contested epoch
+   * index across the entire dispute → vote → resolve → slash lifecycle by making
+   * the sole active batch-op group SBP-less (it never delivers, so depot consensus
+   * cannot advance and the epoch is paused for the dispute). Suppresses the three
+   * epoch-ADVANCEMENT bails (epoch-stall, opp zero-growth, direction-plateau) that
+   * would otherwise false-kill such a flow. The FATAL-signature and
+   * bootstrap-never-completes bails STILL fire — a real plugin/execution failure
+   * is still caught. Default off; every other flow's monitoring is unchanged.
+   */
+  const expectEpochFreeze = argv["expect-epoch-freeze"] === true
+  const expectFreeze = argv["expect-freeze"] === true
+
+  const clusterConfigPath = path.join(clusterPath, ClusterConfigFilename)
+  const oppDebuggingDir = path.join(clusterPath, OppDebuggingSubdir)
+
+  /**
+   * Bootstrap deadline: the epoch must reach >= 1 within this many seconds of
+   * first chain liveness. Scaled by the cluster's provisioned identity count
+   * (see {@link BootstrapPerIdentitySeconds}) because a 21-producer / 21-batch-op
+   * bootstrap legitimately takes many times longer than the dev default's — a
+   * flat floor would SIGINT it mid-bootstrap.
+   *
+   * @param {number} identityCount producers + batch operators + underwriters.
+   * @return {number} the deadline, in seconds of chain liveness.
+   */
+  function bootstrapDeadlineSeconds(identityCount) {
+    return Math.max(
+      BootstrapDeadlineFloorSeconds,
+      epochDurationSeconds * 3,
+      identityCount * BootstrapPerIdentitySeconds
+    )
   }
-  const { clioExecutable, producerUrl } = clusterConfig
 
-  // Probe 1 — chain liveness (also starts the bootstrap-deadline clock).
-  const chain = await probeChainLiveness(clioExecutable, producerUrl),
-    headBlockNumber = chain?.headBlockNumber,
-    libBlockNumber = chain?.libBlockNumber
-  if (headBlockNumber != null && firstLivenessTimestamp == null) {
-    firstLivenessTimestamp = now
-  }
+  // ---------------------------------------------------------------------------
+  // Heartbeat loop
+  // ---------------------------------------------------------------------------
 
-  // Probe 2 — operators (queried every beat; see probeOperators for why unprinted).
-  await probeOperators(clioExecutable, producerUrl)
+  let firstGrowthDeadlineMs = null
+  let previousEpochIndex = -1
+  let previousOppTotal = 0
+  let previousFatalCount = 0
+  let previousNoiseCount = 0
+  let fatalGrowthStreak = 0
+  let firstLivenessTimestamp = null
+  const previousDirectionCounts = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
+  const directionFreezeStreaks = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
+  const startTimestamp = Date.now()
 
-  // Probe 3 — epoch state.
-  let epochIndex = await probeEpochState(clioExecutable, producerUrl)
+  while (true) {
+    await sleep(intervalSeconds * 1000)
+    const now = Date.now()
+    const elapsedSeconds = Math.round((now - startTimestamp) / 1000)
 
-  // Probe 4 — msgch outbound envelopes.
-  const envelopeCount = await probeEnvelopes(clioExecutable, producerUrl)
-
-  // Probe 5 — opp-debugging artifacts + per-direction freeze accounting.
-  // A plateau = a direction FROZEN for DirectionFreezeBailStreak consecutive
-  // beats while the total advances — evaluated only once EVERY direction has a
-  // non-zero baseline. A single same-count beat right after the baselines
-  // appear is normal ramp, not a plateau.
-  const opp = await probeOppArtifacts(oppDebuggingDir)
-  const oppDelta = opp.total - previousOppTotal
-  const allDirectionsHaveBaseline = OppDirections.every(direction => opp.byDirection[direction.name] > 0)
-  let plateauDirection = null
-  OppDirections.forEach(direction => {
-    const count = opp.byDirection[direction.name]
-    const frozenWhileOthersAdvance =
-      allDirectionsHaveBaseline && count === previousDirectionCounts[direction.name] && oppDelta > 0
-    directionFreezeStreaks[direction.name] = frozenWhileOthersAdvance
-      ? directionFreezeStreaks[direction.name] + 1
-      : 0
-    if (directionFreezeStreaks[direction.name] >= DirectionFreezeBailStreak) {
-      plateauDirection = direction.name
+    if (!(await isFlowAlive(clusterPath))) {
+      console.log(`FLOW-EXITED at t=${elapsedSeconds}s (heartbeat ending)`)
+      process.exit(0)
     }
-    previousDirectionCounts[direction.name] = count
-  })
 
-  // Probe 6 — aggregate cluster log.
-  const clusterLogFile = await resolveClusterLogFile(clusterPath)
-  const logProbe = clusterLogFile != null ? await probeAggregateLog(clusterLogFile) : emptyLogProbe()
+    const clusterConfig = readClusterConfig(clusterConfigPath)
+    if (clusterConfig == null) {
+      console.log(`HB t=${elapsedSeconds}s (pre-config)`)
+      continue
+    }
+    const { clioExecutable, producerUrl } = clusterConfig
 
-  const fatalDelta = logProbe.fatalCount - previousFatalCount
-  const noiseDelta = logProbe.noiseCount - previousNoiseCount
-  previousNoiseCount = logProbe.noiseCount
-  fatalGrowthStreak = fatalDelta > 0 ? fatalGrowthStreak + 1 : 0
+    // Probe 1 — chain liveness (also starts the bootstrap-deadline clock).
+    const chain = await probeChainLiveness(clioExecutable, producerUrl),
+      headBlockNumber = chain?.headBlockNumber,
+      libBlockNumber = chain?.libBlockNumber
+    if (headBlockNumber != null && firstLivenessTimestamp == null) {
+      firstLivenessTimestamp = now
+    }
 
-  const directionsText = OppDirections.map(
-    direction => `${direction.short}=${opp.byDirection[direction.name]}`
-  ).join(" ")
-  console.log(
-    `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
-      `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
-      `epoch=${epochIndex ?? "?"} ` +
-      `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
-      `acts=[${logProbe.actionReceipts.join(" ")}] ` +
-      `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})`
-  )
-  if (noiseDelta > 0 && logProbe.noiseTail.length > 0) {
-    console.log(`NOISE-TAIL: ${logProbe.noiseTail}`)
-  }
-  if (fatalDelta > 0 && epochIndex != null && epochIndex !== 0) {
-    console.log(`FAIL-TAIL: ${logProbe.fatalTail.join(" | ")}`)
-  }
+    // Probe 2 — operators (queried every beat; see probeOperators for why unprinted).
+    await probeOperators(clioExecutable, producerUrl)
 
-  // ── bails ──
-  // Bootstrap fallback: chain answering but epoch still null/0 past the
-  // deadline. Every other bail is gated on epoch >= 1 — without this fallback
-  // a monitor against a dead-during-bootstrap chain would print forever.
-  if (firstLivenessTimestamp != null && (epochIndex == null || epochIndex === 0)) {
-    const livenessSeconds = Math.round((now - firstLivenessTimestamp) / 1000),
-      deadlineSeconds = bootstrapDeadlineSeconds(clusterConfig.identityCount)
-    if (livenessSeconds > deadlineSeconds) {
-      await bail(
-        `bootstrap never completed: current_epoch_index=${epochIndex ?? "null"} after ${livenessSeconds}s of chain liveness ` +
-          `(deadline ${deadlineSeconds}s for ${clusterConfig.identityCount} provisioned identities)`,
-        clusterPath
+    // Probe 3 — epoch state.
+    const epochState = await probeEpochState(clioExecutable, producerUrl)
+    let epochIndex = epochState?.current_epoch_index ?? null
+    if (firstGrowthDeadlineMs == null) {
+      const growthEpochDurationSeconds = argv["epoch-duration-seconds"] == null
+        ? clusterConfig.epochDurationSeconds
+        : epochDurationSeconds
+      firstGrowthDeadlineMs = firstEpochGrowthDeadlineMs(
+        epochState, growthEpochDurationSeconds, clusterConfig.epochDurationSeconds
       )
     }
-  }
-  if (epochIndex != null && epochIndex >= 1) {
-    // Epoch stall: a same-epoch heartbeat at 60s epochs is the fatal signal,
-    // but consensus latency makes the effective cadence ~90–105s — re-probe
-    // once after EpochStallReprobeDelaySeconds and bail only if STILL
-    // unchanged (a true stall = dead cluster).
-    // Epoch-ADVANCEMENT bails (epoch-stall + opp zero-growth) — skipped when the
-    // flow intentionally freezes the epoch (see {@link expectEpochFreeze}).
-    if (!expectEpochFreeze && epochIndex === previousEpochIndex) {
-      await sleep(EpochStallReprobeDelaySeconds * 1000)
-      const reprobedEpochIndex = await probeEpochState(clioExecutable, producerUrl)
-      if ((reprobedEpochIndex ?? epochIndex) === previousEpochIndex) {
+
+    // Probe 4 — msgch outbound envelopes.
+    const envelopeCount = await probeEnvelopes(clioExecutable, producerUrl)
+
+    // Probe 5 — opp-debugging artifacts + per-direction freeze accounting.
+    // A plateau = a direction FROZEN for DirectionFreezeBailStreak consecutive
+    // beats while the total advances — evaluated only once EVERY direction has a
+    // non-zero baseline. A single same-count beat right after the baselines
+    // appear is normal ramp, not a plateau.
+    const opp = await probeOppArtifacts(oppDebuggingDir)
+    const oppDelta = opp.total - previousOppTotal
+    const allDirectionsHaveBaseline = OppDirections.every(direction => opp.byDirection[direction.name] > 0)
+    let plateauDirection = null
+    OppDirections.forEach(direction => {
+      const count = opp.byDirection[direction.name]
+      const frozenWhileOthersAdvance =
+        allDirectionsHaveBaseline && count === previousDirectionCounts[direction.name] && oppDelta > 0
+      directionFreezeStreaks[direction.name] = frozenWhileOthersAdvance
+        ? directionFreezeStreaks[direction.name] + 1
+        : 0
+      if (directionFreezeStreaks[direction.name] >= DirectionFreezeBailStreak) {
+        plateauDirection = direction.name
+      }
+      previousDirectionCounts[direction.name] = count
+    })
+
+    // Probe 6 — aggregate cluster log.
+    const clusterLogFile = await resolveClusterLogFile(clusterPath)
+    const logProbe = clusterLogFile != null ? await probeAggregateLog(clusterLogFile, expectFreeze) : emptyLogProbe()
+
+    const fatalDelta = logProbe.fatalCount - previousFatalCount
+    const noiseDelta = logProbe.noiseCount - previousNoiseCount
+    previousNoiseCount = logProbe.noiseCount
+    fatalGrowthStreak = fatalDelta > 0 ? fatalGrowthStreak + 1 : 0
+
+    const growthNowMs = Date.now()
+    const initialEpochBoundary = epochIndex >= 1 && oppDelta <= 0 &&
+      firstGrowthDeadlineMs != null && growthNowMs < firstGrowthDeadlineMs
+    const growthMarker = initialEpochBoundary
+      ? ` growth=first-epoch-boundary(until=${new Date(firstGrowthDeadlineMs).toISOString()})`
+      : ""
+    const directionsText = OppDirections.map(
+      direction => `${direction.short}=${opp.byDirection[direction.name]}`
+    ).join(" ")
+    console.log(
+      `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
+        `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
+        `epoch=${epochIndex ?? "?"} ` +
+        `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
+        `acts=[${logProbe.actionReceipts.join(" ")}] ` +
+        `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})${growthMarker}`
+    )
+    if (noiseDelta > 0 && logProbe.noiseTail.length > 0) {
+      console.log(`NOISE-TAIL: ${logProbe.noiseTail}`)
+    }
+    if (fatalDelta > 0 && epochIndex != null && epochIndex !== 0) {
+      console.log(`FAIL-TAIL: ${logProbe.fatalTail.join(" | ")}`)
+    }
+
+    // ── bails ──
+    // Bootstrap fallback: chain answering but epoch still null/0 past the
+    // deadline. Every other bail is gated on epoch >= 1 — without this fallback
+    // a monitor against a dead-during-bootstrap chain would print forever.
+    if (firstLivenessTimestamp != null && (epochIndex == null || epochIndex === 0)) {
+      const livenessSeconds = Math.round((now - firstLivenessTimestamp) / 1000),
+        deadlineSeconds = bootstrapDeadlineSeconds(clusterConfig.identityCount)
+      if (livenessSeconds > deadlineSeconds) {
         await bail(
-          `epoch stalled at ${epochIndex} across heartbeat + ${EpochStallReprobeDelaySeconds}s re-probe (epoch_duration=${epochDurationSeconds}s)`,
+          `bootstrap never completed: current_epoch_index=${epochIndex ?? "null"} after ${livenessSeconds}s of chain liveness ` +
+            `(deadline ${deadlineSeconds}s for ${clusterConfig.identityCount} provisioned identities)`,
           clusterPath
         )
       }
-      epochIndex = reprobedEpochIndex
     }
-    // Zero opp-debugging delta once epoch >= 1: fatal on the FIRST occurrence.
-    if (!expectEpochFreeze && oppDelta <= 0 && previousOppTotal > 0) {
-      await bail(`opp-debugging zero growth (total=${opp.total}) on a post-bootstrap heartbeat`, clusterPath)
+    const growthBail = oppGrowthBailReason(epochIndex, oppDelta, opp.total, growthNowMs, firstGrowthDeadlineMs, expectEpochFreeze)
+    if (growthBail != null) await bail(growthBail, clusterPath)
+    if (epochIndex != null && epochIndex >= 1) {
+      // Epoch stall: a same-epoch heartbeat at 60s epochs is the fatal signal,
+      // but consensus latency makes the effective cadence ~90–105s — re-probe
+      // once after EpochStallReprobeDelaySeconds and bail only if STILL
+      // unchanged (a true stall = dead cluster).
+      // Epoch-ADVANCEMENT bails (epoch-stall + opp zero-growth) — skipped when the
+      // flow intentionally freezes the epoch (see {@link expectEpochFreeze}).
+      if (!expectEpochFreeze && epochIndex === previousEpochIndex) {
+        await sleep(EpochStallReprobeDelaySeconds * 1000)
+        const reprobedEpochIndex = (await probeEpochState(clioExecutable, producerUrl))?.current_epoch_index
+        if ((reprobedEpochIndex ?? epochIndex) === previousEpochIndex) {
+          await bail(
+            `epoch stalled at ${epochIndex} across heartbeat + ${EpochStallReprobeDelaySeconds}s re-probe (epoch_duration=${epochDurationSeconds}s)`,
+            clusterPath
+          )
+        }
+        epochIndex = reprobedEpochIndex
+      }
+      // FATAL growth: bail on PERSISTENT growth only — one-off transients (nonce
+      // retries, momentary table-read races) occur in PASSING runs; persistent
+      // plugin breakage grows every cycle.
+      if (fatalGrowthStreak >= FatalGrowthBailStreak) {
+        await bail(
+          `failure signatures growing across consecutive heartbeats (count=${logProbe.fatalCount}): ${logProbe.fatalTail[0] ?? ""}`,
+          clusterPath
+        )
+      }
+      if (!expectEpochFreeze && plateauDirection != null) {
+        await bail(
+          `direction ${plateauDirection} frozen for ${DirectionFreezeBailStreak}+ heartbeats while total advanced`,
+          clusterPath
+        )
+      }
     }
-    if (oppDelta <= 0 && previousOppTotal === 0 && previousEpochIndex >= 1) {
-      await bail(`opp-debugging EMPTY (no artifacts at all) with epoch=${epochIndex}`, clusterPath)
-    }
-    // FATAL growth: bail on PERSISTENT growth only — one-off transients (nonce
-    // retries, momentary table-read races) occur in PASSING runs; persistent
-    // plugin breakage grows every cycle.
-    if (fatalGrowthStreak >= FatalGrowthBailStreak) {
-      await bail(
-        `failure signatures growing across consecutive heartbeats (count=${logProbe.fatalCount}): ${logProbe.fatalTail[0] ?? ""}`,
-        clusterPath
-      )
-    }
-    if (!expectEpochFreeze && plateauDirection != null) {
-      await bail(
-        `direction ${plateauDirection} frozen for ${DirectionFreezeBailStreak}+ heartbeats while total advanced`,
-        clusterPath
-      )
-    }
+
+    previousEpochIndex = epochIndex ?? previousEpochIndex
+    previousOppTotal = opp.total
+    previousFatalCount = logProbe.fatalCount
   }
 
-  previousEpochIndex = epochIndex ?? previousEpochIndex
-  previousOppTotal = opp.total
-  previousFatalCount = logProbe.fatalCount
+}
+
+if (process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main()
 }

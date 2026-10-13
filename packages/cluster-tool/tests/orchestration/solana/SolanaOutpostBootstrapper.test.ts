@@ -3,6 +3,7 @@ import { PublicKey } from "@solana/web3.js"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+
 import { toURL } from "@wireio/cluster-tool/utils"
 
 /** A minimal roster entry — the asserts under test never read its contents. */
@@ -14,24 +15,15 @@ const bootstrapOperator = (): SolanaOutpostBootstrapper.BootstrapOperator => ({
 })
 
 /** A seed of `size` paired roster entries + group members (roster IS the group). */
-const seedOfSize = (size: number): SolanaOutpostBootstrapper.OppBootstrapSeed => {
+const seedOfSize = (
+  size: number
+): SolanaOutpostBootstrapper.OppBootstrapSeed => {
   const operators = Array.from({ length: size }, bootstrapOperator)
-  return { operators, groupMembers: operators.map(operator => operator.solAddress) }
+  return {
+    operators,
+    groupMembers: operators.map(operator => operator.solAddress)
+  }
 }
-
-describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
-  it("provisions USDCSOL / USDTSOL / LIQSOL with the expected decimals", () => {
-    const byCode = new Map(
-      SolanaOutpostBootstrapper.SplReserveSpecifications.map(spec => [
-        spec.codeName,
-        spec
-      ])
-    )
-    expect(byCode.get("USDCSOL")?.decimals).toBe(6)
-    expect(byCode.get("USDTSOL")?.decimals).toBe(6)
-    expect(byCode.get("LIQSOL")?.decimals).toBe(9)
-  })
-})
 
 describe("SolanaOutpostBootstrapper.PdaSeed", () => {
   it("carries the liqsol global_config seed matching the on-chain program", () => {

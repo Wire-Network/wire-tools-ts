@@ -38,18 +38,28 @@ export namespace SolanaOutpostSteps {
 
   /**
    * Deploy the Solana outpost: airdrop the deployer, initialize the opp-outpost
-   * PDAs against the already-loaded program, seed the native-SOL reserve, and
+   * PDAs against the already-loaded program and — only when the config's
+   * `enableLaunchWithheldOperations` is set — seed the native-SOL reserve and
    * provision mock SPL reserves (persisting `sol-mock-mints.json` for depot-side
    * token registration). Input-less — paths + RPC come from `ctx.config` /
    * `ctx.solana`; the validator must already be running.
    */
-  export function planDeploy<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeploy<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runDeploy)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runDeploy
+    )
   }
 
   /** Named runner — `SolanaOutpostBootstrapper.bootstrap`. */
@@ -74,13 +84,22 @@ export namespace SolanaOutpostSteps {
    * its first envelope. Input-less — the roster + group are resolved from
    * `ctx.keyStore` and the depot's `sysio.epoch::epochstate`.
    */
-  export function planOppBootstrap<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planOppBootstrap<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runOppBootstrap)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runOppBootstrap
+    )
   }
 
   /** Named runner — `SolanaOutpostBootstrapper.oppBootstrap`. */
@@ -149,7 +168,9 @@ export namespace SolanaOutpostSteps {
       )
     }
 
-    const operatorByAccount = new Map(batchOperators.map(operator => [operator.account, operator])),
+    const operatorByAccount = new Map(
+        batchOperators.map(operator => [operator.account, operator])
+      ),
       groupOperators = seedAccounts.map(accountName => {
         const operator = operatorByAccount.get(accountName)
         Assert.ok(
@@ -162,12 +183,13 @@ export namespace SolanaOutpostSteps {
         )
         return operator
       })
-    const operators: SolanaOutpostBootstrapper.BootstrapOperator[] = groupOperators.map(operator => ({
-        wireName: new anchor.BN(Name.from(operator.account).value.toString()),
-        solAddress: new PublicKey(solanaNativePublicKey(operator.solana)),
-        role: OperatorType.BATCH,
-        status: OperatorStatus.ACTIVE
-      })),
+    const operators: SolanaOutpostBootstrapper.BootstrapOperator[] =
+        groupOperators.map(operator => ({
+          wireName: new anchor.BN(Name.from(operator.account).value.toString()),
+          solAddress: new PublicKey(solanaNativePublicKey(operator.solana)),
+          role: OperatorType.BATCH,
+          status: OperatorStatus.ACTIVE
+        })),
       groupMembers = operators.map(operator => operator.solAddress)
     return { operators, groupMembers }
   }

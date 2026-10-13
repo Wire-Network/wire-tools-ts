@@ -109,6 +109,24 @@
       ],
       "@wireio/test-app-server/*": [
         "./packages/test-app-server/src/*"
+      ],
+      "@wireio/ql-shared": [
+        "./packages/ql-shared/src"
+      ],
+      "@wireio/ql-shared/*": [
+        "./packages/ql-shared/src/*"
+      ],
+      "@wireio/ql-tool-cli": [
+        "./packages/ql-tool-cli/src"
+      ],
+      "@wireio/ql-tool-cli/*": [
+        "./packages/ql-tool-cli/src/*"
+      ],
+      "@wireio/ql-tool-app": [
+        "./packages/ql-tool-app/src"
+      ],
+      "@wireio/ql-tool-app/*": [
+        "./packages/ql-tool-app/src/*"
       ]
     }
   },

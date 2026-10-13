@@ -1,4 +1,6 @@
 import Dgram from "node:dgram"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { BindConfigPortProtocol } from "@wireio/cluster-tool-shared"
 import { Deferred } from "@wireio/shared"
 import {
   assertEndpoint,
@@ -41,15 +43,22 @@ describe("netUtils", () => {
 
   describe("isUdpPortFree", () => {
     it("is false while a UDP socket holds the port, true after release", async () => {
-      // OS-assigned port (never a fixed bind — see bind-available-ports rule).
+      const port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultSolanaGossip,
+        BindConfigPortProtocol.udp
+      )
       const holder = Dgram.createSocket("udp4")
-      const port = await Deferred.useCallback<number>(deferred =>
-        holder.bind(0, () => deferred.resolve(holder.address().port))
-      ).promise
-      expect(await isUdpPortFree(port)).toBe(false)
-      await Deferred.useCallback<void>(deferred =>
-        holder.close(() => deferred.resolve())
-      ).promise
+      try {
+        await Deferred.useCallback<void>(deferred => {
+          holder.once("error", error => deferred.reject(error))
+          holder.bind(port, () => deferred.resolve())
+        }).promise
+        expect(await isUdpPortFree(port)).toBe(false)
+      } finally {
+        await Deferred.useCallback<void>(deferred =>
+          holder.close(() => deferred.resolve())
+        ).promise
+      }
       expect(await isUdpPortFree(port)).toBe(true)
     })
   })

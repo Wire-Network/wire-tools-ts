@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+import Path from "node:path"
+import Fs from "node:fs"
+import Assert from "node:assert"
+
+const mainFile = Path.resolve(import.meta.dirname, "..", "dist", "bundle", "wql.mjs")
+Assert.ok(Fs.existsSync(mainFile), `Main file not found @ ${mainFile}.`)
+const { main } = await import(mainFile)
+await main(process.argv.slice(2))

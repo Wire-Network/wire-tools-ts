@@ -8,7 +8,9 @@ import {
   ClusterFiles,
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
+  createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState,
   type ClusterStateNode
@@ -91,7 +93,9 @@ export function makeFixtureCluster(): FixtureCluster {
     nodeCount: 3,
     batchOperatorCount: 1,
     underwriterCount: 1,
+    apiCount: 0,
     epochDurationSec: 60,
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
     operatorsPerEpoch: null,
     batchOpGroups: null,
     epochRetentionEnvelopeLogCount: null,
@@ -111,6 +115,7 @@ export function makeFixtureCluster(): FixtureCluster {
           producers: [],
           batch: [],
           underwriters: [],
+          api: [],
           adHoc: []
         }
       },
@@ -152,9 +157,11 @@ export function makeFixtureCluster(): FixtureCluster {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false,
+    enableMockLiqPools: false,
+    enableMockSyndicationImport: false,
     deploymentKind: ClusterDeploymentKind.local,
-    chainStateDbSizeMb: DefaultChainStateDbSizeMb
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+    queryEngine: createUnsetQueryEngineConfig()
   }
 
   Fs.writeFileSync(

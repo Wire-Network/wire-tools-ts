@@ -17,8 +17,8 @@ import {
 export namespace SolanaValidatorProcessSteps {
   /**
    * Start the solana-test-validator (get-or-create from `ctx.processManager`)
-   * with the `liqsol_core` program (hosting the OPP outpost interface) loaded
-   * upgradeable, the per-cluster deployer as its upgrade authority. Idempotent.
+   * with every wire-solana program loaded upgradeable, the per-cluster deployer
+   * as their upgrade authority. Idempotent.
    */
   export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -45,24 +45,35 @@ export namespace SolanaValidatorProcessSteps {
       gossipPort: ctx.config.bind.solana.ports.gossip,
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
       ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
+      slotsPerEpoch: ctx.config.solanaSlotsPerEpoch,
       programs: resolvePrograms(ctx.config)
     })
     await validator.start()
   }
 
   /**
-   * The BPF programs this cluster's validator loads at genesis.
+   * The BPF programs this cluster's validator loads at genesis — ALL FOUR
+   * wire-solana Anchor programs
+   * ({@link SolanaOutpostProgramTool.GenesisAnchorPrograms}).
    *
    * Shared by {@link runStart} and the `start.sh` renderer
    * (`StartScriptSteps.resolveSolanaValidatorConfig`) so the two cannot drift:
    * omitting these from the rendered argv produces a validator with NO
-   * `opp-outpost` program, which fails as a one-direction OPP circulation
-   * stall rather than a startup error.
+   * wire-solana programs at all, which fails as a one-direction OPP
+   * circulation stall rather than a startup error.
    *
-   * The program is deployed UPGRADEABLE with the per-cluster deployer as its
+   * `liqsol_core` alone is not enough: the liqsol staking + syndication surface
+   * the `init-*` scripts stand up (`SolanaLiqsolSurfaceSteps`) CPIs into
+   * `liqsol_token` for the liqSOL mint and into `transfer_hook` on every
+   * Token-2022 transfer, and the leaderboard init targets
+   * `validator_leaderboard` — a missing sibling surfaces as an
+   * `AccountNotExecutable` mid-bootstrap, not as a startup error.
+   *
+   * Each program is deployed UPGRADEABLE with the per-cluster deployer as its
    * upgrade authority — that same deployer becomes the `global_config.admin`
-   * the OPP admin ops require. `createDeployerKeypair` is create-or-load, so
-   * calling it from either path yields the identical identity.
+   * the OPP admin ops require (`initialize_global_config` proves it against
+   * `liqsol_core`'s `ProgramData`). `createDeployerKeypair` is create-or-load,
+   * so calling it from either path yields the identical identity.
    *
    * @param config - The resolved cluster config.
    * @returns The validator's program list.
@@ -70,17 +81,17 @@ export namespace SolanaValidatorProcessSteps {
   export function resolvePrograms(
     config: ClusterConfig
   ): SolanaValidatorProgram[] {
-    return [
-      {
-        name: SolanaOutpostProgramTool.ProgramName,
-        programId: SolanaOutpostProgramTool.assertProgramId(
-          config.solanaPath
-        ).toBase58(),
-        soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath),
-        upgradeAuthority: SolanaFundingTool.createDeployerKeypair(
-          config.dataPath
-        ).publicKey.toBase58()
-      }
-    ]
+    const upgradeAuthority = SolanaFundingTool.createDeployerKeypair(
+      config.dataPath
+    ).publicKey.toBase58()
+    return SolanaOutpostProgramTool.GenesisAnchorPrograms.map(program => ({
+      name: program,
+      programId: SolanaOutpostProgramTool.assertProgramId(
+        config.solanaPath,
+        program
+      ).toBase58(),
+      soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath, program),
+      upgradeAuthority
+    }))
   }
 }

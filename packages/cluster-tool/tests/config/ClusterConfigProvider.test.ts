@@ -5,6 +5,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -14,7 +15,8 @@ import {
   BindConfigProvider,
   ClusterConfigProvider,
   NodeConfig,
-  NodeRole
+  NodeRole,
+  QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
@@ -126,11 +128,14 @@ describe("ClusterConfigProvider", () => {
   describe("toSecretId", () => {
     it("renders the canonical 4-segment {cluster}/{account}/{keyType} pattern", () => {
       expect(
-        ClusterConfigProvider.toSecretId("/wire/{cluster}/{account}/{keyType}", {
-          cluster: AWSAccountName.test,
-          account: "batchop.a",
-          keyType: "K1"
-        })
+        ClusterConfigProvider.toSecretId(
+          "/wire/{cluster}/{account}/{keyType}",
+          {
+            cluster: AWSAccountName.test,
+            account: "batchop.a",
+            keyType: "K1"
+          }
+        )
       ).toBe("/wire/test/batchop.a/K1")
     })
 
@@ -261,9 +266,8 @@ describe("ClusterConfigProvider", () => {
 
   describe("signatureProviderSource", () => {
     it("KEY → the inline default source for every key (byte-identical)", () => {
-      const source = ClusterConfigProvider.signatureProviderSource(
-        fixtureConfig()
-      )
+      const source =
+        ClusterConfigProvider.signatureProviderSource(fixtureConfig())
       expect(source("node_00", KeyType.K1)).toEqual({
         type: SignatureProviderType.KEY
       })
@@ -306,7 +310,8 @@ describe("ClusterConfigProvider", () => {
             type: SignatureProviderType.SSM,
             ssm: {
               awsRegions: ["us-east-1"],
-              awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}/{version}",
+              awsSecretIdPattern:
+                "/wire/{cluster}/{account}/{keyType}/{version}",
               version: "v7"
             }
           },
@@ -510,7 +515,7 @@ describe("ClusterConfigProvider", () => {
     })
   })
 
-  describe("resolve deploymentKind + chainStateDbSizeMb", () => {
+  describe("resolve deploymentKind + cluster-wide nodeop settings", () => {
     let environment: ResolveEnvironment
 
     beforeEach(() => {
@@ -518,6 +523,7 @@ describe("ClusterConfigProvider", () => {
     })
     afterEach(() => {
       environment.cleanup()
+      jest.restoreAllMocks()
     })
 
     /** Base create options (fake host paths; binaries fixture-resolved). */
@@ -548,6 +554,64 @@ describe("ClusterConfigProvider", () => {
       expect(config.chainStateDbSizeMb).toBe(2_048)
       expect(config.deploymentKind).toBe(ClusterDeploymentKind.local)
     })
+
+    it("defaults apiCount to 0 and resolves no api port pairs", async () => {
+      const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.apiCount).toBe(ClusterConfigProvider.DefaultApiCount)
+      expect(ClusterConfigProvider.DefaultApiCount).toBe(0)
+      expect(config.bind.nodeop.ports.api).toEqual([])
+      expect(config.queryEngine).toEqual(
+        QueryEngineConfigProvider.createDefaultOptions()
+      )
+    })
+
+    it("persists apiCount and resolves one port pair per API node", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        apiCount: 2
+      })
+      expect(config.apiCount).toBe(2)
+      expect(config.bind.nodeop.ports.api).toHaveLength(2)
+    })
+
+    // 2 ** 53 is an integer but not a SAFE one — the bound Number.isSafeInteger pins.
+    it.each([1.5, -1, 2 ** 53])(
+      "rejects apiCount %s before any port is claimed",
+      async apiCount => {
+        const bindResolve = jest.spyOn(BindConfigProvider, "resolve")
+        await expect(
+          ClusterConfigProvider.resolve({ ...baseOptions(), apiCount })
+        ).rejects.toThrow(/apiCount must be a non-negative safe integer/)
+        expect(bindResolve).not.toHaveBeenCalled()
+      }
+    )
+
+    it("persists the query-engine config — unset by default, caller values when set", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        apiCount: 1,
+        queryEngine: {
+          readMode: NodeopReadMode.irreversible,
+          maxResultRows: 500
+        }
+      })
+      expect(config.queryEngine.readMode).toBe(NodeopReadMode.irreversible)
+      expect(config.queryEngine.maxResultRows).toBe(500)
+      expect(config.queryEngine.workerThreads).toBeNull()
+    })
+
+    it("rejects query-engine settings when no API node is planned", async () => {
+      const bindResolve = jest.spyOn(BindConfigProvider, "resolve")
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          queryEngine: { maxGroups: 100 }
+        })
+      ).rejects.toThrow(
+        /query-engine settings \(maxGroups\) require at least one API node/
+      )
+      expect(bindResolve).not.toHaveBeenCalled()
+    })
   })
 
   describe("resolve --bind-config classify/merge", () => {
@@ -573,9 +637,10 @@ describe("ClusterConfigProvider", () => {
         buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
-        // The fixture bind fed in as a COMPLETE config carries ad-hoc pairs, and cardinality is
-        // cross-checked per role — so the topology has to declare them.
+        // The fixture bind fed in as a COMPLETE config carries ad-hoc and API pairs, and cardinality
+        // is cross-checked per role — so the topology has to declare them.
         adHocCount: PersistedFixture.bind.nodeop.ports.adHoc.length,
+        apiCount: PersistedFixture.bind.nodeop.ports.api.length,
         bindConfig,
         ...extra
       }
@@ -602,6 +667,17 @@ describe("ClusterConfigProvider", () => {
       )
     })
 
+    it("rejects a COMPLETE bind config whose api cardinality mismatches the topology", async () => {
+      const bind = JSON.parse(JSON.stringify(PersistedFixture.bind))
+      await expect(
+        ClusterConfigProvider.resolve(
+          baseOptions(writeBindConfig(bind), { apiCount: 0 })
+        )
+      ).rejects.toThrow(
+        /nodeop\.ports\.api has 1 entries but the cluster topology expects 0/
+      )
+    })
+
     it("rejects a remote anvil bind without --external-outpost-config", async () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind))
       bind.anvil.address = "10.0.0.5"
@@ -611,9 +687,8 @@ describe("ClusterConfigProvider", () => {
     })
 
     it("merges a PARTIAL bind config over resolver defaults (file pins the kiod port)", async () => {
-      const kiodPort = await BindConfigProvider.findAvailable(
-        PartialMergeKiodPin
-      )
+      const kiodPort =
+        await BindConfigProvider.findAvailable(PartialMergeKiodPin)
       // findAvailable LOCKS the port in get-port's in-process cache. Release
       // the locks so resolve's PINNED draw can re-acquire the very port the
       // registry just vetted — without this the pin fails deterministically.
@@ -647,7 +722,10 @@ describe("ClusterConfigProvider", () => {
 
     it("accepts an explicit flag when the document does not author clusterPath", () => {
       expect(() =>
-        ClusterConfigProvider.assertClusterPathSource({ epochDurationSec: 60 }, true)
+        ClusterConfigProvider.assertClusterPathSource(
+          { epochDurationSec: 60 },
+          true
+        )
       ).not.toThrow()
       expect(() =>
         ClusterConfigProvider.assertClusterPathSource(null, true)
@@ -696,14 +774,10 @@ describe("ClusterConfigProvider", () => {
       ).rejects.toThrow(/underwriterCount was set to 3/)
     })
 
-    it("rejects an OMITTED underwriterCount — the default is ONE underwriter, not zero", async () => {
-      await expect(
-        ClusterConfigProvider.resolve(externalOptions())
-      ).rejects.toThrow(
-        new RegExp(
-          `underwriterCount was omitted, which defaults to ${ClusterConfigProvider.DefaultUnderwriterCount}`
-        )
-      )
+    it("defaults to no retired swap-underwriter daemons", async () => {
+      const config = await ClusterConfigProvider.resolve(externalOptions())
+      expect(config.underwriterCount).toBe(0)
+      expect(config.bind.nodeop.ports.underwriters).toEqual([])
     })
 
     it("accepts an EXPLICIT underwriterCount of 0", async () => {
@@ -714,7 +788,7 @@ describe("ClusterConfigProvider", () => {
       expect(config.externalOutposts).not.toBeNull()
     })
 
-    it("leaves LOCAL mode's underwriters untouched", async () => {
+    it("defaults local mode to zero retired daemons", async () => {
       const config = await ClusterConfigProvider.resolve({
         clusterPath: Path.join(environment.rootPath, "local-cluster"),
         buildPath: environment.buildPath,

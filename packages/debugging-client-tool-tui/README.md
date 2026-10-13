@@ -103,7 +103,7 @@ The TUI is composed of `FeatureProvider`s. Each owns its panels, status-bar widg
 Always-on. Discovers every pid-file-backed process under the cluster, probes liveness, and lets the user drill into each one's log file.
 
 **Panels**
-- **Process Monitor** — unified list of cluster processes: WIRE producers / bios / batch operators / underwriters, plus `anvil` and `solana-test-validator` when present. Each row shows liveness glyph (● alive, ✕ dead, … unknown), kind, identifier, `host:port` (for nodeop processes), and pid.
+- **Process Monitor** — unified list of cluster processes: WIRE producers / bios / batch operators / underwriters / API nodes, plus `anvil` and `solana-test-validator` when present. Each row shows liveness glyph (● alive, ✕ dead, … unknown), kind (the identity-mapped `PidSourceKind` value, rendered as `[kind]`: `bios`, `producer`, `batch_operator`, `underwriter`, `api`, `anvil`, `solana_validator`), identifier, `host:port` (for nodeop processes), and pid.
 - **Log Viewer** — virtual-scrolled viewer for the selected process's log (`<process-dir>/logs/log_YYYYMMDD.log`). Scrolls arbitrarily large files without buffering them in memory — the `LogTailingService` maintains a byte-offset index and reads only the visible window per render.
 
 **Status bar widget**
@@ -169,7 +169,7 @@ packages/debugging-client-tool-tui/src/
 | Contract | Where | What |
 |---|---|---|
 | `cluster-config.json` | `<clusterPath>/` | Ports, paths, binary locations. Loaded by `loadCluster(path)` and dispatched to the cluster slice. |
-| `cluster-state.json` | `<clusterPath>/` | Node inventory (producers + batch operators + underwriters). Null before bootstrap completes. |
+| `cluster-state.json` | `<clusterPath>/` | Node inventory (bios + producers + batch operators + underwriters + API nodes). Null before bootstrap completes. |
 | `data/<processDir>/<label>.pid` | per-process | Scanned by `collectPidSources` into a unified `PidSource[]`. |
 | `data/<processDir>/logs/log_YYYYMMDD.log` | per-process | Opened by `LogTailingService` when selected in the Process Monitor. |
 | `data/opp-debugging/<epoch>-<endpoint>-<checksum>.{data,metadata}` | server-written | Decoded by `OPPTrackingService` into Redux. |

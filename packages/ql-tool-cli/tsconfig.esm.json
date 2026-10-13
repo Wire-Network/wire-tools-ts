@@ -1,0 +1,13 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.cjs.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/esm",
+    "jsx": "react-jsx"
+  },
+  "references": [
+    { "path": "../cluster-tool-shared/tsconfig.json" },
+    { "path": "../ql-shared/tsconfig.cjs.json" }
+  ],
+  "include": ["src"]
+}

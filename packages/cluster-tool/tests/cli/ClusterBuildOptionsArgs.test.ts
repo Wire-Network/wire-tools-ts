@@ -2,13 +2,21 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  NodeopReadMode,
+  QueryEngineReadModeSchema,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   applyClusterBuildOptionsArgs,
   AWSClusterNodeConfigFlag,
   buildOptionShape,
   ClusterBuildOptionsFileFlag,
   ClusterPathFlag,
+  describeQueryEngineLimitFlag,
+  describeQueryEngineReadModeFlag,
   environmentPathDefaults,
   flattenOptionLeaves,
   hasCommandLineFlag,
@@ -16,13 +24,16 @@ import {
   mergeAWSClusterNodeConfig,
   mergeSignatureProviderSSM,
   OptionLeafType,
+  QueryEngineOptionKey,
   readCommandLineFlag,
   toAWSClusterNodeConfig,
   toClusterBuildOptions,
   toAWSSSMSignatureProviderOptions,
   toFlag,
+  toQueryEngineFlag,
   type OptionLeaf
 } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
+import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
 // `yargs` is ESM-only as of v18 and jest's CJS runtime can't load it (see
 // debugging-client-tool-tui/tests/cli.test.ts). The design under test needs no
@@ -89,6 +100,15 @@ const RequiredPaths = {
   solanaPath: "/tmp/wire-sol"
 }
 
+/**
+ * Ports replayed from the persisted fixture (never a literal): its one API-node
+ * pair, and the http ports of its two ad-hoc pairs.
+ */
+const [apiPorts] = PersistedFixture.bind.nodeop.ports.api,
+  fixturePairs = PersistedFixture.bind.nodeop.ports.adHoc.map(({ http }) => ({
+    http
+  }))
+
 describe("toFlag", () => {
   it("kebab-cases each dotted segment and joins with '-'", () => {
     expect(toFlag(["bind", "kiod", "port"])).toBe("bind-kiod-port")
@@ -115,6 +135,49 @@ describe("toFlag", () => {
   })
 })
 
+describe("toQueryEngineFlag", () => {
+  it("spells every query-engine flag from the shared key (the spelling create-api-node registers)", () => {
+    expect(QueryEngineOptionKey).toBe("queryEngine")
+    expect(toQueryEngineFlag("readMode")).toBe("query-engine-read-mode")
+    expect(toQueryEngineFlag("maxInFlight")).toBe("query-engine-max-in-flight")
+    expect(toQueryEngineFlag("timeoutMs")).toBe("query-engine-timeout-ms")
+  })
+})
+
+describe("query-engine help text", () => {
+  it("describeQueryEngineReadModeFlag names the option, every accepted mode, the omission default, and the rejected mode", () => {
+    const text = describeQueryEngineReadModeFlag()
+    expect(text).toContain(Constants.READ_MODE_OPTION)
+    QueryEngineReadModeSchema.options.forEach(mode =>
+      expect(text).toContain(mode)
+    )
+    // head is also an accepted mode, so the omission default is pinned by its own clause.
+    expect(text).toContain(`default (${NodeopReadMode.head})`)
+    // speculative is no accepted mode; the text names it as the one the plugin rejects.
+    expect(text).toContain(NodeopReadMode.speculative)
+  })
+
+  it("describeQueryEngineLimitFlag names the limit's option and that omitting it keeps the plugin's default", () => {
+    const option = "query-max-groups",
+      text = describeQueryEngineLimitFlag(option)
+    expect(text).toContain(option)
+    expect(text).toContain("omit for the plugin's default")
+  })
+
+  it("registers every --query-engine-* flag with exactly its helper's text", () => {
+    // The registration and the helper are one spelling — create-api-node reads the same helpers.
+    const options = register()
+    expect(options.get(toQueryEngineFlag("readMode"))?.describe).toBe(
+      describeQueryEngineReadModeFlag()
+    )
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) =>
+      expect(options.get(toQueryEngineFlag(member))?.describe).toBe(
+        describeQueryEngineLimitFlag(option)
+      )
+    )
+  })
+})
+
 describe("flattenOptionLeaves + buildOptionShape", () => {
   it("emits a kebab flag for every leaf at any depth", () => {
     const flags = flattenOptionLeaves(buildOptionShape({})).map(
@@ -127,7 +190,6 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "epoch-duration-sec",
         "force",
         "bind-all",
-        "enable-mock-reserves",
         "chain-state-db-size-mb",
         "bind-kiod-port",
         "bind-kiod-address",
@@ -181,6 +243,18 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
     expect(flags).not.toContain("bind-nodeop-ports-producers-2-http")
   })
 
+  it("sizes the api node-port arrays from apiCount", () => {
+    const flags = flattenOptionLeaves(buildOptionShape({ apiCount: 2 })).map(
+      leaf => leaf.flag
+    )
+    expect(flags).toContain("bind-nodeop-ports-api-0-http")
+    expect(flags).toContain("bind-nodeop-ports-api-1-p2p")
+    expect(flags).not.toContain("bind-nodeop-ports-api-2-http")
+    expect(
+      flattenOptionLeaves(buildOptionShape({})).map(leaf => leaf.flag)
+    ).not.toContain("bind-nodeop-ports-api-0-http")
+  })
+
   it("yields no flags for empty-by-default arrays (collateral)", () => {
     const flags = flattenOptionLeaves(buildOptionShape({})).map(
       leaf => leaf.flag
@@ -204,6 +278,29 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     })
     // Absent from a scenario's defaults, no pairs are reserved.
     expect(register().get("ad-hoc-count")).toMatchObject({ default: 0 })
+  })
+
+  it("registers api-count with a 0 default and no alias", () => {
+    expect(register().get("api-count")).toMatchObject({
+      type: "number",
+      default: 0
+    })
+    expect(register().get("api-count")?.alias).toBeUndefined()
+  })
+
+  it("registers api-count seeded from a scenario's defaults", () => {
+    // The seam a flow's API nodes travel: `FlowCLI` registers `Scenario.defaults` as the
+    // yargs defaults, so a leaf missing from the option TREE never reaches argv.
+    expect(register({ apiCount: 2 }).get("api-count")).toMatchObject({
+      type: "number",
+      default: 2
+    })
+  })
+
+  it("describes the api port leaves like every other role", () => {
+    expect(
+      register({ apiCount: 1 }).get("bind-nodeop-ports-api-0-http")?.describe
+    ).toBe("api[0] nodeop http listen port")
   })
 
   it("registers a described, typed yargs option for every deep flag", () => {
@@ -260,6 +357,47 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     expect(registered?.describe).toContain("MiB")
   })
 
+  it("registers the query-engine read mode as an UNSEEDED head|irreversible choice", () => {
+    const option = register().get(toQueryEngineFlag("readMode"))
+    expect(option).toMatchObject({
+      type: "string",
+      choices: [NodeopReadMode.head, NodeopReadMode.irreversible]
+    })
+    expect(option?.default).toBeUndefined()
+    expect(option?.describe).toContain(Constants.READ_MODE_OPTION)
+  })
+
+  it("registers one UNSEEDED number leaf per query-engine limit, named from the plugin's option", () => {
+    const options = register()
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) => {
+      const flag = toQueryEngineFlag(member)
+      expect(options.get(flag)).toMatchObject({ type: "number" })
+      expect(options.get(flag)?.default).toBeUndefined()
+      expect(options.get(flag)?.describe).toContain(option)
+    })
+    expect(options.has("query-engine-max-in-flight")).toBe(true)
+    expect(options.has("query-engine-max-response-bytes")).toBe(true)
+    // The member column checked against the plugin's own option names, spelled
+    // here rather than derived through toFlag.
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) =>
+      expect(toQueryEngineFlag(member)).toBe(
+        `query-engine-${option.replace(/^query-/, "")}`
+      )
+    )
+    // The twelve plugin limits plus the read mode; nothing else has the prefix.
+    expect(
+      [...options.keys()].filter(flag => flag.startsWith("query-engine-"))
+    ).toHaveLength(13)
+  })
+
+  it("seeds a query-engine leaf from a scenario's defaults", () => {
+    expect(
+      register({ queryEngine: { maxInFlight: 8 } }).get(
+        toQueryEngineFlag("maxInFlight")
+      )
+    ).toMatchObject({ type: "number", default: 8 })
+  })
+
   it("wires the historical short aliases", () => {
     const options = register()
     expect(options.get("cluster-path")?.alias).toBe("d")
@@ -299,7 +437,10 @@ describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", ()
   })
 
   it("the environment (per-invocation operator intent) beats scenario defaults", () => {
-    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
+    const options = register(
+      { clusterPath: "/tmp/scenario-cluster" },
+      environment
+    )
     expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
   })
 
@@ -343,7 +484,9 @@ describe("toClusterBuildOptions reverse parse", () => {
       { "epoch-duration-sec": 60 },
       { requiredBatchOperatorCollateral }
     )
-    expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
+    expect(options.requiredBatchOperatorCollateral).toEqual(
+      requiredBatchOperatorCollateral
+    )
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
@@ -356,6 +499,27 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.adHocCount).toBe(2)
     expect(options.bind?.nodeop?.ports?.adHoc?.[1]?.http).toBe(4321)
   })
+
+  it("reverse-parses api-count, and sizes the api bind array from it", () => {
+    const options = toClusterBuildOptions({
+      "api-count": 2,
+      "bind-nodeop-ports-api-1-http": apiPorts.http
+    })
+    expect(options.apiCount).toBe(2)
+    expect(options.bind?.nodeop?.ports?.api?.[1]?.http).toBe(apiPorts.http)
+  })
+
+  it.each([1.5, -1, 2 ** 53])(
+    "does not size the api bind array from an api-count of %s (resolve rejects the count by name)",
+    apiCount => {
+      const options = toClusterBuildOptions({
+        "api-count": apiCount,
+        "bind-nodeop-ports-api-0-http": apiPorts.http
+      })
+      expect(options.apiCount).toBe(apiCount)
+      expect(options.bind?.nodeop?.ports?.api).toBeUndefined()
+    }
+  )
 
   it("absolutizes path leaves and leaves unset bind ports absent", () => {
     const options = toClusterBuildOptions({
@@ -373,10 +537,23 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-liq-pools": true })
+        .enableMockLiqPools
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-liq-pools": false })
+        .enableMockLiqPools
+    ).toBe(false)
+  })
+
+  it("round trips the mock syndication import leaf", () => {
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": true })
+        .enableMockSyndicationImport
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-syndication-import": false })
+        .enableMockSyndicationImport
     ).toBe(false)
   })
 
@@ -390,6 +567,19 @@ describe("toClusterBuildOptions reverse parse", () => {
     ).toBe(2048)
     // Absent ⇒ ClusterConfigProvider.resolve's DefaultChainStateDbSizeMb applies.
     expect(toClusterBuildOptions({}).chainStateDbSizeMb).toBeUndefined()
+  })
+
+  it("reverse-parses the query-engine leaves into options.queryEngine", () => {
+    const options = toClusterBuildOptions({
+      "query-engine-read-mode": NodeopReadMode.irreversible,
+      "query-engine-worker-threads": 4,
+      "query-engine-max-result-rows": 500
+    })
+    expect(options.queryEngine).toEqual({
+      readMode: NodeopReadMode.irreversible,
+      workerThreads: 4,
+      maxResultRows: 500
+    })
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -415,13 +605,16 @@ describe("register → parse round-trip", () => {
     expect(options.epochDurationSec).toBe(60)
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
-    // no opt-in ⇒ the default-false mock-reserves flag survives as false
-    expect(options.enableMockReserves).toBe(false)
+    expect(options.enableMockLiqPools).toBe(false)
+    expect(options.enableMockSyndicationImport).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
     // resolve-time default is its ONE author.
     expect(options.chainStateDbSizeMb).toBeUndefined()
+    expect(options.apiCount).toBe(0)
+    // nothing seeded, nothing materializes: nodeop / the plugin own every default
+    expect(options.queryEngine).toBeUndefined()
   })
 
   it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {
@@ -438,8 +631,11 @@ describe("register → parse round-trip", () => {
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
-        enableMockReserves: true,
-        chainStateDbSizeMb: 8_192
+        enableMockLiqPools: true,
+        enableMockSyndicationImport: true,
+        chainStateDbSizeMb: 8_192,
+        apiCount: 2,
+        queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
       }),
       argv: Record<string, unknown> = {}
     registered.forEach((config, flag) => {
@@ -453,10 +649,17 @@ describe("register → parse round-trip", () => {
     expect(options.terminateMaxConsecutiveMisses).toBe(5)
     expect(options.terminateMaxPercentMisses24h).toBe(99)
     expect(options.terminateWindowMs).toBe(3_600_000)
-    // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
-    expect(options.enableMockReserves).toBe(true)
+    // …and the one the liq-yield flow's pools ride
+    expect(options.enableMockLiqPools).toBe(true)
+    expect(options.enableMockSyndicationImport).toBe(true)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
+    // …and a flow's API nodes + their query engine
+    expect(options.apiCount).toBe(2)
+    expect(options.queryEngine).toEqual({
+      readMode: NodeopReadMode.irreversible,
+      maxInFlight: 8
+    })
   })
 })
 
@@ -522,11 +725,15 @@ describe("mergeSignatureProviderSSM", () => {
   })
 
   it("falls back to the options-file document's signatureProvider.ssm", () => {
-    const merged = mergeSignatureProviderSSM({}, {}, {
-      signatureProvider: {
-        ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+    const merged = mergeSignatureProviderSSM(
+      {},
+      {},
+      {
+        signatureProvider: {
+          ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+        }
       }
-    })
+    )
     expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
       "/from/{cluster}/{account}/{keyType}"
     )
@@ -576,7 +783,10 @@ describe("mergeSignatureProviderSSM", () => {
 describe("raw command-line reads", () => {
   it("readCommandLineFlag reads both `--flag value` and `--flag=value`", () => {
     expect(
-      readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)
+      readCommandLineFlag(
+        ["create", "--cluster-path", "/tmp/a"],
+        ClusterPathFlag
+      )
     ).toBe("/tmp/a")
     expect(
       readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)
@@ -584,18 +794,26 @@ describe("raw command-line reads", () => {
   })
 
   it("readCommandLineFlag returns null when the flag is absent", () => {
-    expect(readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)).toBeNull()
+    expect(
+      readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)
+    ).toBeNull()
   })
 
   it("hasCommandLineFlag sees the long form, the `=` form, and the short alias", () => {
-    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(true)
-    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(
+      true
+    )
+    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(
+      true
+    )
     expect(hasCommandLineFlag(["-d", "/x"], ClusterPathFlag)).toBe(true)
     expect(hasCommandLineFlag(["-d=/x"], ClusterPathFlag)).toBe(true)
   })
 
   it("hasCommandLineFlag is false for a flag that only arrives as a yargs default", () => {
-    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(false)
+    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(
+      false
+    )
   })
 })
 
@@ -633,7 +851,10 @@ describe("--cluster-build-options-file", () => {
         clusterPath: "/tmp/doc-cluster",
         epochDurationSec: 30,
         bindAll: true,
-        bind: { kiod: { port: 1234 }, nodeop: { ports: { bios: { http: 5555 } } } },
+        bind: {
+          kiod: { port: 1234 },
+          nodeop: { ports: { bios: { http: 5555 } } }
+        },
         logging: { levels: { console: "debug" } }
       })
     )
@@ -649,10 +870,49 @@ describe("--cluster-build-options-file", () => {
     const loaded = loadClusterBuildOptionsFile(
       writeDocument({
         nodeCount: 2,
-        bind: { nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } } }
+        bind: {
+          nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } }
+        }
       })
     )
     expect(loaded.bind?.nodeop?.ports?.producers?.[1]?.http).toBe(7001)
+  })
+
+  it("sizes the api bind array from the document's own apiCount", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        apiCount: 2,
+        bind: { nodeop: { ports: { api: fixturePairs } } }
+      })
+    )
+    expect(loaded.apiCount).toBe(2)
+    expect(loaded.bind?.nodeop?.ports?.api?.[1]?.http).toBe(
+      fixturePairs[1].http
+    )
+  })
+
+  it("sizes the ad-hoc bind array from the document's own adHocCount", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        adHocCount: 2,
+        bind: { nodeop: { ports: { adHoc: fixturePairs } } }
+      })
+    )
+    expect(loaded.bind?.nodeop?.ports?.adHoc?.[1]?.http).toBe(
+      fixturePairs[1].http
+    )
+  })
+
+  it("carries a document's queryEngine sub-tree", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        queryEngine: { readMode: NodeopReadMode.irreversible, maxGroups: 100 }
+      })
+    )
+    expect(loaded.queryEngine).toEqual({
+      readMode: NodeopReadMode.irreversible,
+      maxGroups: 100
+    })
   })
 
   it("carries the flag-less collateral arrays through their shared schemas", () => {
@@ -678,12 +938,16 @@ describe("--cluster-build-options-file", () => {
       })
     )
     expect(loaded.signatureProvider?.type).toBe(SignatureProviderType.SSM)
-    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
+    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      SecretIdPattern
+    )
   })
 
   it("rejects an unknown option, naming its dotted path", () => {
     expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))
+      loadClusterBuildOptionsFile(
+        writeDocument({ bind: { kiod: { prot: 1 } } })
+      )
     ).toThrow(/unknown option "bind\.kiod\.prot"/)
     expect(() =>
       loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))
@@ -707,10 +971,28 @@ describe("--cluster-build-options-file", () => {
     ).toThrow(/"signatureProvider\.type" must be one of/)
   })
 
+  it("rejects a document read mode outside the plugin's choices", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ queryEngine: { readMode: NodeopReadMode.speculative } })
+      )
+    ).toThrow(/"queryEngine\.readMode" must be one of/)
+  })
+
+  it("rejects a string-typed query-engine limit", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ queryEngine: { maxGroups: "100" } })
+      )
+    ).toThrow(/"queryEngine\.maxGroups" must be a number/)
+  })
+
   it("rejects awsClusterNodeConfig, pointing at its own flag", () => {
     expect(() =>
       loadClusterBuildOptionsFile(
-        writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } })
+        writeDocument({
+          awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] }
+        })
       )
     ).toThrow(new RegExp(`--${AWSClusterNodeConfigFlag}`))
   })
@@ -726,11 +1008,21 @@ describe("--cluster-build-options-file", () => {
     )
   })
 
-  it("rejects a non-integer topology count before the shape is built", () => {
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ nodeCount: 1.5 }))
-    ).toThrow(/"nodeCount" must be a non-negative integer/)
-  })
+  it.each([
+    "nodeCount",
+    "batchOperatorCount",
+    "underwriterCount",
+    "apiCount",
+    "adHocCount"
+  ])(
+    "rejects a non-integer, negative, or unsafe %s before the shape is built",
+    key =>
+      [1.5, -1, 2 ** 53].forEach(value =>
+        expect(() =>
+          loadClusterBuildOptionsFile(writeDocument({ [key]: value }))
+        ).toThrow(new RegExp(`"${key}" must be a non-negative safe integer`))
+      )
+  )
 })
 
 describe("--aws-cluster-node-config", () => {
@@ -783,6 +1075,8 @@ describe("--aws-cluster-node-config", () => {
       mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file })
         .awsClusterNodeConfig?.account
     ).toBe(AWSAccountName.test)
-    expect(mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig).toBeUndefined()
+    expect(
+      mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig
+    ).toBeUndefined()
   })
 })

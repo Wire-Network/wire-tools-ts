@@ -1,6 +1,7 @@
 import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -8,7 +9,8 @@ import { Level } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool"
 import {
   BindConfigProvider,
-  ClusterConfigProvider
+  ClusterConfigProvider,
+  QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
@@ -36,7 +38,8 @@ export const PersistedFixture: ClusterConfig = {
   producerCount: 21,
   nodeCount: 1,
   batchOperatorCount: 3,
-  underwriterCount: 1,
+  underwriterCount: 0,
+  apiCount: 1,
   epochDurationSec: 60,
   operatorsPerEpoch: null,
   batchOpGroups: null,
@@ -59,7 +62,10 @@ export const PersistedFixture: ClusterConfig = {
         },
         producers: [pair(0)],
         batch: [pair(1), pair(2), pair(3)],
-        underwriters: [pair(4)],
+        underwriters: [],
+        // One API node, so every role-driven test (`nodeOfRole`, `it.each(Object.values(NodeRole))`)
+        // finds a planned node of the api role.
+        api: [pair(7)],
         // Two pairs so a fixture-driven tool can start an ad-hoc node (and a second one) without
         // exhausting the pool — `resolve` reserves these for real clusters.
         adHoc: [pair(5), pair(6)]
@@ -112,9 +118,13 @@ export const PersistedFixture: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false,
+  enableMockLiqPools: false,
+  enableMockSyndicationImport: false,
   deploymentKind: ClusterDeploymentKind.local,
-  chainStateDbSizeMb: DefaultChainStateDbSizeMb
+  chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+  // Nothing set: nodeop's read mode, the plugin's limits.
+  queryEngine: QueryEngineConfigProvider.createDefaultOptions(),
+  solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

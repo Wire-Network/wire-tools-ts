@@ -4,7 +4,9 @@ import {
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
+  createUnsetQueryEngineConfig,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
@@ -19,6 +21,7 @@ describe("ClusterConfig shape", () => {
     nodeCount: 1,
     batchOperatorCount: 3,
     underwriterCount: 1,
+    apiCount: 0,
     epochDurationSec: 60,
     operatorsPerEpoch: null,
     batchOpGroups: null,
@@ -39,6 +42,7 @@ describe("ClusterConfig shape", () => {
           producers: [{ http: 8988, p2p: 9976 }],
           batch: [],
           underwriters: [],
+          api: [],
           adHoc: []
         }
       },
@@ -86,9 +90,12 @@ describe("ClusterConfig shape", () => {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false,
+    enableMockLiqPools: false,
+    enableMockSyndicationImport: false,
     deploymentKind: ClusterDeploymentKind.local,
-    chainStateDbSizeMb: DefaultChainStateDbSizeMb
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+    queryEngine: createUnsetQueryEngineConfig(),
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -115,13 +122,29 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
+  it("persists explicit mock syndication opt-in and rejects a non-boolean flag", () => {
+    const enabled = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize({
+        ...config,
+        enableMockSyndicationImport: true
+      })
+    )
+    expect(enabled.enableMockSyndicationImport).toBe(true)
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    parsed.enableMockSyndicationImport = "true"
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
+    ).toThrow()
+  })
+
+  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.awsClusterNodeConfig
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
-    delete parsed.enableMockReserves
+    delete parsed.enableMockSyndicationImport
+    delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -134,7 +157,8 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.awsClusterNodeConfig).toBeNull()
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
-    expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.enableMockLiqPools).toBe(false)
+    expect(rehydrated.enableMockSyndicationImport).toBe(false)
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)
@@ -156,6 +180,15 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {
+    const tuned: ClusterConfig = { ...config, solanaSlotsPerEpoch: 64 },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(tuned)
+      )
+    expect(rehydrated.solanaSlotsPerEpoch).toBe(64)
+    expect(rehydrated).toEqual(tuned)
   })
 
   it("persists deploymentKind as its identity-mapped wire spelling", () => {

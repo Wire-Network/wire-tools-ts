@@ -5,14 +5,15 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { z } from "zod"
 
-/** Classifies a monitored process for display grouping and fallback handling. */
+/** Classifies a monitored process for display grouping and fallback handling (identity-mapped). */
 export enum PidSourceKind {
-  Bios = "bios",
-  Producer = "producer",
-  BatchOperator = "batch-operator",
-  Underwriter = "underwriter",
-  Anvil = "anvil",
-  SolanaValidator = "solana-validator"
+  bios = "bios",
+  producer = "producer",
+  batch_operator = "batch_operator",
+  underwriter = "underwriter",
+  api = "api",
+  anvil = "anvil",
+  solana_validator = "solana_validator"
 }
 
 /**

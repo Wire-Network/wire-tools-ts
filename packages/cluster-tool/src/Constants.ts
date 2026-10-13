@@ -1,5 +1,7 @@
 import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+
+import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
@@ -9,6 +11,10 @@ import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
  * `config/BindConfigProvider.ts`, which owns binding.
  */
 export namespace Constants {
+  /** Depot asset frame shared by native collateral and syndication. */
+  export const DepotPrecisionCap = 9
+  export const WireChainCode = Number(SlugName.from("WIRE"))
+  export const WireTokenCode = WireChainCode
   /** Seed for the deterministic dev K1 key pair (matches the genesis bios key). */
   const DefaultK1KeyPairSeed = "nathan"
 
@@ -111,10 +117,13 @@ export namespace Constants {
     "sysio.epoch",
     "sysio.opreg",
     "sysio.msgch",
-    "sysio.uwrit",
-    "sysio.reserv",
     "sysio.chalg",
     "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
+    "sysio.andon",
+    "sysio.bond",
+    "sysio.synd",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"
@@ -145,6 +154,13 @@ export namespace Constants {
 
   /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
   export const BOOTSTRAP_NODE_OWNER = "wireno"
+
+  /**
+   * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
+   * clear the depot's emergency stop. The bootstrap creates it (under the dev key) and
+   * delegates the native `sysio.andon@pull` and `@clear` permissions to it.
+   */
+  export const PANIC_ACCOUNT = "andon.panic"
 
   /** Name of the kiod wallet the bootstrap creates and helpers re-open. */
   export const DEFAULT_WALLET_NAME = "default"
@@ -201,23 +217,50 @@ export namespace Constants {
    */
   export const BASE_PLUGINS = [NET_PLUGIN, CHAIN_API_PLUGIN] as const
 
+  /**
+   * THE one spelling of the producer-api plugin — the `/v1/producer/*` control
+   * endpoints. Loaded on every role but the API node
+   * (`NodeConfig.runsProducerApiPlugin`); the standalone `create-api-node`
+   * artifact omits it. Changing it changes the argv of every node that loads it
+   * and the plugin list that carries it, together.
+   */
+  export const PRODUCER_API_PLUGIN = "sysio::producer_api_plugin"
+
   /** Additional plugins for producer / bios nodes. */
   export const PRODUCER_PLUGINS = [
     "sysio::producer_plugin",
-    "sysio::producer_api_plugin"
+    PRODUCER_API_PLUGIN
   ] as const
 
   /**
    * THE one spelling of the trace-api plugin, shared by the ini renderer and
    * the nodeop argv builder.
    *
-   * It is NOT in {@link PRODUCER_PLUGINS} because it is the one role-plugin
-   * whose presence is GATED (SHARED-25 AC#4, the author's D3 carve-out):
-   * `NodeConfig.runsTraceApiPlugin` keeps it on every role of a LOCAL cluster
-   * and drops it from the production-shaped external tree's bios / producer
-   * nodes. Two spellings would let the gate move in one surface only.
+   * trace_api is one of the role-gated plugins, each gated by its own
+   * `NodeConfig` predicate: `runsTraceApiPlugin` (SHARED-25 AC#4) keeps it on
+   * every role of a local cluster and on the operator and API nodes of an
+   * external tree; `runsProducerApiPlugin` keeps {@link PRODUCER_API_PLUGIN}
+   * on every role but the API node; `runsQueryEnginePlugin` loads
+   * {@link QUERY_ENGINE_PLUGIN} on API nodes only. trace_api is NOT in
+   * {@link PRODUCER_PLUGINS}, which bios / producer nodes load regardless of
+   * deployment kind, because its gate drops it from an external tree's bios /
+   * producer nodes. Two spellings would let the gate move in one surface only.
    */
   export const TRACE_API_PLUGIN = "sysio::trace_api_plugin"
+
+  /**
+   * THE one spelling of the query-engine plugin (`POST /v1/query/execute`),
+   * read by the cluster ini renderer and the nodeop argv builder
+   * (`NodeConfig.runsQueryEnginePlugin` gates both) and by the standalone
+   * `ApiNodeIniRenderer`. Loaded on API-role cluster nodes — the cluster's
+   * chain-read surface — and on every `create-api-node` artifact. The plugin
+   * itself requires a node with no configured producer and a non-speculative
+   * read mode.
+   *
+   * Changing it changes the plugin line of every API-node `config.ini`
+   * (cluster and standalone) and the cluster API nodes' nodeop argv together.
+   */
+  export const QUERY_ENGINE_PLUGIN = "sysio::query_engine_plugin"
 
   /**
    * THE one spelling of nodeop's chain-state DB size option (SHARED-31), used
@@ -228,6 +271,45 @@ export namespace Constants {
    * spellings would let one surface drift.
    */
   export const CHAIN_STATE_DB_SIZE_MB_OPTION = "chain-state-db-size-mb"
+
+  /**
+   * THE one spelling of nodeop's read-mode option, used bare as an ini key and
+   * as `--${…}` in a nodeop argv: the operator ini / daemon argv line
+   * (`irreversible`) and the API-node query-engine block (`--query-engine-read-mode`).
+   *
+   * Changing it changes every emitted `config.ini` key and argv flag together.
+   */
+  export const READ_MODE_OPTION = "read-mode"
+
+  /** One query-engine limit: its `QueryEngineLimits` member and the nodeop option it renders as. */
+  export interface QueryEngineLimitOption {
+    /** The camelCase member of `QueryEngineLimits` (the persisted / CLI-path key). */
+    readonly member: QueryEngineLimitKey
+    /** The plugin's own option name — the ini key. */
+    readonly option: `query-${string}`
+  }
+
+  /**
+   * THE one spelling of every `query-*` limit option, in the plugin's own
+   * order. Read by `QueryEngineConfigProvider` (validation + ini lines for both
+   * API-node renderers), the `--query-engine-*` flag registration of `create`
+   * and `create-api-node`, and the external-config Verify mask — so a member,
+   * its flag, and its ini key cannot drift apart.
+   */
+  export const QUERY_ENGINE_LIMIT_OPTIONS = [
+    { member: "workerThreads", option: "query-worker-threads" },
+    { member: "maxInFlight", option: "query-max-in-flight" },
+    { member: "maxQueryBytes", option: "query-max-query-bytes" },
+    { member: "timeoutMs", option: "query-timeout-ms" },
+    { member: "maxCaptureMs", option: "query-max-capture-ms" },
+    { member: "maxAbiBytes", option: "query-max-abi-bytes" },
+    { member: "maxScanRows", option: "query-max-scan-rows" },
+    { member: "maxRawBytes", option: "query-max-raw-bytes" },
+    { member: "maxMemoryBytes", option: "query-max-memory-bytes" },
+    { member: "maxGroups", option: "query-max-groups" },
+    { member: "maxResultRows", option: "query-max-result-rows" },
+    { member: "maxResponseBytes", option: "query-max-response-bytes" }
+  ] as const satisfies readonly QueryEngineLimitOption[]
 
   /** Core system contract paths (relative to the build dir). */
   export const CONTRACT_PATHS = {
@@ -249,25 +331,34 @@ export namespace Constants {
     "sysio.epoch": "contracts/sysio.epoch",
     "sysio.opreg": "contracts/sysio.opreg",
     "sysio.msgch": "contracts/sysio.msgch",
-    "sysio.uwrit": "contracts/sysio.uwrit",
-    "sysio.reserv": "contracts/sysio.reserv",
     "sysio.chalg": "contracts/sysio.chalg",
-    "sysio.dclaim": "contracts/sysio.dclaim"
+    "sysio.dclaim": "contracts/sysio.dclaim",
+    "sysio.swap": "contracts/sysio.swap",
+    "sysio.liq": "contracts/sysio.liq",
+    "sysio.andon": "contracts/sysio.andon",
+    "sysio.bond": "contracts/sysio.bond",
+    "sysio.synd": "contracts/sysio.synd"
   } as const
 
   export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
 
-  /** OPP system accounts (need `sysio.code` on their active permission). */
+  /**
+   * OPP system accounts (need `sysio.code` on their active permission): every contract
+   * that sends inline actions under its own authority. `sysio.andon` is absent — it sends
+   * none.
+   */
   export const OPP_SYSTEM_ACCOUNTS = [
     "sysio.chains",
     "sysio.tokens",
     "sysio.epoch",
     "sysio.opreg",
     "sysio.msgch",
-    "sysio.uwrit",
-    "sysio.reserv",
     "sysio.chalg",
-    "sysio.dclaim"
+    "sysio.dclaim",
+    "sysio.swap",
+    "sysio.liq",
+    "sysio.bond",
+    "sysio.synd"
   ] as const
 
   /** Plugins loaded on a batch-operator node. */
@@ -277,13 +368,6 @@ export namespace Constants {
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
     "sysio::cron_plugin"
-  ] as const
-
-  /** Plugins loaded on an underwriter node. */
-  export const UNDERWRITER_PLUGINS = [
-    "sysio::underwriter_plugin",
-    "sysio::outpost_ethereum_client_plugin",
-    "sysio::outpost_solana_client_plugin"
   ] as const
 
   /** Lowercase ASCII alphabet — single-character operator-account suffixes (wraps via modulo). */
@@ -496,6 +580,14 @@ export namespace ProtocolTiming {
    * {@link CollateralVerifyBudgetMs} / {@link SingleHopBudgetMs} wait.
    */
   export const OutpostWriteBudgetMs = 60_000
+
+  /**
+   * The challenge window of every `sysio.synd` pair the bootstrap configures (s): one
+   * default 60 s epoch. A flow that bonds an envelope waits this long after the request
+   * is fully bonded before `sysio.bond::approve` succeeds, and a challenge must land
+   * within it. The contract refuses 0.
+   */
+  export const SyndicationChallengeWindowSec = 60
 
   /**
    * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),

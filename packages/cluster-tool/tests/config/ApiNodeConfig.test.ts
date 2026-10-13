@@ -1,11 +1,15 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { DefaultChainStateDbSizeMb } from "@wireio/cluster-tool-shared"
+import {
+  DefaultChainStateDbSizeMb,
+  NodeopReadMode
+} from "@wireio/cluster-tool-shared"
 import {
   ApiNodeConfig,
   type ApiNodeOptions,
-  createApiNodeDefaultOptions
+  createApiNodeDefaultOptions,
+  QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
 
 /** A minimal, always-valid options set the invariant cases mutate one field of. */
@@ -56,11 +60,18 @@ describe("ApiNodeConfig", () => {
       expect(DefaultChainStateDbSizeMb).toBe(1_024)
     })
 
-    it("hands back a FRESH tuning group each call (no shared mutable default)", () => {
+    it("hands back FRESH tuning / peer / query-engine groups each call (no shared mutable default)", () => {
       const first = createApiNodeDefaultOptions(),
         second = createApiNodeDefaultOptions()
       expect(first.tuning).not.toBe(second.tuning)
       expect(first.p2pPeerAddresses).not.toBe(second.p2pPeerAddresses)
+      expect(first.queryEngine).not.toBe(second.queryEngine)
+    })
+
+    it("leaves every query-engine member unset (nodeop and the plugin own those defaults)", () => {
+      expect(createApiNodeDefaultOptions().queryEngine).toEqual(
+        QueryEngineConfigProvider.createDefaultOptions()
+      )
     })
   })
 
@@ -120,6 +131,31 @@ describe("ApiNodeConfig", () => {
       )
     })
 
+    it("resolves an all-unset queryEngine when the caller supplies none", () => {
+      expect(ApiNodeConfig.resolve(validOptions()).queryEngine).toEqual(
+        QueryEngineConfigProvider.createDefaultOptions()
+      )
+    })
+
+    it("keeps a PARTIAL queryEngine's members and fills the rest unset (the second shallow pass)", () => {
+      const config = ApiNodeConfig.resolve(
+        validOptions({
+          queryEngine: { readMode: NodeopReadMode.irreversible, maxGroups: 50 }
+        })
+      )
+      expect(config.queryEngine).toEqual({
+        ...QueryEngineConfigProvider.createDefaultOptions(),
+        readMode: NodeopReadMode.irreversible,
+        maxGroups: 50
+      })
+    })
+
+    it("REJECTS a non-positive query-engine limit, naming the nodeop option", () => {
+      expect(() =>
+        ApiNodeConfig.resolve(validOptions({ queryEngine: { maxGroups: 0 } }))
+      ).toThrow(/query-max-groups/)
+    })
+
     it("does NOT resurrect default peers under a caller-supplied list (defaultsDeep would)", () => {
       const config = ApiNodeConfig.resolve(
         validOptions({ p2pPeerAddresses: ["10.0.0.5:9876"] })
@@ -128,11 +164,15 @@ describe("ApiNodeConfig", () => {
     })
 
     it("does not mutate the caller's options object", () => {
-      const options = validOptions({ tuning: { httpThreads: 32 } })
+      const options = validOptions({
+        tuning: { httpThreads: 32 },
+        queryEngine: { maxInFlight: 8 }
+      })
       ApiNodeConfig.resolve(options)
       expect(options.chainStateDbSizeMb).toBeUndefined()
       expect(options.p2pPeerAddresses).toBeUndefined()
       expect(options.tuning).toEqual({ httpThreads: 32 })
+      expect(options.queryEngine).toEqual({ maxInFlight: 8 })
     })
 
     it("accepts a genesis file that exists and carries it through", () => {

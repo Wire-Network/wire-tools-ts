@@ -34,12 +34,14 @@ const AlwaysOnPlugins = [
 /** Plugins loaded only when the node has producers assigned. */
 const ProducerPlugins = ["sysio::producer_plugin"] as const
 /**
- * Plugins loaded after the standard argument block, on EVERY role
- * unconditionally. `sysio::trace_api_plugin` is deliberately NOT here — it is
- * gated by {@link NodeConfig.runsTraceApiPlugin} (SHARED-25 AC#4) and emitted
+ * Plugins loaded after the standard argument block, on every role but the API
+ * node ({@link NodeConfig.runsProducerApiPlugin}) — the public chain-read
+ * surface must not expose the producer control endpoints.
+ * `sysio::trace_api_plugin` is deliberately NOT here — it is gated by
+ * {@link NodeConfig.runsTraceApiPlugin} (SHARED-25 AC#4) and emitted
  * immediately after this block.
  */
-const TrailingPlugins = ["sysio::producer_api_plugin"] as const
+const TrailingPlugins = [Constants.PRODUCER_API_PLUGIN] as const
 
 /** `[flag, value]` pair expansion helper. */
 const pair = (flag: string, value: string): [string, string] => [flag, value]
@@ -151,11 +153,12 @@ function createNodeopDeadlineDefaultOptions(
  * companion-namespace constants). `p2pMaxNodesPerHost` AND `maxClients` are both
  * topology-derived from {@link NodeConfig.peerCapacity}: EVERY cluster node lives
  * on loopback in a full mesh, so each must accept inbound connections from the
- * whole planned topology (bios + producers + operators) plus headroom for
- * flow-provisioned ad-hoc daemons. A `p2pMaxNodesPerHost` of 1 leaves
- * late-joining nodes unable to sync ("Peer closed connection"); a `maxClients`
- * below the mesh size makes every node refuse the surplus dials, which freezes
- * LIB at scale (see {@link NodeConfig.peerCapacity} for the full failure chain).
+ * whole planned topology (bios + producers + operators + API nodes) plus
+ * headroom for flow-provisioned ad-hoc daemons. A `p2pMaxNodesPerHost` of 1
+ * leaves late-joining nodes unable to sync ("Peer closed connection"); a
+ * `maxClients` below the mesh size makes every node refuse the surplus dials,
+ * which freezes LIB at scale (see {@link NodeConfig.peerCapacity} for the full
+ * failure chain).
  *
  * Every knob except the three deadlines is phase- AND role-independent —
  * `databaseMapMode` most pointedly (SHARED-28 applies to every node, both
@@ -718,7 +721,9 @@ export namespace NodeopProcess {
         String(cluster.chainStateDbSizeMb)
       ),
       ...(tuning.contractsConsole ? ["--contracts-console"] : []),
-      ...pluginArgs(TrailingPlugins),
+      ...(NodeConfig.runsProducerApiPlugin(node)
+        ? pluginArgs(TrailingPlugins)
+        : []),
       // SHARED-25 AC#4 (D3): local clusters keep trace_api on every role; the
       // production-shaped external tree drops it from bios / producer nodes.
       ...(NodeConfig.runsTraceApiPlugin(node)
@@ -731,6 +736,11 @@ export namespace NodeopProcess {
       // it outright when trace_api_plugin is not loaded.
       ...(config.supportsTraceNoAbis && NodeConfig.runsTraceApiPlugin(node)
         ? [TraceNoAbisFlag]
+        : []),
+      // The query engine rides the SAME predicate as its ini line
+      // (NodeConfig.runsQueryEnginePlugin), so the two surfaces agree.
+      ...(NodeConfig.runsQueryEnginePlugin(node)
+        ? pluginArgs([Constants.QUERY_ENGINE_PLUGIN])
         : []),
       // Same SHARED-25 omission rule as the two deadlines above.
       ...(tuning.httpMaxResponseTimeMs != null
@@ -846,7 +856,7 @@ export namespace NodeopProcess {
    *
    * @param node - The planned node being relaunched.
    * @param operators - The accounts that node acts for (one per hosted producer).
-   * @param extraArgs - Its OPP daemon args (empty for bios / producer nodes).
+   * @param extraArgs - Its OPP daemon args (empty for every non-operator node).
    * @returns The post-bootstrap relaunch options.
    */
   export function createRelaunchOptions(
