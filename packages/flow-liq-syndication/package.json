@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-liq-syndication",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "description": "Flow: real liqsol syndication fully settles in the destination wallet and reported yield is released",

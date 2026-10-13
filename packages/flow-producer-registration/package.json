@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-producer-registration",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Block Producer Registration",

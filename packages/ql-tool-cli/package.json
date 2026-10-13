@@ -1,6 +1,6 @@
 {
   "name": "@wireio/ql-tool-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WIRE QL command line (wql / wire-ql) and terminal workbench (wire-ql-tui) for the node query engine",
   "private": false,
   "publishConfig": {
