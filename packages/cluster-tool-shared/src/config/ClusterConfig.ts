@@ -107,6 +107,19 @@ export enum ClusterDeploymentKind {
 }
 
 /**
+ * Which Ethereum outpost a LOCAL cluster deploys (`--ethereum-deployment`).
+ * `current` runs `deployLocal.ts`: the current contracts, fresh. `ladder` runs
+ * `deployLadder.ts`: the pre-launch outpost as mainnet climbed it, which the
+ * bootstrap then exercises, freezes, imports into the depot through the
+ * capital-index snapshot, and takes live with the real go-live scripts.
+ * Schema-defaulted `current` so pre-existing configs keep their deploy.
+ */
+export enum EthereumDeploymentKind {
+  current = "current",
+  ladder = "ladder"
+}
+
+/**
  * SHARED-31's mandated `--chain-state-db-size-mb` default (MiB); equals
  * nodeop's stock chain-state-db-size-mb (1 GiB), so the always-emitted flag is
  * a no-op until an operator overrides it — uniformity by construction.
@@ -287,6 +300,10 @@ export const ClusterConfigSchema = z.object({
   enableMockLiqPools: z.boolean().default(false),
   /** Opt-in bootstrap import of mock bonder positions, with custody backing. */
   enableMockSyndicationImport: z.boolean().default(false),
+  /** Which Ethereum outpost a local cluster deploys; see {@link EthereumDeploymentKind}. */
+  ethereumDeployment: z
+    .enum(EthereumDeploymentKind)
+    .default(EthereumDeploymentKind.current),
   /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every

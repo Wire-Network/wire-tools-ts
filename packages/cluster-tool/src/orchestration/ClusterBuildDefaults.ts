@@ -9,6 +9,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
@@ -164,7 +165,11 @@ export namespace ClusterBuildDefaults {
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
-      isExternalOutpost = config.externalOutposts != null
+      isExternalOutpost = config.externalOutposts != null,
+      // The pre-launch outpost as mainnet climbed it, taken live through the go-live
+      // with the depot bootstrapped from its frozen positions (`--ethereum-deployment ladder`).
+      isEthereumLadder =
+        config.ethereumDeployment === EthereumDeploymentKind.ladder
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
         owner: Constants.BOOTSTRAP_NODE_OWNER,
@@ -882,6 +887,48 @@ export namespace ClusterBuildDefaults {
           {}
         )
       )
+    } else if (isEthereumLadder) {
+      // The ladder: anvil, then `deployLadder.ts` (liqEth + outpost as mainnet
+      // climbed them, stopping before the freeze), the pre-launch set used as
+      // its users used it, and the deep freeze that books the figure. Anvil
+      // stays on instamine through the go-live below; interval mining starts
+      // once the fresh pair is in place.
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "EthereumOutpost",
+        "Deploy the pre-launch Ethereum outpost as mainnet climbed it"
+      ).push(
+        Steps.processes.anvil.planStart<C>(
+          Actor.EthereumOutpost,
+          "start-anvil",
+          "start the run-time anvil (instamine)",
+          {}
+        ),
+        Steps.ethereumLadder.planLadder<C>(
+          Actor.EthereumOutpost,
+          "climb-ethereum-ladder",
+          "run deployLadder.ts: the liqEth + outpost ladders in mainnet order, stopping before the freeze",
+          { timeoutMs: 900_000 }
+        )
+      )
+      Steps.ethereumPreLaunch.planPreLaunch<C>(
+        prerequisites,
+        "EthereumPreLaunch",
+        "Use the pre-launch outpost as its users did: stakes, pretoken purchases, yield, the last sync",
+        { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs }
+      )
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "EthereumDeepFreeze",
+        "Go-live step 0: freeze every retired contract and book lastPoolLiqBalance"
+      ).push(
+        Steps.ethereumLadder.planDeepFreeze<C>(
+          Actor.EthereumOutpost,
+          "freeze-ethereum",
+          "run the deep-freeze upgrade script against the pre-launch outpost",
+          { timeoutMs: 900_000 }
+        )
+      )
     } else {
       ClusterBuildPhase.create<C>(
         prerequisites,
@@ -914,6 +961,9 @@ export namespace ClusterBuildDefaults {
           {}
         )
       )
+    }
+
+    if (!isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         prerequisites,
         "SolanaValidator",
@@ -1010,11 +1060,26 @@ export namespace ClusterBuildDefaults {
       Steps.registry.planMockLiqPools<C>(
         prerequisites,
         "MockLiqPools",
-        "Seed the 2 mock shadow-liq yield pools on sysio.swap",
-        {}
+        isEthereumLadder
+          ? "Seed the mock LIQSOL shadow-liq yield pool on sysio.swap"
+          : "Seed the 2 mock shadow-liq yield pools on sysio.swap",
+        {},
+        isEthereumLadder ? [Steps.registry.SolanaChainCodename] : undefined
       )
     }
-    if (config.enableMockSyndicationImport) {
+    if (isEthereumLadder) {
+      // The frozen outpost's positions, through capital-index, inside the
+      // epoch-0 window: the Ethereum pool with the booked custody net of the
+      // imported credits, one importsynd per staker (plus the mock LIQSOL
+      // credit when asked), the seals, and the dclaim seed.
+      Steps.ethereumLadderImport.planImport<C>(
+        prerequisites,
+        "EthereumLadderImport",
+        "Import the frozen outpost into the depot from the capital-index snapshot",
+        {},
+        { mockSolanaCredit: config.enableMockSyndicationImport }
+      )
+    } else if (config.enableMockSyndicationImport) {
       Steps.registry.planMockSyndicationImport<C>(
         prerequisites,
         "MockSyndicationImport",
@@ -1024,7 +1089,43 @@ export namespace ClusterBuildDefaults {
     }
     if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
       Steps.mockShadowBacking.planSolana<C>(prerequisites)
-      Steps.mockShadowBacking.planEthereum<C>(prerequisites)
+      if (!isEthereumLadder) Steps.mockShadowBacking.planEthereum<C>(prerequisites)
+    }
+    if (isEthereumLadder) {
+      // Go-live step 1 BEFORE the operator daemons read the outpost book: the
+      // pool upgraded in place and seeded from the booked figure, the OPP pair
+      // and BAR fresh with the provisional roster. Then interval mining.
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "EthereumGoLive",
+        "Go-live step 1: SyndicationPool seeded from the booked figure, OPP pair and BAR fresh, re-wired"
+      ).push(
+        Steps.ethereumLadder.planGoLive<C>(
+          Actor.EthereumOutpost,
+          "go-live-ethereum",
+          "run the go-live upgrade script against the frozen outpost",
+          { timeoutMs: 900_000 }
+        ),
+        verifyStep<C>(
+          Actor.EthereumOutpost,
+          "verify-syndication-pool",
+          "SyndicationPool carries the go-live config's maximum, deadband and liq token, " +
+            "and the panic account may pause and unpause it",
+          Steps.ethereumOutpost.assertSyndicationPoolConfigured
+        ),
+        verifyStep<C>(
+          Actor.EthereumOutpost,
+          "verify-go-live-reconciliation",
+          "the pool's seeded principal is the booked figure, and so is the depot's outstanding",
+          Steps.ethereumLadderImport.assertPoolSeededFromBooked
+        ),
+        Steps.processes.anvil.planEnableIntervalMining<C>(
+          Actor.EthereumOutpost,
+          "enable-interval-mining",
+          "switch anvil to interval mining",
+          {}
+        )
+      )
     }
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══

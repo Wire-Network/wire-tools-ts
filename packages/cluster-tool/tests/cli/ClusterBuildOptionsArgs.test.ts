@@ -6,7 +6,8 @@ import {
   AWSAccountName,
   NodeopReadMode,
   QueryEngineReadModeSchema,
-  SignatureProviderType
+  SignatureProviderType,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
@@ -557,6 +558,20 @@ describe("toClusterBuildOptions reverse parse", () => {
     ).toBe(false)
   })
 
+  it("round trips the Ethereum deployment choice and refuses an unknown kind", () => {
+    expect(
+      toClusterBuildOptions({ "ethereum-deployment": EthereumDeploymentKind.ladder })
+        .ethereumDeployment
+    ).toBe(EthereumDeploymentKind.ladder)
+    expect(
+      toClusterBuildOptions({ "ethereum-deployment": EthereumDeploymentKind.current })
+        .ethereumDeployment
+    ).toBe(EthereumDeploymentKind.current)
+    const registered = flattenOptionLeaves(buildOptionShape({})),
+      leaf = registered.find(entry => entry.flag === "ethereum-deployment")
+    expect(leaf.choices).toEqual(Object.values(EthereumDeploymentKind))
+  })
+
   it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
     // Registration is MANDATORY: this reverse parse reads argv ONLY through
     // flattenOptionLeaves(buildOptionShape(...)), so an unregistered field is
@@ -607,6 +622,7 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     expect(options.enableMockLiqPools).toBe(false)
     expect(options.enableMockSyndicationImport).toBe(false)
+    expect(options.ethereumDeployment).toBe(EthereumDeploymentKind.current)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
     // …and neither does the unseeded chain-state DB size (SHARED-31) — the
@@ -633,6 +649,7 @@ describe("register → parse round-trip", () => {
         terminateWindowMs: 3_600_000,
         enableMockLiqPools: true,
         enableMockSyndicationImport: true,
+        ethereumDeployment: EthereumDeploymentKind.ladder,
         chainStateDbSizeMb: 8_192,
         apiCount: 2,
         queryEngine: { readMode: NodeopReadMode.irreversible, maxInFlight: 8 }
@@ -652,6 +669,7 @@ describe("register → parse round-trip", () => {
     // …and the one the liq-yield flow's pools ride
     expect(options.enableMockLiqPools).toBe(true)
     expect(options.enableMockSyndicationImport).toBe(true)
+    expect(options.ethereumDeployment).toBe(EthereumDeploymentKind.ladder)
     // the same scenario-defaults path carries the SHARED-31 override
     expect(options.chainStateDbSizeMb).toBe(8_192)
     // …and a flow's API nodes + their query engine

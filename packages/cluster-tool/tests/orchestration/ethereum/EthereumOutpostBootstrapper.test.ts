@@ -377,3 +377,68 @@ describe("EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount", () =>
     ).toThrow(/not below the panic account's/)
   })
 })
+
+describe("EthereumOutpostBootstrapper go-live configs", () => {
+  const deploymentsPath = "/cluster/data/ethereum-deployments",
+    rpcUrl = "http://127.0.0.1:8545",
+    roster: EthereumOutpostInitialRoster = {
+      groups: [[AnvilAccount1Address], [AnvilAccount2Address]],
+      epochDurationSec: SeedEpochDurationSec
+    }
+
+  it("names the panic account for the ladder and nothing else", () => {
+    expect(EthereumOutpostBootstrapper.ladderConfig(AnvilAccount2Address)).toEqual({
+      panicAccount: AnvilAccount2Address
+    })
+  })
+
+  it("writes the deep freeze's UPGRADE_CONFIG against the ladder's book under the go-live salt", () => {
+    expect(
+      EthereumOutpostBootstrapper.deepFreezeConfig(rpcUrl, AnvilAccount0PrivateKey, deploymentsPath)
+    ).toEqual({
+      url: rpcUrl,
+      key: AnvilAccount0PrivateKey,
+      addressFile: Path.join(deploymentsPath, "outpost-addrs.json"),
+      releaseStateFile: Path.join(deploymentsPath, "outpost-release-state.json"),
+      gasLimitFile: Path.join(deploymentsPath, "012_outpost_deep_freeze-gas-limits.json"),
+      saltVersion: "3"
+    })
+  })
+
+  it("writes the go-live's UPGRADE_CONFIG with the roster, the stand-in and the pool parameters the fresh deploy names", () => {
+    const config = EthereumOutpostBootstrapper.goLiveConfig(
+      rpcUrl,
+      AnvilAccount0PrivateKey,
+      deploymentsPath,
+      AnvilAccount2Address,
+      roster,
+      "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+    )
+    expect(config).toEqual({
+      url: rpcUrl,
+      key: AnvilAccount0PrivateKey,
+      addressFile: Path.join(deploymentsPath, "outpost-addrs.json"),
+      liqEthAddressFile: Path.join(deploymentsPath, "liqeth-addrs.json"),
+      releaseStateFile: Path.join(deploymentsPath, "outpost-release-state.json"),
+      gasLimitFile: Path.join(deploymentsPath, "013_outpost_go_live-gas-limits.json"),
+      saltVersion: "3",
+      initialOperatorGroups: roster.groups,
+      epochDurationSec: SeedEpochDurationSec,
+      panicAccount: AnvilAccount2Address,
+      WireNodes: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+      maxSyndicationPerTransfer: EthereumOutpostBootstrapper.MaxSyndicationPerTransferWei,
+      yieldDeadband: EthereumOutpostBootstrapper.YieldDeadbandDepotUnits
+    })
+    // the fresh deploy and the go-live agree on the pool parameters
+    const fresh = EthereumOutpostBootstrapper.outpostDeployConfig(
+      rpcUrl,
+      AnvilAccount0PrivateKey,
+      deploymentsPath,
+      AnvilAccount2Address,
+      roster
+    )
+    expect(config.maxSyndicationPerTransfer).toBe(fresh.maxSyndicationPerTransfer)
+    expect(config.yieldDeadband).toBe(fresh.yieldDeadband)
+    expect(config.saltVersion).not.toBe("2")
+  })
+})

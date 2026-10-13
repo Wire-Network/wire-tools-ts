@@ -28,6 +28,9 @@ const wireLibrariesPath = Path.resolve(
 const wireSysioPath = Path.resolve(
   process.env.WIRE_SYSIO_PATH ?? Path.resolve(__dirname, "..", "wire-sysio")
 )
+const capitalIndexPath = Path.resolve(
+  process.env.CAPITAL_INDEX_PATH ?? Path.resolve(__dirname, "..", "capital-index")
+)
 
 const wireLibPackagesPath = Path.join(wireLibrariesPath, "packages")
 
@@ -69,6 +72,14 @@ wireOPPPkgPaths
   .forEach(([pkgName, path]) => {
     localOverrides[pkgName] = path
   })
+
+// The capital indexer's `capital-index/opp` library (the pre-launch OPP balance
+// snapshot the ladder bootstrap imports into the depot) links from the sibling
+// checkout the manifest places beside this repo; `CAPITAL_INDEX_PATH` re-points
+// a feature worktree the same way the other siblings are re-pointed.
+if (isDirectory(capitalIndexPath)) {
+  localOverrides["capital-index"] = capitalIndexPath
+}
 
 /**
  * `readPackage` hook, which links locally available versions of

@@ -332,17 +332,21 @@ export namespace SyndicationScenario {
     Assert.ok(rows.length === 1, "missing epoch state")
     return rows[0].current_epoch_index
   }
-  /** Liquid shadow held by one account, zero before its first credit. */
+  /**
+   * Liquid shadow held by one account, zero before its first credit — the
+   * scenario's {@link Token} unless another shadow symbol is named.
+   */
   export async function readBalance(
     ctx: ClusterBuildContext,
-    account: string
+    account: string,
+    symbolCode: string = Token
   ): Promise<bigint> {
     const { rows, more } = await ctx.wire
       .getSysioContract(SysioContractName.liq)
       .tables.accounts.query({ scope: account, limit: QueryLimit })
     Assert.ok(!more, "truncated holder read")
     const row = rows.find(
-      value => Asset.from(value.balance).symbol.name === Token
+      value => Asset.from(value.balance).symbol.name === symbolCode
     )
     return row ? units(row.balance) : 0n
   }

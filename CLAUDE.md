@@ -377,6 +377,28 @@ Ethereum then seeds principal through `OutpostManager.execute` in a separate
 Step, preserving the pool configuration. Verification requires principal to equal
 the backing and custody to cover it before the epoch relay can realize yield.
 
+**Flow authoring — the Ethereum ladder.** `ethereumDeployment: EthereumDeploymentKind.ladder`
+in `Scenario.defaults` (`--ethereum-deployment ladder` on `create`) replaces the fresh
+`deployLocal.ts` outpost with the PRE-LAUNCH one: `Steps.ethereumLadder.planLadder` runs
+wire-ethereum's `deployLadder.ts` (the liqEth and outpost ladders as mainnet climbed them,
+stopping before the freeze), `Steps.ethereumPreLaunch.planPreLaunch` uses it as its users
+did (stakes, pretoken purchases, yield, the last sync — one write per Step, actors on HD
+indices past the mock bonder's), `Steps.ethereumLadder.planDeepFreeze` runs the real
+deep-freeze script and publishes the booked figure (`EthereumBookedFigureKey`), and inside
+the epoch-0 window `Steps.ethereumLadderImport.planImport` reads the frozen OPP stream
+through `capital-index/opp` (`buildOppSnapshot` against the cluster's anvil — the
+production indexer's own computation, linked from the sibling `capital-index` checkout)
+and imports it: `regliqpool` for LIQETH with the booked custody net of the credits,
+`importsynd` per staker keyed by the recovered compressed pubkey, `importdone`, a verify
+that the depot's outstanding equals the booked figure, then `importseed` + `importdone`.
+`Steps.ethereumLadder.planGoLive` then runs the real go-live script before the operator
+daemons read the book, and verifies the pool's principal equals the depot's outstanding.
+On a ladder cluster the mock flags reduce to Solana: `enableMockLiqPools` seeds only the
+LIQSOL pool, `enableMockSyndicationImport` adds only the mock LIQSOL credit (inside the
+same import phase, before the one seal), and no mock Ethereum backing runs. The
+snapshot lands as `<deployments>/capital-index-snapshot.json`; the derived import rides
+`EthereumLadderImportKey` for a flow to read back.
+
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
 unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: the

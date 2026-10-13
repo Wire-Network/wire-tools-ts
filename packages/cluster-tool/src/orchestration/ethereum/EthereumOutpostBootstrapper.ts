@@ -152,7 +152,160 @@ export class EthereumOutpostBootstrapper {
     this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
 
     await this.deployContracts(ethereumPath, rpcUrl)
+    this.writeAccounts(anvilDataPath)
+    return this.accounts
+  }
 
+  /**
+   * The ladder instead of the fresh deploy: generate accounts, run
+   * wire-ethereum's `deployLadder.ts` against the run anvil — the liqEth and
+   * outpost ladders as mainnet climbed them, stopping before the go-live
+   * freeze — and write the annotated accounts file. What it leaves is the
+   * PRE-LAUNCH outpost; {@link deepFreeze} and {@link goLive} take it live.
+   */
+  async ladder(): Promise<EthereumAccount[]> {
+    const { anvilDataPath, rpcUrl, accountCount, deploymentsPath } = this.config
+    log.info(
+      `[ethereum] generating ${accountCount} accounts, climbing the ladder against ${rpcUrl}`
+    )
+    this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
+    const localDir = mkdirs(deploymentsPath)
+    this.markAccountUsed(
+      EthereumOutpostBootstrapper.DeployerAccountIndex,
+      "Ladder deploy owner (liqEth + outpost, mainnet order)"
+    )
+    Fs.writeFileSync(
+      Path.join(localDir, EthereumOutpostBootstrapper.LadderConfigFile),
+      JSON.stringify(
+        EthereumOutpostBootstrapper.ladderConfig(this.panicAccount()),
+        null,
+        2
+      )
+    )
+    await this.runHardhatScript(
+      EthereumOutpostBootstrapper.LadderScript,
+      localDir,
+      {},
+      "ladder"
+    )
+    this.recordArtifacts(localDir, [
+      ...EthereumOutpostBootstrapper.StaleDeployArtifactFiles,
+      EthereumOutpostBootstrapper.LadderSummaryFile
+    ])
+    this.writeAccounts(anvilDataPath)
+    return this.accounts
+  }
+
+  /**
+   * Go-live step 0 on the ladder's outpost: the deep freeze, as the real
+   * `UPGRADE_CONFIG` script, which records the booked figure
+   * (`Depositor.lastPoolLiqBalance`) into the release state.
+   */
+  async deepFreeze(): Promise<void> {
+    const { rpcUrl, accountCount, deploymentsPath } = this.config
+    this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
+    const localDir = mkdirs(deploymentsPath),
+      configFile = Path.join(
+        localDir,
+        EthereumOutpostBootstrapper.DeepFreezeConfigFile
+      )
+    Fs.writeFileSync(
+      configFile,
+      JSON.stringify(
+        EthereumOutpostBootstrapper.deepFreezeConfig(
+          rpcUrl,
+          this.deployerPrivateKey(),
+          localDir
+        ),
+        null,
+        2
+      )
+    )
+    await this.runHardhatScript(
+      EthereumOutpostBootstrapper.DeepFreezeScript,
+      localDir,
+      { UPGRADE_CONFIG: configFile },
+      "deep-freeze"
+    )
+    this.recordArtifacts(localDir, [
+      EthereumOutpostBootstrapper.OutpostReleaseStateFile
+    ])
+  }
+
+  /**
+   * Go-live step 1 on the frozen outpost: the pool upgraded in place and
+   * seeded from the booked figure, the OPP pair and BAR fresh under the
+   * go-live salt with the provisional batch-operator roster, everything
+   * re-wired — as the real `UPGRADE_CONFIG` script.
+   *
+   * @param wireNodes - The WireNodes ERC-1155 BAR draws claims from (the ladder's stand-in).
+   */
+  async goLive(wireNodes: string): Promise<void> {
+    const { rpcUrl, accountCount, deploymentsPath, initialRoster } = this.config
+    this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
+    const localDir = mkdirs(deploymentsPath),
+      configFile = Path.join(
+        localDir,
+        EthereumOutpostBootstrapper.GoLiveConfigFile
+      )
+    log.info(
+      `[ethereum] go-live roster: ${initialRoster.groups
+        .map(group => `[${group.join(", ")}]`)
+        .join(" ")} (epochDurationSec=${initialRoster.epochDurationSec})`
+    )
+    Fs.writeFileSync(
+      configFile,
+      JSON.stringify(
+        EthereumOutpostBootstrapper.goLiveConfig(
+          rpcUrl,
+          this.deployerPrivateKey(),
+          localDir,
+          this.panicAccount(),
+          initialRoster,
+          wireNodes
+        ),
+        null,
+        2
+      )
+    )
+    await this.runHardhatScript(
+      EthereumOutpostBootstrapper.GoLiveScript,
+      localDir,
+      { UPGRADE_CONFIG: configFile },
+      "go-live"
+    )
+    this.recordArtifacts(localDir, [
+      EthereumOutpostBootstrapper.OutpostAddressesFile,
+      EthereumOutpostBootstrapper.OutpostReleaseStateFile
+    ])
+  }
+
+  /** The deployer (anvil HD index 0) key; the generated accounts must exist. */
+  private deployerPrivateKey(): string {
+    Assert.ok(
+      this.accounts.length > EthereumOutpostBootstrapper.DeployerAccountIndex,
+      "EthereumOutpostBootstrapper: accounts are not generated"
+    )
+    return this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex]
+      .privateKey
+  }
+
+  /** The panic account's address (anvil HD index 49), marked used. */
+  private panicAccount(): string {
+    Assert.ok(
+      this.accounts.length > EthereumOutpostBootstrapper.PanicAccountIndex,
+      `EthereumOutpostBootstrapper: ${this.accounts.length} generated accounts leave no HD index ` +
+        `${EthereumOutpostBootstrapper.PanicAccountIndex} for the panic account`
+    )
+    this.markAccountUsed(
+      EthereumOutpostBootstrapper.PanicAccountIndex,
+      "Emergency-stop panic account (panic role: pause / unpause)"
+    )
+    return this.accounts[EthereumOutpostBootstrapper.PanicAccountIndex].address
+  }
+
+  /** Write the annotated accounts file under the anvil data dir. */
+  private writeAccounts(anvilDataPath: string): void {
     const accountsFile = Path.join(
       mkdirs(anvilDataPath),
       EthereumOutpostBootstrapper.AccountsFile
@@ -161,8 +314,88 @@ export class EthereumOutpostBootstrapper {
     log.info(
       `[ethereum] wrote ${this.accounts.length} accounts to ${accountsFile}`
     )
+  }
 
-    return this.accounts
+  /**
+   * Run one wire-ethereum hardhat script against the run anvil, serialized
+   * host-wide: hardhat compiles into the SHARED repo cache/artifacts on demand,
+   * and two concurrent compiles corrupt them. The per-run state (configs +
+   * address files) is isolated via `deploymentsPath`; hardhat's `localhost`
+   * network is pointed at this cluster's anvil through `LOCALHOST_RPC_URL`.
+   *
+   * @param script - The script path, relative to the wire-ethereum root.
+   * @param localDir - This cluster's deployments dir (`WIRE_ETH_DEPLOYMENTS_PATH`).
+   * @param extraEnv - Script-specific environment (an `UPGRADE_CONFIG`, say).
+   * @param label - The log label.
+   */
+  private async runHardhatScript(
+    script: string,
+    localDir: string,
+    extraEnv: Record<string, string>,
+    label: string
+  ): Promise<void> {
+    const { ethereumPath, rpcUrl } = this.config,
+      args = [
+        "hardhat",
+        "run",
+        script,
+        "--network",
+        EthereumOutpostBootstrapper.HardhatLocalhostNetwork
+      ]
+    log.info(`[ethereum] running ${script} via hardhat (${label})...`)
+    StepExtraRecorder.record({
+      client: "process",
+      kind: "exec",
+      command: ["npx", ...args],
+      cwd: ethereumPath
+    })
+    const { stdout, stderr } = await withFileLock(
+      EthereumOutpostBootstrapper.HardhatDeployLockPath,
+      () =>
+        execFileAsync("npx", args, {
+          cwd: ethereumPath,
+          timeout: scaleTimeoutMs(
+            EthereumOutpostBootstrapper.HardhatDeployTimeoutMs
+          ),
+          maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
+          env: {
+            ...process.env,
+            HARDHAT_NETWORK: EthereumOutpostBootstrapper.HardhatLocalhostNetwork,
+            LOCALHOST_RPC_URL: rpcUrl,
+            WIRE_ETH_DEPLOYMENTS_PATH: localDir,
+            ...extraEnv
+          }
+        }),
+      LongFileLockOptions
+    )
+    if (stderr)
+      log.debug(
+        `[ethereum] hardhat stderr (${label}):\n${stderr.slice(0, EthereumOutpostBootstrapper.HardhatStderrTailChars)}`
+      )
+    log.info(
+      `[ethereum] ${label} output:\n${stdout.slice(-EthereumOutpostBootstrapper.HardhatStdoutTailChars)}`
+    )
+  }
+
+  /**
+   * Land each present, non-empty artifact file in the step extra — the
+   * script's OUTPUT (the address books, the release state, the summary) is
+   * the step's payload.
+   */
+  private recordArtifacts(localDir: string, names: readonly string[]): void {
+    names.forEach(name => {
+      const file = Path.join(localDir, name)
+      if (!Fs.existsSync(file)) return
+      const contents = Fs.readFileSync(file, "utf-8")
+      if (contents.trim().length === 0) return
+      log.info(`[ethereum] ${name}: ${contents}`)
+      StepExtraRecorder.record({
+        client: "harness",
+        kind: "artifact",
+        file: name,
+        contents: JSON.parse(contents) as Record<string, unknown>
+      })
+    })
   }
 
   /** Mark an account as used during bootstrap (for the annotated accounts file). */
@@ -202,17 +435,7 @@ export class EthereumOutpostBootstrapper {
       if (Fs.existsSync(file)) Fs.unlinkSync(file)
     })
 
-    Assert.ok(
-      this.accounts.length > EthereumOutpostBootstrapper.PanicAccountIndex,
-      `EthereumOutpostBootstrapper: ${this.accounts.length} generated accounts leave no HD index ` +
-        `${EthereumOutpostBootstrapper.PanicAccountIndex} for the panic account`
-    )
-    const panicAccount =
-      this.accounts[EthereumOutpostBootstrapper.PanicAccountIndex].address
-    this.markAccountUsed(
-      EthereumOutpostBootstrapper.PanicAccountIndex,
-      "Emergency-stop panic account (panic role: pause / unpause)"
-    )
+    const panicAccount = this.panicAccount()
     const { initialRoster } = this.config,
       liqEthConfig = EthereumOutpostBootstrapper.liqEthDeployConfig(
         rpcUrl,
@@ -241,73 +464,16 @@ export class EthereumOutpostBootstrapper {
       JSON.stringify(outpostConfig, null, 2)
     )
 
-    log.info("[ethereum] running deployLocal.ts via hardhat...")
-    StepExtraRecorder.record({
-      client: "process",
-      kind: "exec",
-      command: [
-        "npx",
-        "hardhat",
-        "run",
-        "src/scripts/deployLocal.ts",
-        "--network",
-        "localhost"
-      ],
-      cwd: ethereumPath
-    })
-    // withFileLock: hardhat compiles into the SHARED repo cache/artifacts on
-    // demand — two concurrent compiles corrupt them. The per-run state (configs
-    // + address files) is already isolated via deploymentsPath.
-    const { stdout, stderr } = await withFileLock(
-      EthereumOutpostBootstrapper.HardhatDeployLockPath,
-      () =>
-        execFileAsync(
-          "npx",
-          [
-            "hardhat",
-            "run",
-            "src/scripts/deployLocal.ts",
-            "--network",
-            "localhost"
-          ],
-          {
-            cwd: ethereumPath,
-            timeout: scaleTimeoutMs(
-              EthereumOutpostBootstrapper.HardhatDeployTimeoutMs
-            ),
-            maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
-            env: {
-              ...process.env,
-              HARDHAT_NETWORK: "localhost",
-              WIRE_ETH_DEPLOYMENTS_PATH: localDir
-            }
-          }
-        ),
-      LongFileLockOptions
+    await this.runHardhatScript(
+      EthereumOutpostBootstrapper.DeployLocalScript,
+      localDir,
+      {},
+      "deploy"
     )
-    if (stderr)
-      log.debug(
-        `[ethereum] hardhat stderr:\n${stderr.slice(0, EthereumOutpostBootstrapper.HardhatStderrTailChars)}`
-      )
-    log.info(
-      `[ethereum] deploy output:\n${stdout.slice(-EthereumOutpostBootstrapper.HardhatStdoutTailChars)}`
+    this.recordArtifacts(
+      localDir,
+      EthereumOutpostBootstrapper.StaleDeployArtifactFiles
     )
-
-    EthereumOutpostBootstrapper.StaleDeployArtifactFiles.forEach(name => {
-      const file = Path.join(localDir, name)
-      if (Fs.existsSync(file)) {
-        const contents = Fs.readFileSync(file, "utf-8")
-        log.info(`[ethereum] ${name}: ${contents}`)
-        // The deploy's OUTPUT — the deployed contract addresses — is the
-        // step's payload; land each artifact file in the step extra.
-        StepExtraRecorder.record({
-          client: "harness",
-          kind: "artifact",
-          file: name,
-          contents: JSON.parse(contents) as Record<string, unknown>
-        })
-      }
-    })
     log.info("[ethereum] contract deployment complete")
   }
 
@@ -582,6 +748,36 @@ export namespace EthereumOutpostBootstrapper {
   export const LiqEthGasLimitsFile = "liqeth-gas-limits.json"
   /** Gas-limit file the outpost deploy writes. */
   export const OutpostGasLimitsFile = "outpost-gas-limits.json"
+  /** The outpost release state the go-live steps record into (`deployLadder.ts` creates it empty). */
+  export const OutpostReleaseStateFile = "outpost-release-state.json"
+  /** `deployLadder.ts`'s optional config. */
+  export const LadderConfigFile = "ladder.json"
+  /** What `deployLadder.ts` writes for the orchestrator. */
+  export const LadderSummaryFile = "ladder-summary.json"
+  /** The deep freeze's `UPGRADE_CONFIG`, written beside the books. */
+  export const DeepFreezeConfigFile = "012_outpost_deep_freeze.json"
+  /** The go-live's `UPGRADE_CONFIG`, written beside the books. */
+  export const GoLiveConfigFile = "013_outpost_go_live.json"
+  export const DeepFreezeGasLimitsFile = "012_outpost_deep_freeze-gas-limits.json"
+  export const GoLiveGasLimitsFile = "013_outpost_go_live-gas-limits.json"
+  /** Hardhat's built-in network every local script runs on; `LOCALHOST_RPC_URL` points it at the run anvil. */
+  export const HardhatLocalhostNetwork = "localhost"
+  /** The fresh-deploy script (`deployLocal.ts`), relative to the wire-ethereum root. */
+  export const DeployLocalScript = "src/scripts/deployLocal.ts"
+  /** The ladder script, relative to the wire-ethereum root. */
+  export const LadderScript = "src/scripts/deployLadder.ts"
+  /** Go-live step 0 — the deep freeze. */
+  export const DeepFreezeScript =
+    "src/scripts/outpost/upgrades/outpost_20269999.01_deep_freeze.ts"
+  /** Go-live step 1 — pool upgrade, fresh OPP pair and BAR, re-wiring. */
+  export const GoLiveScript =
+    "src/scripts/outpost/upgrades/outpost_20269999.02_go_live.ts"
+  /**
+   * The CREATE2 salt version the go-live deploys its fresh proxies under —
+   * never the ladder's (mainnet deployed under `outpost_v2`, the ladder under
+   * "2"), so the fresh pair cannot collide with the originals.
+   */
+  export const GoLiveSaltVersion = "3"
   /** `DepositManager` entry-queue length the local liqETH deploy configures. */
   export const LiqEthEntryQueue = 47
   /** `DepositManager` daily rate (bps) the local liqETH deploy configures. */
@@ -660,6 +856,81 @@ export namespace EthereumOutpostBootstrapper {
       initialOperatorGroups: initialRoster.groups,
       epochDurationSec: initialRoster.epochDurationSec,
       panicAccount,
+      maxSyndicationPerTransfer: MaxSyndicationPerTransferWei,
+      yieldDeadband: YieldDeadbandDepotUnits
+    }
+  }
+
+  /**
+   * The `ladder.json` config `deployLadder.ts` reads: the panic account the
+   * liqEth ladder's permissions grant; every other key defaults. A pure value
+   * helper.
+   *
+   * @param panicAccount - The panic account's address.
+   * @returns The config object written as `ladder.json`.
+   */
+  export function ladderConfig(panicAccount: string) {
+    return { panicAccount }
+  }
+
+  /**
+   * The deep freeze's `UPGRADE_CONFIG`: the ladder's outpost book and release
+   * state under the go-live salt. A pure value helper.
+   *
+   * @param rpcUrl - The run anvil's endpoint.
+   * @param deployerPrivateKey - The deploy owner (anvil HD index 0) key.
+   * @param deploymentsPath - This cluster's deploy-artifact dir.
+   * @returns The config object written as {@link DeepFreezeConfigFile}.
+   */
+  export function deepFreezeConfig(
+    rpcUrl: string,
+    deployerPrivateKey: string,
+    deploymentsPath: string
+  ) {
+    return {
+      url: rpcUrl,
+      key: deployerPrivateKey,
+      addressFile: Path.join(deploymentsPath, OutpostAddressesFile),
+      releaseStateFile: Path.join(deploymentsPath, OutpostReleaseStateFile),
+      gasLimitFile: Path.join(deploymentsPath, DeepFreezeGasLimitsFile),
+      saltVersion: GoLiveSaltVersion
+    }
+  }
+
+  /**
+   * The go-live's `UPGRADE_CONFIG`: the books, the release state the freeze
+   * recorded the booked figure into, the go-live salt, the provisional roster
+   * the fresh `OPPInbound` seats, the WireNodes stand-in, and the same pool
+   * parameters the fresh deploy names. A pure value helper.
+   *
+   * @param rpcUrl - The run anvil's endpoint.
+   * @param deployerPrivateKey - The deploy owner (anvil HD index 0) key.
+   * @param deploymentsPath - This cluster's deploy-artifact dir.
+   * @param panicAccount - The panic account's address.
+   * @param initialRoster - The WNE-41 roster the fresh `OPPInbound` seats.
+   * @param wireNodes - The WireNodes ERC-1155 BAR draws claims from.
+   * @returns The config object written as {@link GoLiveConfigFile}.
+   */
+  export function goLiveConfig(
+    rpcUrl: string,
+    deployerPrivateKey: string,
+    deploymentsPath: string,
+    panicAccount: string,
+    initialRoster: EthereumOutpostInitialRoster,
+    wireNodes: string
+  ) {
+    return {
+      url: rpcUrl,
+      key: deployerPrivateKey,
+      addressFile: Path.join(deploymentsPath, OutpostAddressesFile),
+      liqEthAddressFile: Path.join(deploymentsPath, LiqEthAddressesFile),
+      releaseStateFile: Path.join(deploymentsPath, OutpostReleaseStateFile),
+      gasLimitFile: Path.join(deploymentsPath, GoLiveGasLimitsFile),
+      saltVersion: GoLiveSaltVersion,
+      initialOperatorGroups: initialRoster.groups,
+      epochDurationSec: initialRoster.epochDurationSec,
+      panicAccount,
+      WireNodes: wireNodes,
       maxSyndicationPerTransfer: MaxSyndicationPerTransferWei,
       yieldDeadband: YieldDeadbandDepotUnits
     }

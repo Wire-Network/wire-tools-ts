@@ -5,6 +5,7 @@ import { ConsensusSteps } from "./ConsensusSteps.js"
 import { ContractSteps } from "./ContractSteps.js"
 import { DebuggingServerBundleSteps } from "./DebuggingServerBundleSteps.js"
 import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
+import { EthereumLadderImportSteps } from "./EthereumLadderImportSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { MockShadowBackingSteps } from "./MockShadowBackingSteps.js"
 import { KeySteps } from "./KeySteps.js"
@@ -13,7 +14,9 @@ import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
 import { StartScriptSteps } from "./StartScriptSteps.js"
 import { UserSteps } from "./UserSteps.js"
+import { EthereumLadderSteps } from "../ethereum/EthereumLadderSteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
+import { EthereumPreLaunchSteps } from "../ethereum/EthereumPreLaunchSteps.js"
 import { SolanaLiqsolSurfaceSteps } from "../solana/SolanaLiqsolSurfaceSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
@@ -42,6 +45,10 @@ export namespace Steps {
   export import consensus = ConsensusSteps
   export import contract = ContractSteps
   export import ethereumOutpost = EthereumOutpostSteps
+  /** The pre-launch outpost taken live: the ladder, the deep freeze, the go-live (ladder clusters). */
+  export import ethereumLadder = EthereumLadderSteps
+  /** The pre-launch outpost used as its users used it, between the ladder and the freeze. */
+  export import ethereumPreLaunch = EthereumPreLaunchSteps
   /** External-outpost artifact publishing (external-outpost clusters). */
   export import externalOutpost = ExternalOutpostSteps
   /** The `create-external-config` five-stage clone/rebind/emit pipeline. */
@@ -54,6 +61,8 @@ export namespace Steps {
   export import registry = RegistrySteps
   /** Opt-in custody backing after mock shadow seeds. */
   export import mockShadowBacking = MockShadowBackingSteps
+  /** The frozen pre-launch outpost imported into the depot through capital-index (ladder clusters). */
+  export import ethereumLadderImport = EthereumLadderImportSteps
   /** The wire-solana liqsol surface (`anchor run init-*`) on the cluster validator. */
   export import solanaLiqsolSurface = SolanaLiqsolSurfaceSteps
   export import solanaOutpost = SolanaOutpostSteps
@@ -65,5 +74,6 @@ export namespace Steps {
   export import user = UserSteps
 }
 export * from "./MockShadowBackingSteps.js"
+export * from "./EthereumLadderImportSteps.js"
 
 export * from "./SyndicationUserSteps.js"

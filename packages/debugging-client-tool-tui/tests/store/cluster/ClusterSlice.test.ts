@@ -8,7 +8,8 @@ import {
   SignatureProviderType,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
-  type ClusterState
+  type ClusterState,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import {
@@ -103,6 +104,7 @@ const stubConfig: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
+  ethereumDeployment: EthereumDeploymentKind.current,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   queryEngine: createUnsetQueryEngineConfig()

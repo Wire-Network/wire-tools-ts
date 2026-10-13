@@ -8,6 +8,7 @@ import {
   BindOptionsSchema,
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
+  EthereumDeploymentKind,
   ClusterFiles,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
@@ -250,6 +251,8 @@ export namespace ClusterConfigProvider {
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
+      ethereumDeployment:
+        options.ethereumDeployment ?? EthereumDeploymentKind.current,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,

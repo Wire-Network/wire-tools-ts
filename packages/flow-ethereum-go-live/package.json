@@ -1,0 +1,23 @@
+{
+  "name": "@wireio/test-flow-ethereum-go-live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: the pre-launch Ethereum outpost taken live — ladder, freeze, capital-index import into the depot, go-live — then a frozen position swept to its linked account",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.97",
+    "@wireio/opp-typescript-models": "^1.0.51",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -1,3 +1,4 @@
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import type {
   AWSClusterNodeConfig,
   BindOptions,
@@ -69,6 +70,15 @@ export interface ClusterBuildOptions {
   enableMockLiqPools?: boolean
   /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
   enableMockSyndicationImport?: boolean
+  /**
+   * Which Ethereum outpost a local cluster deploys (`--ethereum-deployment`):
+   * `current` (default) runs `deployLocal.ts`; `ladder` runs `deployLadder.ts`
+   * — the pre-launch outpost as mainnet climbed it — then exercises it, freezes
+   * it, imports the frozen positions into the depot through the capital-index
+   * snapshot during epoch zero, and runs the go-live before the operator
+   * daemons start. Flows opt in through `defaults`.
+   */
+  ethereumDeployment?: EthereumDeploymentKind
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit

@@ -45,6 +45,7 @@
     "@wireio/shared-node": "^1.0.96",
     "archiver": "^8.0.0",
     "bluebird": "^3.7.2",
+    "capital-index": "^1.0.0",
     "ethers": "^6.14.0",
     "eventemitter3": "^5.0.1",
     "get-port": "^7.2.0",

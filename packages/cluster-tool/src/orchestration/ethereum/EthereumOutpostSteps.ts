@@ -182,7 +182,7 @@ export namespace EthereumOutpostSteps {
    * `Steps.processes.anvil.start`, so they cannot diverge), and the roster the
    * call installs.
    */
-  function bootstrapperOptions<C extends ClusterBuildContext>(
+  export function bootstrapperOptions<C extends ClusterBuildContext>(
     ctx: C,
     initialRoster: EthereumOutpostInitialRoster
   ): EthereumOutpostBootstrapperOptions {

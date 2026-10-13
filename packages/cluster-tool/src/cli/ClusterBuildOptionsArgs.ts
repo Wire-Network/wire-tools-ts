@@ -16,7 +16,8 @@ import {
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
-  type QueryEngineConfig
+  type QueryEngineConfig,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { camelCase, defaultsDeep, identity, isPlainObject, range } from "lodash"
 import { match, P } from "ts-pattern"
@@ -551,6 +552,11 @@ export function buildOptionShape(
     enableMockSyndicationImport: leaf(
       false,
       "import mock syndication positions for the bonder and back mock shadow at bootstrap"
+    ),
+    ethereumDeployment: choicesLeaf(
+      Object.values(EthereumDeploymentKind),
+      EthereumDeploymentKind.current,
+      "which Ethereum outpost a local cluster deploys: the current contracts fresh, or the pre-launch ladder taken live through the go-live"
     ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
