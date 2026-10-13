@@ -17,8 +17,9 @@ import type {
  *
  * - `label` — the DURABLE harness handle (`batchop.a`, `uwrit.a`, a flow's
  *   `depositor`). It **does NOT exist on chain**: it is harness-side identity
- *   only — the `ClusterKeyStore` key, the SSM secret-id `{account}` segment, and
- *   the operator daemon's node-directory name. Deterministic and known at PLAN
+ *   only — the `ClusterKeyStore` key, the SSM secret-id `{account}` segment
+ *   (unless `publicationLabel` names the hosting node), and the operator
+ *   daemon's node-directory name. Deterministic and known at PLAN
  *   time, which is why secret ids can be rendered before any account exists. It
  *   is NOT the `sysio.roa::newuser` sponsor nonce — that is a single-use token
  *   minted per call (`utils/nonceUtils.newSponsorNonce`) and never persisted.
@@ -39,8 +40,10 @@ import type {
  *   wallet so `account@active` signs); a producer carries its NODE's key —
  *   sibling producer accounts on the same node share the SAME `wire` (accurate:
  *   the node signs blocks for all of them with that one key).
- * - `wireFinalizer` — producers: the node's finality key (shared with siblings
- *   likewise).
+ * - `wireFinalizer` — producers: the node's own finality key when the node hosts
+ *   this producer alone; on a node hosting several, a key minted for the
+ *   account (`regfinkey` enforces global finalizer-key uniqueness, so siblings
+ *   never share one).
  * - `ethereum` (EM) / `solana` (ED) — OPP operators (batch / underwriter): the
  *   authex-link + outpost signing keys.
  *
@@ -53,12 +56,15 @@ export interface OperatorAccount {
   /**
    * The label whose signature-provider parameter holds this identity's keys.
    *
-   * Its own `label` for every identity that OWNS its keys; the hosting NODE's
-   * name for a producer account, which signs with the node's shared set. It is
-   * a FACT recorded where the key set is assigned — never re-derived from the
-   * topology, because "which node hosts this account name" and "whose key set
-   * did this account actually receive" are two different questions, and a
-   * mapping that answers the first can render a real-but-WRONG parameter.
+   * Its own `label` for every identity that OWNS its keys — producers sharing
+   * a node with siblings included; the hosting NODE's name for a node's sole
+   * hosted producer, which signs and votes with the node's own key set. It is
+   * decided at plan time (`NodeConfig.producerPublicationLabel`) and RECORDED
+   * where the key set is assigned — consumers read the recorded value and never
+   * re-derive it from the topology, because "which node hosts this account
+   * name" and "whose key set did this account actually receive" are two
+   * different questions, and a mapping that answers the first can render a
+   * real-but-WRONG parameter.
    *
    * Required so a new identity cannot silently inherit a fallback: the answer
    * is known at the moment the keys are handed over, and nowhere else.

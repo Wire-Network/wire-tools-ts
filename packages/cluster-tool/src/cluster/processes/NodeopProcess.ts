@@ -190,8 +190,9 @@ export function createNodeopTuningDefaultOptions(
  * already describe it (never a flat primitive bag): the planned {@link NodeConfig}
  * (which carries its `cluster: ClusterConfig` — name, role, ports, peers,
  * producers, node dir, binaries, bind address, genesis), the {@link OperatorAccount}
- * the node acts for (a producer's carries the node-shared `wire`+`wireFinalizer` signing
- * keys; a batch/underwriter's carries `wire`+`ethereum`+`solana`; the bios node's
+ * the node acts for (a producer's carries the node-shared `wire` key and a `wireFinalizer` —
+ * the node's own on a node hosting it alone, else one minted for the account; a
+ * batch/underwriter's carries `wire`+`ethereum`+`solana`; the bios node's
  * is the genesis producer with the dev keys), the typed
  * {@link NodeopTuningOptions}, and any OPP daemon extra args (operator nodes).
  * Every endpoint / path / flag derives INSIDE {@link NodeopProcess} from these
@@ -204,8 +205,9 @@ export interface NodeopOptions {
    * The accounts this node acts for.
    *
    * A PRODUCING node carries one entry per hosted producer account: they share the node's
-   * block-signing K1 (`setprodkeys` maps every producer on a node to it), but each owns its own
-   * BLS finalizer key, because `regfinkey` enforces a global uniqueness check — siblings sharing
+   * block-signing K1 (`setprodkeys` maps every producer on a node to it). A node's sole hosted
+   * producer votes with the node's own BLS key; siblings on a shared node each own a BLS
+   * finalizer key, because `regfinkey` enforces a global uniqueness check — siblings sharing
    * one finalizer key means only the first can ever register, and an unregistered producer holds
    * no rank position at all. A batch-operator / underwriter node carries exactly one entry; a
    * non-producing plain node carries none.
@@ -666,8 +668,9 @@ export namespace NodeopProcess {
         ? [
             ...pluginArgs(ProducerPlugins),
             // ONE block-signing provider: the hosted accounts share the node's K1. It resolves
-            // from the FIRST account's own label, not the node's — every one of an account's
-            // keys is published under, and persisted against, its `publicationLabel`, so
+            // from the FIRST account's recorded `publicationLabel` — the node's name when the
+            // node hosts that account alone, else the account's own label. Every one of an
+            // account's keys is published under, and persisted against, that one label, so
             // splitting the two halves across two labels would leave one of them a dangling
             // custody reference.
             ...pair(
@@ -678,8 +681,9 @@ export namespace NodeopProcess {
                 keySourceFor(operators[0].publicationLabel, KeyType.K1)
               )
             ),
-            // …and one finalizer provider per hosted account, each published under that
-            // ACCOUNT's own name — the node's own BLS parameter is a different key.
+            // …and one finalizer provider per hosted account, each resolved from that account's
+            // recorded `publicationLabel` — the node's BLS under the node's name for a sole
+            // hosted producer, each sibling's own BLS under its own label on a shared node.
             ...operators.flatMap(entry =>
               pair(
                 SignatureProviderFlag,

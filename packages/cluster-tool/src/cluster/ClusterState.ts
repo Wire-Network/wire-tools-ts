@@ -57,14 +57,16 @@ export interface ClusterKeysOperatorEntry {
    * Deterministic and known at plan time; it does NOT exist on chain.
    *
    * NOT necessarily the SSM secret-id `{account}` segment: a producer account
-   * signs with its NODE's key set, so its parameter is keyed by the node. Use
+   * that is its node's sole hosted producer signs with the NODE's key set, so
+   * its parameters are keyed by the node. Use
    * {@link ClusterKeysOperatorEntry.publicationLabel} for that.
    */
   label: string
   /**
    * The label whose signature-provider parameter holds this record's keys — the
    * SSM secret-id `{account}` segment. Equals `label` for every identity that
-   * owns its keys; the hosting NODE's name for a producer account.
+   * owns its keys, including each producer sharing its node with siblings; the
+   * hosting NODE's name for a node's sole hosted producer.
    */
   publicationLabel: string
   /**
@@ -346,9 +348,10 @@ export namespace ClusterState {
 
   /**
    * Producer node NAME by key-store node index — the secret-id `{account}`
-   * segment `KeySteps.signatureProviderKeyPublications` publishes that node's
-   * keys under, resolved from the SAME `NodeConfig.plan` both derive from so
-   * the persisted refs and the published ids can never drift.
+   * segment a node's keys are referenced under, resolved from the SAME
+   * `NodeConfig.plan` `KeySteps.signatureProviderKeyPublications` derives from.
+   * For a node hosting one producer those ids are exactly the ones its sole
+   * producer's publications write, so the node and operator refs coincide.
    */
   function producerNodeNames(config: ClusterConfig): Map<number, string> {
     return new Map(
@@ -397,10 +400,10 @@ export namespace ClusterState {
           `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
         )
         // Custody is keyed by the RECORDED `publicationLabel` — the label whose
-        // parameter actually holds these keys. For every provisioned identity,
-        // producer accounts included, that is its own handle: a producer's
-        // finalizer key is minted for the account, and its node's block-signing
-        // K1 is published under the account's handle alongside it.
+        // parameter actually holds these keys: the node's name for a node's sole
+        // hosted producer (it signs and votes with the node's keys), the
+        // identity's own handle for everything else, including producers sharing
+        // a node (each owns its finalizer key, its node's K1 published alongside).
         const { publicationLabel, account } = operator
         return {
           ...operator,

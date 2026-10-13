@@ -15,6 +15,7 @@ import { ClusterState } from "@wireio/cluster-tool"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import { fixtureProducerTopologyOverrides } from "../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
 /** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
@@ -277,36 +278,72 @@ describe("ClusterState", () => {
       )
     })
 
-    // A producer ACCOUNT signs with its hosting NODE's key set, so that pair is
-    // published ONCE under the node. Persisting the ref under the ACCOUNT wrote
-    // ids the walker never published — 21 accounts × K1+BLS on the target
-    // topology, every BLS a finality key — and `runClone` ships the file into
-    // the external deployment, where it contradicted external-cluster-config's
-    // (correct) node-keyed ref for the SAME key.
-    it("keys a producer account's refs by its NODE, not the account", () => {
-      const ctx = ssmContext(),
+    // A node's SOLE producer signs and votes with the node's own key set, which
+    // is published ONCE under the node. The persisted operator refs and node
+    // refs therefore name the SAME parameters — `runClone` ships this file into
+    // the external deployment, where it must agree with external-cluster-config's
+    // node-keyed refs for the same keys.
+    it("keys a node's SOLE producer's refs by its NODE — identical to the node's own refs", () => {
+      const ctx = seededContext({
+          ...ssmOverrides(),
+          ...fixtureProducerTopologyOverrides(1, 1)
+        }),
         node = NodeConfig.plan(ctx.config).find(
           planned => planned.role === NodeRole.producer
         ),
-        producer = node.producers[0],
+        [producer] = node.producers,
         nodeKeys = ctx.keyStore.node(node.index)
       ctx.keyStore.setOperator({
         label: producer,
-        publicationLabel: node.name,
+        publicationLabel: NodeConfig.producerPublicationLabel(node, producer),
         account: producer,
         type: OperatorType.PRODUCER,
         wire: nodeKeys.keys.wire,
         wireFinalizer: nodeKeys.keys.wireFinalizer
       })
-      const entry = ClusterState.captureKeys(ctx).operators.find(
-        record => record.account === producer
-      )
+      const keys = ClusterState.captureKeys(ctx),
+        nodeEntry = keys.nodes.find(entry => entry.index === node.index),
+        entry = keys.operators.find(record => record.account === producer)
       expect(entry.wire.awsSecretId).toBe(`/wire/test/${node.name}/K1`)
       expect(entry.wireFinalizer.awsSecretId).toBe(
         `/wire/test/${node.name}/BLS`
       )
+      expect(entry.wire.awsSecretId).toBe(nodeEntry.wire.awsSecretId)
+      expect(entry.wireFinalizer.awsSecretId).toBe(
+        nodeEntry.wireFinalizer.awsSecretId
+      )
+      expect(entry.wire.publicKey).toBe(nodeEntry.wire.publicKey)
+      expect(entry.wireFinalizer.publicKey).toBe(nodeEntry.wireFinalizer.publicKey)
       expect(entry.wire.privateKey).toBeUndefined()
       expect(entry.wireFinalizer.privateKey).toBeUndefined()
+    })
+
+    it("keys a SHARED-node producer's refs by its own label — never the node's", () => {
+      const ctx = ssmContext(),
+        node = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.producer
+        ),
+        [producer] = node.producers,
+        nodeKeys = ctx.keyStore.node(node.index)
+      expect(node.producers.length).toBeGreaterThan(1)
+      ctx.keyStore.setOperator({
+        label: producer,
+        publicationLabel: NodeConfig.producerPublicationLabel(node, producer),
+        account: producer,
+        type: OperatorType.PRODUCER,
+        wire: nodeKeys.keys.wire,
+        wireFinalizer: {
+          type: KeyType.BLS,
+          publicKey: `PUB_BLS_${producer}`,
+          privateKey: `PVT_BLS_${producer}`,
+          proofOfPossession: `SIG_BLS_${producer}`
+        }
+      })
+      const entry = ClusterState.captureKeys(ctx).operators.find(
+        record => record.account === producer
+      )
+      expect(entry.wire.awsSecretId).toBe(`/wire/test/${producer}/K1`)
+      expect(entry.wireFinalizer.awsSecretId).toBe(`/wire/test/${producer}/BLS`)
     })
 
     it("RETAINS the non-secret per-curve members (BLS proof, EM address)", () => {
