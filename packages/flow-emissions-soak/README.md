@@ -31,15 +31,14 @@ end-to-end.
 ## Prerequisites
 
 Same as the other flow packages — see the repo-root README for the
-`anvil`, `solana-test-validator`, and wire-sysio build dependencies, plus
-the sibling `capital-index` checkout the ladder import reads through.
+`anvil`, `solana-test-validator`, and wire-sysio build dependencies.
 
 ## Test data
 
 No committed fixtures and no call to the Wire Foundation index. The seed
 is whatever the pre-launch exercise did on the cluster's own anvil
 (`EthereumPreLaunchSteps`: stakers stake liqETH, buyers buy pretokens),
-replayed by `capital-index/opp` exactly as the production indexer replays
+replayed by `@wireio/opp-snapshot` exactly as the capital indexer replays
 mainnet. The buyers' pretokens are the credits this flow claims.
 
 ## Running

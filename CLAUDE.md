@@ -388,8 +388,9 @@ did (stakes, pretoken purchases, yield, the last sync — one write per Step, ac
 indices past the mock bonder's), `Steps.ethereumLadder.planDeepFreeze` runs the real
 deep-freeze script and publishes the booked figure (`EthereumBookedFigureKey`), and inside
 the epoch-0 window `Steps.ethereumLadderImport.planImport` reads the frozen OPP stream
-through `capital-index/opp` (`buildOppSnapshot` against the cluster's anvil — the
-production indexer's own computation, linked from the sibling `capital-index` checkout)
+through `@wireio/opp-snapshot` (`buildOppSnapshot` against the cluster's anvil — the
+capital indexer's own computation, published from wire-libraries-ts and linked from the
+sibling checkout like `sdk-core`)
 and imports it: `regliqpool` for LIQETH with the booked custody net of the credits,
 `importsynd` per staker keyed by the recovered compressed pubkey, `importdone`, a verify
 that the depot's outstanding equals the booked figure, then `importseed` + `importdone`.

@@ -64,7 +64,7 @@ export interface IndexPurchaserRow {
   address: string
   totalPretokens: string | number
   // Other indexer fields exist but are not consumed; a row with more (the
-  // capital-index `OppPurchaserRow`) is accepted as is.
+  // `@wireio/opp-snapshot` `OppPurchaserRow`) is accepted as is.
 }
 
 export interface IndexStakerRow {

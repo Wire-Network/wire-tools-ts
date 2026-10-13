@@ -7,7 +7,7 @@ depot is bootstrapped from it:
    `deployLadder.ts` — the liqEth and outpost ladders as mainnet climbed them —
    uses the pre-launch set as its users did (stakes, pretoken purchases,
    yield, the last sync), runs the real deep-freeze script, reads the frozen
-   OPP stream through `capital-index/opp` and imports it into the depot during
+   OPP stream through `@wireio/opp-snapshot` and imports it into the depot during
    epoch zero (`regliqpool`, `importsynd` per staker, `importseed`), then runs
    the real go-live script before the operator daemons start.
 2. The flow then verifies the reconciliation the launch depends on — the
@@ -18,5 +18,4 @@ depot is bootstrapped from it:
    LIQETH balance.
 
 Run it through the canonical scripts (`scripts/run-flow.mjs` +
-`scripts/flow-heartbeat-monitor.mjs`); it needs the sibling `capital-index`
-checkout linked by `pnpm install`.
+`scripts/flow-heartbeat-monitor.mjs`).

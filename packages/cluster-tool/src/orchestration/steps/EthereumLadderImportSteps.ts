@@ -4,7 +4,7 @@ import Path from "node:path"
 import { range } from "lodash"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { SysioContracts } from "@wireio/sdk-core"
-import type { OppSnapshot } from "capital-index/opp"
+import { buildOppSnapshot, type OppSnapshot } from "@wireio/opp-snapshot"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { ProtocolTiming } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -44,27 +44,9 @@ import { RegistrySteps } from "./RegistrySteps.js"
 
 const log = getLogger(__filename)
 
-/** The capital-index snapshot library, typed from the package itself. */
-type CapitalIndexModule = typeof import("capital-index/opp")
-
-/** The one cached load of the library; see {@link importCapitalIndexModule}. */
-let capitalIndexModule: Promise<CapitalIndexModule> | null = null
-
-/**
- * Load `capital-index/opp` once, on first use. Only a ladder cluster takes the
- * snapshot, so the library (and the hashing it does at load) stays out of
- * every other consumer of the cluster-tool barrel — the jsdom-hosted QL app's
- * renderer tests among them, where its load-time topic hash rejects Node's
- * cross-realm `Buffer`. The promise is assigned synchronously, so concurrent
- * callers share the one import.
- */
-function importCapitalIndexModule(): Promise<CapitalIndexModule> {
-  return (capitalIndexModule ??= import("capital-index/opp"))
-}
-
 /**
  * The frozen pre-launch outpost imported into the depot during epoch zero,
- * through capital-index: its `OPPMessage` stream is read straight from the
+ * through `@wireio/opp-snapshot`, the capital indexer's own computation: its `OPPMessage` stream is read straight from the
  * cluster's anvil and replayed into staker and purchaser balances
  * (`buildOppSnapshot` — the same computation the production indexer serves),
  * then the booked figure the freeze recorded is reconciled against them:
@@ -350,12 +332,11 @@ export namespace EthereumLadderImportSteps {
       bookedWei = ctx.outputs.assert(EthereumBookedFigureKey),
       oppAddress = summary.outpost[OppContractName]
     Assert.ok(oppAddress, "EthereumLadderImportSteps: the ladder's book names no OPP contract")
-    const { buildOppSnapshot } = await importCapitalIndexModule(),
-      build = await buildOppSnapshot({
+    const build = await buildOppSnapshot({
         rpc: toURL(ctx.config.bind.anvil.port, toDialAddress(ctx.config.bind.anvil.address)),
         oppAddress,
         fromBlock: SnapshotFromBlock,
-        warn: message => log.warn(`[capital-index] ${message}`)
+        warn: message => log.warn(`[opp-snapshot] ${message}`)
       }),
       { snapshot } = build
     Fs.writeFileSync(

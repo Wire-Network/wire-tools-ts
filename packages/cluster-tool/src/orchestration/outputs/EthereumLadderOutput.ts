@@ -1,6 +1,6 @@
 import type { EthereumLadderSummary } from "@wireio/cluster-tool-shared"
 import type { SysioContracts } from "@wireio/sdk-core"
-import type { OppSnapshot } from "capital-index/opp"
+import type { OppSnapshot } from "@wireio/opp-snapshot"
 import { outputKey } from "../OutputStore.js"
 
 /** The ladder's books and rung, as `deployLadder.ts` summarized them. */
@@ -39,7 +39,7 @@ export interface EthereumLadderImport {
   readonly importseedTotalAtomic: bigint
 }
 
-/** The frozen outpost's OPP balance snapshot, as capital-index computes it. */
+/** The frozen outpost's OPP balance snapshot, as the capital indexer computes it (`@wireio/opp-snapshot`). */
 export const CapitalIndexSnapshotKey = outputKey<OppSnapshot>(
   "ethereumLadder.capitalIndexSnapshot",
   "the frozen outpost's staker and purchaser balances"
