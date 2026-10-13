@@ -108,6 +108,27 @@ export namespace EthereumPreLaunchSteps {
     return ActorEthereumHdIndexBase + index
   }
 
+  /**
+   * The `index`-th actor's anvil HD wallet: the key it staked or bought with,
+   * so the key its imported positions are bound to.
+   *
+   * @param index - The actor index: stakers first, then buyers.
+   * @returns The actor's wallet, unconnected.
+   */
+  export function actorWallet(index: number): ethers.HDNodeWallet {
+    return EthereumOutpostBootstrapper.anvilWallet(actorEthereumHdIndex(index))
+  }
+
+  /**
+   * The actor index of the `index`-th buyer; buyers follow the stakers.
+   *
+   * @param index - The buyer index, from zero.
+   * @returns The buyer's actor index.
+   */
+  export function buyerActorIndex(index: number): number {
+    return StakerCount + index
+  }
+
   /** The 8-byte access-manager role id of `roleName`, as wire-ethereum's `getRoleId` derives it. */
   export function roleId(roleName: string): string {
     return ethers.keccak256(ethers.toUtf8Bytes(roleName)).slice(0, 18)
@@ -137,7 +158,7 @@ export namespace EthereumPreLaunchSteps {
         ]
       }),
       buyers = range(BuyerCount).flatMap(index => {
-        const hdIndex = actorEthereumHdIndex(StakerCount + index),
+        const hdIndex = actorEthereumHdIndex(buyerActorIndex(index)),
           label = `buyer-${index}`
         return [
           planFund<C>(Report.Actor.EthereumOutpost, `fund-${label}`, "the owner funds the buyer with ETH", options, hdIndex),

@@ -432,6 +432,16 @@ describe("EthereumSyndicationTool", () => {
       )
     })
 
+    it("accepts a liqETH balance change within one wei of the amount, and nothing wider", () => {
+      const amount = 500_000_000_000_000_000n
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount - 1n, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount + 1n, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount - 2n, amount)).toBe(false)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount + 2n, amount)).toBe(false)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(0n, amount)).toBe(false)
+    })
+
     it("names LIQETH as the pool's token code, at 18 decimals", () => {
       expect(EthereumSyndicationTool.liqEthTokenCode()).toBe(53_413_376_196_608n)
       expect(EthereumSyndicationTool.LiqEthTokenPrecision).toBe(18)

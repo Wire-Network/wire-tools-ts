@@ -11,49 +11,36 @@ end-to-end.
    `payepoch`. Compute / capex / governance accounts receive their bps
    splits. `total_distributed` advances monotonically and stays bounded
    by `t5_distributable - t5_floor`.
-3. **importseed → link → claim** — a sample of synthetic staker
-   addresses (controlled in-test ETH wallets, seeded via
-   `sysio.dclaim::importseed`) complete AuthEx linking → `sysio.authex`
-   inline-calls `sysio.dclaim::linkswept` → `unmapped_tokens` row sweeps
-   into `pending_claims` → user `claim` drains the row and inline-transfers
-   WIRE from `sysio.dclaim` to the user.
+3. **seed → link → claim** — the cluster bootstraps with
+   `ethereumDeployment: ladder`, so `sysio.dclaim` is seeded from the
+   frozen pre-launch Ethereum outpost through capital-index, as at launch.
+   Each pre-launch buyer (the harness holds its key) links its Ethereum key
+   to a new WIRE account → `sysio.authex` inline-calls
+   `sysio.dclaim::linkswept` → its `unmapped_tokens` row sweeps into
+   `pending_claims` → `claim` pays it exactly the WIRE the import seeded.
 
 ## What it does NOT verify
 
 - **Pre-funding of `sysio.dclaim`.** At production launch the dclaim
   account is credited with the pre-launch capital allocation up-front.
-  This soak replicates that with an in-test `sysio.token::transfer`
-  from `sysio` to `sysio.dclaim` sized to cover the controlled-staker
-  claim load. The bulk rows (and the SOL slice) sit in
-  `unmapped_tokens` for the duration of the run; they're verified at
-  import-time but never claimed.
+  This soak replicates that with an in-flow `sysio.token::transfer`
+  from `sysio` to `sysio.dclaim` of exactly the claimants' seeded credits.
+- **Solana pretoken seeds.** The ladder import is Ethereum-only; no
+  `CHAIN_KIND_SVM` batch is imported.
 
 ## Prerequisites
 
 Same as the other flow packages — see the repo-root README for the
-`anvil`, `solana-test-validator`, and wire-sysio build dependencies.
+`anvil`, `solana-test-validator`, and wire-sysio build dependencies, plus
+the sibling `capital-index` checkout the ladder import reads through.
 
 ## Test data
 
-This flow does **not** consume committed fixtures or the Wire Foundation
-index. Each run synthesizes an indexer dump in-test (`tests/syntheticDump.ts`)
-that matches the shape returned by:
-
-- `https://index.wire.foundation/opp/balances` (ETH)
-- `https://index.wire.foundation/opp/solana/balances` (SOL)
-
-The synthetic dump includes:
-- Controlled ETH stakers (test holds the wallets) — drives the
-  `importseed → createlink (inline linkswept) → claim` path end-to-end.
-- Bulk purchasers + stakers with overlapping addresses and partial
-  `yieldClaimed` rows — exercises the dedup + netting paths in
-  `convertImportSeed`.
-- A Solana bulk slice — verifies `importseed` accepts CHAIN_KIND_SOLANA
-  batches. (No SVM link/claim today; outpost-side reward emission is on
-  a separate track.)
-
-Generation is deterministic given `SYNTHETIC_SEED` (default `1`). Bump
-the seed via env to surface non-deterministic bugs across runs.
+No committed fixtures and no call to the Wire Foundation index. The seed
+is whatever the pre-launch exercise did on the cluster's own anvil
+(`EthereumPreLaunchSteps`: stakers stake liqETH, buyers buy pretokens),
+replayed by `capital-index/opp` exactly as the production indexer replays
+mainnet. The buyers' pretokens are the credits this flow claims.
 
 ## Running
 
@@ -84,10 +71,6 @@ SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-so
 | `EPOCH_DURATION_SEC` | `60` | Epoch duration passed to sysio.epoch::setconfig. |
 | `WIRE_CLUSTER_PATH` | (fresh temp dir per run) | Cluster data directory (the standard harness contract; seeds `--cluster-path`). |
 | `WIRE_BUILD_PATH` | (required) | Path to the wire-sysio build directory (seeds `--wire-build-path`). |
-| `SYNTHETIC_SEED` | `1` | Seed for the synthetic dump PRNG (deterministic). |
-| `CONTROLLED_STAKER_COUNT` | `5` | Number of test-owned ETH wallets driving the link/claim path. |
-| `BULK_ETH_PURCHASERS` / `BULK_ETH_STAKERS` / `BULK_ETH_OVERLAPPING` / `BULK_ETH_YIELD_CLAIMED` | `40`/`40`/`8`/`8` | Synthetic ETH bulk-row counts. |
-| `BULK_SOL_PURCHASERS` / `BULK_SOL_STAKERS` | `20`/`20` | Synthetic SOL bulk-row counts. |
 
 ## Status
 

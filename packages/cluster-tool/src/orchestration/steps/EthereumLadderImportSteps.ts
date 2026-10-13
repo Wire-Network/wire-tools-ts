@@ -15,7 +15,9 @@ import {
   convertImportSeed,
   serializeBatchForClio
 } from "../../tools/wire/WireDclaimSeedTool.js"
+import { AuthExLinkTool } from "../../tools/all/AuthExLinkTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
+import { ethereumPrivateKeyFromWallet } from "../../utils/keyPairUtils.js"
 import { toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -106,6 +108,18 @@ export namespace EthereumLadderImportSteps {
     readonly batchIndex: number
   }
 
+  /** Which pre-launch actor links its Ethereum key, and to which WIRE account. */
+  export interface LinkActorInput extends StepInput {
+    readonly kind: "EthereumLadderImportSteps.LinkActorInput"
+    /** The pre-launch actor: stakers first, then buyers. */
+    readonly actorIndex: number
+    /** The WIRE account the actor's imported positions sweep into. */
+    readonly account: string
+  }
+
+  /** A `sysio.dclaim::importseed` credit, as the import pushes it. */
+  export type SeedCredit = SysioContracts.SysioDclaimImportseedAction["credits"][number]
+
   /** What a ladder cluster's mock flags add to the import phase. */
   export interface ImportOptions {
     /** Import the mock bonder's LIQSOL position too (the `enableMockSyndicationImport` flag on a ladder cluster). */
@@ -131,6 +145,61 @@ export namespace EthereumLadderImportSteps {
         ? [{ pubkey: staker.pubkey.replace(/^0x/i, ""), amount: amount.toString() }]
         : []
     })
+  }
+
+  /**
+   * The key an actor's syndication credit is parked against: its compressed
+   * secp256k1 public key, bare lowercase hex, as `syndicationCredits` writes it.
+   */
+  export function actorPubkey(actorIndex: number): string {
+    return bareHex(
+      EthereumSyndicationTool.compressedPubkey(EthereumPreLaunchSteps.actorEthereumHdIndex(actorIndex))
+    )
+  }
+
+  /** The address an actor's dclaim credit is keyed by: bare lowercase hex. */
+  export function actorNativeAddress(actorIndex: number): string {
+    return bareHex(EthereumPreLaunchSteps.actorWallet(actorIndex).address)
+  }
+
+  /**
+   * The syndication credit the import parked for a staking actor.
+   *
+   * @throws when the import carries no credit for the actor's key.
+   */
+  export function actorSyndicationCredit(
+    derived: EthereumLadderImport,
+    actorIndex: number
+  ): SysioContracts.SysioSyndImportCreditType {
+    const pubkey = actorPubkey(actorIndex),
+      credit = derived.credits.find(candidate => bareHex(candidate.pubkey) === pubkey)
+    Assert.ok(
+      credit,
+      `EthereumLadderImportSteps: no syndication credit for actor ${actorIndex} (pubkey ${pubkey})`
+    )
+    return credit
+  }
+
+  /**
+   * The dclaim credit the import seeded for an actor.
+   *
+   * @throws when no importseed batch carries a credit for the actor's address.
+   */
+  export function actorSeedCredit(derived: EthereumLadderImport, actorIndex: number): SeedCredit {
+    const address = actorNativeAddress(actorIndex),
+      credit = derived.importseed
+        .flatMap(batch => batch.credits)
+        .find(candidate => bareHex(candidate.native_address) === address)
+    Assert.ok(
+      credit,
+      `EthereumLadderImportSteps: no dclaim credit for actor ${actorIndex} (address ${address})`
+    )
+    return credit
+  }
+
+  /** Hex without its `0x` prefix, lowercased: the spelling credits are keyed by. */
+  function bareHex(value: string): string {
+    return value.replace(/^0x/i, "").toLowerCase()
   }
 
   /** The booked figure (wei) in the depot's nine-decimal frame, floored. */
@@ -427,6 +496,47 @@ export namespace EthereumLadderImportSteps {
       { kind: "DclaimContractSteps.ImportseedInput", data: importseed[input.batchIndex] },
       signal
     )
+  }
+
+  /**
+   * Plan one pre-launch actor linking its Ethereum key to a WIRE account: the
+   * `createlink` whose inline sweeps deliver the actor's parked syndication
+   * credit and its dclaim seed to that account.
+   */
+  export function planLinkActor<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    actorIndex: number,
+    account: string
+  ): ClusterBuildStep<C, LinkActorInput> {
+    return ClusterBuildStep.create<C, LinkActorInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "EthereumLadderImportSteps.LinkActorInput", actorIndex, account },
+      runLinkActor
+    )
+  }
+
+  /** Named runner — ONE `sysio.authex::createlink`, signed with the actor's anvil HD key. */
+  export async function runLinkActor<C extends ClusterBuildContext>(
+    ctx: C,
+    input: LinkActorInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const wallet = EthereumPreLaunchSteps.actorWallet(input.actorIndex)
+    await AuthExLinkTool.createLink(ctx.wire, {
+      chainKind: ChainKind.EVM,
+      account: input.account,
+      privateKey: ethereumPrivateKeyFromWallet(wallet),
+      ethereumWallet: wallet
+    })
   }
 
   /** The depot's outstanding LIQETH (shadow supply plus pending) equals the booked figure. */

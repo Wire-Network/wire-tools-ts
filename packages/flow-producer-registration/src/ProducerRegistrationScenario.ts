@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
@@ -143,7 +144,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
     producerCount: Constants.ProducerCount,
     // The flow starts one node of its own, outside `NodeConfig.plan`.
     adHocCount: Constants.AdHocNodeCount,
-    // Import backed shadow positions for the two collateral-funding transfers.
+    // The LIQETH bond is a pre-launch staker's position, frozen on the ladder and imported
+    // into the depot; the mock import adds the LIQSOL one.
+    ethereumDeployment: EthereumDeploymentKind.ladder,
     enableMockSyndicationImport: true,
     // Both entries are mandatory for the non-bootstrapped producer to leave UNKNOWN.
     requiredProducerCollateral: Constants.CollateralTokens.map(token => ({
@@ -265,7 +268,8 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // Imported shadows are backed by the bootstrap's actual outpost custody fixture.
+    // LIQSOL is the mock bonder's backed import; LIQETH is a pre-launch staker's frozen
+    // position, backed by the custody the go-live seeded the pool with.
     ClusterBuildPhase.create(
       cluster,
       "FundShadowCollateral",
@@ -294,11 +298,13 @@ export class ProducerRegistrationScenario extends FlowScenario {
         Constants.FundingAccount,
         Steps.registry.MockSyndicationBonderLabel
       ),
-      ProducerCollateralSteps.planLinkEthereum(
+      Steps.ethereumLadderImport.planLinkActor(
         Actor.Producer,
         "link-ethereum-funder",
-        "deliver imported LIQETH",
-        {}
+        "deliver a pre-launch staker's imported LIQETH",
+        {},
+        Constants.FundingStakerIndex,
+        Constants.FundingAccount
       )
     )
     for (const token of Constants.CollateralTokens) {

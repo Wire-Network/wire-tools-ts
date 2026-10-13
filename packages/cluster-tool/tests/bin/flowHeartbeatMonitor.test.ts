@@ -41,7 +41,8 @@ describe("flow heartbeat expected refusals", () => {
   it.each([
     "execution reverted: MockYieldEmitter: externalEpochRef not monotonic",
     "error underwriter: custom program error: 0x1795",
-    "error underwriter: execution reverted: OPP_NotActiveOperator"
+    "error underwriter: execution reverted: OPP_NotActiveOperator",
+    "outbound delivery failed: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1775"
   ])("counts and quotes expected refusal as NOISE: %s", line => {
     Fs.writeFileSync(logFile, `${line}\n${line}\n`)
     const result = probe(logFile)
@@ -56,7 +57,10 @@ describe("flow heartbeat expected refusals", () => {
     "error outpost_solana_client: simulation failed: custom program error: 0x17c7",
     "Program liqsol failed: custom program error: 0x17c7",
     "error outpost_ethereum_client: execution reverted: EnforcedPause()",
-    "EnforcedPause"
+    "EnforcedPause",
+    "    Error: Execution error: execution reverted: custom error 0xd93c0665",
+    "    Error: Execution error: execution reverted: custom error 0x287022ed:",
+    "execution reverted: WIRE_NoPendingDesyndication(23)"
   ])("requires explicit freeze expectation for %s", line => {
     Fs.writeFileSync(logFile, `${line}\n${line}\n`)
     expect(probe(logFile)).toMatchObject({
@@ -75,6 +79,10 @@ describe("flow heartbeat expected refusals", () => {
   })
 
   it.each([
+    "error outpost_solana_client: custom program error: 0x17750",
+    "execution reverted: custom error 0xd93c06650",
+    "execution reverted: custom error 0x287022ed1",
+    "execution reverted: WIRE_NoPendingDesyndicationX()",
     "error outpost_solana_client: custom program error: 0x17c70",
     "Program liqsol failed: custom program error: 0x17c7F",
     "execution reverted: UnexpectedEnforcedPauseFailure()",

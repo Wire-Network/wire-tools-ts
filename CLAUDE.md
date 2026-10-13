@@ -237,10 +237,12 @@ Running a flow means exactly two scripts, per
    armed DIRECTLY via a background Monitor, one instance per run; its stdout is
    the event stream and it self-concludes on flow exit or bail.
 
-OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
-by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
-when deliberately exercising paused outposts; it counts and quotes those exact
-refusals as NOISE, while preserving unrelated failures and all liveness bails.
+OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` (anvil logs it
+as `custom error 0xd93c0665`) are FATAL by default, as is the second-payment refusal
+`WIRE_NoPendingDesyndication` (`0x287022ed`). **Only `flow-emergency-stop` passes
+`--expect-freeze` to the monitor** when deliberately exercising paused outposts; it
+counts and quotes those exact refusals as NOISE, while preserving unrelated failures
+and all liveness bails.
 The liquidity flows run without this flag. It is distinct from
 `--expect-epoch-freeze`, which permits a deliberate epoch stall.
 
@@ -397,7 +399,14 @@ On a ladder cluster the mock flags reduce to Solana: `enableMockLiqPools` seeds 
 LIQSOL pool, `enableMockSyndicationImport` adds only the mock LIQSOL credit (inside the
 same import phase, before the one seal), and no mock Ethereum backing runs. The
 snapshot lands as `<deployments>/capital-index-snapshot.json`; the derived import rides
-`EthereumLadderImportKey` for a flow to read back.
+`EthereumLadderImportKey` for a flow to read back. A flow delivers a pre-launch actor's
+imported positions with `Steps.ethereumLadderImport.planLinkActor` (the actor's own HD key,
+`EthereumPreLaunchSteps.actorWallet`; buyers sit at `buyerActorIndex`), and reads the
+actor's credits back by key with `actorSyndicationCredit` / `actorSeedCredit`. Flows on
+the ladder today: `flow-ethereum-go-live`, `flow-emissions-soak` (its claimants are the
+pre-launch buyers the import seeded), `flow-emergency-stop` and
+`flow-producer-registration` (their LIQETH is a linked staker's import),
+`flow-operator-collateral-deposit` and `flow-batch-operator-slashing`.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them

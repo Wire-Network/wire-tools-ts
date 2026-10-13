@@ -1,16 +1,16 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const { Wallet, Interface, makeError } = require("ethers")
-const { KeyType } = require("@wireio/sdk-core")
+const { EthereumDeploymentKind } = require("@wireio/cluster-tool-shared")
 const {
-  AuthExLinkTool,
+  ClusterBuild,
+  EthereumPreLaunchSteps,
   EthereumSyndicationTool,
   OutputStore,
   Report,
   SolanaLiqSyndicationTool,
   Steps,
-  SyndicationScenario,
-  privateKeyFromNativeString
+  SyndicationScenario
 } = require("@wireio/cluster-tool")
 const { EmergencyStopSteps } = require("../lib/steps/EmergencyStopSteps.js")
 const {
@@ -55,28 +55,24 @@ test("expected refusal is accepted, unexpected refusal and success are rejected"
   )
 })
 
-test("Ethereum link carries an EVM wallet matching the imported key", async () => {
-  const wallet = Wallet.createRandom(),
-    privateKey = privateKeyFromNativeString(KeyType.EM, wallet.privateKey)
-  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({
-    ethereum: { privateKey: privateKey.toString() }
-  }))
-  const stub = mock.method(
-    AuthExLinkTool,
-    "createLink",
-    async (_wire, input) => {
-      Assert.equal(input.ethereumWallet.address, wallet.address)
-      Assert.equal(input.account, SyndicationScenario.Bonder)
-    }
-  )
-  await run(Action.linkEthereum)
-  Assert.equal(stub.mock.calls.length, 1)
-  stub.mock.mockImplementation(async () => {
-    throw new Error("bad link proof")
+test("on a ladder cluster the Ethereum holder is a pre-launch staker linked to the bonder", () => {
+  const { EmergencyStopScenario } = require("../lib/EmergencyStopScenario.js")
+  const scenario = new EmergencyStopScenario()
+  Assert.equal(scenario.defaults.ethereumDeployment, EthereumDeploymentKind.ladder)
+  const cluster = ClusterBuild.forContext(context())
+  scenario.plan(cluster)
+  const link = cluster.children
+    .find(phase => phase.name === "EthereumSetup")
+    .steps.find(step => step.name === "link-imported-ethereum")
+  Assert.equal(link.runner, Steps.ethereumLadderImport.runLinkActor)
+  Assert.deepEqual(link.input, {
+    kind: "EthereumLadderImportSteps.LinkActorInput",
+    actorIndex: Constants.EthereumHolderIndex,
+    account: SyndicationScenario.Bonder
   })
-  await Assert.rejects(
-    run(Action.linkEthereum),
-    /Unexpected emergency-stop action refusal/
+  Assert.equal(
+    EmergencyStopScenario.ethereumAddress(),
+    EthereumPreLaunchSteps.actorWallet(Constants.EthereumHolderIndex).address
   )
 })
 
@@ -540,13 +536,11 @@ test("pre-clear verifications reject changed records or balances on either outpo
   solRecord.mock.mockImplementation(async () => ({ ...record }))
   solBalance.mock.mockImplementation(async () => 43n)
   await Assert.rejects(sol.runner(ctx, sol.input, signal))
-  const pending = { recipient: "0xholder", depotAmount: 42n, reason: 1 }
+  const holder = EthereumPreLaunchSteps.actorWallet(Constants.EthereumHolderIndex).address,
+    pending = { recipient: holder, depotAmount: 42n, reason: 1 }
   ctx.outputs.set(Constants.EthereumPending, pending)
   ctx.outputs.set(Constants.EthereumRequest, 23n)
   ctx.outputs.set(Constants.EthereumBefore, 42n)
-  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({
-    ethereum: { address: "0xholder" }
-  }))
   mock.method(EthereumSyndicationTool, "readPaused", async () => true)
   const ethRecord = mock.method(
     EthereumSyndicationTool,

@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
@@ -151,7 +152,10 @@ export class SlashingScenario extends FlowScenario {
     epochRetentionEnvelopeLogCount: Constants.EpochRetentionEnvelopeLogCount,
     // Loosest VALID termination thresholds — see the constants' JSDoc.
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
-    terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h
+    terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h,
+    // The contested deliveries and the slash land on the outpost the go-live deployed
+    // over the frozen pre-launch ladder, as at launch.
+    ethereumDeployment: EthereumDeploymentKind.ladder
   }
 
   plan(cluster: ClusterBuild): void {

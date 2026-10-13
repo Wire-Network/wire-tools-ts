@@ -1,6 +1,6 @@
 import { ethers } from "ethers"
 import { ClusterBuild, ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
-import { EthereumPreLaunchSteps } from "@wireio/cluster-tool/orchestration/ethereum"
+import { EthereumOutpostBootstrapper, EthereumPreLaunchSteps } from "@wireio/cluster-tool/orchestration/ethereum"
 import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
 import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
 import { getLogger } from "@wireio/cluster-tool/logging"
@@ -22,6 +22,16 @@ describe("EthereumPreLaunchSteps", () => {
     expect(EthereumPreLaunchSteps.ActorEthereumHdIndexBase).toBe(AnvilProcess.AccountCount + 1)
     expect(EthereumPreLaunchSteps.actorEthereumHdIndex(0)).toBe(AnvilProcess.AccountCount + 1)
     expect(EthereumPreLaunchSteps.actorEthereumHdIndex(4)).toBe(AnvilProcess.AccountCount + 5)
+  })
+
+  it("derives each actor's wallet from its HD index, buyers following the stakers", () => {
+    const wallet = EthereumPreLaunchSteps.actorWallet(0)
+    expect(wallet.address).toBe(
+      EthereumOutpostBootstrapper.anvilWallet(EthereumPreLaunchSteps.actorEthereumHdIndex(0)).address
+    )
+    expect(EthereumPreLaunchSteps.actorWallet(1).address).not.toBe(wallet.address)
+    expect(EthereumPreLaunchSteps.buyerActorIndex(0)).toBe(EthereumPreLaunchSteps.StakerCount)
+    expect(EthereumPreLaunchSteps.buyerActorIndex(1)).toBe(EthereumPreLaunchSteps.StakerCount + 1)
   })
 
   it("derives the access-manager role id as wire-ethereum's getRoleId does: the first 8 bytes of keccak256(name)", () => {
@@ -86,6 +96,11 @@ describe("EthereumPreLaunchSteps", () => {
         step => (step.input as EthereumPreLaunchSteps.ActorAmountInput).ethereumHdIndex
       )
     expect(new Set(indices).size).toBe(indices.length)
+    purchases.forEach((step, index) =>
+      expect((step.input as EthereumPreLaunchSteps.ActorAmountInput).ethereumHdIndex).toBe(
+        EthereumPreLaunchSteps.actorEthereumHdIndex(EthereumPreLaunchSteps.buyerActorIndex(index))
+      )
+    )
     indices.forEach(index => expect(index).toBeGreaterThanOrEqual(EthereumPreLaunchSteps.ActorEthereumHdIndexBase))
     stakes.forEach(step =>
       expect((step.input as EthereumPreLaunchSteps.ActorAmountInput).amountWei).toBe(EthereumPreLaunchSteps.StakeWei)

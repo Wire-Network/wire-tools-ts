@@ -1,3 +1,4 @@
+import { ChainKind } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { ClusterBuild, ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Steps, EthereumLadderImportSteps } from "@wireio/cluster-tool/orchestration/steps"
@@ -5,7 +6,9 @@ import { EthereumPreLaunchSteps } from "@wireio/cluster-tool/orchestration/ether
 import { EthereumLadderImportKey } from "@wireio/cluster-tool/orchestration/outputs"
 import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { getLogger } from "@wireio/cluster-tool/logging"
+import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
 /** The snapshot shape the derivation consumes — capital-index's `/opp/balances`, typed through the step. */
@@ -166,6 +169,58 @@ describe("EthereumLadderImportSteps", () => {
       expect(names.indexOf("materialize-mock-syndication-bonder")).toBeLessThan(names.indexOf("import-syndication-liqsol"))
       expect(names.indexOf("import-syndication-liqsol")).toBeLessThan(names.indexOf("seal-syndication-import"))
       expect(names.indexOf("import-syndication-liqsol")).toBeGreaterThan(names.indexOf("import-syndication-liqeth-0"))
+    })
+  })
+
+  describe("actor identities", () => {
+    /** A derived import whose first credit and seed entry belong to actor 0, keyed as the import keys them. */
+    function importFor(actorIndex: number) {
+      const wallet = EthereumPreLaunchSteps.actorWallet(actorIndex),
+        derived = EthereumLadderImportSteps.deriveImport(snapshot(), 83n * Ether)
+      return {
+        ...derived,
+        credits: [{ pubkey: wallet.signingKey.compressedPublicKey.slice(2), amount: "5000000000" }, ...derived.credits],
+        importseed: [
+          {
+            ...derived.importseed[0],
+            credits: [{ native_address: wallet.address.slice(2).toLowerCase(), wire_atomic: "20000000000000" }]
+          }
+        ]
+      }
+    }
+
+    it("keys an actor by its wallet's bare compressed pubkey and lowercase address", () => {
+      const wallet = EthereumPreLaunchSteps.actorWallet(2)
+      expect(EthereumLadderImportSteps.actorPubkey(2)).toBe(wallet.signingKey.compressedPublicKey.slice(2))
+      expect(EthereumLadderImportSteps.actorPubkey(2)).toMatch(/^0[23][0-9a-f]{64}$/)
+      expect(EthereumLadderImportSteps.actorNativeAddress(2)).toBe(wallet.address.slice(2).toLowerCase())
+    })
+
+    it("finds an actor's syndication credit and dclaim credit by key, not by position", () => {
+      const derived = importFor(0)
+      expect(EthereumLadderImportSteps.actorSyndicationCredit(derived, 0)).toBe(derived.credits[0])
+      expect(EthereumLadderImportSteps.actorSeedCredit(derived, 0)).toBe(derived.importseed[0].credits[0])
+    })
+
+    it("refuses an actor the import carries no credit for", () => {
+      const derived = importFor(0)
+      expect(() => EthereumLadderImportSteps.actorSyndicationCredit(derived, 1)).toThrow(
+        /no syndication credit for actor 1/
+      )
+      expect(() => EthereumLadderImportSteps.actorSeedCredit(derived, 1)).toThrow(/no dclaim credit for actor 1/)
+    })
+
+    it("plans one createlink per actor, and links with the actor's own Ethereum key", async () => {
+      const step = EthereumLadderImportSteps.planLinkActor(Report.Actor.User, "link", "link", {}, 3, "soak.sa")
+      expect(step.input).toEqual({ kind: "EthereumLadderImportSteps.LinkActorInput", actorIndex: 3, account: "soak.sa" })
+      expect(step.runner).toBe(EthereumLadderImportSteps.runLinkActor)
+      const createLink = jest.spyOn(AuthExLinkTool, "createLink").mockResolvedValue(undefined)
+      await EthereumLadderImportSteps.runLinkActor(context, step.input, signal)
+      expect(createLink).toHaveBeenCalledTimes(1)
+      const [, params] = createLink.mock.calls[0]
+      expect(params.chainKind).toBe(ChainKind.EVM)
+      expect(params.account).toBe("soak.sa")
+      expect(params.ethereumWallet.address).toBe(EthereumPreLaunchSteps.actorWallet(3).address)
     })
   })
 

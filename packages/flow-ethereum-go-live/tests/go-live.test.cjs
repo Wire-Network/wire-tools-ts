@@ -1,6 +1,6 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
-const { ClusterBuild, OutputStore, EthereumLadderImportKey, WireSyndicationTool, SyndicationScenario } = require("@wireio/cluster-tool")
+const { ClusterBuild, OutputStore, EthereumLadderImportKey, WireSyndicationTool, SyndicationScenario, Steps } = require("@wireio/cluster-tool")
 const { EthereumDeploymentKind } = require("@wireio/cluster-tool-shared")
 const { EthereumGoLiveScenario } = require("../lib/EthereumGoLiveScenario.js")
 const { EthereumGoLiveScenarioConstants: Constants } = require("../lib/EthereumGoLiveScenarioConstants.js")
@@ -10,10 +10,12 @@ function steps(node) {
   return node.steps ? [...node.steps] : node.children.flatMap(steps)
 }
 
+/** The swept staker's real key first, then an unrelated staker: the sweep is found by key, not position. */
 const credits = [
-  { pubkey: "02" + "aa".repeat(32), amount: "5000000000" },
-  { pubkey: "03" + "bb".repeat(32), amount: "3000000000" }
+  { pubkey: "03" + "bb".repeat(32), amount: "3000000000" },
+  { pubkey: Steps.ethereumLadderImport.actorPubkey(Constants.SweptStakerIndex), amount: "5000000000" }
 ]
+const sweptCredit = credits[1]
 
 test("opts into the ladder deployment and plans the reconciliation before the sweep", () => {
   const scenario = new EthereumGoLiveScenario()
@@ -50,9 +52,15 @@ test("the sweep is proven by the parked row vanishing AND the balance landing", 
   const reads = []
   mock.method(SyndicationScenario, "readBalance", async (_ctx, account, symbol) => {
     reads.push([account, symbol])
-    return BigInt(credits[Constants.SweptStakerIndex].amount)
+    return BigInt(sweptCredit.amount)
   })
   await EthereumGoLiveScenario.assertCreditSwept(ctx)
   Assert.deepEqual(reads, [[Constants.StakerAccount, Constants.LiqTokenCodename]])
-  Assert.equal(EthereumGoLiveScenario.sweptCredit(ctx), credits[Constants.SweptStakerIndex])
+  Assert.equal(EthereumGoLiveScenario.sweptCredit(ctx), sweptCredit)
+})
+
+test("the swept credit is the one keyed by the staker's own pubkey, and its absence is refused", () => {
+  const ctx = { outputs: new OutputStore() }
+  ctx.outputs.set(EthereumLadderImportKey, { credits: [credits[0]] })
+  Assert.throws(() => EthereumGoLiveScenario.sweptCredit(ctx), /no syndication credit for actor 0/)
 })

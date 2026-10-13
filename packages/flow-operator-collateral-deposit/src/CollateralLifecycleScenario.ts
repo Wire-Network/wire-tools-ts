@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
@@ -74,7 +75,10 @@ export class CollateralLifecycleScenario extends FlowScenario {
     adHocCount: Constants.AdHocDaemonCount,
     // Without a requirement `meets_role_min` refuses every non-bootstrapped batch operator,
     // so the ACTIVE assertion is meaningful only against a minimum the flow installs.
-    requiredBatchOperatorCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)]
+    requiredBatchOperatorCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)],
+    // The operator's Ethereum delivery and authex link run against the outpost the
+    // go-live deployed over the frozen pre-launch ladder, as at launch.
+    ethereumDeployment: EthereumDeploymentKind.ladder
   }
 
   plan(cluster: ClusterBuild): void {

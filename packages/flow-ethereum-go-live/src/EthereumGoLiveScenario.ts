@@ -1,28 +1,19 @@
 import Assert from "node:assert"
-import { Wallet } from "ethers"
 import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
-import { ChainKind } from "@wireio/opp-typescript-models"
-import { PrivateKey, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import {
-  AuthExLinkTool,
   ClusterBuildPhase,
-  ClusterBuildStep,
   EthereumLadderImportKey,
-  EthereumOutpostBootstrapper,
-  EthereumPreLaunchSteps,
   FlowScenario,
   Report,
   Steps,
   SyndicationScenario,
   WireSyndicationTool,
-  ethereumPrivateKeyFromWallet,
   pollUntil,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
-  type ClusterBuildOptions,
-  type ClusterBuildStepOptions,
-  type StepInput
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { EthereumGoLiveScenarioConstants as Constants } from "./EthereumGoLiveScenarioConstants.js"
 
@@ -87,12 +78,13 @@ export class EthereumGoLiveScenario extends FlowScenario {
         Constants.StakerAccount,
         0n
       ),
-      EthereumGoLiveScenario.planLinkStaker(
+      Steps.ethereumLadderImport.planLinkActor(
         Actor.User,
         "link-staker-ethereum-key",
         "sysio.authex::createlink with the staker's own Ethereum key — the sweep's trigger",
         writeStepOptions,
-        Constants.SweptStakerIndex
+        Constants.SweptStakerIndex,
+        Constants.StakerAccount
       ),
       verifyStep(
         Actor.Sysio,
@@ -146,57 +138,11 @@ export class EthereumGoLiveScenario extends FlowScenario {
     )
   }
 
-  /** The credit the flow sweeps: the first pre-launch staker's. */
+  /** The credit the flow sweeps: the one parked against the first pre-launch staker's key. */
   static sweptCredit(ctx: ClusterBuildContext): SysioContracts.SysioSyndImportCreditType {
-    const { credits } = ctx.outputs.assert(EthereumLadderImportKey),
-      credit = credits[Constants.SweptStakerIndex]
-    Assert.ok(credit, `no credit ${Constants.SweptStakerIndex} in the ladder import`)
-    return credit
-  }
-
-  /** Which pre-launch actor links its key. */
-  static planLinkStaker(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    stakerIndex: number
-  ): ClusterBuildStep<ClusterBuildContext, EthereumGoLiveScenario.LinkStakerInput> {
-    return ClusterBuildStep.create<ClusterBuildContext, EthereumGoLiveScenario.LinkStakerInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "EthereumGoLiveScenario.LinkStakerInput", stakerIndex, account: Constants.StakerAccount },
-      EthereumGoLiveScenario.runLinkStaker
+    return Steps.ethereumLadderImport.actorSyndicationCredit(
+      ctx.outputs.assert(EthereumLadderImportKey),
+      Constants.SweptStakerIndex
     )
-  }
-
-  /** Named runner — ONE `sysio.authex::createlink`, signed with the staker's anvil HD key. */
-  static async runLinkStaker(
-    ctx: ClusterBuildContext,
-    input: EthereumGoLiveScenario.LinkStakerInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const wallet = EthereumOutpostBootstrapper.anvilWallet(
-        EthereumPreLaunchSteps.actorEthereumHdIndex(input.stakerIndex)
-      ),
-      privateKey: PrivateKey = ethereumPrivateKeyFromWallet(wallet)
-    await AuthExLinkTool.createLink(ctx.wire, {
-      chainKind: ChainKind.EVM,
-      account: input.account,
-      privateKey,
-      ethereumWallet: new Wallet(privateKey.toNativeString())
-    })
-  }
-}
-
-export namespace EthereumGoLiveScenario {
-  /** Which staker links, and to which account. */
-  export interface LinkStakerInput extends StepInput {
-    readonly kind: "EthereumGoLiveScenario.LinkStakerInput"
-    readonly stakerIndex: number
-    readonly account: string
   }
 }

@@ -47,6 +47,27 @@ import {
 } from "../../utils/ethereumUtils.js"
 
 export namespace EthereumSyndicationTool {
+  /**
+   * How far a liqETH balance can move from the amount transferred into it.
+   * liqETH is share-based: `balanceOf` floors `shares × pooled / totalShares`,
+   * so once the index is off 1:1 a transfer of `amount` can land as
+   * `amount ± 1` wei in the recipient's balance.
+   */
+  export const LiqEthBalanceRoundingWei = 1n
+
+  /**
+   * Whether a liqETH balance change matches a transferred amount, within the
+   * share rounding ({@link LiqEthBalanceRoundingWei}).
+   *
+   * @param delta - The observed balance change, in wei.
+   * @param amount - The amount transferred, in wei.
+   * @returns True when the change is the amount up to the rounding.
+   */
+  export function isLiqEthTransferDelta(delta: bigint, amount: bigint): boolean {
+    const difference = delta - amount
+    return difference <= LiqEthBalanceRoundingWei && -difference <= LiqEthBalanceRoundingWei
+  }
+
   /** `outpost-addrs.json` key + artifact basename of the syndication pool. */
   export const SyndicationPoolContractName = "SyndicationPool"
   /** Artifact dir segments of `SyndicationPool` under `artifacts/contracts`. */
