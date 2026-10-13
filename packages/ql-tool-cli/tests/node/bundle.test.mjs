@@ -76,6 +76,9 @@ const RunTimeoutMs = 60_000
 function run(bin, args, input = "") {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [bin, ...args], {
+        // Outside the package, as an installed wql runs (yargs-style lookups of the
+        // current directory's package.json must not decide any output).
+        cwd: Sandbox,
         env: { ...process.env, XDG_CONFIG_HOME: Path.join(Sandbox, "config"), XDG_STATE_HOME: Path.join(Sandbox, "state"), WIRE_QL_URL: "", WIRE_QL_PROFILE: "" }
       }),
       stdout = [],

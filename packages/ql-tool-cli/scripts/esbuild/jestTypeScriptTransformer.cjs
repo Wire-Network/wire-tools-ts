@@ -13,7 +13,7 @@ const Crypto = require("node:crypto")
 const Path = require("node:path")
 const esbuild = require("esbuild")
 
-const { LoaderByExtension, Target } = require("./loaders.cjs")
+const { Define, LoaderByExtension, PackageVersion, Target } = require("./loaders.cjs")
 
 module.exports = {
   /**
@@ -27,6 +27,7 @@ module.exports = {
       format: "cjs",
       platform: "node",
       target: Target,
+      define: Define,
       jsx: "automatic",
       sourcemap: "inline",
       sourcefile: sourcePath
@@ -36,9 +37,9 @@ module.exports = {
   /**
    * @param {string} sourceText - the source.
    * @param {string} sourcePath - its file.
-   * @returns {string} cache key (path + text + esbuild version).
+   * @returns {string} cache key (path + text + esbuild version + the defined package version).
    */
   getCacheKey(sourceText, sourcePath) {
-    return Crypto.createHash("sha256").update(`${sourcePath}\0${sourceText}\0${esbuild.version}`).digest("hex")
+    return Crypto.createHash("sha256").update(`${sourcePath}\0${sourceText}\0${esbuild.version}\0${PackageVersion}`).digest("hex")
   }
 }

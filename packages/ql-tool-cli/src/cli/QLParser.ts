@@ -16,7 +16,8 @@ import { QLCli, type GlobalOptions } from "./QLCli.js"
 
 /**
  * Assemble the wql parser over `argv` (yargs routes; this only registers the
- * commands, the global `--log-level`, and the fail handler).
+ * commands, the global `--log-level`, `--version` ({@link QLCli.Version}), and the
+ * fail handler).
  *
  * @param argv - The arguments (without node + script).
  * @param context - The run context (stores, connection resolver, exit code).
@@ -43,7 +44,7 @@ export function createQLParser(argv: string[], context: CliContext): Argv<Global
     .command(createSavedCommand(context))
     .strict()
     .help()
-    .version()
+    .version(QLCli.Version)
     .exitProcess(false)
     .fail(QLCli.createFailHandler(context)) as unknown as Argv<GlobalOptions>
 }

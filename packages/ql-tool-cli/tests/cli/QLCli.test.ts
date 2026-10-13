@@ -1,3 +1,6 @@
+import * as Fs from "node:fs"
+import * as Path from "node:path"
+
 import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 
 import { QLCli, QLExitCode, QLUsageError } from "@wireio/ql-tool-cli/cli/index.js"
@@ -13,6 +16,15 @@ describe("QLCli", () => {
   })
 
   afterEach(() => logs.restore())
+
+  it("Version is this package's version (injected at build time)", () => {
+    const packageFile = Path.resolve(__dirname, "..", "..", "package.json")
+    expect(QLCli.Version).toBe(JSON.parse(Fs.readFileSync(packageFile, "utf8")).version)
+  })
+
+  it("Version is a release version, never yargs' `unknown` fallback", () => {
+    expect(QLCli.Version).toMatch(/^\d+\.\d+\.\d+/)
+  })
 
   it("onFail: a parser message → usage exit, printed, and thrown to stop yargs", () => {
     const { context } = createTestContext(),

@@ -15,7 +15,7 @@ const esbuild = require("esbuild")
 
 const { createCommonJsResolvePlugin } = require("./scripts/esbuild/commonJsResolvePlugin.cjs")
 const { createFilenamePlugin } = require("./scripts/esbuild/filenamePlugin.cjs")
-const { Target } = require("./scripts/esbuild/loaders.cjs")
+const { Define, Target } = require("./scripts/esbuild/loaders.cjs")
 
 /** Bundle output directory. */
 const OutputPath = "dist/bundle"
@@ -41,6 +41,7 @@ esbuild
     bundle: true,
     platform: "node",
     target: Target,
+    define: Define,
     format: "esm",
     splitting: true,
     outdir: OutputPath,

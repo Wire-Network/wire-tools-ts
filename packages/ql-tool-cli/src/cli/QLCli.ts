@@ -11,6 +11,9 @@ import { ErrorPrinter } from "./output/index.js"
 
 const log = getLogger(__filename)
 
+/** This package's version — replaced at build time by esbuild `define` (scripts/esbuild/loaders.cjs). */
+declare const WQL_PACKAGE_VERSION: string
+
 /** Global flags of every wql command. */
 export interface GlobalOptions {
   /** `--log-level` for diagnostics on stderr (default {@link QLCli.DefaultLogLevel}). */
@@ -27,6 +30,8 @@ export interface InterruptibleRun<T> {
 
 /** Parser-level helpers of the wql CLI: the fail handler, handler wrapping, SIGINT. */
 export namespace QLCli {
+  /** The wql package version `--version` prints (injected at build time — never read from the current directory). */
+  export const Version = WQL_PACKAGE_VERSION
   /** Diagnostic level when `--log-level` is not given (stderr stays quiet on success). */
   export const DefaultLogLevel = Level.error
   /** Hint appended to a usage error. */
