@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-liq-yield",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "commonjs",
   "description": "Flow: syndicated liqSOL is credited on the depot, its reported yield is minted, sold through sysio.swap and claimed as WIRE, and the position is redeemed on the outpost",

@@ -1,6 +1,6 @@
 {
   "name": "@wireio/cluster-tool-shared",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Shared zod schema-first shapes (persisted configs and wire envelopes) behind SchemaCodec",
   "private": false,
   "publishConfig": {

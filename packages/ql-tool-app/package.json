@@ -1,7 +1,7 @@
 {
   "name": "@wireio/ql-tool-app",
   "productName": "WIRE QL",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "WIRE QL desktop workbench: an Electron GUI for the node query engine (query_engine_plugin)",
   "private": true,
   "type": "commonjs",
