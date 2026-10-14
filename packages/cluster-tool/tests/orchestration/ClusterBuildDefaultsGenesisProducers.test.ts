@@ -75,9 +75,8 @@ describe("ClusterBuildDefaults — genesis producer registration", () => {
     ).toBe(producers.length)
   })
 
-  it("admits genesis operators only after opreg config, then creates producer rows", () => {
-    // sysio.opreg has no code until OPPContracts and no admission configuration until OPPConfig;
-    // pushing regoperator before either phase would target an undeployed or unconfigured contract.
+  it("admits bootstrapped genesis operators after deployment, then configures collateral after registry seeding", () => {
+    // Bootstrapped operators use the default config until the collateral registries exist.
     // The system contract then requires that ACTIVE operator row before it will create a producer.
     const names = collectPhaseNames(cluster.children)
     expect(names.indexOf("GenesisProducerOperators")).toBeGreaterThan(
@@ -88,6 +87,14 @@ describe("ClusterBuildDefaults — genesis producer registration", () => {
     )
     expect(names.indexOf("GenesisProducerRegistration")).toBeGreaterThan(
       names.indexOf("GenesisProducerOperators")
+    )
+    const steps = collectStepNames(cluster.children)
+    expect(steps.indexOf("seed-registry")).toBeGreaterThanOrEqual(0)
+    expect(steps.indexOf("configure-opreg")).toBeGreaterThan(
+      steps.indexOf("seed-registry")
+    )
+    expect(names.indexOf("OperatorRegistryConfig")).toBeGreaterThan(
+      names.indexOf("GenesisProducerRegistration")
     )
   })
 

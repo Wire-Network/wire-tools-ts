@@ -836,6 +836,9 @@ export namespace RegistrySteps {
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
+      // Depot custody uses shadow tokens as collateral, independently of their origin binding.
+      chainToken("WIRE", "LIQETH", "", false),
+      chainToken("WIRE", "LIQSOL", "", false),
       chainToken("ETHEREUM", "ETH", "", true),
       chainToken(
         "ETHEREUM",
