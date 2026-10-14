@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { assetUnits } from "@wireio/cluster-tool/utils"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { Keypair } from "@solana/web3.js"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
@@ -95,7 +96,7 @@ describe("syndication scenario accounting", () => {
   })
   it("round trips base units without floating point, including dust", () => {
     expect(
-      WireSyndicationTool.assetUnits(
+      assetUnits(
         SyndicationScenario.quantity(2_000_000_001n)
       )
     ).toBe(2_000_000_001n)

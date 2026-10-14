@@ -3,6 +3,7 @@ import { Asset, PrivateKey, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { Wallet } from "ethers"
 import {
+  assetUnits,
   AuthExLinkTool,
   ClusterBuildStep,
   Steps,
@@ -166,6 +167,6 @@ export namespace ProducerCollateralSteps {
       Constants.Precision,
       "unexpected depot shadow precision"
     )
-    return WireSyndicationTool.assetUnits(row.balance)
+    return assetUnits(row.balance)
   }
 }

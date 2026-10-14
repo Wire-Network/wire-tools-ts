@@ -424,7 +424,13 @@ daemon args (`resolveOperatorDaemonArgs`).
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
 `setconfig` and the kicker are registry setup a real depot performs too, so the
-bootstrap does those unconditionally. A flow needing the first bonder sets
+bootstrap does those unconditionally (`Kicker`: privileged `sysio.kicker` deploy, a
+read-back of its privilege and `setconfig` with a 60 s interval, 86,400 s TWAP window and 5,000 bps spot guard). `addpool` needs a token's yield pool, so
+`KickerPools` runs only with `enableMockLiqPools`; at the mock pools' supply no kick
+meets the default one-WIRE `min_gift`, so a flow that needs a payment lowers it with
+`sysio.kicker::setpool` and restores it. Every pool also needs a positive daily cap
+from its minimum through 1,000 WIRE. A payment requires a mature TWAP observation
+window, and catch-up is bounded to 72 hours. A flow needing the first bonder sets
 `enableMockSyndicationImport: true` in `Scenario.defaults`, never `plan()`:
 `importsynd` is epoch-zero only. Reload the unlinked bonder with
 `Steps.registry.readMockSyndicationBonder(ctx)` (durable label

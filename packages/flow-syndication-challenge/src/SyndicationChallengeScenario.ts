@@ -5,6 +5,7 @@ import Path from "node:path"
 import { Level } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  assetUnits,
   ClusterBuildPhase,
   ProtocolTiming,
   pollUntil,
@@ -141,7 +142,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
         "record exact pre-intake accounting",
         async ctx => {
           ctx.outputs.set(Constants.Before, {
-            supply: WireSyndicationTool.assetUnits(
+            supply: assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -354,7 +355,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
           Assert.strictEqual(BigInt(envelope.forfeit), Constants.Amount)
           Assert.strictEqual(BigInt(request.forfeit_pending), 0n)
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(
+            assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
