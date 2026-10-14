@@ -59,8 +59,6 @@ const WireSymbol = "9,WIRE"
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
 const AndonPermissionRamWeight = "0.0100 SYS"
-/** This policy adds permission RAM only; it allocates no CPU or network weight. */
-const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -152,9 +150,7 @@ export namespace ClusterBuildDefaults {
       ),
       bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
-      batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
+      batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
       producerNodes = plannedNodes.filter(
         node => node.role === NodeRole.producer
@@ -792,15 +788,15 @@ export namespace ClusterBuildDefaults {
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        {
-          owner: SysioContractAccount[SysioContractName.andon],
-          issuer: Constants.BOOTSTRAP_NODE_OWNER,
-          net_weight: NoResourceWeight,
-          cpu_weight: NoResourceWeight,
-          ram_weight: AndonPermissionRamWeight,
-          time_block: 0,
-          network_gen: 0
-        }
+        // This policy adds permission RAM only; it allocates no CPU or network weight.
+        SyndicationUserSteps.nodeOwnerPolicy(
+          SysioContractAccount[SysioContractName.andon],
+          {
+            net: Constants.NO_RESOURCE_WEIGHT,
+            cpu: Constants.NO_RESOURCE_WEIGHT,
+            ram: AndonPermissionRamWeight
+          }
+        )
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,

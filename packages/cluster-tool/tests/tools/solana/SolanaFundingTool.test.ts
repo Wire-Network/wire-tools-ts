@@ -312,6 +312,16 @@ describe("SolanaFundingTool named keypairs", () => {
     )
   })
 
+  it("publicKeyHex is the persisted key's 32 public-key bytes as hex", () => {
+    const keypair = SolanaFundingTool.createKeypair(dataPath, UserName),
+      hex = SolanaFundingTool.publicKeyHex(dataPath, UserName)
+    expect(hex).toBe(keypair.publicKey.toBuffer().toString("hex"))
+    expect(Buffer.from(hex, "hex")).toHaveLength(32)
+    expect(() => SolanaFundingTool.publicKeyHex(dataPath, "absent")).toThrow(
+      /SOL keypair "absent" not found/
+    )
+  })
+
   it("loadKeypair throws for a handle that was never created", () => {
     expect(() => SolanaFundingTool.loadKeypair(dataPath, "absent")).toThrow(
       /SOL keypair "absent" not found/

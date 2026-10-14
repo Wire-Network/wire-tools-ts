@@ -1173,3 +1173,81 @@ describe("explicit governance settlement", () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 })
+
+describe("WireSyndicationTool — sysio.liq holdings and bond arithmetic", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** One `sysio.liq::accounts` row. */
+  function account(balance: string): SysioContracts.SysioLiqAccountType {
+    return { balance, index_checkpoint: "0", owed_wire: 0 }
+  }
+
+  it("reads the holder's row and balance in the requested token only", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.accounts, [
+      account("9.000000000 LIQETH"),
+      account("2.000000001 LIQSOL")
+    ])
+    expect(await WireSyndicationTool.readLiqBalance(ctx, Bonder, Liqsol)).toBe(
+      2_000_000_001n
+    )
+    expect(
+      (await WireSyndicationTool.readLiqAccount(ctx, Bonder, Liqeth)).balance
+    ).toBe("9.000000000 LIQETH")
+    expect(clients.liq.tables.accounts.query).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: Bonder })
+    )
+  })
+
+  it("reads zero with no row and refuses a truncated read", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.accounts, [])
+    expect(await WireSyndicationTool.readLiqBalance(ctx, Bonder, Liqsol)).toBe(
+      0n
+    )
+    expect(
+      await WireSyndicationTool.readLiqAccount(ctx, Bonder, Liqsol)
+    ).toBeUndefined()
+    serve(clients.liq.tables.accounts, [], true)
+    await expect(
+      WireSyndicationTool.readLiqBalance(ctx, Bonder, Liqsol)
+    ).rejects.toThrow("truncated")
+  })
+
+  it("parses asset base units without floating point", () => {
+    expect(WireSyndicationTool.assetUnits("2.000000001 LIQSOL")).toBe(
+      2_000_000_001n
+    )
+    expect(WireSyndicationTool.assetUnits("0.000000000 LIQSOL")).toBe(0n)
+  })
+
+  it("computes the bond remainder and full-bond state", () => {
+    const row = (
+      covered: number,
+      bonded: number,
+      state: SysioContracts.SysioBondRequestState
+    ) => ({ covered, bonded, state }) as SysioContracts.SysioBondRequestRowType
+    expect(
+      WireSyndicationTool.bondRemainder(row(10, 4, SysioBondRequestState.OPEN))
+    ).toBe(6n)
+    expect(
+      WireSyndicationTool.isFullyBonded(
+        row(10, 10, SysioBondRequestState.BONDED)
+      )
+    ).toBe(true)
+    expect(
+      WireSyndicationTool.isFullyBonded(
+        row(10, 10, SysioBondRequestState.APPROVED)
+      )
+    ).toBe(true)
+    expect(
+      WireSyndicationTool.isFullyBonded(
+        row(10, 9, SysioBondRequestState.BONDED)
+      )
+    ).toBe(false)
+    expect(
+      WireSyndicationTool.isFullyBonded(row(10, 10, SysioBondRequestState.HELD))
+    ).toBe(false)
+    expect(WireSyndicationTool.isFullyBonded(undefined)).toBe(false)
+  })
+})

@@ -1,6 +1,21 @@
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 
 describe("Constants", () => {
+  describe("LIQSOL_CODENAME", () => {
+    it("is the codename the syndication scenario trades", () => {
+      expect(Constants.LIQSOL_CODENAME).toBe("LIQSOL")
+    })
+  })
+  describe("batchOperatorLabels", () => {
+    it("lists the bootstrap batch-operator labels in index order", () => {
+      expect(Constants.batchOperatorLabels(3)).toEqual([
+        "batchop.a",
+        "batchop.b",
+        "batchop.c"
+      ])
+      expect(Constants.batchOperatorLabels(0)).toEqual([])
+    })
+  })
   describe("development keys", () => {
     it("derives a deterministic dev K1 public key (SYS-prefixed)", () => {
       expect(Constants.DEV_K1_PUBLIC_KEY).toMatch(/^SYS/)

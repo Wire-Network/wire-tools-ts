@@ -1,6 +1,6 @@
 import Assert from "node:assert"
 import { ChainKind } from "@wireio/opp-typescript-models"
-import { ProtocolTiming } from "../../Constants.js"
+import { Constants, ProtocolTiming } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
@@ -151,7 +151,7 @@ export namespace MockShadowBackingSteps {
     const solana = input.chain === ChainKind.SVM,
       outstanding = await WireSyndicationTool.readOutstanding(
         ctx,
-        solana ? "LIQSOL" : "LIQETH"
+        solana ? Constants.LIQSOL_CODENAME : "LIQETH"
       ),
       custody = solana
         ? await SolanaLiqSyndicationTool.readPoolBalance(ctx)

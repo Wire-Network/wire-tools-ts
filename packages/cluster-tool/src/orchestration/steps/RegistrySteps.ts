@@ -28,7 +28,7 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { ProtocolTiming } from "../../Constants.js"
+import { Constants, ProtocolTiming } from "../../Constants.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
@@ -66,7 +66,7 @@ export namespace RegistrySteps {
    */
   const ShadowLiqTokenPairs = [
     ["ETHEREUM", "LIQETH"],
-    ["SOLANA", "LIQSOL"]
+    ["SOLANA", Constants.LIQSOL_CODENAME]
   ] as const
   /** Depot-frame precision every liq token is registered at, which its shadow symbol carries. */
   const LiqTokenPrecision = 9
@@ -144,7 +144,7 @@ export namespace RegistrySteps {
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
       chain_code: "SOLANA",
-      token_code: "LIQSOL",
+      token_code: Constants.LIQSOL_CODENAME,
       keyType: KeyType.ED,
       amount: MockSyndicationImportAmount
     },
@@ -811,7 +811,7 @@ export namespace RegistrySteps {
       ),
       nativeToken("SOL", "Sol", "Solana native asset"),
       liqToken(
-        "LIQSOL",
+        Constants.LIQSOL_CODENAME,
         "Liquid SOL",
         "Liquid-staking receipt for SOL",
         svmAddress(solanaMints.LIQSOL)
@@ -858,7 +858,7 @@ export namespace RegistrySteps {
       chainToken("SOLANA", "SOL", "", true),
       chainToken(
         "SOLANA",
-        "LIQSOL",
+        Constants.LIQSOL_CODENAME,
         nullableMintHex(solanaMints.LIQSOL),
         false
       ),
@@ -965,7 +965,7 @@ export namespace RegistrySteps {
     ) as SolanaFundingTool.SolMockMint[]
     const out: Record<string, string> = {}
     rows.forEach(row => {
-      ;["USDC", "USDT", "LIQSOL"].forEach(codename => {
+      ;["USDC", "USDT", Constants.LIQSOL_CODENAME].forEach(codename => {
         if (SlugName.from(codename) === row.code) out[codename] = row.mint
       })
     })

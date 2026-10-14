@@ -8,6 +8,7 @@ import {
   Steps,
   WireClient,
   WireCollateralTool,
+  WireSyndicationTool,
   verifyStep,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
@@ -158,22 +159,13 @@ export namespace ProducerCollateralSteps {
     const account = ctx.keyStore.assertOperator(
         Constants.ProducerLabel
       ).account,
-      { rows, more } = await ctx.wire
-        .getSysioContract(SysioContracts.SysioContractName.liq)
-        .tables.accounts.query({
-          scope: account,
-          limit: WireCollateralTool.TableRowLimit
-        })
-    Assert.ok(!more, "truncated producer shadow balance read")
-    const balance = rows
-      .map(row => Asset.from(row.balance))
-      .find(asset => asset.symbol.name === token)
-    if (!balance) return 0n
+      row = await WireSyndicationTool.readLiqAccount(ctx, account, token)
+    if (!row) return 0n
     Assert.equal(
-      balance.symbol.precision,
+      Asset.from(row.balance).symbol.precision,
       Constants.Precision,
       "unexpected depot shadow precision"
     )
-    return BigInt(balance.units.toString())
+    return WireSyndicationTool.assetUnits(row.balance)
   }
 }

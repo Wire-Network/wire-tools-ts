@@ -27,7 +27,7 @@ import { SyndicationUnderwritingScenarioConstants as Constants } from "./Syndica
 import { SyndicationUnderwritingSteps } from "./steps/index.js"
 
 const { Actor } = Report,
-  { SysioSyndEnvelopeState, SysioSyndChainkind } = SysioContracts
+  { SysioSyndEnvelopeState } = SysioContracts
 
 /** Prove held intake, serialized requests, fee-bearing release, approval and linked delivery. */
 export class SyndicationUnderwritingScenario extends SyndicationScenario {
@@ -133,9 +133,7 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
           )
           Assert.strictEqual(
             BigInt(request.covered),
-            ((Constants.Amount + SyndicationScenario.Increment - 1n) /
-              SyndicationScenario.Increment) *
-              SyndicationScenario.Increment
+            SyndicationScenario.coveredOf(Constants.Amount)
           )
           Assert.strictEqual(
             await SyndicationScenario.readBalance(
@@ -228,9 +226,7 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         "exact fee and linked credit; second request is now issued",
         async ctx => {
           const before = ctx.outputs.assert(Constants.Before),
-            fee =
-              (Constants.Amount * BigInt(Constants.FeeBps)) /
-              SyndicationScenario.BasisPoints,
+            fee = SyndicationScenario.feeOf(Constants.Amount, Constants.FeeBps),
             first = await SyndicationScenario.readEnvelope(
               ctx,
               Constants.FirstEpoch
@@ -356,31 +352,16 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         "advance the syndication queue",
         SyndicationScenario.WriteOptions
       ),
-      verifyStep(
+      SyndicationUserSteps.planVerifyParkedCredit(
         Actor.User,
         "parked-credit",
         "the net credit is parked and the account has zero",
-        async ctx => {
-          const row = await WireSyndicationTool.readParked(
-            ctx,
-            SyndicationScenario.Token,
-            SysioSyndChainkind.CHAIN_KIND_SVM,
-            SyndicationScenario.publicKey(ctx, Constants.Unlinked)
-          )
-          Assert.strictEqual(
-            BigInt(row.balance),
-            Constants.LaterAmount -
-              (Constants.LaterAmount * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints
-          )
-          Assert.strictEqual(
-            await SyndicationScenario.readBalance(
-              ctx,
-              Constants.Unlinked.account
-            ),
-            0n
-          )
-        }
+        {},
+        Constants.Unlinked.account,
+        Constants.Unlinked.keypairName,
+        SyndicationScenario.Token,
+        Constants.LaterAmount -
+          SyndicationScenario.feeOf(Constants.LaterAmount, Constants.FeeBps)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.User,
@@ -390,28 +371,16 @@ export class SyndicationUnderwritingScenario extends SyndicationScenario {
         Constants.Unlinked.account,
         Constants.Unlinked.keypairName
       ),
-      verifyStep(
+      SyndicationUserSteps.planVerifyParkedDelivered(
         Actor.User,
         "parked-delivered",
         "the exact net balance reached the linked account once",
-        async ctx => {
-          const row = await WireSyndicationTool.readParked(
-            ctx,
-            SyndicationScenario.Token,
-            SysioSyndChainkind.CHAIN_KIND_SVM,
-            SyndicationScenario.publicKey(ctx, Constants.Unlinked)
-          )
-          Assert.strictEqual(row ? BigInt(row.balance) : 0n, 0n)
-          Assert.strictEqual(
-            await SyndicationScenario.readBalance(
-              ctx,
-              Constants.Unlinked.account
-            ),
-            Constants.LaterAmount -
-              (Constants.LaterAmount * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints
-          )
-        }
+        {},
+        Constants.Unlinked.account,
+        Constants.Unlinked.keypairName,
+        SyndicationScenario.Token,
+        Constants.LaterAmount -
+          SyndicationScenario.feeOf(Constants.LaterAmount, Constants.FeeBps)
       )
     )
     WireSyndicationTool.planApproveAndClaim(

@@ -1,5 +1,6 @@
 import { Option } from "@3fv/prelude-ts"
 import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+import { range } from "lodash"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 
@@ -32,6 +33,13 @@ export namespace Constants {
   }).getOrThrow(`Failed to create default key pair: ${DefaultK1KeyPairSeed}`)
 
   export type DefaultK1KeyPairType = typeof DefaultK1KeyPair
+
+  /**
+   * The Solana liq token's codename (`LIQSOL`): the shadow symbol code, the `sysio.tokens`
+   * code and the token code every LIQSOL syndication carries. Renaming it renames the token
+   * across the registry, the mock data and the flows.
+   */
+  export const LIQSOL_CODENAME = "LIQSOL"
 
   /** Default sysio development private key (WIF format). */
   export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
@@ -151,6 +159,8 @@ export namespace Constants {
   export const ROA_BYTES_PER_UNIT = 104
   export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
   export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
+  /** A resource weight that allocates nothing — for a policy that grants only another resource. */
+  export const NO_RESOURCE_WEIGHT = "0.0000 SYS"
 
   /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
   export const BOOTSTRAP_NODE_OWNER = "wireno"
@@ -385,6 +395,16 @@ export namespace Constants {
    */
   export function batchOperatorLabel(index: number): string {
     return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+  }
+
+  /**
+   * The labels of a cluster's bootstrap batch operators, in index order.
+   *
+   * @param count - The batch-operator roster size (`batchOperatorCount`).
+   * @returns `batchOperatorLabel(0)` … `batchOperatorLabel(count - 1)`.
+   */
+  export function batchOperatorLabels(count: number): string[] {
+    return range(count).map(batchOperatorLabel)
   }
 
   /**

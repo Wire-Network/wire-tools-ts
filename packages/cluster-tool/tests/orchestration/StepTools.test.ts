@@ -1,4 +1,9 @@
-import { pollStep, pollUntil, verifyStep } from "@wireio/cluster-tool/orchestration"
+import {
+  pollFor,
+  pollStep,
+  pollUntil,
+  verifyStep
+} from "@wireio/cluster-tool/orchestration"
 import { ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
@@ -25,9 +30,9 @@ describe("pollUntil.timeoutScale", () => {
 
   it("stretches the deadline (timeout message carries the scaled budget)", async () => {
     process.env[pollUntil.TimeoutScaleEnvVar] = "3"
-    await expect(
-      pollUntil("never", async () => false, 20, 5)
-    ).rejects.toThrow("Timed out waiting for: never (60ms)")
+    await expect(pollUntil("never", async () => false, 20, 5)).rejects.toThrow(
+      "Timed out waiting for: never (60ms)"
+    )
   })
 
   it("does not delay a satisfied poll", async () => {
@@ -41,14 +46,14 @@ describe("pollUntil.timeoutScale", () => {
 describe("pollUntil", () => {
   it("resolves once the predicate returns true", async () => {
     let calls = 0
-    await pollUntil("counter reaches 3", async () => (++calls) >= 3, 1_000, 2)
+    await pollUntil("counter reaches 3", async () => ++calls >= 3, 1_000, 2)
     expect(calls).toBe(3)
   })
 
   it("throws a labelled timeout when the deadline elapses", async () => {
-    await expect(
-      pollUntil("never", async () => false, 30, 5)
-    ).rejects.toThrow(/Timed out waiting for: never \(30ms\)/)
+    await expect(pollUntil("never", async () => false, 30, 5)).rejects.toThrow(
+      /Timed out waiting for: never \(30ms\)/
+    )
   })
 })
 
@@ -85,7 +90,7 @@ describe("pollStep.lift", () => {
     let calls = 0
     const fn = pollStep.lift<ClusterBuildContext>(
       "counter reaches 2",
-      async () => (++calls) >= 2,
+      async () => ++calls >= 2,
       1_000,
       2
     )
@@ -93,5 +98,20 @@ describe("pollStep.lift", () => {
     // The predicate ignores ctx; the fixture context keeps the call typed.
     await fn(fixtureContext())
     expect(calls).toBe(2)
+  })
+})
+
+describe("pollFor", () => {
+  it("returns the first value a read yields, skipping null and undefined", async () => {
+    const reads = [undefined, null, 0, 5],
+      read = jest.fn(async () => reads.shift())
+    await expect(pollFor("value", read, 1_000, 1)).resolves.toBe(0)
+    expect(read).toHaveBeenCalledTimes(3)
+  })
+
+  it("times out when the read never yields", async () => {
+    await expect(pollFor("never", async () => null, 20, 5)).rejects.toThrow(
+      "Timed out waiting for: never"
+    )
   })
 })
