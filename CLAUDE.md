@@ -314,7 +314,11 @@ override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
 custody), `--enable-mock-syndication-import` (default off — import the mock
-bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--api-count <N>` (default 0 — plan N API nodes:
+bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off — every batch-operator
+daemon also runs the `batch_operator_plugin` underwriter role from its own account
+and gets a node-owner RAM grant for its `sysio.bond` rows; with the import on, each
+operator's ED key also gets an epoch-zero LIQSOL credit, and the import moves after
+operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -377,7 +381,15 @@ sweep the parked import. Either mock shadow flag enables custody backing after
 all seeds, with one funding/deposit/donation per Step and final custody checks.
 Ethereum then seeds principal through `OutpostManager.execute` in a separate
 Step, preserving the pool configuration. Verification requires principal to equal
-the backing and custody to cover it before the epoch relay can realize yield.
+the backing and custody to cover it before the epoch relay can realize yield. A flow
+whose batch operators underwrite sets `enableBatchOperatorUnderwriting: true` in
+`Scenario.defaults` too, never `plan()`: with the import on, each operator's ED key
+gets an epoch-zero LIQSOL credit, which reorders the bootstrap — the import, its
+verify and the custody backing run after operator provisioning rather than in the
+prerequisites group. The flag-less `batchOperatorUnderwriting` default tunes it:
+`fundedOperatorCount` (the first N operators get the credit; the rest run the role
+unfunded) and `maxExposure` (the caps, `TokenAmount[]`); both default to every operator
+funded at a 10 LIQSOL cap.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them

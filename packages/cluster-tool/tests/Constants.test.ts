@@ -6,6 +6,13 @@ describe("Constants", () => {
       expect(Constants.LIQSOL_CODENAME).toBe("LIQSOL")
     })
   })
+  describe("liqSymbol", () => {
+    it("renders a liq token's shadow symbol at the liq-token precision", () => {
+      expect(Constants.LIQ_TOKEN_PRECISION).toBe(9)
+      expect(Constants.liqSymbol("LIQSOL")).toBe("9,LIQSOL")
+      expect(Constants.liqSymbol("LIQETHP")).toBe("9,LIQETHP")
+    })
+  })
   describe("batchOperatorLabels", () => {
     it("lists the bootstrap batch-operator labels in index order", () => {
       expect(Constants.batchOperatorLabels(3)).toEqual([

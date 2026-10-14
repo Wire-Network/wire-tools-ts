@@ -149,6 +149,21 @@ export namespace Constants {
   export const CORE_SYMBOL = "SYS"
   /** Core symbol decimal precision. */
   export const CORE_SYMBOL_PRECISION = 4
+  /**
+   * Depot-frame precision every liq token is registered at, and so the precision of every
+   * shadow symbol (`9,LIQSOL`). Changing it changes the registered tokens and every shadow
+   * asset the harness renders.
+   */
+  export const LIQ_TOKEN_PRECISION = 9
+  /**
+   * The shadow symbol of a liq token codename at {@link LIQ_TOKEN_PRECISION}, in ABI form.
+   *
+   * @param codename - The token codename (`LIQSOL`).
+   * @returns The symbol (`9,LIQSOL`).
+   */
+  export function liqSymbol(codename: string): string {
+    return `${LIQ_TOKEN_PRECISION},${codename}`
+  }
 
   /**
    * `total_sys` for `sysio.roa::activateroa` — the supply the ROA RAM pool is

@@ -450,13 +450,34 @@ async function bail(reason, clusterPath) {
 // ---------------------------------------------------------------------------
 
 /**
+ * The bootstrap work a cluster config implies, counted in provisioned identities: producers,
+ * batch operators and underwriters, plus each batch operator once more when
+ * `batchOperatorUnderwriting` is set — every underwriting operator also gets a RAM grant
+ * and each FUNDED one an epoch-zero import credit, each an irreversible write, and the mock
+ * import and custody backing move behind operator provisioning, inside the measured window.
+ * Counting every operator twice, funded or not, keeps the deadline an upper bound.
+ *
+ * @param {object} config the parsed cluster-config.json.
+ * @return {number} the identity count {@link bootstrapDeadlineSeconds} scales by.
+ */
+export function provisionedIdentityCount(config) {
+  const batchOperators = config?.batchOperatorCount ?? 0
+  return (
+    (config?.producerCount ?? 0) +
+    batchOperators +
+    (config?.underwriterCount ?? 0) +
+    (config?.batchOperatorUnderwriting != null ? batchOperators : 0)
+  )
+}
+
+/**
  * Read `<cluster-path>/cluster-config.json`: the resolved clio executable
  * (`executables.clio`) and the FIRST PRODUCER's HTTP URL
  * (`bind.nodeop.ports.producers[0].http`) — never bios, whose port stops
  * answering after the Phase 8 producer handoff.
  *
- * Also reports the cluster's PROVISIONED IDENTITY COUNT (producers + batch
- * operators + underwriters), which scales the bootstrap deadline — see
+ * Also reports the cluster's PROVISIONED IDENTITY COUNT
+ * ({@link provisionedIdentityCount}), which scales the bootstrap deadline — see
  * {@link bootstrapDeadlineSeconds}.
  *
  * @param {string} clusterConfigPath absolute path to cluster-config.json.
@@ -471,10 +492,7 @@ function readClusterConfig(clusterConfigPath) {
     const clioExecutable = config?.executables?.clio
     const producerHttpPort = config?.bind?.nodeop?.ports?.producers?.[0]?.http
     if (clioExecutable == null || producerHttpPort == null) return null
-    const identityCount =
-      (config?.producerCount ?? 0) +
-      (config?.batchOperatorCount ?? 0) +
-      (config?.underwriterCount ?? 0)
+    const identityCount = provisionedIdentityCount(config)
     // Dial the producer at its bind address, mapping the non-dialable listen
     // wildcard (0.0.0.0 / empty) to loopback — mirrors netUtils.toDialAddress
     // (this script is outside the eslint/TS surface, so the mapping is inline).
@@ -898,7 +916,8 @@ async function main() {
    * bootstrap legitimately takes many times longer than the dev default's — a
    * flat floor would SIGINT it mid-bootstrap.
    *
-   * @param {number} identityCount producers + batch operators + underwriters.
+   * @param {number} identityCount the provisioned identity count — see
+   *   {@link provisionedIdentityCount}.
    * @return {number} the deadline, in seconds of chain liveness.
    */
   function bootstrapDeadlineSeconds(identityCount) {

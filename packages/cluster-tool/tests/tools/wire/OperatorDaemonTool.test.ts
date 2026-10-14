@@ -3,8 +3,8 @@ import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
-import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { OperatorType, TokenAmount } from "@wireio/opp-typescript-models"
+import { KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool"
 import {
   NodeopProcess,
@@ -229,7 +229,8 @@ describe("OperatorDaemonTool", () => {
           operatorAccount("batchopcccc", OperatorType.BATCH),
           artifacts,
           network,
-          keySourceFor
+          keySourceFor,
+          OperatorDaemonTool.NoBatchUnderwriting
         )
       expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
         `${OperatorDaemonTool.EthereumClientId},eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
@@ -285,7 +286,8 @@ describe("OperatorDaemonTool", () => {
       operator,
       artifacts,
       network,
-      keySourceFor
+      keySourceFor,
+      OperatorDaemonTool.NoBatchUnderwriting
     )
 
     it("loads the batch plugin set at irreversible read-mode", () => {
@@ -302,7 +304,8 @@ describe("OperatorDaemonTool", () => {
         operator,
         artifacts,
         { ...network, debuggingServerEnabled: false },
-        keySourceFor
+        keySourceFor,
+        OperatorDaemonTool.NoBatchUnderwriting
       )
       expect(valuesOf(disabledArgs, "--plugin")).toEqual(
         OperatorDaemonTool.BatchOperatorPlugins.filter(
@@ -397,7 +400,8 @@ describe("OperatorDaemonTool", () => {
           fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
           network,
-          keySourceFor
+          keySourceFor,
+          OperatorDaemonTool.NoBatchUnderwriting
         )
       ).toThrow(/not a batch operator/)
     })
@@ -426,7 +430,8 @@ describe("OperatorDaemonTool", () => {
           operator,
           artifacts,
           network,
-          ssmKeySourceFor
+          ssmKeySourceFor,
+          OperatorDaemonTool.NoBatchUnderwriting
         ),
         solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
           provider.startsWith(`sol-${operator.account}`)
@@ -436,6 +441,104 @@ describe("OperatorDaemonTool", () => {
       expect(solProvider).not.toMatch(/,KEY:/)
     })
   })
+
+  describe("batchOperatorArgs — underwriter role", () => {
+    const operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+      relayOnly = OperatorDaemonTool.batchOperatorArgs(
+        operator,
+        artifacts,
+        network,
+        keySourceFor,
+        OperatorDaemonTool.NoBatchUnderwriting
+      ),
+      underwriting = OperatorDaemonTool.batchOperatorArgs(
+        operator,
+        artifacts,
+        network,
+        keySourceFor,
+        OperatorDaemonTool.underwritingFromConfig(underwritingConfig())
+      )
+
+    it("renders no underwriter flag on a relay-only node", () => {
+      expect(valuesOf(relayOnly, "--batch-underwriter-account")).toEqual([])
+      expect(valuesOf(relayOnly, "--batch-underwriter-max-exposure")).toEqual(
+        []
+      )
+    })
+
+    it("underwrites as the relay's own account with the named LIQSOL cap", () => {
+      expect(valuesOf(underwriting, "--batch-underwriter-account")).toEqual([
+        operator.account
+      ])
+      expect(valuesOf(underwriting, "--batch-operator-account")).toEqual([
+        operator.account
+      ])
+      expect(
+        valuesOf(underwriting, "--batch-underwriter-max-exposure")
+      ).toEqual(["10.000000000 LIQSOL"])
+      expect(
+        OperatorDaemonTool.exposureAsset(
+          TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("LIQETH")),
+            amount: 1n
+          })
+        ).toString()
+      ).toBe("0.000000001 LIQETH")
+    })
+
+    it("keeps ONE WIRE signature provider for both roles and changes nothing else", () => {
+      const wireProviders = (args: string[]) =>
+        valuesOf(args, "--signature-provider").filter(provider =>
+          provider.startsWith("wire-")
+        )
+      expect(wireProviders(underwriting)).toEqual(wireProviders(relayOnly))
+      expect(wireProviders(underwriting)).toHaveLength(1)
+      const withoutUnderwriter = underwriting.filter(
+        (arg, index, all) =>
+          ![arg, all[index - 1]].some(value =>
+            [
+              "--batch-underwriter-account",
+              "--batch-underwriter-max-exposure"
+            ].includes(value)
+          )
+      )
+      expect(withoutUnderwriter).toEqual(relayOnly)
+    })
+
+    it("renders no underwriter role for an empty cap list", () => {
+      expect(
+        OperatorDaemonTool.batchOperatorArgs(
+          operator,
+          artifacts,
+          network,
+          keySourceFor,
+          { maxExposure: [] }
+        )
+      ).toEqual(relayOnly)
+    })
+
+    it("derives the role from the cluster option, off by default", () => {
+      expect(OperatorDaemonTool.underwritingFromConfig(fixtureConfig())).toBe(
+        OperatorDaemonTool.NoBatchUnderwriting
+      )
+      expect(
+        OperatorDaemonTool.underwritingFromConfig(
+          underwritingConfig()
+        ).maxExposure.map(cap => cap.toString())
+      ).toEqual(["10.000000000 LIQSOL"])
+    })
+  })
+
+  /** A cluster config whose operators run the underwriter role with the default cap. */
+  function underwritingConfig() {
+    return {
+      ...fixtureConfig(),
+      batchOperatorUnderwriting: {
+        fundedOperatorCount: 3,
+        maxExposure: [ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure]
+      }
+    }
+  }
 
   describe("runArtifactPreparation", () => {
     let dir: string

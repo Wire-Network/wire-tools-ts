@@ -103,6 +103,7 @@ const stubConfig: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
+  batchOperatorUnderwriting: null,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   queryEngine: createUnsetQueryEngineConfig()
