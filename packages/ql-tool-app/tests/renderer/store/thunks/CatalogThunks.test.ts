@@ -2,13 +2,11 @@ import { CatalogSnapshot, QueryErrorCode, QueryFailureKind } from "@wireio/ql-sh
 
 import { QueryPortError } from "@wireio/ql-tool-app/renderer/query"
 import {
-  ConnectionTest,
   ConnectionsActions,
   describeTable,
   loadCatalogOwners,
   loadOwner,
-  resetCatalog,
-  testConnection
+  resetCatalog
 } from "@wireio/ql-tool-app/renderer/store"
 
 import { ConnectionFixtures } from "../../../common/ConnectionFixtures.js"
@@ -78,17 +76,5 @@ describe("CatalogThunks", () => {
     workbench.queryPort.loadOwner.mockClear()
     await workbench.store.dispatch(loadCatalogOwners())
     expect(workbench.queryPort.loadOwner.mock.calls.map(([, , owner]) => owner)).toEqual(["sample"])
-  })
-
-  it("testConnection reports passed with the table count, or the failure", async () => {
-    const workbench = readyWorkbench(),
-      profile = FakeWorkbench.profilesOf("local").profiles[0]
-    workbench.queryPort.loadOwner.mockResolvedValueOnce(loadedSnapshot())
-    workbench.queryPort.describe.mockResolvedValueOnce(loadedSnapshot())
-    await expect(workbench.store.dispatch(testConnection(profile))).resolves.toBe(
-      `${ConnectionTest.Passed}: sample has 1 tables`
-    )
-    workbench.queryPort.loadOwner.mockRejectedValueOnce(new Error("ECONNREFUSED"))
-    await expect(workbench.store.dispatch(testConnection(profile))).resolves.toBe(`${ConnectionTest.Failed}: ECONNREFUSED`)
   })
 })

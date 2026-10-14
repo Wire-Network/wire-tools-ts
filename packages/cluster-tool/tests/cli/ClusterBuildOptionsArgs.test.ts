@@ -9,6 +9,7 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import { QueryEngineConfigProvider } from "@wireio/cluster-tool/config"
 import {
   applyClusterBuildOptionsArgs,
   AWSClusterNodeConfigFlag,
@@ -158,10 +159,24 @@ describe("query-engine help text", () => {
   })
 
   it("describeQueryEngineLimitFlag names the limit's option and that omitting it keeps the plugin's default", () => {
-    const option = "query-max-groups",
-      text = describeQueryEngineLimitFlag(option)
-    expect(text).toContain(option)
+    const limit = Constants.QUERY_ENGINE_LIMIT_OPTIONS.find(
+        ({ member }) => member === "maxGroups"
+      ),
+      text = describeQueryEngineLimitFlag(limit)
+    expect(text).toContain(limit.option)
     expect(text).toContain("omit for the plugin's default")
+  })
+
+  it("describeQueryEngineLimitFlag names the harness default the query deadline resolves to when omitted", () => {
+    const limit = Constants.QUERY_ENGINE_LIMIT_OPTIONS.find(
+        ({ member }) => member === "timeoutMs"
+      ),
+      text = describeQueryEngineLimitFlag(limit)
+    expect(text).toContain(limit.option)
+    expect(text).toContain(
+      `omit for ${QueryEngineConfigProvider.DefaultTimeoutMs}`
+    )
+    expect(text).not.toContain("the plugin's default")
   })
 
   it("registers every --query-engine-* flag with exactly its helper's text", () => {
@@ -170,9 +185,9 @@ describe("query-engine help text", () => {
     expect(options.get(toQueryEngineFlag("readMode"))?.describe).toBe(
       describeQueryEngineReadModeFlag()
     )
-    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) =>
-      expect(options.get(toQueryEngineFlag(member))?.describe).toBe(
-        describeQueryEngineLimitFlag(option)
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(limit =>
+      expect(options.get(toQueryEngineFlag(limit.member))?.describe).toBe(
+        describeQueryEngineLimitFlag(limit)
       )
     )
   })

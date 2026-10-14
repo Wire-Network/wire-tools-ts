@@ -1,3 +1,4 @@
+import Alert from "@mui/material/Alert"
 import Box from "@mui/material/Box"
 import CircularProgress from "@mui/material/CircularProgress"
 import Typography from "@mui/material/Typography"
@@ -10,6 +11,7 @@ import { CatalogFieldRole, CatalogSnapshot, QueryText, type CatalogTable } from 
 import { ActionRegistry, AppAction } from "../../common/index.js"
 import { Clipboard, DisplayText } from "../common/index.js"
 import {
+  CatalogActions,
   describeTable,
   loadOwner,
   openAndRunQuery,
@@ -22,14 +24,16 @@ import {
 /**
  * The schema navigator: owners → tables → key/value fields (ABI + logical types
  * from the catalog snapshot). Expanding an owner loads its ABI; expanding a table
- * describes it. Context menu ({@link SchemaNavigator.TableMenuActions}): Select
+ * describes it — only the item being expanded, so a failed load is retried by
+ * expanding it again, never by touching another item. A failure shows as a
+ * closable error. Context menu ({@link SchemaNavigator.TableMenuActions}): Select
  * rows, Describe, Copy qualified name, Reload owner.
  *
  * @returns The navigator.
  */
 export function SchemaNavigator() {
   const dispatch = useAppDispatch(),
-    { snapshot, loadingOwners, error } = useAppSelector(state => state.catalog)
+    { snapshot, loadingOwners, error, generation } = useAppSelector(state => state.catalog)
   if (snapshot == null) {
     return (
       <Typography sx={{ p: 2 }} color="text.secondary">
@@ -38,18 +42,17 @@ export function SchemaNavigator() {
     )
   }
 
-  const onExpanded = (itemIds: string[]) =>
-    itemIds.forEach(itemId => {
-      if (itemId.startsWith(SchemaNavigator.OwnerPrefix)) {
-        const owner = itemId.slice(SchemaNavigator.OwnerPrefix.length),
-          entry = snapshot.owners.find(candidate => candidate.account === owner)
-        if (entry != null && !entry.loaded && !loadingOwners.includes(owner)) void dispatch(loadOwner(owner))
-      } else if (itemId.startsWith(SchemaNavigator.TablePrefix)) {
-        const [owner, table] = itemId.slice(SchemaNavigator.TablePrefix.length).split(SchemaNavigator.TableSeparator),
-          entry = CatalogSnapshot.lookupTable(snapshot, owner, table)
-        if (entry != null && !entry.described) void dispatch(describeTable(owner, table))
-      }
-    })
+  const onItemExpanded = (itemId: string) => {
+    if (itemId.startsWith(SchemaNavigator.OwnerPrefix)) {
+      const owner = itemId.slice(SchemaNavigator.OwnerPrefix.length),
+        entry = snapshot.owners.find(candidate => candidate.account === owner)
+      if (entry != null && !entry.loaded && !loadingOwners.includes(owner)) void dispatch(loadOwner(owner))
+    } else if (itemId.startsWith(SchemaNavigator.TablePrefix)) {
+      const [owner, table] = itemId.slice(SchemaNavigator.TablePrefix.length).split(SchemaNavigator.TableSeparator),
+        entry = CatalogSnapshot.lookupTable(snapshot, owner, table)
+      if (entry != null && !entry.described) void dispatch(describeTable(owner, table))
+    }
+  }
 
   const onTableMenu = async (owner: string, table: string) => {
     const action = await dispatch(showContextMenu(...SchemaNavigator.TableMenuActions))
@@ -67,11 +70,21 @@ export function SchemaNavigator() {
   return (
     <Box sx={{ height: "100%", overflow: "auto" }} data-testid="schema-navigator">
       {error != null && (
-        <Typography variant="caption" color="error" sx={{ px: 1 }}>
+        <Alert
+          severity="error"
+          data-testid="catalog-error"
+          onClose={() => dispatch(CatalogActions.errorDismissed())}
+          sx={{ m: 1 }}
+        >
           {error}
-        </Typography>
+        </Alert>
       )}
-      <SimpleTreeView onExpandedItemsChange={(_event, itemIds) => onExpanded(itemIds)}>
+      <SimpleTreeView
+        key={generation}
+        onItemExpansionToggle={(_event, itemId, isExpanded) => {
+          if (isExpanded) onItemExpanded(itemId)
+        }}
+      >
         {snapshot.owners.map(owner => (
           <TreeItem
             key={owner.account}

@@ -319,9 +319,11 @@ non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
 `--query-engine-read-mode <head|irreversible>` / `--query-engine-<limit> <n>`
-(the API nodes' query engine, persisted as `ClusterConfig.queryEngine`; every
-member rendered into their config.ini only when set, so nodeop and the plugin
-own the defaults; any set member requires `--api-count` ≥ 1); `package` writes
+(the API nodes' query engine, persisted as `ClusterConfig.queryEngine`;
+`query-timeout-ms` defaults to 30000 (`QueryEngineConfigProvider.DefaultTimeoutMs`
+— the plugin's own 1000 ms would reject every client `timeout_ms` above it) and
+is always rendered, every other member only when set, so nodeop and the plugin
+own those defaults; any member the caller sets requires `--api-count` ≥ 1); `package` writes
 one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
 a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
 other, loosely coupled).
@@ -334,7 +336,7 @@ Emit → Verify pipeline; a mismatched bind config fails fast before any write).
 `default:`) and writes `config.ini` (plugins `net_plugin`, `chain_api_plugin`,
 `trace_api_plugin`, `query_engine_plugin` — so the artifact requires a nodeop
 built with the query engine — plus the same `--query-engine-*` read mode /
-limits block, each line only when set, emitted by the same
+limits block, the default `query-timeout-ms` plus each set member, emitted by the same
 `QueryEngineConfigProvider.toIniLines` as the cluster's API nodes) + `start.sh`
 (mode 0755, plus a copied `genesis.json` when supplied) into `--output-path`.
 Having no `ClusterConfig`, it builds no `ClusterBuildContext` and produces no

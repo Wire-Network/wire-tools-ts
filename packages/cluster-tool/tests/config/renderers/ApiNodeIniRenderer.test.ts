@@ -37,6 +37,7 @@ describe("ApiNodeIniRenderer", () => {
         "http-threads = 4",
         "agent-name = wire-api-node",
         `http-server-address = ${HttpServerAddress}`,
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`,
         "",
         "plugin = sysio::net_plugin",
         "plugin = sysio::chain_api_plugin",
@@ -139,13 +140,18 @@ describe("ApiNodeIniRenderer", () => {
         line.startsWith(ApiNodeIniRenderer.P2pPeerAddressOption)
       ),
       readModeIndex = lines.indexOf(readModeLine),
+      // The default query deadline renders too, in the plugin's option order.
+      timeoutIndex = lines.indexOf(
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`
+      ),
       maxGroupsIndex = lines.indexOf("query-max-groups = 50"),
       firstPluginIndex = lines.findIndex(line =>
         line.startsWith(`${ApiNodeIniRenderer.PluginOption} = `)
       )
     expect(lastPeerIndex).toBeGreaterThanOrEqual(0)
     expect(readModeIndex).toBe(lastPeerIndex + 1)
-    expect(maxGroupsIndex).toBe(readModeIndex + 1)
+    expect(timeoutIndex).toBe(readModeIndex + 1)
+    expect(maxGroupsIndex).toBe(timeoutIndex + 1)
     expect(maxGroupsIndex).toBeLessThan(firstPluginIndex)
     expect(
       lines.filter(line => line.startsWith(`${Constants.READ_MODE_OPTION} =`))

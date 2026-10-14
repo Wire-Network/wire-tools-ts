@@ -18,19 +18,29 @@ import { toIniLine } from "../utils/iniUtils.js"
  * The harness's view of `sysio::query_engine_plugin`'s config: resolves the
  * shape shared by a cluster's API nodes (`ClusterConfigProvider.resolve`) and
  * the standalone `create-api-node` artifact (`ApiNodeConfig.resolve`), and
- * projects it onto ini lines for both renderers. Every member stays `null` —
- * nodeop's / the plugin's own default — unless set.
+ * projects it onto ini lines for both renderers. Every member but the query
+ * deadline stays `null` — nodeop's / the plugin's own default — unless set.
  */
 export namespace QueryEngineConfigProvider {
   /**
-   * The default half of a {@link QueryEngineOptions} merge. Every member is
-   * `null` on purpose: nodeop (read mode) and the plugin (limits) are the
-   * single authors of their defaults.
+   * `query-timeout-ms` an API node gets when the caller sets none. Under the
+   * plugin's own default (1000 ms, queue time included) the node rejects every
+   * client `timeout_ms` above 1000, since a request may only lower the node's
+   * deadline. Changing it changes the `query-timeout-ms` line of every API node
+   * the harness renders (cluster and standalone).
+   */
+  export const DefaultTimeoutMs = 30_000
+
+  /**
+   * The default half of a {@link QueryEngineOptions} merge: the query deadline
+   * is {@link DefaultTimeoutMs}; every other member is `null` on purpose, as
+   * nodeop (read mode) and the plugin (the other limits) are the single
+   * authors of those defaults.
    *
    * @returns The defaults.
    */
   export function createDefaultOptions(): QueryEngineConfig {
-    return createUnsetQueryEngineConfig()
+    return { ...createUnsetQueryEngineConfig(), timeoutMs: DefaultTimeoutMs }
   }
 
   /**
@@ -39,9 +49,11 @@ export namespace QueryEngineConfigProvider {
    * mode is one the plugin accepts, and the plugin's two pairwise rules hold
    * whenever BOTH halves of a pair are set — `query-max-capture-ms` never
    * exceeds `query-timeout-ms`, `query-max-raw-bytes` never exceeds
-   * `query-max-memory-bytes`. No plugin default is restated: a pair with one
-   * unset half is the plugin's to judge at startup, as is its admitted-memory
-   * overflow rule.
+   * `query-max-memory-bytes`. The query deadline is always set (the caller's or
+   * {@link DefaultTimeoutMs}), so `query-max-capture-ms` is checked against it
+   * whenever set. No plugin default is restated: a pair with one unset half is
+   * the plugin's to judge at startup, as is its admitted-memory overflow rule.
+   * An explicit `null` member stays unset, leaving the plugin's default.
    *
    * @param options - Caller options (any subset).
    * @returns The resolved config.

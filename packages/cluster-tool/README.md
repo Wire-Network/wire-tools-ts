@@ -95,7 +95,8 @@ the path flags.
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
-| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
+| `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
 | `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
@@ -186,16 +187,18 @@ passing a genesis.
 | `--agent-name` | | `wire-api-node` | `agent-name` |
 | `--genesis-json` | | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | `read-mode` (`head` or `irreversible`) — only when set |
-| `--query-engine-<limit>` | | plugin default | `query-<limit>` — only when set; one flag per limit: `worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes` |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` — always |
+| `--query-engine-<limit>` | | plugin default | `query-<limit>` — only when set; one flag per other limit: `worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes` |
 
 Flag names follow **nodeop's own option names**, so the ini line and the flag
 that produced it read the same — except the `--query-engine-*` flags, which are
 the spellings shared with `create` and render as nodeop's `read-mode` /
 `query-<limit>`. No flag carries a yargs `default:` — every default is applied
 by `ApiNodeConfig.resolve` (one home). Each `--help` line interpolates the
-constant it will apply, except on the thirteen `--query-engine-*` flags, which
-apply none: their `--help` says that omitting one leaves nodeop's (read mode)
-or the plugin's (limits) own default in force.
+constant it will apply — `--query-engine-timeout-ms` included — except on the
+other twelve `--query-engine-*` flags, which apply none: their `--help` says
+that omitting one leaves nodeop's (read mode) or the plugin's (limits) own
+default in force.
 
 Notes specific to this command:
 
@@ -207,11 +210,14 @@ Notes specific to this command:
   `trace_api_plugin` and `query_engine_plugin`: it owns `p2p-peer-address` AND
   `agent-name`, which would otherwise be accepted-and-ignored and the node would
   never sync.
-- **`query_engine_plugin` settings render only when set.** With no
-  `--query-engine-*` flag the artifact carries no `read-mode` line (nodeop's
-  default `head` applies) and no `query-*` line; a set flag renders its line,
-  and a deployment overlay that appends its own `read-mode` must then drop it
-  (nodeop refuses a key set twice). The artifact requires a nodeop built with
+- **`query_engine_plugin` settings render only when set — except the query
+  deadline.** With no `--query-engine-*` flag the artifact carries
+  `query-timeout-ms = 30000` (the plugin's own 1000 ms default would reject
+  every client `timeout_ms` above it), no `read-mode` line (nodeop's default
+  `head` applies) and no other `query-*` line; a set flag renders its line. A
+  deployment overlay must not append a key the artifact already carries —
+  `query-timeout-ms` always, `read-mode` when set — since nodeop refuses a key
+  set twice; pass the flag instead. The artifact requires a nodeop built with
   the plugin.
 - **`start.sh` capability-probes `--trace-no-abis` at run time.** Newer nodeop
   generations hard-fail `trace_api_plugin` init without it and older ones reject

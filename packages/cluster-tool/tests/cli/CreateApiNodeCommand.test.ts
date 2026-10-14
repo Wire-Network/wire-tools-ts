@@ -345,10 +345,25 @@ describe("toApiNodeOptions", () => {
     expect(ApiNodeConfig.resolve(options).tuning.httpThreads).toBe(
       ApiNodeConfig.DefaultHttpThreads
     )
-    // An unset query-engine member resolves to "unset" — nodeop's / the
-    // plugin's own default, never a harness-chosen value.
+    // An unset query-engine member resolves to the harness defaults: the query
+    // deadline, else nodeop's / the plugin's own default.
     expect(ApiNodeConfig.resolve(options).queryEngine).toEqual(
       QueryEngineConfigProvider.createDefaultOptions()
+    )
+    expect(ApiNodeConfig.resolve(options).queryEngine.timeoutMs).toBe(
+      QueryEngineConfigProvider.DefaultTimeoutMs
+    )
+  })
+
+  it("lets --query-engine-timeout-ms replace the default query deadline", () => {
+    const callerTimeoutMs = QueryEngineConfigProvider.DefaultTimeoutMs * 2,
+      options = toApiNodeOptions({
+        outputPath: "/tmp/out",
+        httpServerAddress: HttpServerAddress,
+        queryEngineTimeoutMs: callerTimeoutMs
+      })
+    expect(ApiNodeConfig.resolve(options).queryEngine.timeoutMs).toBe(
+      callerTimeoutMs
     )
   })
 })

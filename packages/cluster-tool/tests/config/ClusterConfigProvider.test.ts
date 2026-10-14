@@ -560,8 +560,13 @@ describe("ClusterConfigProvider", () => {
       expect(config.apiCount).toBe(ClusterConfigProvider.DefaultApiCount)
       expect(ClusterConfigProvider.DefaultApiCount).toBe(0)
       expect(config.bind.nodeop.ports.api).toEqual([])
+      // The harness default deadline is not a caller setting, so it does not
+      // demand an API node.
       expect(config.queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
+      )
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
       )
     })
 
@@ -586,7 +591,7 @@ describe("ClusterConfigProvider", () => {
       }
     )
 
-    it("persists the query-engine config — unset by default, caller values when set", async () => {
+    it("persists the query-engine config — the defaults, caller values when set", async () => {
       const config = await ClusterConfigProvider.resolve({
         ...baseOptions(),
         apiCount: 1,
@@ -598,6 +603,20 @@ describe("ClusterConfigProvider", () => {
       expect(config.queryEngine.readMode).toBe(NodeopReadMode.irreversible)
       expect(config.queryEngine.maxResultRows).toBe(500)
       expect(config.queryEngine.workerThreads).toBeNull()
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
+      )
+    })
+
+    it("rejects a caller query deadline when no API node is planned", async () => {
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          queryEngine: { timeoutMs: QueryEngineConfigProvider.DefaultTimeoutMs }
+        })
+      ).rejects.toThrow(
+        /query-engine settings \(timeoutMs\) require at least one API node/
+      )
     })
 
     it("rejects query-engine settings when no API node is planned", async () => {

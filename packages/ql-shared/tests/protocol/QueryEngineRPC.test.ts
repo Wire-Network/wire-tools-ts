@@ -18,6 +18,8 @@ describe("protocol constants and enums", () => {
     expect(QueryEngineRPC.MaxIntegerId).toBe(4294967295)
     expect(QueryEngineRPC.MaxRequestInteger).toBe(9007199254740991)
     expect(QueryEngineRPC.MinRequestTimeoutMs).toBe(1)
+    expect(QueryEngineRPC.InvalidParamsMessage).toBe("Expected named query parameter")
+    expect(QueryEngineRPC.ProbeMethod).toBe("query.probe")
   })
 
   it.each(Object.entries(identityEnums))("%s is an identity enum", (_name, values) => {
