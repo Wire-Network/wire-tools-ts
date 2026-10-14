@@ -207,6 +207,25 @@ describe("QueryPortClient", () => {
     expect(statuses).toEqual([QueryPortStatus.connected])
   })
 
+  it("testConnection sends the profile and resolves the host's result; any other kind is a protocol error", async () => {
+    const connector = newConnector(),
+      client = new QueryPortClient(connector),
+      { port1, port2 } = newChannel(),
+      received = hostEnd(port2),
+      result = { chainId: "c".repeat(64), headBlockNum: 42 }
+    client.start()
+    connector.deliver(port1 as unknown as QueryPortLike)
+    const tested = client.testConnection("t", Fixture.Profile)
+    await receivedCount(received, 1)
+    expect(received[0]).toEqual({ kind: QueryHostMessageKind.testConnection, requestId: "t", profile: Fixture.Profile })
+    port2.postMessage({ kind: QueryHostMessageKind.connectionTested, requestId: "t", result })
+    await expect(tested).resolves.toEqual(result)
+    const mismatched = client.testConnection("u", Fixture.Profile)
+    await receivedCount(received, 2)
+    port2.postMessage(executedOf("u"))
+    await expect(mismatched).rejects.toThrow(`unexpected query-host response ${QueryHostMessageKind.executed}`)
+  })
+
   it("cancelling a queued (unsent) call rejects it locally as cancelled; it is never sent", async () => {
     const connector = newConnector(),
       client = new QueryPortClient(connector),

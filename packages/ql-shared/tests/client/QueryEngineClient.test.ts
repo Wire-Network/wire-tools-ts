@@ -10,6 +10,7 @@ import {
 import {
   createQueryEngineClientDefaultOptions,
   QueryEngineClient,
+  QueryEngineError,
   QueryEngineRPC,
   QueryErrorCode,
   QueryErrorKind,
@@ -30,12 +31,14 @@ import { readEngineExample } from "../common/resultFixtures.js"
 const RequestId = "req-1",
   profile = createProfile({ name: "local", retries: 2 }),
   successBody = () => ({ ...JSON.parse(readEngineExample("response.json")), id: RequestId }),
-  errorBody = (kind: QueryErrorKind, retryable: boolean) => ({
+  /** A paging engine's INVALID_PARAMS for a `timeout_ms` above its `query-timeout-ms`. */
+  TimeoutAboveDeadlineMessage = "timeout_ms may only lower query-timeout-ms",
+  errorBody = (kind: QueryErrorKind, retryable: boolean, message = `${kind} happened`) => ({
     jsonrpc: "2.0",
     id: RequestId,
     error: {
       code: QueryErrorCode[kind],
-      message: `${kind} happened`,
+      message,
       data: { kind, retryable, line: kind === QueryErrorKind.QUERY_SYNTAX ? 1 : null, column: kind === QueryErrorKind.QUERY_SYNTAX ? 32 : null, limit: null }
     }
   })
@@ -167,13 +170,18 @@ describe("QueryEngineClient", () => {
     expect(execution.failure.data.kind).toBe(QueryErrorKind.STATE_UNAVAILABLE)
   })
 
-  it("adds the upgrade hint to INVALID_PARAMS only when paging params were sent", async () => {
-    const paged = createClient([{ body: errorBody(QueryErrorKind.INVALID_PARAMS, false) }]),
-      plain = createClient([{ body: errorBody(QueryErrorKind.INVALID_PARAMS, false) }])
+  it("adds the upgrade hint to a pre-paging engine's refusal only when paging params were sent", async () => {
+    const refusal = () => [{ body: errorBody(QueryErrorKind.INVALID_PARAMS, false, QueryEngineRPC.InvalidParamsMessage) }],
+      paged = createClient(refusal()),
+      plain = createClient(refusal())
     expect(asFailure(await paged.client.execute("q", { limit: 1 })).failure.message).toContain(QueryEngineClient.UpgradeHint)
     expect(asFailure(await plain.client.execute("q")).failure.message).not.toContain(QueryEngineClient.UpgradeHint)
   })
 
+  it("passes a paging engine's own INVALID_PARAMS on a paged request through unhinted", async () => {
+    const { client } = createClient([{ body: errorBody(QueryErrorKind.INVALID_PARAMS, false, TimeoutAboveDeadlineMessage) }])
+    expect(asFailure(await client.execute("q", { timeoutMs: 30_000 })).failure.message).toBe(TimeoutAboveDeadlineMessage)
+  })
   it("rejects a schema_version other than 1.1 naming both versions", async () => {
     const body = successBody()
     body.result.schema_version = "1.0"
@@ -277,6 +285,43 @@ describe("QueryEngineClient", () => {
     expect(mapped).toMatchObject({ status: 500, requestId: RequestId, url: "http://x" })
     const unrelated = new RangeError("caller bug")
     expect(QueryEngineClient.transportError(unrelated, attempt)).toBe(unrelated)
+  })
+
+  describe("ping", () => {
+    it("sends the probe method with empty params and resolves on METHOD_NOT_FOUND", async () => {
+      const { client, requests } = createClient([{ body: errorBody(QueryErrorKind.METHOD_NOT_FOUND, false) }])
+      await expect(client.ping()).resolves.toBeUndefined()
+      expect(requests).toHaveLength(1)
+      expect(requests[0].url).toBe(client.executeURL)
+      expect(JSON.parse(requests[0].init.body as string)).toEqual({
+        jsonrpc: "2.0",
+        id: RequestId,
+        method: QueryEngineRPC.ProbeMethod,
+        params: {}
+      })
+    })
+
+    it("throws the engine's error for any other engine answer, without retrying", async () => {
+      const { client, requests } = createClient([{ body: errorBody(QueryErrorKind.QUERY_BUSY, true) }]),
+        error = await client.ping().then(() => null, identity<QueryEngineError>)
+      expect(error).toBeInstanceOf(QueryEngineError)
+      expect(error.data.kind).toBe(QueryErrorKind.QUERY_BUSY)
+      expect(requests).toHaveLength(1)
+    })
+
+    it("throws a transport error when the endpoint does not serve the engine (HTTP 404)", async () => {
+      const { client } = createClient([{ status: 404, text: "Unknown Endpoint" }]),
+        error = await client.ping().then(() => null, identity<QueryTransportError>)
+      expect(error).toBeInstanceOf(QueryTransportError)
+      expect(error.status).toBe(404)
+    })
+
+    it("throws a transport error when the probe is answered with a result", async () => {
+      const { client } = createClient([{ body: successBody() }]),
+        error = await client.ping().then(() => null, identity<QueryTransportError>)
+      expect(error).toBeInstanceOf(QueryTransportError)
+      expect(error.detail).toBe(QueryEngineClient.ProbeExecutedMessage)
+    })
   })
 
   it("describeOutcome names the result or the failure", () => {

@@ -594,13 +594,16 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("renders the api node ini: query engine plugin, NO read-mode or query-* line when nothing is set, retry storage, no producer plugins", () => {
+    it("renders the api node ini: query engine plugin, only the default query-timeout-ms when nothing is set, retry storage, no producer plugins", () => {
       const ini = nodeOfRole(nodes, NodeRole.api).ini.render()
       expect(ini).toContain(`plugin = ${Constants.QUERY_ENGINE_PLUGIN}`)
-      // The fixture's queryEngine is all-unset: nodeop's read mode and the
-      // plugin's limits govern, so the ini pins none of them.
+      // The fixture's queryEngine holds only the harness default deadline:
+      // nodeop's read mode and the plugin's other limits govern, so the ini
+      // pins none of them.
       expect(ini).not.toContain(Constants.READ_MODE_OPTION)
-      expect(ini).not.toContain("query-")
+      expect(ini.split("\n").filter(line => line.startsWith("query-"))).toEqual(
+        [`query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`]
+      )
       expect(ini).toContain("transaction-retry-max-storage-size-gb = 100")
       expect(ini).toContain(`plugin = ${Constants.NET_PLUGIN}`)
       expect(ini).toContain(`plugin = ${Constants.CHAIN_API_PLUGIN}`)

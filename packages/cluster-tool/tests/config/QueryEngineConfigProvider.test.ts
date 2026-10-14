@@ -1,4 +1,5 @@
 import {
+  createUnsetQueryEngineConfig,
   NodeopReadMode,
   QueryEngineLimitsSchema,
   type QueryEngineOptions
@@ -9,16 +10,21 @@ import { QueryEngineConfigProvider } from "@wireio/cluster-tool/config"
 
 describe("QueryEngineConfigProvider", () => {
   describe("resolve", () => {
-    it("leaves every member unset by default (nodeop's read mode, the plugin's limits)", () => {
+    it("pins the default query deadline at 30 seconds", () => {
+      expect(QueryEngineConfigProvider.DefaultTimeoutMs).toBe(30_000)
+    })
+
+    it("defaults the query deadline and leaves every other member unset (nodeop's read mode, the plugin's limits)", () => {
       const config = QueryEngineConfigProvider.resolve()
       expect(config.readMode).toBeNull()
-      Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member }) =>
-        expect(config[member]).toBeNull()
-      )
+      expect(config.timeoutMs).toBe(QueryEngineConfigProvider.DefaultTimeoutMs)
+      Constants.QUERY_ENGINE_LIMIT_OPTIONS.filter(
+        ({ member }) => member !== "timeoutMs"
+      ).forEach(({ member }) => expect(config[member]).toBeNull())
       expect(config).toEqual(QueryEngineConfigProvider.createDefaultOptions())
     })
 
-    it("keeps caller values and fills the rest with null", () => {
+    it("keeps caller values and fills the rest with the defaults", () => {
       const config = QueryEngineConfigProvider.resolve({
         readMode: NodeopReadMode.irreversible,
         maxInFlight: 8
@@ -26,6 +32,15 @@ describe("QueryEngineConfigProvider", () => {
       expect(config.readMode).toBe(NodeopReadMode.irreversible)
       expect(config.maxInFlight).toBe(8)
       expect(config.workerThreads).toBeNull()
+      expect(config.timeoutMs).toBe(QueryEngineConfigProvider.DefaultTimeoutMs)
+    })
+
+    it("keeps a caller query deadline over the default", () => {
+      expect(QueryEngineConfigProvider.resolve({ timeoutMs: 5_000 }).timeoutMs).toBe(5_000)
+    })
+
+    it("keeps an explicit null query deadline unset (the plugin's own default)", () => {
+      expect(QueryEngineConfigProvider.resolve({ timeoutMs: null }).timeoutMs).toBeNull()
     })
 
     it.each([
@@ -65,11 +80,25 @@ describe("QueryEngineConfigProvider", () => {
           .maxCaptureMs
       ).toBe(60)
       expect(
-        QueryEngineConfigProvider.resolve({ maxCaptureMs: 60 }).timeoutMs
+        QueryEngineConfigProvider.resolve({ maxCaptureMs: 60, timeoutMs: null })
+          .timeoutMs
       ).toBeNull()
       expect(
         QueryEngineConfigProvider.resolve({ maxRawBytes: 2 }).maxMemoryBytes
       ).toBeNull()
+    })
+
+    it("checks query-max-capture-ms against the DEFAULT query deadline when no deadline is given", () => {
+      const { DefaultTimeoutMs } = QueryEngineConfigProvider
+      expect(
+        QueryEngineConfigProvider.resolve({ maxCaptureMs: DefaultTimeoutMs })
+          .maxCaptureMs
+      ).toBe(DefaultTimeoutMs)
+      expect(() =>
+        QueryEngineConfigProvider.resolve({ maxCaptureMs: DefaultTimeoutMs + 1 })
+      ).toThrow(
+        `query-max-capture-ms (${DefaultTimeoutMs + 1}) must not exceed query-timeout-ms (${DefaultTimeoutMs})`
+      )
     })
 
     it("covers every limit the shared schema declares", () => {
@@ -82,10 +111,18 @@ describe("QueryEngineConfigProvider", () => {
   describe("toIniLines", () => {
     it("renders nothing when nothing is set", () => {
       expect(
+        QueryEngineConfigProvider.toIniLines(createUnsetQueryEngineConfig())
+      ).toEqual([])
+    })
+
+    it("renders only the default query deadline for the defaults", () => {
+      expect(
         QueryEngineConfigProvider.toIniLines(
           QueryEngineConfigProvider.createDefaultOptions()
         )
-      ).toEqual([])
+      ).toEqual([
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`
+      ])
     })
 
     it("renders read-mode first, then one query-* line per SET limit in the plugin's order", () => {
@@ -100,6 +137,7 @@ describe("QueryEngineConfigProvider", () => {
       ).toEqual([
         "read-mode = irreversible",
         "query-max-in-flight = 8",
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`,
         "query-max-response-bytes = 1048576"
       ])
     })
@@ -107,7 +145,7 @@ describe("QueryEngineConfigProvider", () => {
     it("renders a set limit without a read-mode line", () => {
       expect(
         QueryEngineConfigProvider.toIniLines(
-          QueryEngineConfigProvider.resolve({ maxGroups: 50 })
+          QueryEngineConfigProvider.resolve({ maxGroups: 50, timeoutMs: null })
         )
       ).toEqual(["query-max-groups = 50"])
     })

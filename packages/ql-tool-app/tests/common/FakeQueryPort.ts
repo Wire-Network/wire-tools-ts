@@ -3,7 +3,7 @@ import { QueryPortStatus } from "@wireio/ql-tool-app/renderer/query"
 
 /**
  * The ONE fake query-port client of the renderer suites: every call the
- * workbench makes (thunks: execute / describe / loadOwner / cancel; App and the
+ * workbench makes (thunks: execute / describe / loadOwner / testConnection / cancel; App and the
  * status bar: start / onStatus / restart) is a jest mock.
  */
 export interface FakeQueryPort {
@@ -12,6 +12,7 @@ export interface FakeQueryPort {
   execute: jest.Mock
   describe: jest.Mock
   loadOwner: jest.Mock
+  testConnection: jest.Mock
   cancel: jest.Mock
   restart: jest.Mock
   onStatus: jest.Mock
@@ -34,6 +35,7 @@ export namespace FakeQueryPort {
       execute: jest.fn(),
       describe: jest.fn(),
       loadOwner: jest.fn(),
+      testConnection: jest.fn(),
       cancel: jest.fn(),
       restart: jest.fn(),
       onStatus: jest.fn(() => () => undefined),

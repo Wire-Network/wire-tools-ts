@@ -19,13 +19,15 @@ import { getLogger, NestedError } from "@wireio/shared"
 import {
   HostControlKind,
   QueryHostMessageKind,
+  type ConnectionTestResult,
   type HostControlMessage,
   type QueryHostCancel,
   type QueryHostDescribe,
   type QueryHostExecute,
   type QueryHostLoadOwner,
   type QueryHostRequest,
-  type QueryHostResponse
+  type QueryHostResponse,
+  type QueryHostTestConnection
 } from "../common/index.js"
 
 const log = getLogger(__filename)
@@ -36,7 +38,7 @@ export interface QueryHostServices {
   profile: ConnectionProfile
   /** Engine client (Node fetch — the transport `wql` uses). */
   client: QueryEngineClient
-  /** Catalog over the same client. */
+  /** Catalog over the same client (its chain API also answers the connection test's `get_info`). */
   catalog: SchemaCatalog
 }
 
@@ -113,6 +115,7 @@ export function handleQueryHostRequest(
     .with({ kind: QueryHostMessageKind.cancel }, cancel => runCancel(controllers, cancel))
     .with({ kind: QueryHostMessageKind.describe }, describe => runDescribe(context, controllers, describe))
     .with({ kind: QueryHostMessageKind.loadOwner }, loadOwner => runLoadOwner(context, controllers, loadOwner))
+    .with({ kind: QueryHostMessageKind.testConnection }, test => runTestConnection(context, controllers, test))
     .exhaustive()
 }
 
@@ -197,6 +200,34 @@ function runLoadOwner(
   return catalogResponse(request.requestId, QueryHostMessageKind.catalog, () =>
     withController(controllers, request.requestId, signal => catalog.loadOwner(request.owner, { signal }))
   )
+}
+
+/**
+ * Test a connection: the node's `get_info` (reachable, which chain), then the
+ * engine probe (`query_engine_plugin` is serving). Reads no ABI and no table.
+ *
+ * @param context - Host state.
+ * @param controllers - The port's in-flight requests.
+ * @param request - The testConnection request.
+ * @returns `connectionTested`, or `failed` with the first step's failure.
+ */
+async function runTestConnection(
+  context: QueryHostContext,
+  controllers: QueryHostRequestControllers,
+  request: QueryHostTestConnection
+): Promise<QueryHostResponse> {
+  const { catalog, client } = context.servicesFor(request.profile)
+  try {
+    const result = await withController(controllers, request.requestId, async (signal): Promise<ConnectionTestResult> => {
+      const info = await SchemaCatalog.untilAborted(catalog.config.chainAPI.v1.chain.get_info(), signal)
+      await client.ping(signal)
+      return { chainId: info.chain_id.hexString, headBlockNum: info.head_block_num.toNumber() }
+    })
+    return { kind: QueryHostMessageKind.connectionTested, requestId: request.requestId, result }
+  } catch (error) {
+    log.warn(`[${request.requestId}] testing ${request.profile.endpoint} failed: ${NestedError.toError(error).message}`, error)
+    return { kind: QueryHostMessageKind.failed, requestId: request.requestId, failure: QueryFailure.of(error) }
+  }
 }
 
 /**
