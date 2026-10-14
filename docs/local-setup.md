@@ -313,7 +313,7 @@ but any nonzero value is rejected.
 
 ### 4.1 Running a flow
 
-Each `flow-*` package is a standalone scenario that bootstraps its own cluster. There are 14:
+Each `flow-*` package is a standalone scenario that bootstraps its own cluster. There are 15:
 
 | Flow | Flow | Flow |
 |---|---|---|
@@ -321,7 +321,7 @@ Each `flow-*` package is a standalone scenario that bootstraps its own cluster. 
 | `flow-batch-operator-termination` | `flow-liq-yield` | `flow-syndication-rate-limit` |
 | `flow-emergency-stop` | `flow-node-owner-nft` | `flow-syndication-underwriting` |
 | `flow-emissions-soak` | `flow-operator-collateral-deposit` | |
-| `flow-producer-registration` | `flow-syndication-plugin-underwriting` | |
+| `flow-producer-registration` | `flow-syndication-plugin-underwriting` | `flow-syndication-plugin-underwriting-cap` |
 
 Launch one with `scripts/run-flow.mjs` and watch it with `scripts/flow-heartbeat-monitor.mjs` (one monitor
 per run, pointed at the same cluster path):

@@ -153,6 +153,7 @@ and outbound queue entries are intermediate checks.
 | `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
 | `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
+| `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -192,7 +193,7 @@ the successful runs above selected the installed pinned 4.2.0 toolchain explicit
 ### Removed reserve and swap flows
 
 The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
-flags have been deleted. The 14 remaining flows exercise supported functionality.
+flags have been deleted. The 15 remaining flows exercise supported functionality.
 Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows

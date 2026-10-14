@@ -386,12 +386,13 @@ Persisted shapes + their validated codecs live in `@wireio/cluster-tool-shared`
 schema behind `SchemaCodec.create<T>(schema)`).
 
 A flow is a `FlowScenario` composed onto the same engine via
-`FlowCLI.create(<Name>Scenario).run()`. See the 14 `flow-*` packages —
+`FlowCLI.create(<Name>Scenario).run()`. See the 15 `flow-*` packages —
 `flow-batch-operator-slashing`, `flow-batch-operator-termination`,
 `flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
 `flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
 `flow-producer-registration`, `flow-syndication-challenge`,
-`flow-syndication-plugin-underwriting`, `flow-syndication-rate-limit`,
+`flow-syndication-plugin-underwriting`, `flow-syndication-plugin-underwriting-cap`,
+`flow-syndication-rate-limit`,
 `flow-syndication-underwriting` — for end-to-end examples.
 
 ---
@@ -438,4 +439,4 @@ repo `CLAUDE.md` / `STYLE.md`).
 - **`@wireio/debugging-client-tool-tui`** — live debugging UI for a running cluster.
 - **`@wireio/debugging-server`** — the embedded JSON-RPC server that persists OPP envelopes.
 - **`@wireio/debugging-shared`** — shared OPP debugging types + storage paths.
-- **`flow-*` (14 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.
+- **`flow-*` (15 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.
