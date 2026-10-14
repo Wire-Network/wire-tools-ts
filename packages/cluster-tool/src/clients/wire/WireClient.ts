@@ -21,7 +21,7 @@ import {
   SysioContracts
 } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
-import { scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
+import { assetUnits, scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
 import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
@@ -402,6 +402,19 @@ export class WireClient {
   }
 
   /**
+   * Whether `account` is privileged (GET /v1/chain/get_account's `privileged`).
+   * A privileged contract's inline actions skip the authorization check, which
+   * is what lets `sysio.kicker` draw from `sysio` under `sysio@active`.
+   *
+   * @param account - The account to read.
+   * @returns True iff the chain marks the account privileged.
+   */
+  async isPrivileged(account: string): Promise<boolean> {
+    const { privileged } = await this.api.v1.chain.get_account(account)
+    return privileged === true
+  }
+
+  /**
    * GET /v1/chain/get_producer_schedule — the ACTIVE schedule, plus the pending / proposed ones
    * while a change is in flight — projected onto plain producer names the way {@link getInfo}
    * projects its scalars (sdk-core answers with `Name`-typed entries). A proposed schedule
@@ -458,9 +471,7 @@ export class WireClient {
       "WIRE"
     )) as Asset[]
     if (!rows || rows.length === 0) return 0n
-    const [amount] = rows[0].toString().split(" ")
-    const [whole, frac = ""] = amount.split(".")
-    return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
+    return assetUnits(rows[0].toString())
   }
 
   /**

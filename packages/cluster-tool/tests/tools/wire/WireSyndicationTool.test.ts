@@ -318,6 +318,15 @@ describe("WireSyndicationTool — shadow ledger and registry reads", () => {
     )
   })
 
+  it("readOutstanding preserves asset units beyond Number precision", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.stat, [stat("9007199.254740993 LIQSOL")])
+    serve(clients.liq.tables.liqpending, [{ quantity: "0.000000001 LIQSOL" }])
+    expect(await WireSyndicationTool.readOutstanding(ctx, Liqsol)).toBe(
+      9_007_199_254_740_994n
+    )
+  })
+
   it("readOutstanding is the supply alone when no yield is pending", async () => {
     const { ctx, clients } = stubbedContext()
     serve(clients.liq.tables.stat, [stat("12.000000000 LIQSOL")])
@@ -1157,13 +1166,6 @@ describe("WireSyndicationTool — sysio.liq holdings and bond arithmetic", () =>
     await expect(
       WireSyndicationTool.readLiqBalance(ctx, Bonder, Liqsol)
     ).rejects.toThrow("truncated")
-  })
-
-  it("parses asset base units without floating point", () => {
-    expect(WireSyndicationTool.assetUnits("2.000000001 LIQSOL")).toBe(
-      2_000_000_001n
-    )
-    expect(WireSyndicationTool.assetUnits("0.000000000 LIQSOL")).toBe(0n)
   })
 
   it("computes the bond remainder and full-bond state", () => {

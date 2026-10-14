@@ -133,6 +133,7 @@ export namespace Constants {
     "sysio.bond",
     "sysio.synd",
     "sysio.councl",
+    "sysio.kicker",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"

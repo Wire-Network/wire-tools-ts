@@ -41,6 +41,7 @@ import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/Bon
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
+import { assetUnits } from "../../utils/index.js"
 
 const {
   SysioContractName,
@@ -1196,14 +1197,4 @@ export namespace WireSyndicationTool {
     )
   }
 
-  /**
-   * The base units of an ABI asset string (`"2.000000000 LIQSOL"` → `2000000000n`), without
-   * passing the integer amount through floating point.
-   *
-   * @param quantity - The asset string.
-   * @return Its base units.
-   */
-  export function assetUnits(quantity: string): bigint {
-    return BigInt(Asset.from(quantity).units.toString())
-  }
 }
