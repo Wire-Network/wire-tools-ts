@@ -1,7 +1,11 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import type { ChildProcess } from "node:child_process"
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from "node:child_process"
 import { Readable } from "node:stream"
 import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
@@ -10,6 +14,118 @@ import {
   ProcessManager,
   terminatePidsSync
 } from "@wireio/cluster-tool/cluster/processes"
+
+/** Loaded-host ceiling for a local bash readiness / close event; never a fixed delay. */
+const StragglerEventTimeoutMs = 20_000
+/** Install SIGINT handling before readiness, then tie lifetime to the parent's stdin pipe. */
+const StragglerCommand = "trap '' INT; echo ready; read -r _"
+
+/** Bound a child event wait and clear the watchdog on every settlement path. */
+function waitForChildEvent(event: Promise<void>, label: string): Promise<void> {
+  let handle: NodeJS.Timeout
+  const timeout = Deferred.useCallback<void>(deferred => {
+    handle = setTimeout(
+      () =>
+        deferred.reject(
+          new Error(
+            `${label} did not arrive within ${StragglerEventTimeoutMs}ms`
+          )
+        ),
+      StragglerEventTimeoutMs
+    )
+  }).promise
+  return Promise.race([event, timeout]).finally(() => clearTimeout(handle))
+}
+
+/** Own the directly spawned straggler independently of the termination behavior under test. */
+async function withStragglerChild(
+  body: (child: ChildProcessWithoutNullStreams) => Promise<void>
+): Promise<void> {
+  const child = spawn("/bin/bash", ["-c", StragglerCommand], { stdio: "pipe" }),
+    closed = Deferred.useCallback<void>(deferred => {
+      // Register before readiness: exitCode is set before stdio has closed.
+      child.once("close", () => deferred.resolve())
+    }).promise,
+    ready = new Deferred<void>(),
+    onReady = () => ready.resolve(),
+    onError = (error: Error) => ready.reject(error),
+    onExit = (code: number, signal: NodeJS.Signals) =>
+      ready.reject(
+        new Error(
+          `straggler exited before ready (code=${code}, signal=${signal})`
+        )
+      )
+  child.stdout.once("data", onReady)
+  child.once("error", onError)
+  child.once("exit", onExit)
+  child.stderr.resume()
+  try {
+    try {
+      await waitForChildEvent(ready.promise, "straggler readiness")
+    } finally {
+      child.stdout.removeListener("data", onReady)
+      child.removeListener("error", onError)
+      child.removeListener("exit", onExit)
+    }
+    await body(child)
+    await waitForChildEvent(closed, "straggler close")
+  } finally {
+    // Use the child handle, never the sweep's liveness predicate or returned pids.
+    if (child.exitCode == null && child.signalCode == null) {
+      child.kill(ProcessSignalName.SIGKILL)
+    }
+    child.stdin.destroy()
+    await waitForChildEvent(closed, "straggler cleanup close")
+  }
+}
+
+describe("straggler fixture lifecycle", () => {
+  afterEach(() => jest.useRealTimers())
+
+  it("clears the event watchdog on success", async () => {
+    jest.useFakeTimers()
+    await waitForChildEvent(Promise.resolve(), "ready")
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("preserves event errors and clears the watchdog", async () => {
+    jest.useFakeTimers()
+    const error = new Error("spawn failed")
+    await expect(
+      waitForChildEvent(Promise.reject(error), "ready")
+    ).rejects.toBe(error)
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("bounds a missing event without leaving a timer", async () => {
+    jest.useFakeTimers()
+    const pending = new Deferred<void>(),
+      wait = waitForChildEvent(pending.promise, "ready")
+    jest.advanceTimersByTime(StragglerEventTimeoutMs)
+    await expect(wait).rejects.toThrow(
+      `ready did not arrive within ${StragglerEventTimeoutMs}ms`
+    )
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("kills and reaps the child even when the test body throws", async () => {
+    let child: ChildProcessWithoutNullStreams
+    let closed = false
+    const error = new Error("termination assertion failed")
+    await expect(
+      withStragglerChild(async spawned => {
+        child = spawned
+        spawned.once("close", () => {
+          closed = true
+        })
+        throw error
+      })
+    ).rejects.toBe(error)
+    expect(closed).toBe(true)
+    expect(child.signalCode).toBe(ProcessSignalName.SIGKILL)
+    expect(child.stdin.destroyed).toBe(true)
+  })
+})
 
 /** A concrete ManagedProcess for tests — trivial exe, fast verify window. */
 class FakeProcess extends ManagedProcess {
@@ -188,7 +304,12 @@ describe("ProcessManager + ManagedProcess", () => {
     // Regression: the 30s GracefulKillMs race timer used to survive a fast
     // graceful exit — one pending handle per stopped process, which held jest
     // workers open past their exit grace ("failed to exit gracefully").
-    const managed = new FakeProcess(manager, "timer-hygiene", "/usr/bin/sleep", ["300"])
+    const managed = new FakeProcess(
+      manager,
+      "timer-hygiene",
+      "/usr/bin/sleep",
+      ["300"]
+    )
     await managed.start()
     const clearTimeoutSpy = jest.spyOn(global, "clearTimeout")
     const timeoutSpy = jest.spyOn(global, "setTimeout")
@@ -215,7 +336,9 @@ describe("ProcessManager + ManagedProcess", () => {
     })
 
     it("refuses while the child is running", async () => {
-      const managed = new FakeProcess(manager, "rm-running", "/usr/bin/sleep", ["300"])
+      const managed = new FakeProcess(manager, "rm-running", "/usr/bin/sleep", [
+        "300"
+      ])
       await managed.start()
       expect(managed.isRunning).toBe(true)
       expect(() => manager.remove("rm-running")).toThrow(/still running/)
@@ -289,7 +412,8 @@ describe("ProcessManager + ManagedProcess", () => {
 
   describe("terminatePidsSync", () => {
     /** The sweep's own liveness semantics — zombies (empty cmdline) count as exited. */
-    const isAliveByCmdline = (pid: number): boolean => commandBasename(pid) !== ""
+    const isAliveByCmdline = (pid: number): boolean =>
+      commandBasename(pid) !== ""
 
     it("returns [] without signalling when nothing passes isAlive", () => {
       const killSpy = jest.spyOn(process, "kill")
@@ -313,18 +437,20 @@ describe("ProcessManager + ManagedProcess", () => {
     })
 
     it("SIGKILLs a straggler that ignores the graceful signal and reports it", async () => {
-      const { spawn } = await import("node:child_process")
-      const child = spawn("/bin/bash", ["-c", "trap '' INT; sleep 300"], {
-        stdio: "ignore"
+      // Wait for the child's own readiness line — it is printed AFTER the trap
+      // is installed — or the SIGINT lands early and the child exits
+      // gracefully, leaving the straggler path untested. bash then blocks in the
+      // `read` builtin on the open stdin pipe: no grandchild to outlive the
+      // SIGKILL, and no exec (during which /proc/<pid>/cmdline is briefly
+      // empty, which the liveness check reads as an exited process).
+      let pid: number
+      await withStragglerChild(async child => {
+        pid = child.pid
+        const forced = terminatePidsSync([pid], 1_200, isAliveByCmdline)
+        expect(forced).toEqual([pid])
       })
-      // Let bash install the trap first, or the SIGINT lands early and the
-      // child exits gracefully — the straggler path would go untested.
-      await new Promise(resolve => setTimeout(resolve, 500))
-      const forced = terminatePidsSync([child.pid], 1_200, isAliveByCmdline)
-      expect(forced).toEqual([child.pid])
-      // SIGKILL is untrappable — give the kernel a beat, then confirm death.
-      await new Promise(resolve => setTimeout(resolve, 200))
-      expect(isAliveByCmdline(child.pid)).toBe(false)
+      // withStragglerChild awaited close; the kernel has reaped the process.
+      expect(isAliveByCmdline(pid)).toBe(false)
     })
   })
 
@@ -352,7 +478,13 @@ describe("ProcessManager + ManagedProcess", () => {
     })
 
     it("rejects when verifyReady never passes within the timeout", async () => {
-      const process = new FakeProcess(manager, "never", "/bin/sleep", ["5"], false)
+      const process = new FakeProcess(
+        manager,
+        "never",
+        "/bin/sleep",
+        ["5"],
+        false
+      )
       await expect(process.start()).rejects.toThrow(/did not pass verifyReady/)
       await process.kill()
     })
