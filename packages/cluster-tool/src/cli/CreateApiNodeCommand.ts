@@ -189,13 +189,13 @@ function applyCreateApiNodeArgs(builder: Argv) {
       }
     )
   // One number flag per limit, from the SAME table the ini renderer reads. No
-  // yargs `default:` — an unset limit must stay unset so the plugin's own
-  // default governs.
+  // yargs `default:` — an unset limit must stay unset so resolution applies
+  // the harness default (the query deadline) or leaves the plugin's own.
   return Constants.QUERY_ENGINE_LIMIT_OPTIONS.reduce(
-    (instance, { member, option }) =>
-      instance.option(toQueryEngineFlag(member), {
+    (instance, limit) =>
+      instance.option(toQueryEngineFlag(limit.member), {
         type: "number",
-        describe: describeQueryEngineLimitFlag(option)
+        describe: describeQueryEngineLimitFlag(limit)
       }),
     withReadMode
   )

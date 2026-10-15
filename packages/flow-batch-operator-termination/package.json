@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-batch-operator-termination",
-  "version": "0.1.17",
+  "version": "0.1.20",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Batch Operator Termination via Delivery Underperformance",
@@ -13,9 +13,9 @@
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.92",
-    "@wireio/opp-typescript-models": "^1.0.50",
-    "@wireio/shared": "^1.0.92"
+    "@wireio/sdk-core": "^1.0.97",
+    "@wireio/opp-typescript-models": "^1.0.51",
+    "@wireio/shared": "^1.0.96"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

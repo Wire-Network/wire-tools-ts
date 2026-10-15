@@ -150,10 +150,14 @@ operators after bootstrap:
    action, so it runs before `system` replaces `bios` in Stage 3:
    - `threshold = floor(N*2/3) + 1`, where `N` = number of producer **accounts** (`producerCount = 21` ⇒
      `threshold = 15`).
-   - each finalizer `= {description:<producer account name>, weight:1, public_key:<that account's own BLS
-     pubkey>, pop:<its BLS proof-of-possession>}`. Every producer account owns a BLS finalizer key minted for
-     it before any node starts (its block-signing K1 stays shared with its hosting node); these are not
-     `DEV_BLS` (which is only the genesis/bios finalizer). The policy is keyed on accounts, not nodes,
+   - each finalizer `= {description:<producer account name>, weight:1, public_key:<that account's BLS
+     pubkey>, pop:<its BLS proof-of-possession>}`. A producer account that is its node's only hosted
+     producer votes with that node's own generated BLS key (its keys are published under the node's
+     name, `/wire/<cluster>/node_NN/{K1,BLS}`); producer accounts sharing a node each own a BLS finalizer
+     key minted for them before any node starts, published under the account's own name, because
+     `regfinkey` enforces global finalizer-key uniqueness. The block-signing K1 is always the hosting
+     node's. None of these is `DEV_BLS` (which is only the genesis/bios finalizer). The policy is keyed
+     on accounts, not nodes,
      because `sysio.system` rebuilds the finalizer policy from the keys accounts registered via `regfinkey`
      (step 23) the first time producer ranking publishes; a node-keyed genesis policy would be replaced by
      one the running nodes hold no key for.
@@ -281,10 +285,10 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
       `[<producer>@active]`. `sysio.system` admits it only for an ACTIVE PRODUCER operator, so it follows
       step 22. Registration is what makes a producer rankable: the ranked schedule is built only from
       producers with an active `producers` row.
-    - `sysio::regfinkey({finalizer_name:<producer>, finalizer_key:<the account's own BLS pubkey>,
+    - `sysio::regfinkey({finalizer_name:<producer>, finalizer_key:<the account's BLS pubkey>,
       proof_of_possession:<its BLS PoP>})` — `[<producer>@active]`. Requires the `producers` row written just
       above; a producer's first finalizer key is activated by `regfinkey` itself, so no `actfinkey` follows.
-      The key is the same per-account BLS key the Stage 1 finalizer policy was built from.
+      The key is the same BLS key the Stage 1 finalizer policy was built from for that account.
 
     The producer, finalizer-key and finalizer rows are billed to `sysio.system`; producers receive no RAM
     grant for them. The bootstrap makes no producer collateral deposit.
@@ -327,7 +331,7 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `compute_bps` | `4000` | 40% → producers + batch ops |
 | `capex_bps` | `2000` | 20% → `sysio.ops` |
 | `governance_bps` | `1000` | 10% → `sysio.gov` |
-| *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`, drained by `fundclaim` |
+| *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`; no automatic LIQ or DClaim capital draw |
 | `producer_bps` | `7000` | compute split: 70% producers |
 | `batch_op_bps` | `3000` | compute split: 30% batch ops |
 | `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
@@ -336,8 +340,9 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
 25. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
-    with the contract's default 180-day claim window. (No `setclmwindow`/`importseed`/`importdone` in the
-    bootstrap — those are external/operational tools, not part of the sequence.)
+    with the bootstrap import window open. DClaim rewards and imported balances remain claimable
+    indefinitely, including while awaiting account linking. `importseed` and `importdone` are
+    external/operational tools, not part of this bootstrap sequence.
 
 ## Stage 10 — Register the bootstrap node owner (real `nodeownreg` flow; NO `forcereg`)
 Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would inline-send for a real claim:
@@ -360,9 +365,8 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 Create the panic account first so the delegated authority can reference it.
 
 **Companion requirement:** deploy the native-permission Andon contract from wire-sysio #662 and use
-tooling that implements the sequence below. Older `ClusterBuildDefaults` / `AndonContractSteps` that
-invoke `setpanic` or `addpuller` must be updated before running this bootstrap against that contract;
-those actions no longer exist. This sequence supersedes that older harness configuration.
+matching SDK declarations. `ClusterBuildDefaults` implements the sequence below; its Andon steps
+declare the linked `sysio.andon@pull` and `@clear` permissions.
 
 28. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — then `sysio.roa::addpolicy({owner:"andon.panic",
@@ -444,7 +448,6 @@ contract/mint addresses via the same shapes.
     registered liq token: `{sym:"9,LIQETH", chain_code:slug("ETHEREUM"), token_code:slug("LIQETH")}` and
     `{sym:"9,LIQSOL", chain_code:slug("SOLANA"), token_code:slug("LIQSOL")}`. Syndicated outpost custody is
     minted 1:1 into these symbols.
-36. `sysio.liq::setkicker({bps:200})` — `[sysio.liq@active]` — the T5 yield kicker.
 37. **Underwriting + syndication rules:**
     - `sysio.bond::setconfig({hold_bps:1000})` — `[sysio.bond@active]` — the hold bond, in bps of a request's
       covered amount (the contract default, set explicitly).
@@ -459,6 +462,7 @@ contract/mint addresses via the same shapes.
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |
+| `min_desyndicate` | `1000000` | required gross return floor: 0.001 at nine decimals, shared by both pairs; an arbitrary launch choice based on 0.001 SOL |
 
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`
@@ -581,8 +585,9 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
 - **Raw deploys:** `bios` then `system` (both on `sysio`), and `sysio.roa`. `system` is raw (not **sys**)
   because `setsyscode`'s `giftram` cannot self-target the `sysio` pool account.
 - **Genesis vs. handoff keys:** genesis runs on `DEV_K1` (block signer) + `DEV_BLS` (finalizer) — the bios
-  node. `setfinalizer` (Stage 1) switches finality to the producer accounts' own generated BLS keys (the
-  keys each account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
+  node. `setfinalizer` (Stage 1) switches finality to each producer account's BLS key — the hosting
+  node's own BLS for a node's sole producer, a per-account key on a shared node (the keys each
+  account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
   production to the producer nodes' generated K1 keys — the same node K1s the producer accounts are keyed
   with and register with `regproducer`. Batch operators carry their own per-operator generated K1s.
   `DEV_K1` remains only as `sysio`'s active key and `wireno`'s key; production replaces all of these with

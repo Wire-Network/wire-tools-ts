@@ -1,3 +1,5 @@
+import "source-map-support/register"
+
 import { FlowCLI } from "@wireio/cluster-tool"
 
 import { TerminalTieScenario } from "./TerminalTieScenario.js"

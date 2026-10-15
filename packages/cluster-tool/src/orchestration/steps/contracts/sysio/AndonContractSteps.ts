@@ -1,5 +1,4 @@
 import { SysioContracts } from "@wireio/sdk-core"
-import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -13,97 +12,14 @@ const { SysioContractName, SysioContractAccount } = SysioContracts
 /**
  * Steps for `sysio.andon` actions — the depot's emergency stop (the Andon cord).
  *
- * `setpanic` and `addpuller` are governance's: the contract requires the system
- * account. `pull` and `clear` are signed by the `actor` named in their data —
- * the contract admits `sysio`, the panic account and (for `pull`) a registered
- * puller.
+ * Pull and clear declare their linked native permissions. The signer must satisfy
+ * the delegated authority configured during bootstrap.
  */
 export namespace AndonContractSteps {
-  /** Input for {@link planSetpanic} — the generated `sysio.andon::setpanic` data. */
-  export interface SetpanicInput extends StepInput {
-    readonly kind: "AndonContractSteps.SetpanicInput"
-    readonly data: SysioContracts.SysioAndonSetpanicAction
-  }
-
-  /**
-   * `sysio.andon::setpanic` — name the panic account, which may pull and clear
-   * the cord. The account must exist. Signed by the system account.
-   */
-  export function planSetpanic<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioAndonSetpanicAction
-  ): ClusterBuildStep<C, SetpanicInput> {
-    return ClusterBuildStep.create<C, SetpanicInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "AndonContractSteps.SetpanicInput", data },
-      runSetpanic
-    )
-  }
-
-  /** Named runner — `sysio.andon::setpanic`, signed by the system account. */
-  export async function runSetpanic<C extends ClusterBuildContext>(
-    ctx: C,
-    input: SetpanicInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.andon)
-      .actions.setpanic.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(
-          SysioContractAccount[SysioContractName.system]
-        )
-      })
-  }
-
-  /** Input for {@link planAddpuller} — the generated `sysio.andon::addpuller` data. */
-  export interface AddpullerInput extends StepInput {
-    readonly kind: "AndonContractSteps.AddpullerInput"
-    readonly data: SysioContracts.SysioAndonAddpullerAction
-  }
-
-  /**
-   * `sysio.andon::addpuller` — register a contract that may pull the cord on a
-   * fault it detects (`sysio.synd` on a custody shortfall). Signed by the system
-   * account.
-   */
-  export function planAddpuller<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioAndonAddpullerAction
-  ): ClusterBuildStep<C, AddpullerInput> {
-    return ClusterBuildStep.create<C, AddpullerInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "AndonContractSteps.AddpullerInput", data },
-      runAddpuller
-    )
-  }
-
-  /** Named runner — `sysio.andon::addpuller`, signed by the system account. */
-  export async function runAddpuller<C extends ClusterBuildContext>(
-    ctx: C,
-    input: AddpullerInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.andon)
-      .actions.addpuller.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(
-          SysioContractAccount[SysioContractName.system]
-        )
-      })
+  /** Native child permissions linked to the corresponding Andon action. */
+  export enum Permission {
+    pull = "pull",
+    clear = "clear"
   }
 
   /** Input for {@link planPull} — the generated `sysio.andon::pull` data. */
@@ -114,7 +30,7 @@ export namespace AndonContractSteps {
 
   /**
    * `sysio.andon::pull` — pull the cord: every contract that reads it stops
-   * moving funds out until it is cleared. Signed by the `actor` in the data.
+   * moving funds out until it is cleared. Authorized by the delegated pull permission.
    */
   export function planPull<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -133,7 +49,7 @@ export namespace AndonContractSteps {
     )
   }
 
-  /** Named runner — `sysio.andon::pull`, signed by the pulling actor. */
+  /** Named runner — `sysio.andon::pull`, declaring the linked pull permission. */
   export async function runPull<C extends ClusterBuildContext>(
     ctx: C,
     input: PullInput,
@@ -143,7 +59,12 @@ export namespace AndonContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.andon)
       .actions.pull.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.data.actor)
+        authorization: [
+          {
+            actor: SysioContractAccount[SysioContractName.andon],
+            permission: Permission.pull
+          }
+        ]
       })
   }
 
@@ -154,10 +75,11 @@ export namespace AndonContractSteps {
   }
 
   /**
-   * `sysio.andon::clear` — clear the cord. Signed by the `actor` in the data:
-   * the system account or the panic account.
+   * `sysio.andon::clear` — clear the cord. Authorized by the delegated clear permission.
    */
-  export function planClear<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClear<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -174,7 +96,7 @@ export namespace AndonContractSteps {
     )
   }
 
-  /** Named runner — `sysio.andon::clear`, signed by the clearing actor. */
+  /** Named runner — `sysio.andon::clear`, declaring the linked clear permission. */
   export async function runClear<C extends ClusterBuildContext>(
     ctx: C,
     input: ClearInput,
@@ -184,7 +106,12 @@ export namespace AndonContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.andon)
       .actions.clear.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.data.actor)
+        authorization: [
+          {
+            actor: SysioContractAccount[SysioContractName.andon],
+            permission: Permission.clear
+          }
+        ]
       })
   }
 }

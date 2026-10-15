@@ -20,17 +20,6 @@ end-to-end.
 
 ## What it does NOT verify
 
-- **`sysio.system::fundclaim` cap semantics from PR 354.** That code path
-  fires only on `sysio.dclaim::onreward`, which is driven by
-  STAKING_REWARD attestations arriving from the outposts. As of writing,
-  wire-ethereum `StakingManager.sol` is a rename-only placeholder
-  (`revert()` bodies); outpost reward emission is on a separate
-  developer track. A companion exhaust flow will be added in a follow-up
-  PR once that emission track lands.
-
-  `capital_shortfall_total` is asserted to stay at `0` in this soak —
-  trivially true today because no `fundclaim` calls occur.
-
 - **Pre-funding of `sysio.dclaim`.** At production launch the dclaim
   account is credited with the pre-launch capital allocation up-front.
   This soak replicates that with an in-test `sysio.token::transfer`
@@ -105,7 +94,7 @@ SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-so
 **Scaffold only.** The bootstrap wiring (`ClusterManager.ts` Phase 15b/c)
 is in place; the seed + sample-claim test bodies are stubbed as `it.todo`
 pending the regen of `@wireio/sdk-core` types against the
-post-PR-354 wire-sysio ABIs (`sysio.system::setemitcfg`, `fundclaim`,
+post-PR-354 wire-sysio ABIs (`sysio.system::setemitcfg`,
 `sysio.dclaim::*`).
 
 The `convertImportSeed` helper has full unit-test coverage in this file

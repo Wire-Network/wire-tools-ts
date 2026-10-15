@@ -14,10 +14,21 @@ import {
   DebugOutpostEndpointsType,
   Envelope
 } from "@wireio/opp-typescript-models"
+import { Deferred } from "@wireio/shared"
 
 import { LocalFileDebuggingClient } from "@wireio/debugging-client-shared"
 
 import { makeFixtureCluster, type FixtureCluster } from "./fixtureCluster.js"
+
+/** Line appended to the tailed log after the subscription starts. */
+const AppendedLine = "gamma"
+/** Process label whose pid file appears after the liveness subscription starts. */
+const DiscoveredLabel = "nodeop"
+/**
+ * Ceiling for a test that awaits a live subscription's poll — four liveness
+ * intervals, so a late tick on a loaded host still lands well inside it.
+ */
+const LiveSubscriptionTimeoutMs = LocalFileDebuggingClient.ProcessLivenessPollMs * 4
 
 describe("LocalFileDebuggingClient", () => {
   let fixture: FixtureCluster
@@ -183,34 +194,48 @@ describe("LocalFileDebuggingClient", () => {
         logFile = fixture.writeLog(logRel, "tail.log", "alpha\nbeta\n")
       const events: LogTailEvent[] = []
       const sub = await client.subscribe(StreamTopic.LogTail, { path: logFile })
-      sub.on("event", e => events.push(e))
+      // Await the appended line itself rather than sleeping a fixed number of
+      // poll intervals — a loaded host can run a tick late; the test timeout
+      // is the ceiling.
+      const gammaSeen = Deferred.useCallback<void>(deferred =>
+        sub.on("event", e => {
+          events.push(e)
+          if (e.lines.includes(AppendedLine)) deferred.resolve()
+        })
+      )
       // Initial emit (might be 0 lines or 2 lines; either fine)
       await new Promise(r =>
         setTimeout(r, LocalFileDebuggingClient.LogTailPollMs + 50)
       )
-      fixture.appendLog(logRel, "tail.log", "gamma\n")
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.LogTailPollMs * 2 + 50)
-      )
+      fixture.appendLog(logRel, "tail.log", `${AppendedLine}\n`)
+      await gammaSeen.promise
       sub.close(ClosedReason.ClientRequested)
       const flatLines = events.flatMap(e => e.lines)
-      expect(flatLines).toContain("gamma")
-    })
+      expect(flatLines).toContain(AppendedLine)
+    }, LiveSubscriptionTimeoutMs)
   })
 
   describe("subscribe(ProcessLiveness)", () => {
     it("emits a diff for newly-discovered sources", async () => {
       const events: ProcessLivenessEvent[] = []
       const sub = await client.subscribe(StreamTopic.ProcessLiveness, {})
-      sub.on("event", e => events.push(e))
-      fixture.writePid("data/node_bios", "nodeop", process.pid)
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.ProcessLivenessPollMs + 200)
+      // The subscription's first tick ran before the pid file exists, so the
+      // new source surfaces on the NEXT interval tick. Await that diff rather
+      // than sleeping one interval plus a fixed margin — a loaded host can run
+      // the tick late; the test timeout is the ceiling.
+      const sourceSeen = Deferred.useCallback<void>(deferred =>
+        sub.on("event", e => {
+          events.push(e)
+          if (e.setSnapshots.some(s => s.label === DiscoveredLabel))
+            deferred.resolve()
+        })
       )
+      fixture.writePid("data/node_bios", DiscoveredLabel, process.pid)
+      await sourceSeen.promise
       sub.close(ClosedReason.ClientRequested)
       const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
-      expect(allLabels).toContain("nodeop")
-    }, 10_000)
+      expect(allLabels).toContain(DiscoveredLabel)
+    }, LiveSubscriptionTimeoutMs)
   })
 
   describe("subscribe(EnvelopeWatch)", () => {

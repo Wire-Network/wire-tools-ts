@@ -86,10 +86,12 @@ export function fixtureOperatorAccount(
  *
  * Every consumer that launches or renders a producing node
  * (`NodeopProcessSteps.resolveOperators` and, through it, `StartScriptSteps` and the
- * external-config rebind) reads these accounts rather than the node key set, because each
- * account owns its own BLS finalizer key — `regfinkey` enforces a global uniqueness check, so
- * siblings sharing their node's one key means only the first can ever register. The K1 is the
- * NODE's, identical across the accounts it hosts, exactly as the live path materializes it.
+ * external-config rebind) reads these accounts rather than the node key set. The K1 is the
+ * NODE's, identical across the accounts it hosts, exactly as the live path materializes it. The
+ * finalizer key and the publication label follow `NodeConfig.producerPublicationLabel`: a node's
+ * sole producer carries the NODE's BLS under the node's name, while siblings on a shared node
+ * each own a BLS under their own label — `regfinkey` enforces a global uniqueness check, so
+ * siblings sharing their node's one key means only the first can ever register.
  *
  * @param ctx - the fixture context whose `keyStore` receives the accounts.
  * @returns the seeded accounts, in plan order.
@@ -100,10 +102,12 @@ export function seedProducerOperators(
   const seeded = NodeConfig.plan(ctx.config)
     .filter(node => node.role === NodeRole.producer)
     .flatMap(node =>
-      node.producers.map(
-        (label): OperatorAccount => ({
+      node.producers.map((label): OperatorAccount => {
+        const publicationLabel = NodeConfig.producerPublicationLabel(node, label),
+          finalizerOwner = publicationLabel === node.name ? `n${node.index}` : label
+        return {
           label,
-          publicationLabel: label,
+          publicationLabel,
           account: label,
           type: OperatorType.PRODUCER,
           wire: {
@@ -113,12 +117,12 @@ export function seedProducerOperators(
           },
           wireFinalizer: {
             type: KeyType.BLS as const,
-            publicKey: `PUB_BLS_${label}`,
-            privateKey: `PVT_BLS_${label}`,
-            proofOfPossession: `SIG_BLS_${label}`
+            publicKey: `PUB_BLS_${finalizerOwner}`,
+            privateKey: `PVT_BLS_${finalizerOwner}`,
+            proofOfPossession: `SIG_BLS_${finalizerOwner}`
           }
-        })
-      )
+        }
+      })
     )
   seeded.forEach(operator => ctx.keyStore.setOperator(operator))
   return seeded

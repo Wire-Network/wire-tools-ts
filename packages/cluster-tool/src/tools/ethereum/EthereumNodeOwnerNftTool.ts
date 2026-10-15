@@ -58,7 +58,8 @@ export enum NodeOwnerRejectReason {
   OwnerNotAccount = 2,
   AccountKeyMismatch = 3,
   Duplicate = 4,
-  LinkKeyMismatch = 5
+  LinkKeyMismatch = 5,
+  TierCapReached = 6
 }
 
 /** Minimal `ethers` surface of `MockWireNodes.sol`. */

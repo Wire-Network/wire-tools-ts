@@ -1,8 +1,8 @@
 import { IMessageType } from "@protobuf-ts/runtime"
 import type { Router, Request, Response, NextFunction } from "express"
 
+import { JsonRPCProtocol } from "@wireio/cluster-tool-shared"
 import {
-  DebuggingDefaults,
   FROM_JSON_OPTIONS,
   HandlerURIType,
   HandlerTypeMappings,
@@ -17,15 +17,6 @@ import { match, P } from "ts-pattern"
 import { identity } from "lodash"
 
 export namespace JsonRPC {
-  /** JSON-RPC 2.0 error codes */
-  export enum ErrorCode {
-    PARSE_ERROR = -32700,
-    INVALID_REQUEST = -32600,
-    METHOD_NOT_FOUND = -32601,
-    INVALID_PARAMS = -32602,
-    INTERNAL_ERROR = -32603
-  }
-
   /**
    * Handler registry — maps method names (the API path strings from
    * HandlerMap, e.g. "/api/opp/envelope") to their handler functions.
@@ -56,7 +47,7 @@ export namespace JsonRPC {
     return (
       body &&
       typeof body === "object" &&
-      body.jsonrpc === DebuggingDefaults.JsonrpcVersion
+      body.jsonrpc === JsonRPCProtocol.Version
     )
   }
 
@@ -164,9 +155,9 @@ export namespace JsonRPC {
 
     if (typeof body.method !== "string") {
       sendJson(res, 200, {
-        jsonrpc: DebuggingDefaults.JsonrpcVersion,
+        jsonrpc: JsonRPCProtocol.Version,
         error: {
-          code: JsonRPC.ErrorCode.INVALID_REQUEST,
+          code: JsonRPCProtocol.ErrorCode.INVALID_REQUEST,
           message: "Missing 'method'"
         },
         id
@@ -176,9 +167,9 @@ export namespace JsonRPC {
 
     if (!isObject(body.params)) {
       sendJson(res, 200, {
-        jsonrpc: DebuggingDefaults.JsonrpcVersion,
+        jsonrpc: JsonRPCProtocol.Version,
         error: {
-          code: JsonRPC.ErrorCode.INVALID_REQUEST,
+          code: JsonRPCProtocol.ErrorCode.INVALID_REQUEST,
           message: `Invalid request: ${body.params}`
         },
         id
@@ -189,9 +180,9 @@ export namespace JsonRPC {
     const handler = registry.get(body.method)
     if (!handler) {
       sendJson(res, 200, {
-        jsonrpc: DebuggingDefaults.JsonrpcVersion,
+        jsonrpc: JsonRPCProtocol.Version,
         error: {
-          code: JsonRPC.ErrorCode.METHOD_NOT_FOUND,
+          code: JsonRPCProtocol.ErrorCode.METHOD_NOT_FOUND,
           message: `Method not found: ${body.method}`
         },
         id
@@ -227,7 +218,7 @@ export namespace JsonRPC {
 
       if (!res.headersSent) {
         sendJson(res, 200, {
-          jsonrpc: DebuggingDefaults.JsonrpcVersion,
+          jsonrpc: JsonRPCProtocol.Version,
           result,
           id
         })
@@ -240,9 +231,9 @@ export namespace JsonRPC {
       })
       if (!res.headersSent) {
         sendJson(res, 200, {
-          jsonrpc: DebuggingDefaults.JsonrpcVersion,
+          jsonrpc: JsonRPCProtocol.Version,
           error: {
-            code: JsonRPC.ErrorCode.INTERNAL_ERROR,
+            code: JsonRPCProtocol.ErrorCode.INTERNAL_ERROR,
             message: err.message || "Internal error"
           },
           id

@@ -3,6 +3,7 @@ import Assert from "node:assert"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 
+import { Constants as TestClusterConstants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
@@ -11,6 +12,7 @@ import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { verifyStep, pollUntil } from "../orchestration/StepTools.js"
 import { Steps } from "../orchestration/steps/index.js"
 import { Report } from "../report/Report.js"
+import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
 import { matchesProtoEnum } from "../utils/predicateUtils.js"
 import { FlowScenario } from "./FlowScenario.js"
@@ -330,24 +332,35 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       "ProvisionVoters",
       "Create + register the 3 Tier-1 voters (the dispute electorate)"
     ).push(
-      ...Constants.Tier1VoterNames.flatMap(voter => [
-        DisputeSteps.planNewnameduser(
-          Actor.User,
-          `create-${voter}`,
-          `create Tier-1 voter account ${voter}`,
-          {},
-          voter,
-          NodeOwnerTier.T1
-        ),
-        DisputeSteps.planNodeownreg(
-          Actor.User,
-          `register-${voter}`,
-          `register ${voter} as a Tier-1 node owner`,
-          {},
-          voter,
-          NodeOwnerTier.T1
-        )
-      ]),
+      ...Constants.Tier1VoterNames.flatMap(voter => {
+        const ethereumIdentity = AuthExLinkTool.newEthereumIdentity()
+        return [
+          Steps.contracts.sysio.roa.planNewnameduser(
+            Actor.User,
+            `create-${voter}`,
+            `create Tier-1 voter account ${voter}`,
+            {},
+            {
+              account: voter,
+              pubkey: TestClusterConstants.DEV_K1_PUBLIC_KEY,
+              tier: NodeOwnerTier.T1
+            }
+          ),
+          Steps.contracts.sysio.roa.planNodeownreg(
+            Actor.User,
+            `register-${voter}`,
+            `register ${voter} as a Tier-1 node owner`,
+            {},
+            {
+              owner: voter,
+              tier: NodeOwnerTier.T1,
+              eth_address: ethereumIdentity.nativeAddress,
+              eth_pub_key: ethereumIdentity.publicKey,
+              wire_pub_key: TestClusterConstants.DEV_K1_PUBLIC_KEY
+            }
+          )
+        ]
+      }),
       verifyStep(
         Actor.Sysio,
         "electorate-registered",

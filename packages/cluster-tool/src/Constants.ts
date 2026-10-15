@@ -158,7 +158,7 @@ export namespace Constants {
   /**
    * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
    * clear the depot's emergency stop. The bootstrap creates it (under the dev key) and
-   * names it with `sysio.andon::setpanic`, which requires an existing account.
+   * delegates the native `sysio.andon@pull` and `@clear` permissions to it.
    */
   export const PANIC_ACCOUNT = "andon.panic"
 

@@ -1009,21 +1009,21 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /**
-   * Every key create PUBLISHED to SSM, indexed by `<label>/<KeyType>` — the ONE
-   * authority for "does this parameter exist", built from the SAME
+   * Every key create PUBLISHED to SSM, indexed by `<publicationLabel>/<KeyType>`
+   * — the ONE authority for "does this parameter exist", built from the SAME
    * {@link KeySteps.signatureProviderKeyPublications} walker that wrote them.
    */
   type SSMPublicationLookup = (
-    label: string,
+    publicationLabel: string,
     keyType: KeyType
   ) => KeySteps.SignatureProviderKeyPublication
 
-  /** Separator for the `<label>/<KeyType>` publication-index key. */
+  /** Separator for the `<publicationLabel>/<KeyType>` publication-index key. */
   const PublicationKeySeparator = "/"
 
-  /** The publication-index key for one identity's curve. */
-  function publicationKey(label: string, keyType: KeyType): string {
-    return [label, KeyType[keyType]].join(PublicationKeySeparator)
+  /** The publication-index key for one published curve. */
+  function publicationKey(publicationLabel: string, keyType: KeyType): string {
+    return [publicationLabel, KeyType[keyType]].join(PublicationKeySeparator)
   }
 
   /**
@@ -1040,7 +1040,7 @@ export namespace ExternalClusterConfigSteps {
    * failed every SSM `create-external-config` at the Emit stage.
    *
    * @param config - The SOURCE cluster's resolved config.
-   * @returns A resolver from `(identity label, curve)` to its publication.
+   * @returns A resolver from `(publication label, curve)` to its publication.
    */
   function ssmPublicationLookup(config: ClusterConfig): SSMPublicationLookup {
     return match(config.signatureProvider.type)
@@ -1049,17 +1049,19 @@ export namespace ExternalClusterConfigSteps {
           config.awsClusterNodeConfig != null,
           "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
         )
-        // Callers pass the RECORDED `publicationLabel`, so this is a plain
-        // lookup — no mapping lives here. Emit deriving its own producer→node
-        // relationship is what made `cluster-keys.json` and the emitted config
-        // disagree about the same key.
+        // Callers pass the RECORDED `publicationLabel`, and the index is keyed
+        // by each row's `publicationLabel` — the secret-id segment it wrote —
+        // so this is a plain lookup with no mapping of its own. Emit deriving
+        // its own producer→node relationship is what made `cluster-keys.json`
+        // and the emitted config disagree about the same key.
         const index = new Map(
           KeySteps.signatureProviderKeyPublications(config).map(row => [
-            publicationKey(row.label, row.keyType),
+            publicationKey(row.publicationLabel, row.keyType),
             row
           ])
         )
-        return (label, keyType) => index.get(publicationKey(label, keyType))
+        return (publicationLabel, keyType) =>
+          index.get(publicationKey(publicationLabel, keyType))
       })
       .otherwise((): SSMPublicationLookup => () => undefined)
   }

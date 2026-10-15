@@ -79,6 +79,33 @@ describe("decodeAttestation", () => {
     expect(result.reason).toMatch(/no decoder/)
   })
 
+  it.each([
+    60950, 60958, 3001, 3002, 3004, 43520, 60928, 60932, 60934, 60945, 60951,
+    60952, 60955, 60962
+  ])(
+    "renders removed wire type %s as raw without blocking active decoding",
+    type => {
+      const entry: AttestationEntry = {
+        type: type as AttestationType,
+        dataSize: 1,
+        data: new Uint8Array([0x0a])
+      }
+      expect(decodeAttestation(entry)).toEqual({
+        kind: "raw",
+        reason: `no decoder registered for AttestationType=${type}`,
+        entry
+      })
+      const bytes = encodeBatchOperatorGroups()
+      expect(
+        decodeAttestation({
+          type: AttestationType.BATCH_OPERATOR_GROUPS,
+          dataSize: bytes.length,
+          data: bytes
+        }).kind
+      ).toBe("decoded")
+    }
+  )
+
   it("falls back to `raw` when decode throws on bogus bytes", () => {
     const entry: AttestationEntry = {
       type: AttestationType.BATCH_OPERATOR_GROUPS,

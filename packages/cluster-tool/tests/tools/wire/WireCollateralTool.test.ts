@@ -835,9 +835,9 @@ describe("WireCollateralTool", () => {
     it("passes as soon as the operator's claim holds the expected balance", async () => {
       const { ctx, account } = operatorContext()
       serveRemitClaims(ctx, [
-        { account: "someone.else", token_code: "WIRE", balance: "1", expires_at_sec: 0 },
-        { account, token_code: "LIQETH", balance: "3", expires_at_sec: 0 },
-        { account, token_code: "WIRE", balance: OneWire.toString(), expires_at_sec: 0 }
+        { account: "someone.else", token_code: "WIRE", balance: "1" },
+        { account, token_code: "LIQETH", balance: "3" },
+        { account, token_code: "WIRE", balance: OneWire.toString() }
       ])
       await expect(
         WireCollateralTool.runVerifyRemitClaim(
@@ -856,7 +856,7 @@ describe("WireCollateralTool", () => {
       jest.useFakeTimers()
       const { ctx, account } = operatorContext()
       serveRemitClaims(ctx, [
-        { account, token_code: "WIRE", balance: "1", expires_at_sec: 0 }
+        { account, token_code: "WIRE", balance: "1" }
       ])
       const deadlineMs = WireCollateralTool.remitClaimDeadlineMs(ctx.config.epochDurationSec),
         verified = WireCollateralTool.runVerifyRemitClaim(
@@ -878,7 +878,7 @@ describe("WireCollateralTool", () => {
     it("readRemitClaim reads a missing row as zero", async () => {
       const { ctx, account } = operatorContext()
       serveRemitClaims(ctx, [
-        { account, token_code: "LIQETH", balance: "3", expires_at_sec: 0 }
+        { account, token_code: "LIQETH", balance: "3" }
       ])
       await expect(
         WireCollateralTool.readRemitClaim(ctx, account, BigInt(WireCode))

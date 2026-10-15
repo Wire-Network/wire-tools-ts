@@ -28,7 +28,7 @@ import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps } from "./steps/index.js"
+import { Steps, SyndicationUserSteps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
 const log = getLogger(__filename)
@@ -53,16 +53,14 @@ const WireSupply = "1000000000.000000000 WIRE"
 /** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
 const WireSymbol = "9,WIRE"
 /**
- * `sysio.liq`'s T5 kicker: the share of every yield intake requested from T5
- * and folded into the same index bump, in basis points. Mirrors the contract
- * default, so a cluster pays yield the way the network will.
- */
-const LiqKickerBps = 200
-/**
  * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
  * and `clear`, which move no funds; its resource policy pays for them.
  */
 const PanicAccountWireFunding = 0n
+/** RAM for the Andon child permissions and action links, beyond the deployment gift. */
+const AndonPermissionRamWeight = "0.0100 SYS"
+/** This policy adds permission RAM only; it allocates no CPU or network weight. */
+const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -221,9 +219,9 @@ export namespace ClusterBuildDefaults {
     )
     // Producer ACCOUNT identities are materialized HERE, before any node starts and before the
     // SSM publication below, because a producing node renders one `--signature-provider` per
-    // hosted account at launch — each account owns its finalizer key, so those keys must exist
-    // (and, under SSM, be published) first. This is pure key work; the matching chain WRITE
-    // (`newaccount`) waits for `sysio.system` and lands in the `Producers` group far below.
+    // hosted account at launch — those keys must exist (and, under SSM, be published) first.
+    // This is pure key work; the matching chain WRITE (`newaccount`) waits for `sysio.system`
+    // and lands in the `Producers` group far below.
     const producerSpecs = producerNodes.flatMap(node =>
       node.producers.map(label => ({
         label,
@@ -231,13 +229,16 @@ export namespace ClusterBuildDefaults {
         // The hosting node comes from `NodeConfig.plan` — the ONE author of the producer→node
         // assignment. Re-deriving `index % producerNodeCount` here made a second copy that had
         // to agree with it by hand.
-        producerNodeIndex: node.index
+        producerNodeIndex: node.index,
+        // Decided at PLAN time so the Report records it: the node's name when the node hosts
+        // this producer alone (it signs and votes with the node's own keys), else its own label.
+        publicationLabel: NodeConfig.producerPublicationLabel(node, label)
       }))
     )
     WireOperatorProvisioningTool.planProducerIdentityPhase<C>(
       prerequisites,
       "ProducerIdentities",
-      "Materialize genesis producer identities (node K1 + each account's own finalizer key)",
+      "Materialize genesis producer identities (the hosting node's keys; a finalizer key per account on a shared node)",
       {},
       producerSpecs
     )
@@ -765,10 +766,8 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── the depot's emergency stop ──
-    // `setpanic` needs an existing account, so the panic account is provisioned first,
-    // through the user path (the dev key, a policy from the bootstrap node owner above).
-    // The cord is armed before any cord reader carries traffic, and `sysio.synd` is a
-    // registered puller before its first envelope, so a custody shortfall pulls it.
+    // Provision the panic delegate before referencing it in native authorities.
+    // Arm both action links before traffic; privileged sysio.synd needs no registry.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "PanicAccount",
@@ -786,22 +785,75 @@ export namespace ClusterBuildDefaults {
     ClusterBuildPhase.create<C>(
       prerequisites,
       "EmergencyStop",
-      "Arm sysio.andon: the panic account and the sysio.synd puller"
+      "Arm sysio.andon with native pull and clear permissions"
     ).push(
-      Steps.contracts.sysio.andon.planSetpanic<C>(
+      SyndicationUserSteps.planResourcePolicy<C>(
         Actor.Sysio,
-        "set-panic-account",
-        `name ${Constants.PANIC_ACCOUNT} the panic account`,
+        "fund-andon-permission-ram",
+        "fund RAM for sysio.andon native permissions and action links",
         {},
-        { account: Constants.PANIC_ACCOUNT }
+        {
+          owner: SysioContractAccount[SysioContractName.andon],
+          issuer: Constants.BOOTSTRAP_NODE_OWNER,
+          net_weight: NoResourceWeight,
+          cpu_weight: NoResourceWeight,
+          ram_weight: AndonPermissionRamWeight,
+          time_block: 0,
+          network_gen: 0
+        }
       ),
-      Steps.contracts.sysio.andon.planAddpuller<C>(
-        Actor.Sysio,
-        "add-synd-puller",
-        "register sysio.synd as a puller, so a custody shortfall pulls the cord",
-        {},
-        { contract: SysioContractAccount[SysioContractName.synd] }
-      )
+      ...[
+        Steps.contracts.sysio.andon.Permission.pull,
+        Steps.contracts.sysio.andon.Permission.clear
+      ].flatMap(permission => [
+        Steps.contracts.sysio.system.planUpdateauth<C>(
+          Actor.Sysio,
+          `delegate-andon-${permission}`,
+          `delegate sysio.andon@${permission} to panic and governance`,
+          {},
+          {
+            account: SysioContractAccount[SysioContractName.andon],
+            permission,
+            parent: "active",
+            auth: {
+              threshold: 1,
+              keys: [],
+              // Fixed harness accounts are ordered by chain name value: andon.panic < sysio.
+              accounts: [
+                Constants.PANIC_ACCOUNT,
+                SysioContractAccount[SysioContractName.system]
+              ].map(actor => ({
+                permission: { actor, permission: "active" },
+                weight: 1
+              }))
+            }
+          },
+          [
+            {
+              actor: SysioContractAccount[SysioContractName.andon],
+              permission: "active"
+            }
+          ]
+        ),
+        Steps.contracts.sysio.system.planLinkauth<C>(
+          Actor.Sysio,
+          `link-andon-${permission}`,
+          `link sysio.andon::${permission} to its native permission`,
+          {},
+          {
+            account: SysioContractAccount[SysioContractName.andon],
+            code: SysioContractAccount[SysioContractName.andon],
+            type: permission,
+            requirement: permission
+          },
+          [
+            {
+              actor: SysioContractAccount[SysioContractName.andon],
+              permission: "active"
+            }
+          ]
+        )
+      ])
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
@@ -917,7 +969,7 @@ export namespace ClusterBuildDefaults {
     )
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
     // the swap's governance + system token, one shadow symbol per registered liq
-    // token, the T5 kicker. Registry setup a real depot performs too — unconditional.
+    // token. Registry setup a real depot performs too — unconditional.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "SwapConfig",
@@ -942,19 +994,6 @@ export namespace ClusterBuildDefaults {
       "ShadowLiqTokens",
       "Open the shadow liq symbols on sysio.liq",
       {}
-    )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "LiqConfig",
-      "Configure sysio.liq"
-    ).push(
-      Steps.contracts.sysio.liq.planSetkicker<C>(
-        Actor.Sysio,
-        "configure-liq-kicker",
-        "set the T5 yield kicker",
-        {},
-        { bps: LiqKickerBps }
-      )
     )
     // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
     // sysio.synd rules, and the verify of the syndication preconditions. A pair with
@@ -1368,6 +1407,26 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
+   * Render a collateral code without losing packed bits or changing its identity.
+   * Zero retains the contract's empty-code sentinel; malformed codes fail before
+   * an action is planned instead of becoming a different valid code.
+   * @param value - The configured packed collateral code.
+   * @returns Its canonical ABI string.
+   */
+  function collateralCode(value: number): string {
+    Assert.ok(
+      Number.isSafeInteger(value) && value >= 0,
+      "collateral code must be a canonical packed slug_name"
+    )
+    const code = SlugName.toString(value)
+    Assert.ok(
+      value === 0 || SlugName.from(code) === value,
+      "collateral code must be a canonical packed slug_name"
+    )
+    return code
+  }
+
+  /**
    * The `sysio.opreg::setconfig` data — dev defaults + the config's per-type
    * collateral minimums (a flow's `defaults.requiredBatchOperatorCollateral` etc. flow through
    * here, gating `OPERATOR_STATUS_ACTIVE` on real deposits).
@@ -1378,8 +1437,8 @@ export namespace ClusterBuildDefaults {
     const toChainMinBond = (
       requirement: CollateralRequirement
     ): SysioContracts.SysioOpregChainMinBondType => ({
-      chain_code: SlugName.toString(requirement.chainCode),
-      token_code: SlugName.toString(requirement.tokenCode),
+      chain_code: collateralCode(requirement.chainCode),
+      token_code: collateralCode(requirement.tokenCode),
       min_bond: requirement.minimumBond,
       config_timestamp_ms: 0
     })

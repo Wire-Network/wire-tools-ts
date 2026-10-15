@@ -1,12 +1,8 @@
 import Assert from "node:assert"
 
-import { ethers } from "ethers"
-
-import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
-import { Constants as TestClusterConstants } from "../../Constants.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -17,11 +13,6 @@ import { pollUntil } from "../../orchestration/StepTools.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Steps } from "../../orchestration/steps/index.js"
 import { Report } from "../../report/Report.js"
-import {
-  pushNewNamedUser,
-  pushNodeOwnerReg
-} from "../../tools/ethereum/EthereumNodeOwnerNftTool.js"
-import { ethereumKeyPairFromWallet } from "../../utils/keyPairUtils.js"
 import { isNotEmpty, matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
 import {
@@ -43,8 +34,8 @@ const UtcZuluSuffix = "Z"
 /**
  * Shared step factories + dispute-domain reads for batch-operator disputes.
  * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
- * `sysio.opreg::processbatch`, and the roa node-owner registration pair have no
- * shared `Steps.*` palette factories yet, so this namespace supplies them in the
+ * and `sysio.opreg::processbatch` have no shared `Steps.*` palette factories
+ * yet, so this namespace supplies them in the
  * same shape (`(actor, name, description, options, ...args) → ClusterBuildStep`,
  * ABI-exact action names, typed `StepInput`s, named runners). Cross-step values
  * (the contested epoch, the open dispute's id + canonical checksum) ride
@@ -390,126 +381,6 @@ export namespace BatchOperatorDisputeSteps {
       `[batch-operator-dispute] settled on frozen dispute-operators-owned epoch ${epoch}`
     )
     return epoch
-  }
-
-  // ── Step: sysio.roa::planNewnameduser (write) ─────────────────────────────────
-
-  /** Input for {@link planNewnameduser}. */
-  export interface NewnameduserInput extends StepInput {
-    readonly kind: "BatchOperatorDisputeSteps.NewnameduserInput"
-    readonly account: string
-    readonly tier: NodeOwnerTier
-  }
-
-  /**
-   * `sysio.roa::newnameduser` — create a voter account under the shared dev K1
-   * key (so the flow can sign votes as any owner), exactly as the depot
-   * inline-sends it for an NFT claim.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step option overrides.
-   * @param account - The voter account to create (Tier-1 names are 2-6 chars).
-   * @param tier - The node-owner tier.
-   * @returns The definition step.
-   */
-  export function planNewnameduser<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    account: string,
-    tier: NodeOwnerTier
-  ): ClusterBuildStep<C, NewnameduserInput> {
-    return ClusterBuildStep.create<C, NewnameduserInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "BatchOperatorDisputeSteps.NewnameduserInput", account, tier },
-      runNewnameduser
-    )
-  }
-
-  /** Named runner — ONE `sysio.roa::newnameduser` keyed by the dev K1. */
-  export async function runNewnameduser<C extends ClusterBuildContext>(
-    ctx: C,
-    input: NewnameduserInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await pushNewNamedUser(
-      ctx.wire,
-      input.account,
-      TestClusterConstants.DEV_K1_PUBLIC_KEY,
-      input.tier
-    )
-  }
-
-  // ── Step: sysio.roa::planNodeownreg (write) ───────────────────────────────────
-
-  /** Input for {@link planNodeownreg}. */
-  export interface NodeownregInput extends StepInput {
-    readonly kind: "BatchOperatorDisputeSteps.NodeownregInput"
-    readonly account: string
-    readonly tier: NodeOwnerTier
-  }
-
-  /**
-   * `sysio.roa::nodeownreg` — register the voter as a Tier-1 node owner (the
-   * registration inline-bumps `nodecount.t1_count`, the N `chkdispute` reads).
-   * The recorded eth key MUST be a `PUB_EM_*` (secp256k1) — a throwaway random
-   * EM key per owner satisfies that (it is never signed with).
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step option overrides.
-   * @param account - The voter account (created by {@link planNewnameduser}).
-   * @param tier - The node-owner tier.
-   * @returns The definition step.
-   */
-  export function planNodeownreg<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    account: string,
-    tier: NodeOwnerTier
-  ): ClusterBuildStep<C, NodeownregInput> {
-    return ClusterBuildStep.create<C, NodeownregInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "BatchOperatorDisputeSteps.NodeownregInput", account, tier },
-      runNodeownreg
-    )
-  }
-
-  /** Named runner — ONE `sysio.roa::nodeownreg` with a throwaway EM link key. */
-  export async function runNodeownreg<C extends ClusterBuildContext>(
-    ctx: C,
-    input: NodeownregInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const ethereumIdentity = ethereumKeyPairFromWallet(
-      ethers.Wallet.createRandom()
-    )
-    await pushNodeOwnerReg(
-      ctx.wire,
-      input.account,
-      input.tier,
-      ethereumIdentity.address.slice(2).toLowerCase(),
-      ethereumIdentity.publicKey,
-      TestClusterConstants.DEV_K1_PUBLIC_KEY
-    )
   }
 
   // ── Step: sysio.opreg::planProcessbatch (write) ───────────────────────────────

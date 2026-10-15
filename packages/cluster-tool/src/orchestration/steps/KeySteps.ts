@@ -1,7 +1,7 @@
 import Assert from "node:assert"
 import { Either } from "@3fv/prelude-ts"
 import { ethers } from "ethers"
-import { range } from "lodash"
+import { range, uniq } from "lodash"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
@@ -376,14 +376,21 @@ export namespace KeySteps {
   /**
    * One identity whose keys are published to SSM — the walker's unit.
    *
-   * `label` is both the key-store handle the private key is read from and the
-   * secret-id `{account}` segment the daemon renders, so the two can never
-   * drift. For the genesis identity that label is the NODE name (`node_bios`),
-   * which is exactly what the bios daemon resolves its specs against.
+   * `label` is the key-store handle the private key is read from;
+   * `publicationLabel` is the secret-id `{account}` segment the daemon renders —
+   * the same value the identity's `OperatorAccount.publicationLabel` records.
+   * They are equal for every identity that owns its keys. They differ for a
+   * genesis producer that is its node's only hosted producer: it signs with the
+   * node's own keys, so its parameters live under the NODE's name
+   * (`NodeConfig.producerPublicationLabel`). The genesis identity's label is
+   * itself the node name (`node_bios`), which is what the bios daemon resolves
+   * its specs against.
    */
   interface SignatureProviderKeyIdentity {
-    /** The operator handle, which is also the secret-id `{account}` segment. */
+    /** The operator handle — the key-store key the private key is read from. */
     label: string
+    /** The secret-id `{account}` segment this identity's keys publish under. */
+    publicationLabel: string
     /** Which publish phase this identity's keys belong to. */
     publishPhase: SignatureKeyPublishPhase
     /** Every curve this identity publishes. */
@@ -394,8 +401,13 @@ export namespace KeySteps {
   export interface SignatureProviderKeyPublication {
     /** Which publish phase this key belongs to. */
     publishPhase: SignatureKeyPublishPhase
-    /** The key's operator label — also the secret-id `{account}` segment. */
+    /** The key's operator label — the key-store handle the private key is read from. */
     label: string
+    /**
+     * The secret-id `{account}` segment — equal to the recorded
+     * `OperatorAccount.publicationLabel` of {@link label}'s identity.
+     */
+    publicationLabel: string
     /** The key's curve — selects which key of the source. */
     keyType: KeyType
     /**
@@ -431,9 +443,9 @@ export namespace KeySteps {
   /**
    * The ONE renderer every publication row goes through, so a row composed by
    * the config walker and a row composed by a flow's provisioning phase can
-   * never disagree on an id. The `{account}` pattern token renders the DURABLE
-   * LABEL — a producer node's name, an operator's handle — never the on-chain
-   * account.
+   * never disagree on an id. The `{account}` pattern token renders the
+   * identity's DURABLE `publicationLabel` — a node's name, an operator's handle —
+   * never the on-chain account.
    */
   function publicationRenderer(
     config: ClusterConfig
@@ -444,11 +456,12 @@ export namespace KeySteps {
     return (identity, keyType) => ({
       publishPhase: identity.publishPhase,
       label: identity.label,
+      publicationLabel: identity.publicationLabel,
       keyType,
       awsRegions,
       secretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
         cluster,
-        account: identity.label,
+        account: identity.publicationLabel,
         keyType: KeyType[keyType],
         version: ssm.version
       }),
@@ -490,6 +503,7 @@ export namespace KeySteps {
   ): SignatureProviderKeyIdentity {
     return {
       label,
+      publicationLabel: label,
       publishPhase: SignatureKeyPublishPhase.afterOperators,
       keyTypes: operatorKeyTypes(type)
     }
@@ -522,8 +536,9 @@ export namespace KeySteps {
   /**
    * Whether the bootstrap's own publish phases cover `label` — true for every
    * identity {@link signatureProviderKeyPublications} enumerates from the
-   * config (the genesis identity, producer nodes and accounts, the bootstrapped
-   * batch operators and underwriters). A FLOW-provisioned operator is never in
+   * config (the genesis identity, the bootstrap node owner, every genesis
+   * producer account (under its publication label), the bootstrapped batch
+   * operators and underwriters). A FLOW-provisioned operator is never in
    * that set, so its provisioning phase publishes its keys itself; the two
    * mechanisms therefore never plan the same parameter twice.
    *
@@ -544,13 +559,14 @@ export namespace KeySteps {
    * Enumerate every generated signing key to publish for an SSM cluster —
    * plan-time fan-out over {@link SignatureProviderKeyIdentity} rows: the
    * genesis identity (bios K1/BLS) and the bootstrap node owner (K1), every
-   * producer node (K1/BLS), and every batch/underwriter operator
-   * (K1 wire / EM ethereum / ED solana).
+   * genesis producer account (K1/BLS, under the publication label
+   * `NodeConfig.producerPublicationLabel` derives), and every
+   * batch/underwriter operator (K1 wire / EM ethereum / ED solana).
    *
    * Under SSM the bios node is NOT exempt — it renders `SSM:` specs like any
    * other node, so its keys MUST be published or it cannot start. Each entry
    * carries its pre-rendered `secretId` (never key material); the runner reads
-   * the private key from `ctx.keyStore`.
+   * the private key from `ctx.keyStore`. No two entries share a `secretId`.
    *
    * @param config - The resolved cluster config (SSM signature provider).
    * @returns The per-key publications.
@@ -573,31 +589,32 @@ export namespace KeySteps {
         // renders. That split is exactly why it needs an explicit row.
         {
           label: NodeConfig.BiosName,
+          publicationLabel: NodeConfig.BiosName,
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1, KeyType.BLS]
         },
         // The bootstrap node owner — signs `roa::newuser` for every operator.
         {
           label: Constants.BOOTSTRAP_NODE_OWNER,
+          publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1]
         },
-        // NOTE: producer NODES publish nothing under their own name. A producing node renders
-        // every `--signature-provider` spec from an ACCOUNT's `publicationLabel` -- the
-        // block-signing K1 from its first hosted account, one finalizer BLS per hosted account --
-        // so a `node_NN` parameter is fetched by nobody. Publishing one wrote a live signing key
-        // into every replication region for no reader. The bios node is not an exception: its
-        // identity is the operator row above, whose label IS the node name the daemon renders.
+        // Producer ACCOUNTS — a producing node renders every `--signature-provider` spec from a
+        // hosted account's `publicationLabel` (the block-signing K1 from its first hosted
+        // account, one finalizer BLS per hosted account), so these rows are the ONLY producer
+        // publications; nothing is published for a node on its own behalf.
         //
-        // Producer ACCOUNTS — each owns a BLS finalizer key of its own, because `regfinkey`
-        // enforces a global uniqueness check and siblings on one node would otherwise share
-        // (and collide on) their node's key. The K1 they sign blocks with is still the node's,
-        // republished here so every parameter this account's `--signature-provider` specs point
-        // at holds exactly the key it names — the alternative, publishing the account's BLS under
-        // the NODE's label, lands on the node's own `(label, BLS)` id.
+        // A node hosting ONE producer: that producer signs and votes with the node's own K1 +
+        // BLS, published under the NODE's name — the path a deployment fetches by node.
+        // A node hosting SEVERAL: each account owns a BLS finalizer key (`regfinkey` enforces a
+        // global uniqueness check, so siblings cannot share the node's), published under its
+        // own label alongside the node K1 it signs blocks with, so every parameter an account's
+        // specs point at holds exactly the key it names.
         ...producerNodes(config).flatMap(node =>
           node.producers.map(label => ({
             label,
+            publicationLabel: NodeConfig.producerPublicationLabel(node, label),
             // beforeNodes, not afterOperators: a producing node renders these accounts'
             // `--signature-provider ...SSM:` specs at LAUNCH, so the parameters have to exist
             // by then. `ProducerIdentities` materializes the keys just before this runs.
@@ -613,10 +630,20 @@ export namespace KeySteps {
         ...range(config.underwriterCount).map(index =>
           operatorKeyIdentity(Constants.underwriterLabel(index), OperatorType.UNDERWRITER)
         )
-      ]
-    return identities.flatMap(identity =>
-      identity.keyTypes.map(keyType => render(identity, keyType))
+      ],
+      publications = identities.flatMap(identity =>
+        identity.keyTypes.map(keyType => render(identity, keyType))
+      ),
+      duplicateSecretIds = publications
+        .map(publication => publication.secretId)
+        .filter((secretId, index, secretIds) => secretIds.indexOf(secretId) !== index)
+    // Two rows on one id would publish two different keys to the same parameter — the second
+    // write is refused as a stale copy, or worse, retained over the key its daemon signs with.
+    Assert.ok(
+      duplicateSecretIds.length === 0,
+      `KeySteps: signature-provider publications collide on ${uniq(duplicateSecretIds).join(", ")}`
     )
+    return publications
   }
 
   /**
@@ -655,8 +682,10 @@ export namespace KeySteps {
         phase.push(
           planPublishSignatureProviderKey<C>(
             Report.Actor.Sysio,
-            `publish-${publication.label}-${KeyType[publication.keyType]}`,
-            `publish ${publication.label} ${KeyType[publication.keyType]} key → SSM`,
+            `publish-${publication.publicationLabel}-${KeyType[publication.keyType]}`,
+            publication.publicationLabel === publication.label
+              ? `publish ${publication.label} ${KeyType[publication.keyType]} key → SSM`
+              : `publish ${publication.label} key ${publication.publicationLabel} ${KeyType[publication.keyType]} → SSM`,
             options,
             publication
           )
@@ -725,11 +754,17 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    // EVERY published identity is an operator account, keyed by its own label -- including the
-    // genesis one, whose label is the node name the bios daemon renders. Producer nodes publish
-    // nothing of their own, so there is no second keystore to select between.
-    const identity: SigningKeySet = ctx.keyStore.assertOperator(input.label),
-      privateKey = identityPrivateKey(identity, input.keyType, input.label)
+    // EVERY published identity is an operator account in the key store, read by its handle --
+    // including the genesis one, whose label is the node name the bios daemon renders, and a
+    // node's sole producer, whose keys ARE the node's. The account's RECORDED publication label
+    // is what every daemon spec and persisted ref renders from, so a plan-time row that drifted
+    // from it fails HERE rather than at a daemon's start.
+    const operator = ctx.keyStore.assertOperator(input.label)
+    Assert.ok(
+      operator.publicationLabel === input.publicationLabel,
+      `KeySteps: ${input.label} publishes under ${input.publicationLabel}, but its keys were recorded under ${operator.publicationLabel}`
+    )
+    const privateKey = identityPrivateKey(operator, input.keyType, input.label)
     const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
       tags: Tag[] =
         input.version != null

@@ -10,7 +10,6 @@ import {
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
-  Constants as HarnessConstants,
   EthereumSyndicationTool,
   PendingPayoutReason,
   ProtocolTiming,
@@ -278,7 +277,6 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "panic pulls the depot cord",
         write,
         {
-          actor: HarnessConstants.PANIC_ACCOUNT,
           reason: "E7 deliberate emergency stop"
         }
       ),
@@ -289,7 +287,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
         async ctx => {
           const cord = await WireSyndicationTool.readCord(ctx)
           Assert.ok(cord.pulled)
-          Assert.strictEqual(cord.pulled_by, HarnessConstants.PANIC_ACCOUNT)
+          Assert.strictEqual(cord.reason, "E7 deliberate emergency stop")
           const { rows, more } = await ctx.wire
             .getSysioContract(SysioContractName.synd)
             .tables.buckets.query({ limit: SyndicationScenario.QueryLimit })
@@ -487,7 +485,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "clear-depot",
         "clear after outpost recovery",
         write,
-        { actor: HarnessConstants.PANIC_ACCOUNT, note: "outpost clear" }
+        { note: "outpost clear" }
       ),
       EmergencyStopSteps.planAction(
         Actor.User,
@@ -666,8 +664,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           Assert.ok(cord.pulled)
           Assert.strictEqual(
-            cord.pulled_by,
-            SysioContracts.SysioContractAccount.synd
+            cord.reason,
+            `custody shortfall ${SyndicationScenario.Chain} ${SyndicationScenario.Token} seq ${mismatch.sequence}`
           )
           ctx.outputs.set(Constants.Mismatches, rows)
         }
@@ -792,7 +790,6 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "clear after the repaired message is admitted",
         write,
         {
-          actor: HarnessConstants.PANIC_ACCOUNT,
           note: "repaired custody admitted"
         }
       ),

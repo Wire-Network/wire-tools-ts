@@ -2,7 +2,8 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 import * as Fs from "node:fs"
 
-import { JsonRPC, DebuggingServer } from "@wireio/debugging-server"
+import { JsonRPCProtocol } from "@wireio/cluster-tool-shared"
+import { DebuggingServer } from "@wireio/debugging-server"
 import { ApiPaths, JsonRPCResult } from "@wireio/debugging-shared"
 import {
   DebugOutpostEndpointsType,
@@ -85,7 +86,7 @@ describe(`JSON-RPC 2.0 via POST ${ApiPaths.OPP.Endpoint}`, () => {
 
     expect(body.jsonrpc).toBe("2.0")
     expect(body.error).toBeDefined()
-    expect(body.error.code).toBe(JsonRPC.ErrorCode.METHOD_NOT_FOUND)
+    expect(body.error.code).toBe(JsonRPCProtocol.ErrorCode.METHOD_NOT_FOUND)
     expect(body.result).toBeUndefined()
   })
 

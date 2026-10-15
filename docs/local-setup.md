@@ -317,10 +317,10 @@ Each `flow-*` package is a standalone scenario that bootstraps its own cluster. 
 | Flow | Flow | Flow |
 |---|---|---|
 | `flow-batch-operator-slashing` | `flow-liq-syndication` | `flow-syndication-challenge` |
-| `flow-batch-operator-termination` | `flow-liq-yield` | `flow-syndication-rate-limit` |
-| `flow-emergency-stop` | `flow-node-owner-nft` | `flow-syndication-underwriting` |
-| `flow-emissions-soak` | `flow-operator-collateral-deposit` | `flow-yield-distribution` |
-| `flow-producer-registration` | | |
+| `flow-batch-operator-terminal-tie` | `flow-liq-yield` | `flow-syndication-rate-limit` |
+| `flow-batch-operator-termination` | `flow-node-owner-nft` | `flow-syndication-underwriting` |
+| `flow-emergency-stop` | `flow-operator-collateral-deposit` | |
+| `flow-emissions-soak` | `flow-producer-registration` | |
 
 Launch one with `scripts/run-flow.mjs` and watch it with `scripts/flow-heartbeat-monitor.mjs` (one monitor
 per run, pointed at the same cluster path):

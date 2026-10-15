@@ -6,6 +6,7 @@ import {
   AWSAccountName,
   ClusterFiles,
   SignatureProviderType,
+  ProcessSignalName,
   type ClusterConfig,
   type ExternalOutpostConfig
 } from "@wireio/cluster-tool-shared"
@@ -13,10 +14,7 @@ import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
 import { ClusterManager, ClusterState } from "@wireio/cluster-tool"
 import { WireWallet } from "@wireio/cluster-tool/clients/wire"
-import {
-  NodeopProcess,
-  ProcessSignalName
-} from "@wireio/cluster-tool/cluster/processes"
+import { NodeopProcess } from "@wireio/cluster-tool/cluster/processes"
 import {
   BindConfigProvider,
   ClusterConfigProvider,
