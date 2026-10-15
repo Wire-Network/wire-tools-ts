@@ -15,7 +15,7 @@ The OPP message flow spans three chains:
   `sysio.opreg`, `sysio.chalg`, `sysio.synd`, `sysio.bond`, `sysio.liq`, `sysio.swap`
   (a depot-local AMM with no outpost participation), `sysio.andon`, `sysio.dclaim`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OutpostManager.sol`,
-  `SyndicationPool.sol`, `BAR.sol`, `StakingManager.sol` (an inert placeholder) (+ `liqEth`).
+  `SyndicationPool.sol`, `BAR.sol` (+ `liqEth`).
 - **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
   loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
   `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol

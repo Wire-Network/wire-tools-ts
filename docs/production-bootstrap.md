@@ -397,8 +397,8 @@ authority is replaced by this setup.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
-outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, the inert
-`StakingManager`, plus the `liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
+outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, plus the
+`liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
 the panic account's pause role, then anvil switches to interval mining; solana-test-validator starts with all
 four wire-solana programs at genesis (`liqsol_core` hosts the OPP outpost), the liqsol surface is stood up by
 wire-solana's own `init-*` scripts, and the OPP PDAs are initialized with the native-SOL token binding and
