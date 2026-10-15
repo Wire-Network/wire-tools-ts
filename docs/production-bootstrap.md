@@ -150,10 +150,14 @@ operators after bootstrap:
    action, so it runs before `system` replaces `bios` in Stage 3:
    - `threshold = floor(N*2/3) + 1`, where `N` = number of producer **accounts** (`producerCount = 21` ⇒
      `threshold = 15`).
-   - each finalizer `= {description:<producer account name>, weight:1, public_key:<that account's own BLS
-     pubkey>, pop:<its BLS proof-of-possession>}`. Every producer account owns a BLS finalizer key minted for
-     it before any node starts (its block-signing K1 stays shared with its hosting node); these are not
-     `DEV_BLS` (which is only the genesis/bios finalizer). The policy is keyed on accounts, not nodes,
+   - each finalizer `= {description:<producer account name>, weight:1, public_key:<that account's BLS
+     pubkey>, pop:<its BLS proof-of-possession>}`. A producer account that is its node's only hosted
+     producer votes with that node's own generated BLS key (its keys are published under the node's
+     name, `/wire/<cluster>/node_NN/{K1,BLS}`); producer accounts sharing a node each own a BLS finalizer
+     key minted for them before any node starts, published under the account's own name, because
+     `regfinkey` enforces global finalizer-key uniqueness. The block-signing K1 is always the hosting
+     node's. None of these is `DEV_BLS` (which is only the genesis/bios finalizer). The policy is keyed
+     on accounts, not nodes,
      because `sysio.system` rebuilds the finalizer policy from the keys accounts registered via `regfinkey`
      (step 23) the first time producer ranking publishes; a node-keyed genesis policy would be replaced by
      one the running nodes hold no key for.
@@ -281,10 +285,10 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
       `[<producer>@active]`. `sysio.system` admits it only for an ACTIVE PRODUCER operator, so it follows
       step 22. Registration is what makes a producer rankable: the ranked schedule is built only from
       producers with an active `producers` row.
-    - `sysio::regfinkey({finalizer_name:<producer>, finalizer_key:<the account's own BLS pubkey>,
+    - `sysio::regfinkey({finalizer_name:<producer>, finalizer_key:<the account's BLS pubkey>,
       proof_of_possession:<its BLS PoP>})` — `[<producer>@active]`. Requires the `producers` row written just
       above; a producer's first finalizer key is activated by `regfinkey` itself, so no `actfinkey` follows.
-      The key is the same per-account BLS key the Stage 1 finalizer policy was built from.
+      The key is the same BLS key the Stage 1 finalizer policy was built from for that account.
 
     The producer, finalizer-key and finalizer rows are billed to `sysio.system`; producers receive no RAM
     grant for them. The bootstrap makes no producer collateral deposit.
@@ -581,8 +585,9 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
 - **Raw deploys:** `bios` then `system` (both on `sysio`), and `sysio.roa`. `system` is raw (not **sys**)
   because `setsyscode`'s `giftram` cannot self-target the `sysio` pool account.
 - **Genesis vs. handoff keys:** genesis runs on `DEV_K1` (block signer) + `DEV_BLS` (finalizer) — the bios
-  node. `setfinalizer` (Stage 1) switches finality to the producer accounts' own generated BLS keys (the
-  keys each account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
+  node. `setfinalizer` (Stage 1) switches finality to each producer account's BLS key — the hosting
+  node's own BLS for a node's sole producer, a per-account key on a shared node (the keys each
+  account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
   production to the producer nodes' generated K1 keys — the same node K1s the producer accounts are keyed
   with and register with `regproducer`. Batch operators carry their own per-operator generated K1s.
   `DEV_K1` remains only as `sysio`'s active key and `wireno`'s key; production replaces all of these with

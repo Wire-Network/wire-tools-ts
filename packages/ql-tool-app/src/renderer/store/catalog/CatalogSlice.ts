@@ -12,6 +12,11 @@ export interface CatalogState {
   loadingOwners: string[]
   /** Last catalog error (null = none). */
   error: string
+  /**
+   * Bumped by every `catalogReset`. The navigator keys its tree on it, so a
+   * reset catalog's owners start collapsed instead of expanded-but-unloaded.
+   */
+  generation: number
 }
 
 /** An owner/table load finished with a snapshot. */
@@ -36,7 +41,7 @@ export interface CatalogFailed {
  * @returns Nothing loaded.
  */
 export function createCatalogInitialState(): CatalogState {
-  return { snapshot: null, loadingOwners: [], error: null }
+  return { snapshot: null, loadingOwners: [], error: null, generation: 0 }
 }
 
 /** Catalog slice. */
@@ -49,6 +54,7 @@ export const CatalogSlice = createSlice({
       state.snapshot = action.payload
       state.loadingOwners = []
       state.error = null
+      state.generation += 1
     },
     /** An owner's ABI load started. */
     ownerLoading(state, action: PayloadAction<string>) {
@@ -64,6 +70,10 @@ export const CatalogSlice = createSlice({
     catalogFailed(state, action: PayloadAction<CatalogFailed>) {
       state.loadingOwners = state.loadingOwners.filter(owner => owner !== action.payload.owner)
       state.error = action.payload.message
+    },
+    /** The user closed the error. */
+    errorDismissed(state) {
+      state.error = null
     }
   }
 })

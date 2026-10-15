@@ -2,7 +2,6 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
 import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
@@ -23,7 +22,7 @@ import {
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
   type ExternalOutpostConfig,
-  type QueryEngineConfig
+  type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
@@ -115,15 +114,19 @@ function assertApiCount(options: ClusterBuildOptions): number {
 
 /**
  * A query-engine setting with no API node to read it is a misconfiguration,
- * not a default: every set member requires at least one planned API node.
+ * not a default: every member the CALLER set requires at least one planned API
+ * node. The harness's own defaults
+ * (`QueryEngineConfigProvider.createDefaultOptions`) are not caller settings,
+ * so they never trip this on a cluster without API nodes.
  *
  * @param apiCount - The planned API-node count.
- * @param queryEngine - The resolved query-engine config.
+ * @param queryEngine - The caller's query-engine options.
+ * @returns The caller's options, for resolution.
  */
 function assertQueryEngineUse(
   apiCount: number,
-  queryEngine: QueryEngineConfig
-): void {
+  queryEngine: QueryEngineOptions = {}
+): QueryEngineOptions {
   const setMembers = Object.entries(queryEngine)
     .filter(([, value]) => value != null)
     .map(([member]) => member)
@@ -131,6 +134,7 @@ function assertQueryEngineUse(
     apiCount > 0 || setMembers.length === 0,
     `ClusterConfigProvider: query-engine settings (${setMembers.join(", ")}) require at least one API node — set apiCount (--api-count)`
   )
+  return queryEngine
 }
 
 /**
@@ -180,11 +184,9 @@ export namespace ClusterConfigProvider {
     // holds the host-global bind lock) on its way to failing.
     const batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
-      queryEngine = asOption(
-        QueryEngineConfigProvider.resolve(options.queryEngine)
-      )
-        .tap(resolved => assertQueryEngineUse(apiCount, resolved))
-        .get(),
+      queryEngine = QueryEngineConfigProvider.resolve(
+        assertQueryEngineUse(apiCount, options.queryEngine)
+      ),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),

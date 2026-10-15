@@ -5,6 +5,7 @@ import { Deferred, getLogger, NestedError } from "@wireio/shared"
 
 import {
   QueryHostMessageKind,
+  type ConnectionTestResult,
   type QueryHostExecute,
   type QueryHostRequest,
   type QueryHostResponse,
@@ -152,6 +153,24 @@ export class QueryPortClient {
   async loadOwner(requestId: string, profile: ConnectionProfile, owner: string): Promise<CatalogSnapshot> {
     const response = await this.call({ kind: QueryHostMessageKind.loadOwner, requestId, profile, owner })
     return QueryPortClient.snapshotOf(response)
+  }
+
+  /**
+   * Test a (possibly unsaved) profile's connection: `get_info`, then the engine
+   * probe — no ABI, no table read.
+   *
+   * @param requestId - Correlation id.
+   * @param profile - The connection.
+   * @returns What the test learned about the node.
+   * @throws QueryPortError carrying the failure of the first step that failed.
+   */
+  async testConnection(requestId: string, profile: ConnectionProfile): Promise<ConnectionTestResult> {
+    const response = await this.call({ kind: QueryHostMessageKind.testConnection, requestId, profile })
+    return match(response)
+      .with({ kind: QueryHostMessageKind.connectionTested }, tested => tested.result)
+      .otherwise(other => {
+        throw QueryPortClient.unexpected(other)
+      })
   }
 
   /**

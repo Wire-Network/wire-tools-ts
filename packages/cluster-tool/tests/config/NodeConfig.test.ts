@@ -18,7 +18,11 @@ import {
   QueryEngineConfigProvider
 } from "@wireio/cluster-tool/config"
 import { Localhost } from "@wireio/cluster-tool/utils"
-import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
+import {
+  fixtureConfig,
+  fixtureProducerTopology,
+  PersistedFixture
+} from "./clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
 /** One `loggers[]` entry of a rendered nodeop `logging.json`. */
@@ -590,13 +594,16 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("renders the api node ini: query engine plugin, NO read-mode or query-* line when nothing is set, retry storage, no producer plugins", () => {
+    it("renders the api node ini: query engine plugin, only the default query-timeout-ms when nothing is set, retry storage, no producer plugins", () => {
       const ini = nodeOfRole(nodes, NodeRole.api).ini.render()
       expect(ini).toContain(`plugin = ${Constants.QUERY_ENGINE_PLUGIN}`)
-      // The fixture's queryEngine is all-unset: nodeop's read mode and the
-      // plugin's limits govern, so the ini pins none of them.
+      // The fixture's queryEngine holds only the harness default deadline:
+      // nodeop's read mode and the plugin's other limits govern, so the ini
+      // pins none of them.
       expect(ini).not.toContain(Constants.READ_MODE_OPTION)
-      expect(ini).not.toContain("query-")
+      expect(ini.split("\n").filter(line => line.startsWith("query-"))).toEqual(
+        [`query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`]
+      )
       expect(ini).toContain("transaction-retry-max-storage-size-gb = 100")
       expect(ini).toContain(`plugin = ${Constants.NET_PLUGIN}`)
       expect(ini).toContain(`plugin = ${Constants.CHAIN_API_PLUGIN}`)
@@ -994,6 +1001,66 @@ describe("NodeConfig — ad-hoc nodes", () => {
           ports
         )
       ).toThrow(/no node role realizes/)
+    })
+  })
+
+  describe("producerPublicationLabel", () => {
+    /** The planned producer nodes of `config`, in plan order. */
+    function producerNodes(config: typeof cluster): NodeConfig[] {
+      return NodeConfig.plan(config).filter(node => node.role === NodeRole.producer)
+    }
+
+    it("is the NODE's name for a planned node's sole hosted producer", () => {
+      const [node] = producerNodes(fixtureProducerTopology(1, 1))
+      expect(node.producers).toEqual([producerName(0)])
+      expect(NodeConfig.producerPublicationLabel(node, producerName(0))).toBe(
+        node.name
+      )
+    })
+
+    it("is each producer's OWN label on a node hosting several", () => {
+      const [node] = producerNodes(fixtureProducerTopology(1, 2))
+      expect(node.producers).toEqual([producerName(0), producerName(1)])
+      node.producers.forEach(producer =>
+        expect(NodeConfig.producerPublicationLabel(node, producer)).toBe(producer)
+      )
+    })
+
+    it("decides per node in a mixed topology", () => {
+      const [shared, sole] = producerNodes(fixtureProducerTopology(2, 3))
+      expect(shared.producers).toEqual([producerName(0), producerName(2)])
+      expect(sole.producers).toEqual([producerName(1)])
+      expect(NodeConfig.producerPublicationLabel(shared, producerName(2))).toBe(
+        producerName(2)
+      )
+      expect(NodeConfig.producerPublicationLabel(sole, producerName(1))).toBe(
+        sole.name
+      )
+    })
+
+    it("refuses a producer the node does not host", () => {
+      const [node] = producerNodes(fixtureProducerTopology(1, 1))
+      expect(() =>
+        NodeConfig.producerPublicationLabel(node, producerName(1))
+      ).toThrow(/is not hosted by node_00/)
+    })
+
+    it("refuses an AD-HOC producer node — its producer publishes under its own label", () => {
+      const node = NodeConfig.createAdHoc(
+        cluster,
+        fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod"),
+        ports
+      )
+      expect(() => NodeConfig.producerPublicationLabel(node, "flowprod")).toThrow(
+        /is not a planned producer node/
+      )
+    })
+
+    it("refuses a non-producer node", () => {
+      const bios = NodeConfig.plan(cluster).find(node => node.role === NodeRole.bios)
+      expect(() =>
+        NodeConfig.producerPublicationLabel(bios, NodeConfig.BiosProducer)
+      ).toThrow(/is not a planned producer node/)
     })
   })
 })

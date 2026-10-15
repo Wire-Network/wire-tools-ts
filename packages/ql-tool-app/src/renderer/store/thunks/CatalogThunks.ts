@@ -1,12 +1,9 @@
 import { CatalogSnapshot, ConnectionProfile } from "@wireio/ql-shared"
-import { getLogger, NestedError } from "@wireio/shared"
 
 import { CatalogActions } from "../catalog/CatalogSlice.js"
 import { selectActiveProfile } from "../connections/ConnectionsSlice.js"
 import type { AppDispatch, AppThunk } from "../Store.js"
 import { guarded, type GuardedFailure, type GuardedFailureReporter } from "./common/index.js"
-
-const log = getLogger(__filename)
 
 /**
  * The reporter of a failed owner load / describe: the navigator shows the message.
@@ -79,38 +76,6 @@ export function describeTable(owner: string, table: string): AppThunk {
         reportCatalogFailure(null)
       )
     )
-  }
-}
-
-/** Connection-test verdict prefixes. */
-export namespace ConnectionTest {
-  /** Prefix of a passing test. */
-  export const Passed = "Connected"
-  /** Prefix of a failing test. */
-  export const Failed = "Failed"
-}
-
-/**
- * "Test connection": `get_abi` of the first resolved owner, then a `LIMIT 0`
- * describe of its first table — both through the query host (the renderer never fetches).
- *
- * @param profile - The (possibly unsaved) profile.
- * @returns The thunk resolving to a one-line verdict.
- */
-export function testConnection(profile: ConnectionProfile): AppThunk<string> {
-  return async (_dispatch, _getState, services) => {
-    const [owner] = ConnectionProfile.resolveOwners(profile)
-    try {
-      const snapshot = await services.queryPort.loadOwner(services.createRequestId(), profile, owner),
-        tables = snapshot.owners.find(entry => entry.account === owner)?.tables ?? [],
-        [first] = tables
-      if (first != null) await services.queryPort.describe(services.createRequestId(), profile, owner, first.name)
-      return `${ConnectionTest.Passed}: ${owner} has ${tables.length} tables`
-    } catch (error) {
-      const message = NestedError.toError(error).message
-      log.warn(`testing the connection ${profile.name} failed: ${message}`, error)
-      return `${ConnectionTest.Failed}: ${message}`
-    }
   }
 }
 

@@ -127,6 +127,64 @@ export const PersistedFixture: ClusterConfig = {
   solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
 }
 
+/**
+ * Offset of the first port pair an EXTRA producer node takes in
+ * {@link fixtureProducerTopology} — past every pair {@link PersistedFixture}
+ * already assigns, so no two planned nodes share a pair.
+ */
+const ExtraProducerNodePairOffset = 10
+
+/**
+ * The fixture overrides that re-plan it onto `producerNodeCount` producer
+ * nodes hosting `producerCount` producers (round-robin, exactly as
+ * `NodeConfig.plan` assigns them): `(1, 1)` is the one-producer-per-node shape,
+ * `(1, 2)` puts two producers on one node, `(2, 3)` mixes both. Node 0 keeps
+ * the fixture's own pair; every further node replays the fixture's
+ * deterministic pair block — nothing binds here.
+ *
+ * @param producerNodeCount - How many producer nodes to plan.
+ * @param producerCount - How many producers they host.
+ * @returns The topology fields, for {@link fixtureConfig} or a fixture context.
+ */
+export function fixtureProducerTopologyOverrides(
+  producerNodeCount: number,
+  producerCount: number
+): Partial<ClusterConfig> {
+  const producers = Array.from({ length: producerNodeCount }, (_unused, index) =>
+    index === 0 ? pair(0) : pair(ExtraProducerNodePairOffset + index)
+  )
+  return {
+    producerCount,
+    nodeCount: producerNodeCount,
+    bind: {
+      ...PersistedFixture.bind,
+      nodeop: {
+        ...PersistedFixture.bind.nodeop,
+        ports: { ...PersistedFixture.bind.nodeop.ports, producers }
+      }
+    }
+  }
+}
+
+/**
+ * The fixture config re-planned per {@link fixtureProducerTopologyOverrides}.
+ *
+ * @param producerNodeCount - How many producer nodes to plan.
+ * @param producerCount - How many producers they host.
+ * @param overrides - Further top-level fixture fields (see {@link fixtureConfig}).
+ * @returns The re-planned config.
+ */
+export function fixtureProducerTopology(
+  producerNodeCount: number,
+  producerCount: number,
+  overrides: Partial<ClusterConfig> = {}
+): ClusterConfig {
+  return fixtureConfig({
+    ...fixtureProducerTopologyOverrides(producerNodeCount, producerCount),
+    ...overrides
+  })
+}
+
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).
  *
  * @param overrides - Top-level fixture fields to replace (typed by the fixture

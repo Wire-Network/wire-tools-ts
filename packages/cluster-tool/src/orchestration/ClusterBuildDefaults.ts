@@ -219,9 +219,9 @@ export namespace ClusterBuildDefaults {
     )
     // Producer ACCOUNT identities are materialized HERE, before any node starts and before the
     // SSM publication below, because a producing node renders one `--signature-provider` per
-    // hosted account at launch — each account owns its finalizer key, so those keys must exist
-    // (and, under SSM, be published) first. This is pure key work; the matching chain WRITE
-    // (`newaccount`) waits for `sysio.system` and lands in the `Producers` group far below.
+    // hosted account at launch — those keys must exist (and, under SSM, be published) first.
+    // This is pure key work; the matching chain WRITE (`newaccount`) waits for `sysio.system`
+    // and lands in the `Producers` group far below.
     const producerSpecs = producerNodes.flatMap(node =>
       node.producers.map(label => ({
         label,
@@ -229,13 +229,16 @@ export namespace ClusterBuildDefaults {
         // The hosting node comes from `NodeConfig.plan` — the ONE author of the producer→node
         // assignment. Re-deriving `index % producerNodeCount` here made a second copy that had
         // to agree with it by hand.
-        producerNodeIndex: node.index
+        producerNodeIndex: node.index,
+        // Decided at PLAN time so the Report records it: the node's name when the node hosts
+        // this producer alone (it signs and votes with the node's own keys), else its own label.
+        publicationLabel: NodeConfig.producerPublicationLabel(node, label)
       }))
     )
     WireOperatorProvisioningTool.planProducerIdentityPhase<C>(
       prerequisites,
       "ProducerIdentities",
-      "Materialize genesis producer identities (node K1 + each account's own finalizer key)",
+      "Materialize genesis producer identities (the hosting node's keys; a finalizer key per account on a shared node)",
       {},
       producerSpecs
     )

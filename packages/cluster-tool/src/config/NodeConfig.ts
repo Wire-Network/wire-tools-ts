@@ -462,6 +462,39 @@ export namespace NodeConfig {
   export const AdHocIndex = -1
 
   /**
+   * The secret-id `{account}` segment a PLANNED producer node's hosted producer publishes its
+   * keys under — the ONE derivation the materialization, the publication walker and every
+   * consumer of the recorded `OperatorAccount.publicationLabel` agree through.
+   *
+   * A planned producer node hosting exactly ONE producer is that producer's whole identity: the
+   * producer signs blocks AND votes with the node's own generated K1 + BLS, published under the
+   * node's name — the path a deployment fetches by node. A node hosting several producers gives
+   * each account its own finalizer key (`regfinkey` enforces global finalizer-key uniqueness, so
+   * siblings cannot share the node's), so each account publishes under its own label.
+   *
+   * An ad-hoc producer node ({@link createAdHoc}) is out of scope: its collateral-backed producer
+   * owns generated keys published under its own label and never reaches this derivation.
+   *
+   * @param node - A planned producer node (`role` producer, never {@link AdHocIndex}).
+   * @param producer - The key-store label of a producer `node` hosts.
+   * @returns `node.name` when `producer` is the node's only hosted producer, else `producer`.
+   */
+  export function producerPublicationLabel(
+    node: NodeConfig,
+    producer: string
+  ): string {
+    Assert.ok(
+      node.role === NodeRole.producer && node.index !== AdHocIndex,
+      `NodeConfig.producerPublicationLabel: ${node.name} is not a planned producer node`
+    )
+    Assert.ok(
+      node.producers.includes(producer),
+      `NodeConfig.producerPublicationLabel: ${producer} is not hosted by ${node.name}`
+    )
+    return node.producers.length === 1 ? node.name : producer
+  }
+
+  /**
    * The process label + node-dir name of an ad-hoc node, keyed by its
    * operator's durable `label` handle (deterministic + human-navigable; the
    * `account` is node-owner-generated and not path-safe to rely on).

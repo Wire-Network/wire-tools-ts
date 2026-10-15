@@ -13,9 +13,11 @@ export enum QueryHostMessageKind {
   cancel = "cancel",
   describe = "describe",
   loadOwner = "loadOwner",
+  testConnection = "testConnection",
   executed = "executed",
   described = "described",
   catalog = "catalog",
+  connectionTested = "connectionTested",
   failed = "failed"
 }
 
@@ -83,6 +85,27 @@ export interface QueryHostLoadOwner {
   owner: string
 }
 
+/**
+ * Test a (possibly unsaved) profile's connection: the node's `get_info`, then
+ * the engine probe — no ABI, no table read.
+ */
+export interface QueryHostTestConnection {
+  /** Discriminator. */
+  kind: QueryHostMessageKind.testConnection
+  /** Correlation id. */
+  requestId: string
+  /** The connection to test. */
+  profile: ConnectionProfile
+}
+
+/** What a passing connection test learned about the node (plain values: they cross the port). */
+export interface ConnectionTestResult {
+  /** The chain id (hex). */
+  chainId: string
+  /** The head block number. */
+  headBlockNum: number
+}
+
 /** Execution outcome. */
 export interface QueryHostExecuted {
   /** Discriminator. */
@@ -113,7 +136,17 @@ export interface QueryHostCatalog {
   snapshot: CatalogSnapshot
 }
 
-/** A describe / loadOwner that failed (execute failures ride `executed`). */
+/** A passing connection test. */
+export interface QueryHostConnectionTested {
+  /** Discriminator. */
+  kind: QueryHostMessageKind.connectionTested
+  /** Correlation id. */
+  requestId: string
+  /** What the test learned. */
+  result: ConnectionTestResult
+}
+
+/** A describe / loadOwner / testConnection that failed (execute failures ride `executed`). */
 export interface QueryHostFailed {
   /** Discriminator. */
   kind: QueryHostMessageKind.failed
@@ -129,12 +162,14 @@ export type QueryHostRequest =
   | QueryHostCancel
   | QueryHostDescribe
   | QueryHostLoadOwner
+  | QueryHostTestConnection
 
 /** Host → renderer. */
 export type QueryHostResponse =
   | QueryHostExecuted
   | QueryHostDescribed
   | QueryHostCatalog
+  | QueryHostConnectionTested
   | QueryHostFailed
 
 /** The query host's process arguments (main passes them to `utilityProcess.fork`). */

@@ -24,6 +24,7 @@ import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
 import { Constants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
+import { QueryEngineConfigProvider } from "../config/QueryEngineConfigProvider.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 
 /**
@@ -253,20 +254,31 @@ export function describeQueryEngineReadModeFlag(): string {
   return `nodeop ${Constants.READ_MODE_OPTION} the API nodes' query engine serves at — ${QueryEngineReadModeSchema.options.join(" | ")}; omit for nodeop's default (${NodeopReadMode.head}); the plugin rejects ${NodeopReadMode.speculative}`
 }
 
+/** What an omitted `--query-engine-<limit>` leaves in force when the harness sets no default. */
+const PluginDefaultDescription = "the plugin's default"
+
 /**
  * The `describe` (`--help`) text of one `--query-engine-<limit>` flag — the
  * ONE wording both `create` and `create-api-node` register.
  *
- * Changing it changes the `--help` of every limit flag on both commands.
+ * Changing it changes the `--help` of every limit flag on both commands. The
+ * omitted-value text interpolates the harness default from
+ * `QueryEngineConfigProvider.createDefaultOptions` when the limit has one,
+ * else names the plugin's own default.
  *
- * @param option - The limit's own plugin option (its ini key), from
- *   `Constants.QUERY_ENGINE_LIMIT_OPTIONS`.
+ * @param limit - The limit's entry in `Constants.QUERY_ENGINE_LIMIT_OPTIONS`
+ *   (its `QueryEngineConfig` member and its plugin option / ini key).
  * @returns The flag's `describe` text.
  */
 export function describeQueryEngineLimitFlag(
-  option: Constants.QueryEngineLimitOption["option"]
+  limit: Constants.QueryEngineLimitOption
 ): string {
-  return `nodeop ${option} on the API nodes; omit for the plugin's default`
+  const omitted = asOption(
+    QueryEngineConfigProvider.createDefaultOptions()[limit.member]
+  )
+    .map(value => `${value}`)
+    .getOrElse(PluginDefaultDescription)
+  return `nodeop ${limit.option} on the API nodes; omit for ${omitted}`
 }
 
 /** Infer a leaf's yargs type from its default `value`, or its `explicitType` when `null`. */
@@ -422,16 +434,18 @@ function buildReportShape(): OptionShapeObject {
  * The `queryEngine` sub-tree: the API nodes' read mode (an UNSEEDED choice) and
  * one UNSEEDED number leaf per plugin limit. `optionalChoicesLeaf` /
  * `optionalLeaf`, never `leaf`: a seeded default would always reach the config
- * and override nodeop's / the plugin's own default, which is the ONE author.
+ * as a CALLER setting (tripping the at-least-one-API-node rule) and re-spell
+ * the defaults, whose ONE home is `QueryEngineConfigProvider.createDefaultOptions`
+ * (the query deadline) or nodeop / the plugin (everything else).
  */
 function buildQueryEngineShape(): OptionShapeObject {
   // Bound to a typed local, never spread inline: an object spread drops the
   // `Object.fromEntries` index signature, so the limit leaves would go
   // unchecked against `OptionShapeObject`.
   const limits: OptionShapeObject = Object.fromEntries(
-    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ member, option }) => [
-      member,
-      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(option))
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(limit => [
+      limit.member,
+      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(limit))
     ])
   )
   return {

@@ -214,8 +214,9 @@ export namespace NodeopProcessSteps {
    * resolution (its keys ARE `genesis.json`'s `initial_key` /
    * `initial_finalizer_key`), falling back to {@link BiosOperator} for a cluster
    * directory written before that seeding existed. A producer node yields ONE ENTRY PER HOSTED
-   * PRODUCER — they share the node's block-signing K1 but each owns its own finalizer key, which
-   * `regfinkey`'s global uniqueness check requires; operator nodes resolve the single provisioned
+   * PRODUCER — they share the node's block-signing K1; a node's sole producer votes with the node's
+   * own BLS, while siblings on a shared node each own a finalizer key, which `regfinkey`'s global
+   * uniqueness check requires; operator nodes resolve the single provisioned
    * account itself; an API node acts for no account and resolves none. Exported so
    * `ClusterManager.run` (the relaunch path) reuses the SAME resolution logic — no duplication.
    */
@@ -242,8 +243,9 @@ export namespace NodeopProcessSteps {
    * A producer node's hosted accounts, in `node.producers` order.
    *
    * A producer never goes through `roa::newuser`, so its handle IS its on-chain name and the
-   * store is keyed by it directly. Each account was materialized with the node's K1 and its own
-   * BLS by `WireOperatorProvisioningTool.runProducerMaterialization`, so nothing is synthesized
+   * store is keyed by it directly. Each account was materialized with the node's K1 — and the
+   * node's BLS when it is the node's sole producer, else a BLS of its own — by
+   * `WireOperatorProvisioningTool.runProducerMaterialization`, so nothing is synthesized
    * here — an absent entry means that provisioning step never ran and must fail loudly rather
    * than silently launch a node that cannot vote.
    */

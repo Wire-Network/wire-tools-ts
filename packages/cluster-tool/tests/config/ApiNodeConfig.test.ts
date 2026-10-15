@@ -68,7 +68,7 @@ describe("ApiNodeConfig", () => {
       expect(first.queryEngine).not.toBe(second.queryEngine)
     })
 
-    it("leaves every query-engine member unset (nodeop and the plugin own those defaults)", () => {
+    it("takes the query-engine defaults from QueryEngineConfigProvider (the query deadline; nodeop and the plugin own the rest)", () => {
       expect(createApiNodeDefaultOptions().queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
       )
@@ -131,13 +131,17 @@ describe("ApiNodeConfig", () => {
       )
     })
 
-    it("resolves an all-unset queryEngine when the caller supplies none", () => {
-      expect(ApiNodeConfig.resolve(validOptions()).queryEngine).toEqual(
+    it("resolves the default queryEngine (only the query deadline set) when the caller supplies none", () => {
+      const { queryEngine } = ApiNodeConfig.resolve(validOptions())
+      expect(queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
+      )
+      expect(queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
       )
     })
 
-    it("keeps a PARTIAL queryEngine's members and fills the rest unset (the second shallow pass)", () => {
+    it("keeps a PARTIAL queryEngine's members and fills the rest with the defaults (the second shallow pass)", () => {
       const config = ApiNodeConfig.resolve(
         validOptions({
           queryEngine: { readMode: NodeopReadMode.irreversible, maxGroups: 50 }
