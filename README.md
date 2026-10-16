@@ -136,6 +136,10 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
+| `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → exact external liqETH redemption |
+| `flow-lco-launch-smoke` | `@wireio/test-flow-lco-launch-smoke` | Original ETH/SOL wallets recover backed principal and exact purchased/yield WIRE entitlements |
+| `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
+| `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
@@ -157,6 +161,10 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
+| `flow-ethereum-round-trip` | Fresh real Ethereum acquisition and custody, full shadow delivery, external payout, then another accepted inbound epoch without duplicate payment |
+| `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
+| `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
+| `flow-lco-launch-smoke` | Production-format entitlement conversion, import-window closure, both original-wallet links, backed principal and exact funded WIRE claims |
 
 The other six enabled flows (`flow-batch-operator-slashing`,
 `flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
