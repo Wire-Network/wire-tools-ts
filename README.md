@@ -158,9 +158,10 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
 
-The other six enabled flows (`flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
-`flow-operator-collateral-deposit`, `flow-producer-registration`) exercise their own paths. Imported
+The other seven enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-terminal-tie`, `flow-batch-operator-termination`,
+`flow-emissions-soak`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
+`flow-producer-registration`) exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
@@ -268,7 +269,7 @@ failure:
 | 2 | `wql-types-check` | `./scripts/generate-wql-types.mjs --check` — WIRE QL grammar + engine schema drift | 2 min |
 | 3 | `ql-app-icons-check` | `./scripts/generate-ql-app-icons.mjs --check` — desktop app icon drift | 2 min |
 | 4 | `lint` | `pnpm lint` | 2 min |
-| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
+| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 10 Jest projects (`cluster-tool-shared`, `cluster-tool`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
 
 This does not launch live flows. The hook uses the mise-pinned toolchain when
 available; Node 24.9 or newer is required.

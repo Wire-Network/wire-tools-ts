@@ -1,7 +1,7 @@
-import {
-  InboundTipReader,
-  type OutpostConsensusRow
-} from "@wireio/test-flow-batch-operator-slashing/InboundTipReader.js"
+import { InboundTipReader } from "@wireio/cluster-tool/flow"
+import type { SysioContracts } from "@wireio/sdk-core"
+
+type OutpostConsensusRow = SysioContracts.SysioMsgchOutpostConsensusEntryType
 
 /** The ETHEREUM outpost chain code used across the fixtures. */
 const ETHEREUM_CHAIN_CODE = 41
@@ -19,6 +19,9 @@ const ENVELOPE_DIGEST_HEX = "0x" + "22".repeat(32)
 function matchingRow(): OutpostConsensusRow {
   return {
     chain_code: ETHEREUM_CHAIN_CODE,
+    epoch_index: EPOCH,
+    consensus_reached: true,
+    winning_checksum: ENVELOPE_DIGEST_HEX,
     message_tip: MESSAGE_TIP_HEX,
     envelope_digest: ENVELOPE_DIGEST_HEX
   }
@@ -28,6 +31,9 @@ function matchingRow(): OutpostConsensusRow {
 function otherRow(): OutpostConsensusRow {
   return {
     chain_code: SOLANA_CHAIN_CODE,
+    epoch_index: EPOCH,
+    consensus_reached: true,
+    winning_checksum: "0x" + "44".repeat(32),
     message_tip: "0x" + "33".repeat(32),
     envelope_digest: "0x" + "44".repeat(32)
   }
@@ -95,11 +101,14 @@ describe("InboundTipReader", () => {
     expect(tips.envelopeDigest.length).toBe(0)
   })
 
-  test("returns empty tips for a genesis row (fields missing or all-zero)", async () => {
+  test("returns empty tips for an all-zero genesis row", async () => {
     const genesisRow: OutpostConsensusRow = {
       chain_code: ETHEREUM_CHAIN_CODE,
-      message_tip: "0x" + "00".repeat(32)
-      // envelope_digest absent: the depot leaves it unset until the first accepted envelope.
+      epoch_index: EPOCH,
+      consensus_reached: false,
+      winning_checksum: "",
+      message_tip: "0x" + "00".repeat(32),
+      envelope_digest: "0x" + "00".repeat(32)
     }
     const tips = await new InboundTipReader().read(
       ETHEREUM_CHAIN_CODE,

@@ -22,7 +22,6 @@ const config: Config = {
   projects: [
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
-    "packages/flow-batch-operator-slashing",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

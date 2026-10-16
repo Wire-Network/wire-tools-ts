@@ -387,7 +387,8 @@ schema behind `SchemaCodec.create<T>(schema)`).
 
 A flow is a `FlowScenario` composed onto the same engine via
 `FlowCLI.create(<Name>Scenario).run()`. See the 15 `flow-*` packages —
-`flow-batch-operator-slashing`, `flow-batch-operator-termination`,
+`flow-batch-operator-slashing`, `flow-batch-operator-terminal-tie`,
+`flow-batch-operator-termination`,
 `flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
 `flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
 `flow-producer-registration`, `flow-syndication-challenge`,

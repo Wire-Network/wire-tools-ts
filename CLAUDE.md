@@ -25,7 +25,7 @@ Never use `npm` or `yarn`.
 ```bash
 pnpm install               # links workspace + sibling-repo packages
 pnpm build                 # tsc -b project references (incremental)
-pnpm test                  # build + jest across all 11 jest projects + every test:unit
+pnpm test                  # build + jest across all 10 jest projects + every test:unit
 pnpm --filter @wireio/cluster-tool test    # harness unit tests only
 pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
