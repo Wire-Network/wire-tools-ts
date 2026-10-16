@@ -1,3 +1,4 @@
+import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
@@ -22,6 +23,10 @@ export namespace TerminationScenarioConstants {
    * underwriters).
    */
   export const DoomedOperatorEthereumHdIndex = 35
+
+  /** Registered outpost chain codes whose inbound cursors must keep advancing. */
+  export const EthereumChainCode = SlugName.from("ETHEREUM")
+  export const SolanaChainCode = SlugName.from("SOLANA")
 
   /** Epoch duration (s) — the bare-cluster working baseline (`sysio.epoch::setconfig` floor is 60). */
   export const EpochDurationSec = 60
@@ -72,11 +77,31 @@ export namespace TerminationScenarioConstants {
 
   /** Deadline for the operator to appear in `epochstate.batch_op_groups`. */
   export function scheduleWindowDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ScheduleWindowEpochs * ProtocolTiming.MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ScheduleWindowEpochs *
+      ProtocolTiming.MsPerSecond
+    )
   }
 
   /** Deadline for the miss window to accumulate and `termcheck` to flip TERMINATED. */
   export function terminationDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * MissAccumulationEpochs * ProtocolTiming.MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      MissAccumulationEpochs *
+      ProtocolTiming.MsPerSecond
+    )
+  }
+
+  /** A full group rotation plus the epoch needed to accept its final envelope. */
+  export function rotationDeadlineMs(
+    epochDurationSec: number,
+    groupCount: number
+  ): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(epochDurationSec) *
+      (groupCount + 1) *
+      ProtocolTiming.MsPerSecond
+    )
   }
 }
