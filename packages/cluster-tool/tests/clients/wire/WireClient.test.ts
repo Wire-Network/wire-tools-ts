@@ -25,6 +25,46 @@ describe("WireClient", () => {
     }
   })
 
+  describe("getWireBalance", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    it.each([
+      ["0.000000000 WIRE", 0n],
+      ["0.000000001 WIRE", 1n],
+      ["12.345678901 WIRE", 12_345_678_901n],
+      ["9007199.254740993 WIRE", 9_007_199_254_740_993n],
+      ["-0.000000001 WIRE", -1n],
+      ["-12.345678901 WIRE", -12_345_678_901n]
+    ])("reads %s as exact nine-decimal base units", async (quantity, expected) => {
+      const client = new WireClient(config),
+        balance = jest.spyOn(client.api.v1.chain, "get_currency_balance")
+      jest.spyOn(client.api.v1Provider, "call").mockResolvedValue({
+        status: 200,
+        headers: {},
+        json: [quantity],
+        text: JSON.stringify([quantity])
+      })
+
+      await expect(client.getWireBalance("alice")).resolves.toBe(expected)
+      expect(balance).toHaveBeenCalledWith("sysio.token", "alice", "WIRE")
+    })
+
+    it("returns zero when no balance row exists", async () => {
+      const client = new WireClient(config)
+      jest.spyOn(client.api.v1.chain, "get_currency_balance").mockResolvedValue([])
+
+      await expect(client.getWireBalance("alice")).resolves.toBe(0n)
+    })
+
+    it("propagates currency balance RPC failures", async () => {
+      const client = new WireClient(config),
+        error = new Error("currency balance RPC failed")
+      jest.spyOn(client.api.v1.chain, "get_currency_balance").mockRejectedValue(error)
+
+      await expect(client.getWireBalance("alice")).rejects.toBe(error)
+    })
+  })
+
   // The regression suite for the 2026-08-04 double-push: a finality wait that
   // does not resolve must NEVER re-send. `newaccount` failed loudly then; a
   // re-pushed transfer/deposit would have succeeded twice, silently.
@@ -436,6 +476,25 @@ describe("WireClient", () => {
           table: "producers"
         })
       )
+    })
+  })
+
+  describe("isPrivileged", () => {
+    it("reads get_account's privileged flag for the named account", async () => {
+      const client = new WireClient(config),
+        getAccount = jest
+          .spyOn(client.api.v1.chain, "get_account")
+          .mockResolvedValue({ privileged: true } as never)
+      expect(await client.isPrivileged("sysio.kicker")).toBe(true)
+      expect(getAccount).toHaveBeenCalledWith("sysio.kicker")
+    })
+
+    it("is false for an unprivileged account", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_account")
+        .mockResolvedValue({ privileged: false } as never)
+      expect(await client.isPrivileged("alice")).toBe(false)
     })
   })
 
