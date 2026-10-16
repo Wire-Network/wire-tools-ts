@@ -25,6 +25,8 @@
     { "path": "./packages/flow-liq-syndication/tsconfig.json" },
     { "path": "./packages/flow-liq-yield/tsconfig.json" },
     { "path": "./packages/flow-syndication-underwriting/tsconfig.json" },
+    { "path": "./packages/flow-syndication-plugin-underwriting/tsconfig.json" },
+    { "path": "./packages/flow-syndication-plugin-underwriting-cap/tsconfig.json" },
     { "path": "./packages/flow-emergency-stop/tsconfig.json" },
     { "path": "./packages/flow-syndication-challenge/tsconfig.json" },
     { "path": "./packages/flow-syndication-rate-limit/tsconfig.json" },

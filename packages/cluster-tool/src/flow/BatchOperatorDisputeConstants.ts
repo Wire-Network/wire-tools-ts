@@ -14,10 +14,6 @@ import { ProtocolTiming } from "../Constants.js"
 export namespace BatchOperatorDisputeConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
-  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
-  export const MsPerSecond = 1_000
-  /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
-  export const PollDeadlineBufferMs = 30_000
   /** Interval for long-running chain-state polls (ms). */
   export const LongPollIntervalMs = 3_000
   /** Interval for the tight epoch-boundary poll (ms). */
@@ -182,7 +178,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       ActiveEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -191,7 +187,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       GroupEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -200,14 +196,15 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       SettleEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
   /** Interval between frozen-epoch settle polls (ms). */
   export function settlePollIntervalMs(): number {
     return (
-      Math.floor(EpochDurationSec * SettlePollIntervalEpochRatio) * MsPerSecond
+      Math.floor(EpochDurationSec * SettlePollIntervalEpochRatio) *
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -216,7 +213,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       BoundaryEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -225,7 +222,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       DisputeOpenEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -234,7 +231,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       ResolveEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -243,7 +240,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       UnpauseEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
@@ -252,7 +249,7 @@ export namespace BatchOperatorDisputeConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       SlashPropagationEpochs *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 }

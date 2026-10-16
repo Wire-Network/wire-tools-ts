@@ -406,7 +406,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               ctx,
               Constants.UserA.account
             ),
-            supply: SyndicationScenario.units(
+            supply: WireSyndicationTool.assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -442,7 +442,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             before.balance
           )
           Assert.strictEqual(
-            SyndicationScenario.units(
+            WireSyndicationTool.assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -507,7 +507,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             before.balance - Constants.DesyndicationAmount
           )
           Assert.strictEqual(
-            SyndicationScenario.units(
+            WireSyndicationTool.assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,

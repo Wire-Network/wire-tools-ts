@@ -4,6 +4,7 @@ import { z } from "zod"
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
 import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
+import { BatchOperatorUnderwritingConfigSchema } from "./BatchOperatorUnderwritingConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
@@ -287,6 +288,13 @@ export const ClusterConfigSchema = z.object({
   enableMockLiqPools: z.boolean().default(false),
   /** Opt-in bootstrap import of mock bonder positions, with custody backing. */
   enableMockSyndicationImport: z.boolean().default(false),
+  /**
+   * The `batch_operator_plugin` underwriter role every batch-operator daemon runs
+   * (`--enable-batch-operator-underwriting`), or `null` for relay-only operator nodes.
+   * Schema-defaulted `null` so a cluster that does not opt in keeps relay-only nodes.
+   */
+  batchOperatorUnderwriting:
+    BatchOperatorUnderwritingConfigSchema.nullable().default(null),
   /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every

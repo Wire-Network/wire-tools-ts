@@ -43,6 +43,37 @@ export async function pollUntil(
   throw new Error(`Timed out waiting for: ${label} (${scaledTimeoutMs}ms)`)
 }
 
+/**
+ * Poll `read` on an interval until it yields a value (anything but `null` / `undefined`)
+ * or the deadline elapses, and return that value — the read-and-capture form of
+ * {@link pollUntil}, so a caller needs no variable assigned inside a predicate closure.
+ *
+ * @param label - Human-readable description of what is being awaited.
+ * @param read - Async read; a value ends the poll.
+ * @param timeoutMs - Deadline from now (ms).
+ * @param intervalMs - Delay between reads (ms).
+ * @return The first value `read` yields.
+ * @throws If the deadline elapses before `read` yields a value.
+ */
+export async function pollFor<T>(
+  label: string,
+  read: () => Promise<T>,
+  timeoutMs: number,
+  intervalMs: number
+): Promise<T> {
+  let value: T = null
+  await pollUntil(
+    label,
+    async () => {
+      value = await read()
+      return value != null
+    },
+    timeoutMs,
+    intervalMs
+  )
+  return value
+}
+
 export namespace pollUntil {
   /** See `utils/asyncUtils.ts` — the single-source flow timing scale. */
   export const TimeoutScaleEnvVar = FlowTimeoutScaleEnvVar

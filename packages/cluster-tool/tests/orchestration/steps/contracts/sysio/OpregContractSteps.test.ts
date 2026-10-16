@@ -79,12 +79,12 @@ describe("Steps.contracts.sysio.opreg", () => {
       "administratively remove batchop.a",
       {},
       OperatorLabel,
-      AuditReason
+      { reason: AuditReason }
     )
     expect(step.actor).toBe(Report.Actor.Sysio)
     expect(step.input.kind).toBe("OpregContractSteps.TerminateInput")
     expect(step.input.label).toBe(OperatorLabel)
-    expect(step.input.reason).toBe(AuditReason)
+    expect(step.input.data).toEqual({ reason: AuditReason })
     expect(typeof step.runner).toBe("function")
   })
 
@@ -96,7 +96,7 @@ describe("Steps.contracts.sysio.opreg", () => {
       {
         kind: "OpregContractSteps.TerminateInput",
         label: OperatorLabel,
-        reason: AuditReason
+        data: { reason: AuditReason }
       },
       new AbortController().signal
     )
@@ -120,7 +120,7 @@ describe("Steps.contracts.sysio.opreg", () => {
         {
           kind: "OpregContractSteps.TerminateInput",
           label: OperatorLabel,
-          reason: AuditReason
+          data: { reason: AuditReason }
         },
         controller.signal
       )
@@ -140,7 +140,9 @@ describe("Steps.contracts.sysio.opreg", () => {
     /** A fixture context whose opreg client is the one the spies are installed on. */
     function opregContext() {
       const ctx = fixtureContext(),
-        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.opreg)
+        contract = ctx.wire.getSysioContract(
+          SysioContracts.SysioContractName.opreg
+        )
       jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
       return { ctx, contract }
     }
@@ -161,13 +163,18 @@ describe("Steps.contracts.sysio.opreg", () => {
         data
       )
       expect(step.actor).toBe(Report.Actor.Underwriter)
-      expect(step.input).toEqual({ kind: "OpregContractSteps.DepositInput", data })
+      expect(step.input).toEqual({
+        kind: "OpregContractSteps.DepositInput",
+        data
+      })
       expect(step.runner).toBe(Steps.contracts.sysio.opreg.runDeposit)
     })
 
     it("runDeposit signs as the depositing operator", async () => {
       const { ctx, contract } = opregContext(),
-        invoke = jest.spyOn(contract.actions.deposit, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.deposit, "invoke")
+          .mockResolvedValue(undefined),
         data: SysioContracts.SysioOpregDepositAction = {
           account: operatorAccount,
           token_code: "WIRE",
@@ -183,7 +190,9 @@ describe("Steps.contracts.sysio.opreg", () => {
 
     it("runDeposit pushes nothing once the step is aborted", async () => {
       const { ctx, contract } = opregContext(),
-        invoke = jest.spyOn(contract.actions.deposit, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.deposit, "invoke")
+          .mockResolvedValue(undefined),
         controller = new AbortController()
       controller.abort()
       await expect(
@@ -212,13 +221,18 @@ describe("Steps.contracts.sysio.opreg", () => {
         {},
         data
       )
-      expect(step.input).toEqual({ kind: "OpregContractSteps.WithdrawInput", data })
+      expect(step.input).toEqual({
+        kind: "OpregContractSteps.WithdrawInput",
+        data
+      })
       expect(step.runner).toBe(Steps.contracts.sysio.opreg.runWithdraw)
     })
 
     it("runWithdraw signs as the withdrawing operator", async () => {
       const { ctx, contract } = opregContext(),
-        invoke = jest.spyOn(contract.actions.withdraw, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.withdraw, "invoke")
+          .mockResolvedValue(undefined),
         data: SysioContracts.SysioOpregWithdrawAction = {
           account: operatorAccount,
           token_code: "WIRE",
@@ -236,7 +250,9 @@ describe("Steps.contracts.sysio.opreg", () => {
       const { ctx, contract } = opregContext()
       jest
         .spyOn(contract.actions.withdraw, "invoke")
-        .mockRejectedValue(new Error("unsupported depot-native collateral token"))
+        .mockRejectedValue(
+          new Error("unsupported depot-native collateral token")
+        )
       await expect(
         Steps.contracts.sysio.opreg.runWithdraw(
           ctx,
@@ -261,13 +277,18 @@ describe("Steps.contracts.sysio.opreg", () => {
         {},
         data
       )
-      expect(step.input).toEqual({ kind: "OpregContractSteps.ClaimremitInput", data })
+      expect(step.input).toEqual({
+        kind: "OpregContractSteps.ClaimremitInput",
+        data
+      })
       expect(step.runner).toBe(Steps.contracts.sysio.opreg.runClaimremit)
     })
 
     it("runClaimremit signs as the claiming operator", async () => {
       const { ctx, contract } = opregContext(),
-        invoke = jest.spyOn(contract.actions.claimremit, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.claimremit, "invoke")
+          .mockResolvedValue(undefined),
         data: SysioContracts.SysioOpregClaimremitAction = {
           account: operatorAccount,
           token_code: "WIRE"
@@ -282,7 +303,9 @@ describe("Steps.contracts.sysio.opreg", () => {
 
     it("runClaimremit pushes nothing once the step is aborted", async () => {
       const { ctx, contract } = opregContext(),
-        invoke = jest.spyOn(contract.actions.claimremit, "invoke").mockResolvedValue(undefined),
+        invoke = jest
+          .spyOn(contract.actions.claimremit, "invoke")
+          .mockResolvedValue(undefined),
         controller = new AbortController()
       controller.abort()
       await expect(

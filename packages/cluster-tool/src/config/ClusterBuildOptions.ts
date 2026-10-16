@@ -1,5 +1,6 @@
 import type {
   AWSClusterNodeConfig,
+  BatchOperatorUnderwritingOptions,
   BindOptions,
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
@@ -69,6 +70,20 @@ export interface ClusterBuildOptions {
   enableMockLiqPools?: boolean
   /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
   enableMockSyndicationImport?: boolean
+  /**
+   * Run the `batch_operator_plugin` underwriter role on every batch-operator daemon, bonding
+   * from the operator's own account (`--enable-batch-operator-underwriting`). Default false;
+   * flows opt in through defaults. Requires a nodeop built with the underwriter role.
+   */
+  enableBatchOperatorUnderwriting?: boolean
+  /**
+   * How the underwriter role runs when {@link enableBatchOperatorUnderwriting} is on: which
+   * operators the mock import funds and the exposure caps. Flag-less — a flow's
+   * `Scenario.defaults` or a build-options document sets it. Every member defaults
+   * (`ClusterConfigProvider.resolveBatchOperatorUnderwriting`); setting it with the role off
+   * is refused.
+   */
+  batchOperatorUnderwriting?: BatchOperatorUnderwritingOptions
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit

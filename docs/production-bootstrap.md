@@ -397,8 +397,8 @@ authority is replaced by this setup.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
-outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, the inert
-`StakingManager`, plus the `liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
+outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, plus the
+`liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
 the panic account's pause role, then anvil switches to interval mining; solana-test-validator starts with all
 four wire-solana programs at genesis (`liqsol_core` hosts the OPP outpost), the liqsol surface is stood up by
 wire-solana's own `init-*` scripts, and the OPP PDAs are initialized with the native-SOL token binding and
@@ -474,6 +474,14 @@ drops every `SYNDICATE_LIQ` of the pair).
     - `--enable-mock-syndication-import`: `sysio.synd::importsynd` × 2 — one parked `100000000000` (100-token)
       position each of LIQSOL (ED key) and LIQETH (EM key) for an unlinked mock bonder — then
       `sysio.synd::importdone`, and a verify that both are parked with no custody mismatch.
+    - `--enable-batch-operator-underwriting` with `--enable-mock-syndication-import`: one more
+      `sysio.synd::importsynd` per FUNDED bootstrap batch operator (the first
+      `batchOperatorUnderwriting.fundedOperatorCount` in label order, default all) — `100000000000` LIQSOL to
+      the operator's own ED key, which lands liquid in its linked account — before `importdone`. Because those
+      keys exist only after operator provisioning, the import, its verify and the custody backing then run after
+      Stage 12's provisioning instead, still inside the epoch-0 window. The option also gives each operator a node-owner
+      `sysio.roa::addpolicy` RAM grant for its `sysio.bond` rows and runs the `batch_operator_plugin`
+      underwriter role on its node; it is a dev/test setup like the other mock flags.
     - With either flag, outpost custody is then funded (Solana pool ATA, Ethereum `SyndicationPool`) to back
       all outstanding mock shadow.
 

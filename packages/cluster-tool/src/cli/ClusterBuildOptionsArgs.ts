@@ -6,6 +6,8 @@ import { isString, Level, NestedError } from "@wireio/shared"
 import {
   AWSClusterNodeConfigSchemaCodec,
   AWSSSMSignatureProviderOptionsSchema,
+  BatchOperatorUnderwritingConfigSchema,
+  type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
   NodeopReadMode,
@@ -87,6 +89,12 @@ const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(
 const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(
   z.array(z.array(ChainTokenAmountSchema))
 )
+
+/** Validated codec for the flag-less `batchOperatorUnderwriting` member (every field optional). */
+const batchOperatorUnderwritingCodec =
+  SchemaCodec.create<BatchOperatorUnderwritingOptions>(
+    BatchOperatorUnderwritingConfigSchema.partial()
+  )
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -566,6 +574,10 @@ export function buildOptionShape(
       false,
       "import mock syndication positions for the bonder and back mock shadow at bootstrap"
     ),
+    enableBatchOperatorUnderwriting: leaf(
+      false,
+      "run the batch_operator_plugin underwriter role on every batch operator, bonding from its own account"
+    ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,
@@ -589,6 +601,8 @@ export function buildOptionShape(
     requiredBatchOperatorCollateral: [],
     requiredUnderwriterCollateral: [],
     underwriterCollateral: [],
+    // ── batch-operator underwriting tuning (flag-less object → no flags) ──
+    batchOperatorUnderwriting: {},
     // ── outputs ──
     logging: buildLoggingShape(),
     report: buildReportShape()
@@ -951,6 +965,9 @@ export function toClusterBuildOptions(
 /** The one non-flag member whose element type is `ChainTokenAmount[]`, not `CollateralRequirement`. */
 const UnderwriterCollateralKey = "underwriterCollateral" as const
 
+/** The one non-flag member that is an object (`BatchOperatorUnderwritingOptions`), not an array. */
+const BatchOperatorUnderwritingKey = "batchOperatorUnderwriting" as const
+
 /**
  * `ClusterBuildOptions` members with NO flag representation (object-arrays —
  * `buildOptionShape` declares them empty). They flow from a caller's `defaults`
@@ -961,7 +978,8 @@ const NonFlagOptionKeys = [
   "requiredProducerCollateral",
   "requiredBatchOperatorCollateral",
   "requiredUnderwriterCollateral",
-  UnderwriterCollateralKey
+  UnderwriterCollateralKey,
+  BatchOperatorUnderwritingKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A `ClusterBuildOptions` member with no flag representation. */
@@ -1054,11 +1072,17 @@ function assertDocumentLeafValue(
 function decodeNonFlagOption(
   key: NonFlagOptionKey,
   value: unknown
-): CollateralRequirement[] | ChainTokenAmount[][] {
+):
+  | CollateralRequirement[]
+  | ChainTokenAmount[][]
+  | BatchOperatorUnderwritingOptions {
   const text = JSON.stringify(value)
   return match(key)
     .with(UnderwriterCollateralKey, () =>
       underwriterCollateralCodec.deserialize(text)
+    )
+    .with(BatchOperatorUnderwritingKey, () =>
+      batchOperatorUnderwritingCodec.deserialize(text)
     )
     .otherwise(() => collateralRequirementsCodec.deserialize(text))
 }

@@ -1,6 +1,13 @@
 import { ethers } from "ethers"
 
-import { AttestationType, Envelope } from "@wireio/opp-typescript-models"
+import {
+  AttestationType,
+  ChainKind,
+  Envelope,
+  type AttestationEntry,
+  type MessageHeader,
+  type MessagePayload
+} from "@wireio/opp-typescript-models"
 
 /**
  * Canonical OPP envelope codec for synthetic dispute envelopes.
@@ -93,7 +100,7 @@ const canonicalSubMessage = (field: number, body: number[]) => [
 ]
 
 /** An `opp.ChainId` body (kind + id). */
-const canonicalChainId = (kind: number, id: number) => [
+const canonicalChainId = (kind: ChainKind, id: number) => [
   ...canonicalVarintField(ChainIdField.kind, kind),
   ...canonicalVarintField(ChainIdField.id, id)
 ]
@@ -103,22 +110,18 @@ const canonicalChainId = (kind: number, id: number) => [
  * (routing derives from the proven chain), so each carries a zero-kind, zero-id chain id.
  */
 const canonicalEndpointsDefault = () => [
-  ...canonicalSubMessage(EndpointsField.start, canonicalChainId(0, 0)),
-  ...canonicalSubMessage(EndpointsField.end, canonicalChainId(0, 0))
+  ...canonicalSubMessage(
+    EndpointsField.start,
+    canonicalChainId(ChainKind.UNKNOWN, 0)
+  ),
+  ...canonicalSubMessage(
+    EndpointsField.end,
+    canonicalChainId(ChainKind.UNKNOWN, 0)
+  )
 ]
 
-/** The wire-level fields of one `opp.Attestation` body, as fed to the canonical encoder. */
-interface CanonicalAttestationBody {
-  /** `Attestation.type` (an `AttestationType` value). */
-  type: number
-  /** `Attestation.data_size` — encoded explicitly, field-complete. */
-  dataSize: number
-  /** `Attestation.data` — the raw attestation bytes. */
-  data: Uint8Array
-}
-
 /** An `opp.Attestation` body (type + data_size + data). */
-const canonicalAttestation = (att: CanonicalAttestationBody) => [
+const canonicalAttestation = (att: AttestationEntry) => [
   ...canonicalVarintField(AttestationField.type, att.type),
   ...canonicalVarintField(AttestationField.dataSize, att.dataSize),
   ...canonicalBytesField(AttestationField.data, att.data)
@@ -126,8 +129,8 @@ const canonicalAttestation = (att: CanonicalAttestationBody) => [
 
 /** An `opp.MessagePayload` body (version + repeated attestation sub-messages). */
 const canonicalPayload = (
-  version: number,
-  atts: CanonicalAttestationBody[]
+  version: MessagePayload["version"],
+  atts: AttestationEntry[]
 ) => [
   ...canonicalVarintField(PayloadField.version, version),
   ...atts.flatMap(att =>
@@ -135,21 +138,8 @@ const canonicalPayload = (
   )
 ]
 
-/** The wire-level fields of an `opp.MessageHeader` body, as fed to the canonical encoder. */
-interface CanonicalHeaderBody {
-  /** `MessageHeader.message_id` (empty in the blanked pre-image). */
-  messageId: Uint8Array
-  /** `MessageHeader.previous_message_id` (empty at stream genesis). */
-  previousMessageId: Uint8Array
-  /** `MessageHeader.payload_size`. */
-  payloadSize: number
-  /** `MessageHeader.payload_checksum`. */
-  payloadChecksum: Uint8Array
-  /** `MessageHeader.timestamp` — milliseconds since the Unix epoch. */
-  timestamp: bigint
-  /** `MessageHeader.header_checksum` (empty in the blanked pre-image). */
-  headerChecksum: Uint8Array
-}
+/** The generated `opp.MessageHeader` fields encoded after fixed default endpoints. */
+type CanonicalHeaderBody = Omit<MessageHeader, "endpoints">
 
 /** An `opp.MessageHeader` body in field-complete canonical form (slot 4 reserved, never encoded). */
 const canonicalHeader = (header: CanonicalHeaderBody) => [
@@ -170,15 +160,15 @@ const keccakBytes = (bytes: number[] | Uint8Array) =>
   ethers.getBytes(ethers.keccak256(Uint8Array.from(bytes)))
 
 /** Big-endian sequence number in the first 8 bytes of a message id; 0 when empty (genesis). */
-function messageSequence(messageId: Uint8Array): bigint {
+function messageSequence(messageId: MessageHeader["messageId"]): bigint {
   return messageId.length < 8 ? 0n : ethers.toBigInt(messageId.slice(0, 8))
 }
 
 /** `headerChecksum` with its first 8 bytes replaced by the big-endian sequence number. */
 function deriveMessageId(
-  headerChecksum: Uint8Array,
+  headerChecksum: MessageHeader["headerChecksum"],
   sequence: bigint
-): Uint8Array {
+): MessageHeader["messageId"] {
   const out = new Uint8Array(headerChecksum)
   out.set(ethers.getBytes(ethers.toBeHex(sequence, 8)), 0)
   return out
@@ -187,35 +177,18 @@ function deriveMessageId(
 // ── Semantic header derivation (opp.proto MessageHeader, SEC-102) ─────────────
 
 /** One attestation for {@link deriveSemanticHeader}; `data_size` is derived from `data.length`. */
-export interface CanonicalAttestation {
-  /** `Attestation.type` (an `AttestationType` value). */
-  type: number
-  /** `Attestation.data` — the raw attestation bytes. */
-  data: Uint8Array
-}
+export type CanonicalAttestation = Omit<AttestationEntry, "dataSize">
 
 /** Inputs to {@link deriveSemanticHeader} — the varying content of one OPP message. */
 export interface SemanticHeaderInput {
   /** `MessagePayload.version`. */
-  version: number
+  version: MessagePayload["version"]
   /** The message's attestations (encoded field-complete, in order). */
   attestations: CanonicalAttestation[]
   /** `MessageHeader.timestamp` — milliseconds since the Unix epoch. */
-  timestampMs: bigint
+  timestampMs: MessageHeader["timestamp"]
   /** The outpost's current inbound message tip (empty at stream genesis). */
-  previousMessageId: Uint8Array
-}
-
-/** The derived, spec-correct `opp.MessageHeader` checksum fields. */
-export interface SemanticHeader {
-  /** `payload_size`: the length of the canonical payload encoding. */
-  payloadSize: number
-  /** `payload_checksum`: keccak256 over the canonical payload bytes. */
-  payloadChecksum: Uint8Array
-  /** `header_checksum`: keccak256 over the blanked canonical header. */
-  headerChecksum: Uint8Array
-  /** `message_id`: `header_checksum` with its first 8 bytes spliced to the sequence number. */
-  messageId: Uint8Array
+  previousMessageId: MessageHeader["previousMessageId"]
 }
 
 /**
@@ -232,7 +205,7 @@ export interface SemanticHeader {
  */
 export function deriveSemanticHeader(
   input: SemanticHeaderInput
-): SemanticHeader {
+): MessageHeader {
   const atts = input.attestations.map(att => ({
     type: att.type,
     dataSize: att.data.length,
@@ -255,10 +228,12 @@ export function deriveSemanticHeader(
     messageSequence(input.previousMessageId) + 1n
   )
   return {
+    messageId,
+    previousMessageId: input.previousMessageId,
     payloadSize: payloadCanonical.length,
     payloadChecksum,
-    headerChecksum,
-    messageId
+    timestamp: input.timestampMs,
+    headerChecksum
   }
 }
 
@@ -267,26 +242,26 @@ export function deriveSemanticHeader(
 /** Inputs to {@link encodeTaggedEnvelope}. */
 export interface TaggedEnvelopeInput {
   /** The contested epoch the envelope claims. */
-  epochIndex: number
+  epochIndex: Envelope["epochIndex"]
   /** `Envelope.epoch_envelope_index` fixture. */
-  epochEnvelopeIndex: number
+  epochEnvelopeIndex: Envelope["epochEnvelopeIndex"]
   /** `Envelope.epoch_timestamp` / `MessageHeader.timestamp` — milliseconds since the Unix epoch. */
-  epochTimestampMs: bigint
+  epochTimestampMs: Envelope["epochTimestamp"]
   /** `MessagePayload.version` fixture. */
-  payloadVersion: number
+  payloadVersion: MessagePayload["version"]
   /** The benign payload tag distinguishing this envelope's checksum. */
   tag: string
   /**
    * The outpost's current inbound MESSAGE tip (empty at stream genesis) — the header must continue
    * it (`previous_message_id`), and the derived `message_id` carries `seq(tip) + 1`.
    */
-  previousMessageId: Uint8Array
+  previousMessageId: MessageHeader["previousMessageId"]
   /**
    * The outpost's current inbound ENVELOPE tip (`outpcons.envelope_digest`, empty at stream
    * genesis) — `apply_consensus` drops any non-genesis envelope whose `previous_envelope_hash`
    * does not equal it, BEFORE the semantic-header check, so it must be chained here too.
    */
-  previousEnvelopeHash: Uint8Array
+  previousEnvelopeHash: Envelope["previousEnvelopeHash"]
 }
 
 /**

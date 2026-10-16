@@ -3,7 +3,10 @@ import Assert from "node:assert"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 
-import { Constants as TestClusterConstants } from "../Constants.js"
+import {
+  Constants as TestClusterConstants,
+  ProtocolTiming
+} from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
@@ -192,32 +195,37 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       } = this.options,
       candidateCount = deliveryOperators.length,
       activeStepOptions = {
-        timeoutMs: Constants.activeDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.activeDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       groupStepOptions = {
-        timeoutMs: Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.groupDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       settleStepOptions = {
-        timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.settleDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       stageStepOptions = {
         timeoutMs:
-          Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.boundaryDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       disputeOpenStepOptions = {
         timeoutMs:
-          Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.disputeOpenDeadlineMs() +
+          ProtocolTiming.PollDeadlineBufferMs
       },
       resolveStepOptions = {
         timeoutMs:
-          Constants.resolveDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.resolveDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       unpauseStepOptions = {
         timeoutMs:
-          Constants.unpauseDeadlineMs() + Constants.PollDeadlineBufferMs
+          Constants.unpauseDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       slashStepOptions = {
-        timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.slashDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       }
 
     Assert.ok(
@@ -454,7 +462,7 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
           `administratively terminate ${terminatedOperator} before contested delivery`,
           {},
           terminatedOperator,
-          "WIRE-362 terminal two-way dispute coverage"
+          { reason: "WIRE-362 terminal two-way dispute coverage" }
         ),
         verifyStep(
           Actor.Sysio,
@@ -611,12 +619,18 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       )
     )
 
-    // ── 4. SlashNonCanonical — configured losers SLASHED, winner untouched ──
+    // ── 4. SlashNonCanonical — advance, configured losers SLASHED, winner untouched ──
     ClusterBuildPhase.create(
       cluster,
       "SlashNonCanonical",
       "Non-canonical deliverers flip SLASHED; the canonical deliverer does not"
     ).push(
+      Steps.contracts.sysio.msgch.planChkcons(
+        Actor.Sysio,
+        "advance-for-slash",
+        "crank consensus once to drive the post-resolution epoch advance and slash",
+        {}
+      ),
       ...losingOperators.map(operator =>
         DisputeSteps.planAwaitOperatorSlashed(
           Actor.Sysio,

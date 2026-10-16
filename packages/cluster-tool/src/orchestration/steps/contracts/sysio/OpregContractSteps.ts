@@ -19,7 +19,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::setconfig` — availability caps, termination thresholds, collateral minimums. */
-  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -55,7 +57,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::regoperator` — register a batch operator / underwriter / producer. */
-  export function planRegoperator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegoperator<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -84,13 +88,13 @@ export namespace OpregContractSteps {
       .actions.regoperator.invoke(input.data)
   }
 
-  /** Input for {@link planTerminate} — a harness operator label and audit reason. */
+  /** Input for {@link planTerminate} — a harness operator label and generated action data. */
   export interface TerminateInput extends StepInput {
     readonly kind: "OpregContractSteps.TerminateInput"
     /** Harness label resolved to the generated WIRE account during execution. */
     readonly label: string
-    /** Human-readable reason stored on the operator row. */
-    readonly reason: string
+    /** Generated action data except the account resolved from {@link label}. */
+    readonly data: Omit<SysioContracts.SysioOpregTerminateAction, "account">
   }
 
   /**
@@ -101,7 +105,7 @@ export namespace OpregContractSteps {
    * @param description - Step description.
    * @param options - Step option overrides.
    * @param label - Harness operator label resolved at execution time.
-   * @param reason - Human-readable audit reason stored by the contract.
+   * @param data - Generated action data except the resolved operator account.
    * @returns The definition step.
    */
   export function planTerminate<
@@ -112,14 +116,14 @@ export namespace OpregContractSteps {
     description: string,
     options: ClusterBuildStepOptions,
     label: string,
-    reason: string
+    data: Omit<SysioContracts.SysioOpregTerminateAction, "account">
   ): ClusterBuildStep<C, TerminateInput> {
     return ClusterBuildStep.create<C, TerminateInput>(
       actor,
       name,
       description,
       options,
-      { kind: "OpregContractSteps.TerminateInput", label, reason },
+      { kind: "OpregContractSteps.TerminateInput", label, data },
       runTerminate
     )
   }
@@ -128,7 +132,7 @@ export namespace OpregContractSteps {
    * Resolve the harness operator label and invoke `sysio.opreg::terminate`.
    *
    * @param ctx - The build context.
-   * @param input - Operator label and audit reason from the definition step.
+   * @param input - Operator label and generated action data from the definition step.
    * @param signal - Abort signal checked before resolving or invoking.
    * @returns A promise that resolves after the action reaches finality.
    */
@@ -141,8 +145,8 @@ export namespace OpregContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .actions.terminate.invoke({
-        account: ctx.keyStore.assertOperator(input.label).account,
-        reason: input.reason
+        ...input.data,
+        account: ctx.keyStore.assertOperator(input.label).account
       })
   }
 
@@ -158,7 +162,9 @@ export namespace OpregContractSteps {
    * `data.account` under that account's own authority, so the operator signs and must
    * already hold `amount` of the token.
    */
-  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -206,7 +212,9 @@ export namespace OpregContractSteps {
    * operator's `recent_actions`. Only an unsupported token reverts. This Step therefore
    * succeeds on a refused request; `WireCollateralTool.planWithdrawal` confirms the queue row.
    */
-  export function planWithdraw<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planWithdraw<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -247,7 +255,9 @@ export namespace OpregContractSteps {
    * `sysio.opreg::claimremit` — pay the `remitclaims{account, token_code}` row out of the
    * token's custody contract in one transfer.
    */
-  export function planClaimremit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClaimremit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,

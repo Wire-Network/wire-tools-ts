@@ -191,6 +191,13 @@ describe("BatchOperatorDisputeScenario", () => {
       step => step.name === "dispute-opens"
     )
     expect(disputeWait?.input).toMatchObject({ expectedCandidateCount: 2 })
+    expect(
+      phaseNamed(build, "SlashNonCanonical").steps.map(step => step.name)
+    ).toEqual([
+      "advance-for-slash",
+      "dispop.b-slashed",
+      "canonical-not-slashed"
+    ])
   })
 
   it("preserves the original three-candidate composition", () => {
@@ -217,6 +224,14 @@ describe("BatchOperatorDisputeScenario", () => {
       "DisputeOpens"
     ).steps.find(step => step.name === "dispute-opens")
     expect(disputeWait?.input).toMatchObject({ expectedCandidateCount: 3 })
+    expect(
+      phaseNamed(build, "SlashNonCanonical").steps.map(step => step.name)
+    ).toEqual([
+      "advance-for-slash",
+      "dispop.b-slashed",
+      "dispop.c-slashed",
+      "canonical-not-slashed"
+    ])
   })
 
   it("rejects a delivery operator outside the provisioned dispute roster", () => {

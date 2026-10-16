@@ -1,5 +1,6 @@
 import { Option } from "@3fv/prelude-ts"
 import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+import { range } from "lodash"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 
@@ -32,6 +33,13 @@ export namespace Constants {
   }).getOrThrow(`Failed to create default key pair: ${DefaultK1KeyPairSeed}`)
 
   export type DefaultK1KeyPairType = typeof DefaultK1KeyPair
+
+  /**
+   * The Solana liq token's codename (`LIQSOL`): the shadow symbol code, the `sysio.tokens`
+   * code and the token code every LIQSOL syndication carries. Renaming it renames the token
+   * across the registry, the mock data and the flows.
+   */
+  export const LIQSOL_CODENAME = "LIQSOL"
 
   /** Default sysio development private key (WIF format). */
   export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
@@ -141,6 +149,21 @@ export namespace Constants {
   export const CORE_SYMBOL = "SYS"
   /** Core symbol decimal precision. */
   export const CORE_SYMBOL_PRECISION = 4
+  /**
+   * Depot-frame precision every liq token is registered at, and so the precision of every
+   * shadow symbol (`9,LIQSOL`). Changing it changes the registered tokens and every shadow
+   * asset the harness renders.
+   */
+  export const LIQ_TOKEN_PRECISION = 9
+  /**
+   * The shadow symbol of a liq token codename at {@link LIQ_TOKEN_PRECISION}, in ABI form.
+   *
+   * @param codename - The token codename (`LIQSOL`).
+   * @returns The symbol (`9,LIQSOL`).
+   */
+  export function liqSymbol(codename: string): string {
+    return `${LIQ_TOKEN_PRECISION},${codename}`
+  }
 
   /**
    * `total_sys` for `sysio.roa::activateroa` — the supply the ROA RAM pool is
@@ -151,6 +174,8 @@ export namespace Constants {
   export const ROA_BYTES_PER_UNIT = 104
   export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
   export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
+  /** A resource weight that allocates nothing — for a policy that grants only another resource. */
+  export const NO_RESOURCE_WEIGHT = "0.0000 SYS"
 
   /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
   export const BOOTSTRAP_NODE_OWNER = "wireno"
@@ -385,6 +410,16 @@ export namespace Constants {
    */
   export function batchOperatorLabel(index: number): string {
     return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+  }
+
+  /**
+   * The labels of a cluster's bootstrap batch operators, in index order.
+   *
+   * @param count - The batch-operator roster size (`batchOperatorCount`).
+   * @returns `batchOperatorLabel(0)` … `batchOperatorLabel(count - 1)`.
+   */
+  export function batchOperatorLabels(count: number): string[] {
+    return range(count).map(batchOperatorLabel)
   }
 
   /**

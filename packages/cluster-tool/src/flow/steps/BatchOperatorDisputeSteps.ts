@@ -3,13 +3,14 @@ import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
+import { WireClient } from "../../clients/wire/WireClient.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import { outputKey } from "../../orchestration/OutputStore.js"
-import { pollUntil } from "../../orchestration/StepTools.js"
+import { pollFor, pollUntil } from "../../orchestration/StepTools.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Steps } from "../../orchestration/steps/index.js"
 import { Report } from "../../report/Report.js"
@@ -26,15 +27,10 @@ const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
 
 const log = getLogger(__filename)
 
-/** The permission every flow-pushed action signs with. */
-const ActivePermission = "active"
-/** ISO-8601 Zulu suffix — chain timestamps are UTC; append when missing. */
-const UtcZuluSuffix = "Z"
-
 /**
  * Shared step factories + dispute-domain reads for batch-operator disputes.
- * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
- * and `sysio.opreg::processbatch` have no shared `Steps.*` palette factories
+ * The `sysio.chalg::votedispute`, `sysio.msgch::deliver`, and
+ * `sysio.opreg::processbatch` actions have no shared `Steps.*` palette factories
  * yet, so this namespace supplies them in the
  * same shape (`(actor, name, description, options, ...args) → ClusterBuildStep`,
  * ABI-exact action names, typed `StepInput`s, named runners). Cross-step values
@@ -253,44 +249,6 @@ export namespace BatchOperatorDisputeSteps {
       ?.checksum
   }
 
-  // ── Cranks (permissionless writes driven inside polls) ───────────────────
-
-  /**
-   * Crank consensus: `sysio.msgch::chkcons` (permissionless, no args) re-runs
-   * `evalcons` for the current epoch's outposts and drives epoch advance. With
-   * the dispute operators SBP-less, nothing else cranks it, so the flow does —
-   * to drive the post-resolution `advance` where the slash runs. Tolerant of
-   * transient errors (e.g. chkcons racing a concurrent advance / a forked-out
-   * crank) so it is safe to call inside a poll — but NEVER silently: a
-   * persistent crank failure (the original `tx_duplicate` bug) is only
-   * diagnosable if it is logged. The typed `invoke` waits for finality, spacing
-   * repeated cranks so byte-identical empty-data txs don't collide on TAPOS.
-   *
-   * @param ctx - The build context.
-   */
-  export async function crankChkcons(ctx: ClusterBuildContext): Promise<void> {
-    try {
-      await ctx.wire
-        .getSysioContract(SysioContractName.msgch)
-        .actions.chkcons.invoke(
-          {},
-          {
-            authorization: [
-              {
-                actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator)
-                  .account,
-                permission: ActivePermission
-              }
-            ]
-          }
-        )
-    } catch (error) {
-      log.warn(
-        `[batch-operator-dispute] chkcons crank transient: ${errorMessage(error)}`
-      )
-    }
-  }
-
   // There is deliberately NO `crankChkdispute` here. `sysio.chalg::chkdispute` is
   // cranked in PRODUCTION by `batch_operator_plugin`'s epoch tick from every ACTIVE
   // batch operator (wire-sysio `crank_open_disputes`). A flow that cranks the tally
@@ -318,10 +276,10 @@ export namespace BatchOperatorDisputeSteps {
     await pollUntil(
       "chain head-block time passes next_epoch_start",
       async () => {
-        const nextEpochStartMs = parseUtcMs(
+        const nextEpochStartMs = WireClient.chainTimeMs(
           String((await readEpochState(ctx)).next_epoch_start)
         )
-        const headTimeMs = parseUtcMs(
+        const headTimeMs = WireClient.chainTimeMs(
           String((await ctx.wire.getInfo()).head_block_time)
         )
         return (
@@ -535,9 +493,7 @@ export namespace BatchOperatorDisputeSteps {
           data: bytesToHex(envelope)
         },
         {
-          authorization: [
-            { actor: batchOperatorAccount, permission: ActivePermission }
-          ]
+          authorization: WireClient.activeAuthorization(batchOperatorAccount)
         }
       )
   }
@@ -598,7 +554,7 @@ export namespace BatchOperatorDisputeSteps {
           chosen_checksum: target.canonicalChecksum
         },
         {
-          authorization: [{ actor: input.owner, permission: ActivePermission }]
+          authorization: WireClient.activeAuthorization(input.owner)
         }
       )
   }
@@ -699,14 +655,12 @@ export namespace BatchOperatorDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const epoch = ctx.outputs.assert(ContestedEpochKey)
-    await pollUntil(
+    const dispute = await pollFor(
       "an OPEN dispute row appears for the contested (outpost, epoch)",
-      async () => (await findOpenDispute(ctx, epoch)) != null,
+      () => findOpenDispute(ctx, epoch),
       Constants.disputeOpenDeadlineMs(),
       Constants.LongPollIntervalMs
     )
-    const dispute = await findOpenDispute(ctx, epoch)
-    Assert.ok(dispute != null, `no OPEN dispute row for epoch ${epoch}`)
     Assert.ok(
       dispute.candidates.length === input.expectedCandidateCount,
       `expected exactly ${input.expectedCandidateCount} dispute candidates, got ${dispute.candidates.length}`
@@ -792,7 +746,7 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  // ── Step: await an operator slash (crank chkcons inside the poll) ─────────
+  // ── Step: await an operator slash (read-only poll) ────────────────────────
 
   /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
@@ -802,9 +756,8 @@ export namespace BatchOperatorDisputeSteps {
 
   /**
    * Poll until the operator flips OPERATOR_STATUS_SLASHED. The slash runs in
-   * `sysio.epoch::advance`; `chkcons` drives advance and the SBP-less group
-   * means nothing else cranks it, so each iteration cranks
-   * ({@link crankChkcons}) until the unpaused epoch advances.
+   * `sysio.epoch::advance`; the preceding dedicated `chkcons` step drives that
+   * advance so this step remains a read-only, reportable assertion.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -836,7 +789,7 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — crank + poll until the operator row shows SLASHED. */
+  /** Named runner — poll until the operator row shows SLASHED. */
   export async function runAwaitOperatorSlashed<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitOperatorSlashedInput,
@@ -846,7 +799,6 @@ export namespace BatchOperatorDisputeSteps {
     await pollUntil(
       `${input.label} (non-canonical) becomes SLASHED`,
       async () => {
-        await crankChkcons(ctx)
         const row = await readOperator(ctx, input.label)
         return (
           row != null &&
@@ -925,18 +877,6 @@ export namespace BatchOperatorDisputeSteps {
       },
       Constants.activeDeadlineMs(),
       Constants.LongPollIntervalMs
-    )
-  }
-
-  /** The chain-side reason folded into a caught error, for crank logging. */
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
-  }
-
-  /** Parse a chain timestamp as UTC ms (chain timestamps omit the zone suffix). */
-  function parseUtcMs(raw: string): number {
-    return Date.parse(
-      raw.endsWith(UtcZuluSuffix) ? raw : `${raw}${UtcZuluSuffix}`
     )
   }
 }

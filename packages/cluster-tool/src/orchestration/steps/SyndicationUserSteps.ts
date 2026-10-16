@@ -1,8 +1,12 @@
+import Assert from "node:assert"
+
 import { Base58, KeyType, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
 import { WireClient } from "../../clients/wire/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
+import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
+import { Constants } from "../../Constants.js"
 import { privateKeyFromNativeString } from "../../utils/keyPairUtils.js"
 import {
   ClusterBuildStep,
@@ -19,6 +23,36 @@ import type { Report } from "../../report/Report.js"
  * `SYNDICATE_LIQ`.
  */
 export namespace SyndicationUserSteps {
+  /** The NET / CPU / RAM weights of one node-owner resource policy, as `SYS` assets. */
+  export interface PolicyWeights {
+    readonly net: string
+    readonly cpu: string
+    readonly ram: string
+  }
+
+  /**
+   * The `sysio.roa::addpolicy` the bootstrap node owner issues to `owner`: the ONE builder of
+   * a node-owner policy, so every flow account and harness account is funded the same way.
+   *
+   * @param owner - The account receiving the resources.
+   * @param weights - Its NET / CPU / RAM weights.
+   * @return The action payload.
+   */
+  export function nodeOwnerPolicy(
+    owner: string,
+    weights: PolicyWeights
+  ): SysioContracts.SysioRoaAddpolicyAction {
+    return {
+      owner,
+      issuer: Constants.BOOTSTRAP_NODE_OWNER,
+      net_weight: weights.net,
+      cpu_weight: weights.cpu,
+      ram_weight: weights.ram,
+      time_block: 0,
+      network_gen: 0
+    }
+  }
+
   /** Resource allocation carried by its own on-chain write. */
   export interface ResourcePolicyInput extends StepInput {
     readonly kind: "SyndicationUserSteps.ResourcePolicyInput"
@@ -125,5 +159,155 @@ export namespace SyndicationUserSteps {
         Base58.encode(keypair.secretKey)
       )
     })
+  }
+
+  /** Input of the parked-credit verify Steps: whose credit, in which token, and its net. */
+  export interface ParkedCreditInput extends StepInput {
+    readonly kind: "SyndicationUserSteps.ParkedCreditInput"
+    /** The recipient's WIRE account. */
+    readonly account: string
+    /** Durable handle of the recipient's persisted Solana keypair, the key credit parks under. */
+    readonly keypairName: string
+    /** The shadow codename (`LIQSOL`). */
+    readonly tokenCode: string
+    /** The net credit the release parks: the gross syndication minus its fee. */
+    readonly expectedNet: bigint
+  }
+
+  /**
+   * Verify an unlinked recipient's release parked exactly its net credit and left its account
+   * empty. Nothing but the recipient's own `createlink` moves a parked row, so this holds
+   * whoever bonded the request.
+   *
+   * @param actor - Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @param account - The recipient's WIRE account.
+   * @param keypairName - Durable handle of its persisted Solana keypair.
+   * @param tokenCode - The shadow codename.
+   * @param expectedNet - The net credit.
+   * @return The verify Step.
+   */
+  export function planVerifyParkedCredit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    keypairName: string,
+    tokenCode: string,
+    expectedNet: bigint
+  ): ClusterBuildStep<C, ParkedCreditInput> {
+    return ClusterBuildStep.create<C, ParkedCreditInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SyndicationUserSteps.ParkedCreditInput",
+        account,
+        keypairName,
+        tokenCode,
+        expectedNet
+      },
+      runVerifyParkedCredit
+    )
+  }
+
+  /** Named runner — the parked row holds exactly the net and the account nothing. */
+  export async function runVerifyParkedCredit<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ParkedCreditInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const row = await readParkedCredit(ctx, input)
+    Assert.ok(row, `nothing is parked for ${input.account}`)
+    Assert.strictEqual(BigInt(row.balance), input.expectedNet)
+    Assert.strictEqual(
+      await WireSyndicationTool.readLiqBalance(
+        ctx,
+        input.account,
+        input.tokenCode
+      ),
+      0n
+    )
+  }
+
+  /**
+   * Verify `createlink` delivered the parked net credit exactly once: the parked row is gone
+   * (or empty) and the linked account holds the net.
+   *
+   * @param actor - Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @param account - The now-linked recipient's WIRE account.
+   * @param keypairName - Durable handle of its persisted Solana keypair.
+   * @param tokenCode - The shadow codename.
+   * @param expectedNet - The net credit.
+   * @return The verify Step.
+   */
+  export function planVerifyParkedDelivered<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    keypairName: string,
+    tokenCode: string,
+    expectedNet: bigint
+  ): ClusterBuildStep<C, ParkedCreditInput> {
+    return ClusterBuildStep.create<C, ParkedCreditInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SyndicationUserSteps.ParkedCreditInput",
+        account,
+        keypairName,
+        tokenCode,
+        expectedNet
+      },
+      runVerifyParkedDelivered
+    )
+  }
+
+  /** Named runner — the parked row is empty and the account holds exactly the net. */
+  export async function runVerifyParkedDelivered<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ParkedCreditInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const row = await readParkedCredit(ctx, input)
+    Assert.strictEqual(row ? BigInt(row.balance) : 0n, 0n)
+    Assert.strictEqual(
+      await WireSyndicationTool.readLiqBalance(
+        ctx,
+        input.account,
+        input.tokenCode
+      ),
+      input.expectedNet
+    )
+  }
+
+  /** The SVM parked row of the recipient's persisted ED key, or nothing. */
+  async function readParkedCredit(
+    ctx: ClusterBuildContext,
+    input: ParkedCreditInput
+  ): Promise<SysioContracts.SysioSyndParkedRowType> {
+    return WireSyndicationTool.readParked(
+      ctx,
+      input.tokenCode,
+      SysioContracts.SysioSyndChainkind.CHAIN_KIND_SVM,
+      SolanaFundingTool.publicKeyHex(ctx.config.dataPath, input.keypairName)
+    )
   }
 }
