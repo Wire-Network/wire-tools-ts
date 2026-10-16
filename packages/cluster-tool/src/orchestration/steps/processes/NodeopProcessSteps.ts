@@ -300,7 +300,8 @@ export namespace NodeopProcessSteps {
       operator,
       artifacts,
       network,
-      keySourceFor
+      keySourceFor,
+      OperatorDaemonTool.underwritingFromConfig(ctx.config)
     )
   }
 }

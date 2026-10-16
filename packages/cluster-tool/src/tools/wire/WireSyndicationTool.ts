@@ -317,6 +317,47 @@ export namespace WireSyndicationTool {
     return result.rows.find(row => isPair(row, chainCode, tokenCode))
   }
 
+  /**
+   * READ the `sysio.liq::accounts` row `account` holds in one shadow token: its balance and
+   * yield position. Nothing before its first credit. Truncated reads are refused.
+   *
+   * @param ctx - The build context.
+   * @param account - The holder.
+   * @param tokenCode - The shadow symbol's codename (`LIQSOL`).
+   * @return The row, or nothing.
+   */
+  export async function readLiqAccount<C extends ClusterBuildContext>(
+    ctx: C,
+    account: string,
+    tokenCode: string
+  ): Promise<SysioContracts.SysioLiqAccountType> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.liq)
+      .tables.accounts.query({ scope: account, limit: TableRowLimit })
+    Assert.ok(!more, "truncated holder read")
+    return rows.find(
+      value => Asset.from(value.balance).symbol.name === tokenCode
+    )
+  }
+
+  /**
+   * READ the liquid `sysio.liq` shadow `account` holds in one token, in base units; zero
+   * before its first credit. Truncated reads are refused.
+   *
+   * @param ctx - The build context.
+   * @param account - The holder.
+   * @param tokenCode - The shadow symbol's codename (`LIQSOL`).
+   * @return The balance in base units.
+   */
+  export async function readLiqBalance<C extends ClusterBuildContext>(
+    ctx: C,
+    account: string,
+    tokenCode: string
+  ): Promise<bigint> {
+    const row = await readLiqAccount(ctx, account, tokenCode)
+    return row ? assetUnits(row.balance) : 0n
+  }
+
   // ── reads: sysio.bond ────────────────────────────────────────────────────
 
   /** READ one `sysio.bond::requests` row; nothing once it is pruned (or before it exists). */
@@ -582,7 +623,7 @@ export namespace WireSyndicationTool {
       request != null,
       `WireSyndicationTool: the ${label} envelope names request ${envelope.request_id}, which sysio.bond does not hold`
     )
-    const remainder = BigInt(request.covered) - BigInt(request.bonded)
+    const remainder = bondRemainder(request)
     Assert.ok(
       remainder > 0n,
       `WireSyndicationTool: request ${request.id} of the ${label} envelope is already fully bonded`
@@ -757,8 +798,12 @@ export namespace WireSyndicationTool {
 
   /** A request id known at planning time or captured by an earlier verify Step. */
   export type RequestId =
-    | SysioContracts.SysioBondApproveAction["request_id"]
-    | OutputKey<SysioContracts.SysioBondApproveAction["request_id"]>
+    SysioContracts.SysioBondApproveAction["request_id"] | RequestKey
+
+  /** A `sysio.bond` request id an earlier Step records at run time. */
+  export type RequestKey = OutputKey<
+    SysioContracts.SysioBondApproveAction["request_id"]
+  >
 
   /** Resolve a runtime request id, refusing an output that has not been recorded. */
   export function resolveRequestId<C extends ClusterBuildContext>(
@@ -1092,6 +1137,43 @@ export namespace WireSyndicationTool {
     )
   }
 
+  /**
+   * What a `sysio.bond` request still needs bonded: its coverage minus what is bonded.
+   *
+   * @param request - The request row.
+   * @return The remainder in base units.
+   */
+  export function bondRemainder(
+    request: SysioContracts.SysioBondRequestRowType
+  ): bigint {
+    return BigInt(request.covered) - BigInt(request.bonded)
+  }
+
+  /** The request states that follow a full bond on the success path. */
+  export const FullyBondedStates = [
+    SysioBondRequestState.BONDED,
+    SysioBondRequestState.APPROVED
+  ] as const
+
+  /**
+   * Whether a request row exists, is bonded for its whole coverage and is BONDED or already
+   * APPROVED.
+   *
+   * @param request - The request row, or nothing.
+   * @return Whether it is fully bonded.
+   */
+  export function isFullyBonded(
+    request: SysioContracts.SysioBondRequestRowType
+  ): boolean {
+    return (
+      request != null &&
+      bondRemainder(request) === 0n &&
+      FullyBondedStates.some(state =>
+        matchesProtoEnum(request.state, SysioBondRequestState, state)
+      )
+    )
+  }
+
   /** Whether a slug cell names `codename`. */
   function isCode(cell: string, codename: string): boolean {
     return slugValue(cell) === SlugName.from(codename)
@@ -1114,8 +1196,14 @@ export namespace WireSyndicationTool {
     )
   }
 
-  /** The base units of an ABI asset string (`"2.000000000 LIQSOL"` → `2000000000n`). */
-  function assetUnits(quantity: string): bigint {
+  /**
+   * The base units of an ABI asset string (`"2.000000000 LIQSOL"` → `2000000000n`), without
+   * passing the integer amount through floating point.
+   *
+   * @param quantity - The asset string.
+   * @return Its base units.
+   */
+  export function assetUnits(quantity: string): bigint {
     return BigInt(Asset.from(quantity).units.toString())
   }
 }

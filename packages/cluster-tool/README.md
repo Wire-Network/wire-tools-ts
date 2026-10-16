@@ -93,6 +93,7 @@ the path flags.
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -385,12 +386,14 @@ Persisted shapes + their validated codecs live in `@wireio/cluster-tool-shared`
 schema behind `SchemaCodec.create<T>(schema)`).
 
 A flow is a `FlowScenario` composed onto the same engine via
-`FlowCLI.create(<Name>Scenario).run()`. See the 13 `flow-*` packages —
+`FlowCLI.create(<Name>Scenario).run()`. See the 15 `flow-*` packages —
 `flow-batch-operator-slashing`, `flow-batch-operator-termination`,
 `flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
 `flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
 `flow-producer-registration`, `flow-syndication-challenge`,
-`flow-syndication-rate-limit`, `flow-syndication-underwriting` — for end-to-end examples.
+`flow-syndication-plugin-underwriting`, `flow-syndication-plugin-underwriting-cap`,
+`flow-syndication-rate-limit`,
+`flow-syndication-underwriting` — for end-to-end examples.
 
 ---
 
@@ -436,4 +439,4 @@ repo `CLAUDE.md` / `STYLE.md`).
 - **`@wireio/debugging-client-tool-tui`** — live debugging UI for a running cluster.
 - **`@wireio/debugging-server`** — the embedded JSON-RPC server that persists OPP envelopes.
 - **`@wireio/debugging-shared`** — shared OPP debugging types + storage paths.
-- **`flow-*` (13 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.
+- **`flow-*` (15 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.

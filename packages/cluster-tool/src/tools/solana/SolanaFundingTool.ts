@@ -312,6 +312,21 @@ export namespace SolanaFundingTool {
   }
 
   /**
+   * A persisted keypair's public key as hex — the byte encoding the depot keys parked
+   * credit and syndication items by.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The keypair's durable handle.
+   * @returns The 32-byte Ed25519 public key, hex-encoded.
+   * @throws If no keypair is persisted under `name`.
+   */
+  export function publicKeyHex(dataPath: string, name: string): string {
+    return SolanaFundingTool.loadKeypair(dataPath, name)
+      .publicKey.toBuffer()
+      .toString("hex")
+  }
+
+  /**
    * Get-or-create the per-cluster SOL deployer keypair. Idempotent — see
    * {@link createKeypair}.
    *

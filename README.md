@@ -152,6 +152,8 @@ and outbound queue entries are intermediate checks.
 | `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
 | `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
+| `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -191,7 +193,7 @@ the successful runs above selected the installed pinned 4.2.0 toolchain explicit
 ### Removed reserve and swap flows
 
 The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
-flags have been deleted. The 13 remaining flows exercise supported functionality.
+flags have been deleted. The 15 remaining flows exercise supported functionality.
 Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows
@@ -479,6 +481,7 @@ command comes first).
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |

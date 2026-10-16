@@ -27,6 +27,7 @@ import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisio
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
 import { Steps, SyndicationUserSteps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
@@ -59,8 +60,6 @@ const WireSymbol = "9,WIRE"
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
 const AndonPermissionRamWeight = "0.0100 SYS"
-/** This policy adds permission RAM only; it allocates no CPU or network weight. */
-const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -152,9 +151,7 @@ export namespace ClusterBuildDefaults {
       ),
       bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
-      batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
+      batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
       producerNodes = plannedNodes.filter(
         node => node.role === NodeRole.producer
@@ -792,15 +789,15 @@ export namespace ClusterBuildDefaults {
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        {
-          owner: SysioContractAccount[SysioContractName.andon],
-          issuer: Constants.BOOTSTRAP_NODE_OWNER,
-          net_weight: NoResourceWeight,
-          cpu_weight: NoResourceWeight,
-          ram_weight: AndonPermissionRamWeight,
-          time_block: 0,
-          network_gen: 0
-        }
+        // This policy adds permission RAM only; it allocates no CPU or network weight.
+        SyndicationUserSteps.nodeOwnerPolicy(
+          SysioContractAccount[SysioContractName.andon],
+          {
+            net: Constants.NO_RESOURCE_WEIGHT,
+            cpu: Constants.NO_RESOURCE_WEIGHT,
+            ram: AndonPermissionRamWeight
+          }
+        )
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
@@ -1017,18 +1014,13 @@ export namespace ClusterBuildDefaults {
         {}
       )
     }
-    if (config.enableMockSyndicationImport) {
-      Steps.registry.planMockSyndicationImport<C>(
-        prerequisites,
-        "MockSyndicationImport",
-        "Import the mock bonder positions during epoch zero",
-        {}
-      )
-    }
-    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
-      Steps.mockShadowBacking.planSolana<C>(prerequisites)
-      Steps.mockShadowBacking.planEthereum<C>(prerequisites)
-    }
+    // Underwriting batch operators are funded by the same epoch-zero import, to their own
+    // ED keys — which exist only once the operators are provisioned. The import (and the
+    // backing that must follow ALL mock shadow) then moves after that provisioning, still
+    // before `EpochBootstrap` closes the bootstrap window; every other cluster keeps it here.
+    const underwritingImport = isUnderwritingImport(config)
+    if (!underwritingImport)
+      planMockImportAndBacking<C>(prerequisites, config, batchOperators)
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -1113,6 +1105,21 @@ export namespace ClusterBuildDefaults {
         Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
+
+    if (config.batchOperatorUnderwriting != null)
+      Steps.registry.planBatchOperatorUnderwritingResources<C>(
+        postContractDeployment,
+        "BatchOperatorUnderwritingResources",
+        "Grant each underwriting batch operator RAM for its sysio.bond rows",
+        {},
+        batchOperators
+      )
+    if (underwritingImport)
+      planMockImportAndBacking<C>(
+        postContractDeployment,
+        config,
+        batchOperators
+      )
 
     // API nodes are mesh members that no bootstrap step reads, so they start
     // outside the bootstrap's finality-sensitive window, right before the
@@ -1237,6 +1244,58 @@ export namespace ClusterBuildDefaults {
     }
 
     planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Whether the epoch-zero mock import also funds the batch operators, which moves it after
+   * their provisioning: both the import and batch-operator underwriting are on.
+   *
+   * @param config - The resolved cluster config.
+   * @return Whether the import funds the operators.
+   */
+  function isUnderwritingImport(config: ClusterConfig): boolean {
+    return (
+      config.enableMockSyndicationImport &&
+      config.batchOperatorUnderwriting != null
+    )
+  }
+
+  /**
+   * Plan the epoch-zero mock syndication import (with each FUNDED underwriting operator's
+   * credit — the first `batchOperatorUnderwriting.fundedOperatorCount` — when
+   * {@link isUnderwritingImport}) and the custody backing that must follow every mock shadow
+   * mint, each only when its option is on.
+   *
+   * @param parent - The PhaseGroup the phases join.
+   * @param config - The resolved cluster config.
+   * @param batchOperators - The bootstrap batch-operator labels.
+   */
+  function planMockImportAndBacking<C extends ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    config: ClusterConfig,
+    batchOperators: readonly string[]
+  ): void {
+    const underwritingImport = isUnderwritingImport(config)
+    if (config.enableMockSyndicationImport) {
+      Steps.registry.planMockSyndicationImport<C>(
+        parent,
+        "MockSyndicationImport",
+        underwritingImport
+          ? "Import the mock bonder and batch-operator underwriting positions during epoch zero"
+          : "Import the mock bonder positions during epoch zero",
+        {},
+        underwritingImport
+          ? batchOperators.slice(
+              0,
+              config.batchOperatorUnderwriting.fundedOperatorCount
+            )
+          : []
+      )
+    }
+    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
+      Steps.mockShadowBacking.planSolana<C>(parent)
+      Steps.mockShadowBacking.planEthereum<C>(parent)
+    }
   }
 
   /**

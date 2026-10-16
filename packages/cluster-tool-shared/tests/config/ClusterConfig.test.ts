@@ -1,4 +1,5 @@
 import {
+  BatchOperatorUnderwritingConfigSchema,
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
   ClusterConfigSchemaCodec,
@@ -92,6 +93,7 @@ describe("ClusterConfig shape", () => {
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
+    batchOperatorUnderwriting: null,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
@@ -137,6 +139,15 @@ describe("ClusterConfig shape", () => {
     ).toThrow()
   })
 
+  it("rejects an underwriting config with no exposure cap", () => {
+    expect(
+      BatchOperatorUnderwritingConfigSchema.safeParse({
+        fundedOperatorCount: 1,
+        maxExposure: []
+      }).success
+    ).toBe(false)
+  })
+
   it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
@@ -144,6 +155,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockSyndicationImport
+    delete parsed.batchOperatorUnderwriting
     delete parsed.enableMockLiqPools
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
@@ -159,6 +171,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockLiqPools).toBe(false)
     expect(rehydrated.enableMockSyndicationImport).toBe(false)
+    expect(rehydrated.batchOperatorUnderwriting).toBeNull()
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)

@@ -28,12 +28,13 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { ProtocolTiming } from "../../Constants.js"
+import { Constants, ProtocolTiming } from "../../Constants.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
 import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { SyndContractSteps } from "./contracts/sysio/SyndContractSteps.js"
+import { SyndicationUserSteps } from "./SyndicationUserSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
@@ -66,10 +67,8 @@ export namespace RegistrySteps {
    */
   const ShadowLiqTokenPairs = [
     ["ETHEREUM", "LIQETH"],
-    ["SOLANA", "LIQSOL"]
+    ["SOLANA", Constants.LIQSOL_CODENAME]
   ] as const
-  /** Depot-frame precision every liq token is registered at, which its shadow symbol carries. */
-  const LiqTokenPrecision = 9
   /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
   const LiqPoolPairSuffix = "P"
   /**
@@ -144,7 +143,7 @@ export namespace RegistrySteps {
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
       chain_code: "SOLANA",
-      token_code: "LIQSOL",
+      token_code: Constants.LIQSOL_CODENAME,
       keyType: KeyType.ED,
       amount: MockSyndicationImportAmount
     },
@@ -157,14 +156,53 @@ export namespace RegistrySteps {
     }
   ]
 
-  /** Provision the import identity, import each position separately, then seal import. */
+  /**
+   * The one import credit template signed by `keyType`, refusing none or several.
+   *
+   * @param keyType - The key the template's credits are imported to.
+   * @return The template.
+   */
+  export function assertImportCredit(
+    keyType: MockSyndicationImportInput["keyType"]
+  ): MockSyndicationImportInput {
+    const credits = MockSyndicationImportCredits.filter(
+      input => input.keyType === keyType
+    )
+    Assert.strictEqual(
+      credits.length,
+      1,
+      `mock syndication import has ${credits.length} ${KeyType[keyType]} credits, expected one`
+    )
+    return credits[0]
+  }
+
+  /**
+   * The template an underwriting batch operator's credit copies: the ED-keyed (Solana)
+   * position, since the credit is imported to the operator's own ED key. Its `token_code` is
+   * the shadow the operator bonds from and its `amount` what it holds — the mock bonder's
+   * one hundred tokens, which must exceed the operators' exposure cap for the cap to bind.
+   */
+  export const MockBatchOperatorUnderwritingPair = assertImportCredit(
+    KeyType.ED
+  )
+
+  /**
+   * Provision the import identity, import each position separately, then seal import.
+   *
+   * @param batchOperatorLabels - Batch operators that underwrite
+   *   and are funded (`batchOperatorUnderwriting.fundedOperatorCount`): each also gets a
+   *   {@link MockBatchOperatorUnderwritingPair} credit to its own ED key, imported
+   *   before the seal. Their identities must already be in `ctx.keyStore`, so a caller passing
+   *   any plans this phase after operator provisioning. Empty by default.
+   */
   export function planMockSyndicationImport<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    batchOperatorLabels: readonly string[] = []
   ): ClusterBuildPhase<C> {
     return ClusterBuildPhase.create<C>(parent, name, description, [
       planMockSyndicationBonder<C>(
@@ -182,6 +220,15 @@ export namespace RegistrySteps {
           input
         )
       ),
+      ...batchOperatorLabels.map(label =>
+        planBatchOperatorSyndicationCredit<C>(
+          Report.Actor.Sysio,
+          `import-underwriting-${label}`,
+          `import ${label}'s underwriting LIQSOL to its own ED key during epoch zero`,
+          options,
+          label
+        )
+      ),
       SyndContractSteps.planImportdone<C>(
         Report.Actor.Sysio,
         "seal-mock-syndication-import",
@@ -192,27 +239,226 @@ export namespace RegistrySteps {
       planVerifyMockSyndicationImport<C>(
         Report.Actor.Sysio,
         "verify-mock-syndication-import",
-        "both credits are parked and no custody mismatch exists",
-        options
+        "both bonder credits are parked, every underwriting operator holds its credit, and no custody mismatch exists",
+        options,
+        batchOperatorLabels
       )
     ])
   }
 
-  /** Report checkpoint for imported parked positions and an empty mismatch table. */
+  /** Input for {@link planBatchOperatorSyndicationCredit}. */
+  export interface BatchOperatorCreditInput extends StepInput {
+    readonly kind: "RegistrySteps.BatchOperatorCreditInput"
+    /** The batch operator's durable handle in `ctx.keyStore`. */
+    readonly label: string
+  }
+
+  /**
+   * One import of a batch operator's underwriting credit; its ED key is read at execution time.
+   *
+   * @param actor - Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @param label - The batch operator's durable handle in `ctx.keyStore`.
+   * @return The Step.
+   */
+  export function planBatchOperatorSyndicationCredit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string
+  ): ClusterBuildStep<C, BatchOperatorCreditInput> {
+    return ClusterBuildStep.create<C, BatchOperatorCreditInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "RegistrySteps.BatchOperatorCreditInput", label },
+      runBatchOperatorSyndicationCredit
+    )
+  }
+
+  /**
+   * Named runner — ONE `importsynd` of {@link MockBatchOperatorUnderwritingPair} credit to
+   * the operator's own ED key. The key is the one its SVM `createlink` linked, so the credit
+   * lands liquid in the operator's account (or parks for that link to sweep).
+   */
+  export async function runBatchOperatorSyndicationCredit<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    input: BatchOperatorCreditInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const operator = ctx.keyStore.assertOperator(input.label)
+    Assert.ok(
+      operator.solana != null,
+      `mock syndication import: batch operator ${input.label} has no ED key`
+    )
+    await SyndContractSteps.runImportsynd(
+      ctx,
+      {
+        kind: "SyndContractSteps.ImportsyndInput",
+        data: {
+          chain_code: MockBatchOperatorUnderwritingPair.chain_code,
+          token_code: MockBatchOperatorUnderwritingPair.token_code,
+          credits: [
+            {
+              pubkey: PublicKey.from(operator.solana.publicKey).data.hexString,
+              amount: MockBatchOperatorUnderwritingPair.amount
+            }
+          ]
+        }
+      },
+      signal
+    )
+  }
+
+  /**
+   * RAM weight an underwriting batch operator receives, from the bootstrap node owner, for its
+   * `sysio.bond` rows: its sponsored account's RAM is spent on registration, and a bond row
+   * (~1.3 KB) does not fit in what is left. Lowering it lets `sysio.bond::accept` fail with
+   * insufficient RAM.
+   */
+  export const BatchOperatorUnderwritingRamWeight = Constants.DEFAULT_RAM_WEIGHT
+
+  /**
+   * One Phase granting every underwriting batch operator the RAM its bond rows need: one
+   * `sysio.roa::addpolicy` Step per operator, issued by the bootstrap node owner.
+   *
+   * @param batchOperatorLabels - The underwriting operators, already provisioned.
+   */
+  export function planBatchOperatorUnderwritingResources<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    batchOperatorLabels: readonly string[]
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(
+      parent,
+      name,
+      description,
+      batchOperatorLabels.map(label =>
+        planBatchOperatorUnderwritingResource<C>(
+          Report.Actor.Sysio,
+          `underwriting-ram-${label}`,
+          `grant ${label} RAM for its sysio.bond rows`,
+          options,
+          label
+        )
+      )
+    )
+  }
+
+  /**
+   * One `sysio.roa::addpolicy` granting a batch operator its underwriting RAM.
+   *
+   * @param actor - Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @param label - The batch operator's durable handle in `ctx.keyStore`.
+   * @return The Step.
+   */
+  export function planBatchOperatorUnderwritingResource<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string
+  ): ClusterBuildStep<C, BatchOperatorResourcesInput> {
+    return ClusterBuildStep.create<C, BatchOperatorResourcesInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "RegistrySteps.BatchOperatorResourcesInput", label },
+      runBatchOperatorUnderwritingResources
+    )
+  }
+
+  /** Input of one {@link planBatchOperatorUnderwritingResources} Step. */
+  export interface BatchOperatorResourcesInput extends StepInput {
+    readonly kind: "RegistrySteps.BatchOperatorResourcesInput"
+    /** The batch operator's durable handle in `ctx.keyStore`. */
+    readonly label: string
+  }
+
+  /** The `addpolicy` that grants a batch operator account its underwriting RAM. */
+  export function batchOperatorUnderwritingPolicy(
+    owner: string
+  ): SysioContracts.SysioRoaAddpolicyAction {
+    return SyndicationUserSteps.nodeOwnerPolicy(owner, {
+      // No NET / CPU beyond what the operator already relays with.
+      net: Constants.NO_RESOURCE_WEIGHT,
+      cpu: Constants.NO_RESOURCE_WEIGHT,
+      ram: BatchOperatorUnderwritingRamWeight
+    })
+  }
+
+  /** Named runner — resolve the operator's generated account, then ONE `addpolicy`. */
+  export async function runBatchOperatorUnderwritingResources<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    input: BatchOperatorResourcesInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await SyndicationUserSteps.runResourcePolicy(
+      ctx,
+      {
+        kind: "SyndicationUserSteps.ResourcePolicyInput",
+        data: batchOperatorUnderwritingPolicy(
+          ctx.keyStore.assertOperator(input.label).account
+        )
+      },
+      signal
+    )
+  }
+
+  /** Input for {@link planVerifyMockSyndicationImport}. */
+  export interface VerifyMockSyndicationImportInput extends StepInput {
+    readonly kind: "RegistrySteps.VerifyMockSyndicationImportInput"
+    /** Batch operators whose underwriting credit is verified too. */
+    readonly batchOperatorLabels: readonly string[]
+  }
+
+  /**
+   * Report checkpoint for imported positions, each underwriting operator's credit and an
+   * empty mismatch table.
+   *
+   * @param batchOperatorLabels - The underwriting operators whose credit is checked; empty
+   *   when none underwrites.
+   */
   export function planVerifyMockSyndicationImport<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     actor: Report.Actor,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
+    options: ClusterBuildStepOptions,
+    batchOperatorLabels: readonly string[] = []
+  ): ClusterBuildStep<C, VerifyMockSyndicationImportInput> {
+    return ClusterBuildStep.create<C, VerifyMockSyndicationImportInput>(
       actor,
       name,
       description,
       options,
-      null,
+      {
+        kind: "RegistrySteps.VerifyMockSyndicationImportInput",
+        batchOperatorLabels
+      },
       runVerifyMockSyndicationImport
     )
   }
@@ -220,7 +466,11 @@ export namespace RegistrySteps {
   /** Read each exact bonder position after import finality; fail on missing or wrong credit. */
   export async function runVerifyMockSyndicationImport<
     C extends ClusterBuildContext
-  >(ctx: C, _input: null, signal: AbortSignal): Promise<void> {
+  >(
+    ctx: C,
+    input: VerifyMockSyndicationImportInput,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
     const bonder = readMockSyndicationBonder(ctx)
     await eachSeries(MockSyndicationImportCredits, async input => {
@@ -246,10 +496,46 @@ export namespace RegistrySteps {
         `mock syndication import wrong ${input.token_code} balance`
       )
     })
+    await eachSeries(input.batchOperatorLabels, label =>
+      assertBatchOperatorCredit(ctx, label)
+    )
     Assert.deepStrictEqual(
       await WireSyndicationTool.readMismatches(ctx),
       [],
       "mock syndication import has custody mismatches"
+    )
+  }
+
+  /**
+   * Assert a batch operator holds exactly its underwriting credit: liquid in its account
+   * when its SVM link existed at import, else parked against its ED key for that link.
+   */
+  async function assertBatchOperatorCredit<C extends ClusterBuildContext>(
+    ctx: C,
+    label: string
+  ): Promise<void> {
+    const operator = ctx.keyStore.assertOperator(label),
+      { token_code } = MockBatchOperatorUnderwritingPair,
+      parked = await WireSyndicationTool.readParked(
+        ctx,
+        token_code,
+        SysioContracts.SysioSyndChainkind.CHAIN_KIND_SVM,
+        PublicKey.from(operator.solana.publicKey).data.hexString
+      ),
+      parkedBalance = parked ? BigInt(parked.balance) : 0n,
+      liquid = await WireSyndicationTool.readLiqBalance(
+        ctx,
+        operator.account,
+        token_code
+      )
+    Assert.strictEqual(
+      parkedBalance + liquid,
+      BigInt(MockBatchOperatorUnderwritingPair.amount),
+      `mock syndication import: ${label} holds ${liquid} liquid + ${parkedBalance} parked ${token_code}, expected ${MockBatchOperatorUnderwritingPair.amount}`
+    )
+    Assert.ok(
+      parkedBalance === 0n || liquid === 0n,
+      `mock syndication import: ${label}'s credit is split between liquid and parked`
     )
   }
 
@@ -420,11 +706,6 @@ export namespace RegistrySteps {
     )
   }
 
-  /** A symbol in ABI form (`9,LIQSOL`) from a codename, at the liq precision. */
-  function liqSymbol(codename: string): string {
-    return `${LiqTokenPrecision},${codename}`
-  }
-
   /**
    * The 2 `sysio.liq::create` rows — one shadow symbol per registered liq
    * token, bound to that token's chain. Shared by {@link planShadowLiqTokens}
@@ -432,7 +713,7 @@ export namespace RegistrySteps {
    */
   export const ShadowLiqTokenRegistrations: SysioContracts.SysioLiqCreateAction[] =
     ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
-      sym: liqSymbol(tokenCodename),
+      sym: Constants.liqSymbol(tokenCodename),
       chain_code: chainCodename,
       token_code: tokenCodename
     }))
@@ -447,7 +728,7 @@ export namespace RegistrySteps {
     ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
-      pair_symbol: liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
+      pair_symbol: Constants.liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
       initial_chain_amount: MockLiqPoolShadowSeed,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
@@ -811,7 +1092,7 @@ export namespace RegistrySteps {
       ),
       nativeToken("SOL", "Sol", "Solana native asset"),
       liqToken(
-        "LIQSOL",
+        Constants.LIQSOL_CODENAME,
         "Liquid SOL",
         "Liquid-staking receipt for SOL",
         svmAddress(solanaMints.LIQSOL)
@@ -858,7 +1139,7 @@ export namespace RegistrySteps {
       chainToken("SOLANA", "SOL", "", true),
       chainToken(
         "SOLANA",
-        "LIQSOL",
+        Constants.LIQSOL_CODENAME,
         nullableMintHex(solanaMints.LIQSOL),
         false
       ),
@@ -898,7 +1179,7 @@ export namespace RegistrySteps {
       code: codename,
       symbol_name: symbolName,
       description,
-      precision: LiqTokenPrecision,
+      precision: Constants.LIQ_TOKEN_PRECISION,
       address
     }
   }
@@ -965,7 +1246,7 @@ export namespace RegistrySteps {
     ) as SolanaFundingTool.SolMockMint[]
     const out: Record<string, string> = {}
     rows.forEach(row => {
-      ;["USDC", "USDT", "LIQSOL"].forEach(codename => {
+      ;["USDC", "USDT", Constants.LIQSOL_CODENAME].forEach(codename => {
         if (SlugName.from(codename) === row.code) out[codename] = row.mint
       })
     })

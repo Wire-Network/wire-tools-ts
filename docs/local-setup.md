@@ -306,13 +306,14 @@ options, is the `create` table in the repo root `README.md`):
 | `--epoch-duration-sec` | Minimum epoch duration in seconds (default 60) |
 | `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero |
 | `--enable-mock-syndication-import` | Import the mock bonder's LIQ positions during epoch zero |
+| `--enable-batch-operator-underwriting` | Run the underwriter role on every batch operator; with the mock import, fund each operator with 100 LIQSOL |
 
 Swap-underwriter daemons have been removed: `--underwriter-count` still parses,
 but any nonzero value is rejected.
 
 ### 4.1 Running a flow
 
-Each `flow-*` package is a standalone scenario that bootstraps its own cluster. There are 13:
+Each `flow-*` package is a standalone scenario that bootstraps its own cluster. There are 15:
 
 | Flow | Flow | Flow |
 |---|---|---|
@@ -320,7 +321,7 @@ Each `flow-*` package is a standalone scenario that bootstraps its own cluster. 
 | `flow-batch-operator-termination` | `flow-liq-yield` | `flow-syndication-rate-limit` |
 | `flow-emergency-stop` | `flow-node-owner-nft` | `flow-syndication-underwriting` |
 | `flow-emissions-soak` | `flow-operator-collateral-deposit` | |
-| `flow-producer-registration` | | |
+| `flow-producer-registration` | `flow-syndication-plugin-underwriting` | `flow-syndication-plugin-underwriting-cap` |
 
 Launch one with `scripts/run-flow.mjs` and watch it with `scripts/flow-heartbeat-monitor.mjs` (one monitor
 per run, pointed at the same cluster path):
