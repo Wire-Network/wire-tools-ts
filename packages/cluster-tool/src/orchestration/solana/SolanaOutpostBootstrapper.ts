@@ -570,6 +570,8 @@ export namespace SolanaOutpostBootstrapper {
     export const OutpostConfig = "outpost_config"
     export const OutboundMessageBuffer = "outbound_message_buffer"
     export const OperatorRegistry = "operator_registry"
+    /** Per-epoch recorded canonical votes; epoch index is the little-endian u32 seed. */
+    export const EpochDeliveries = "epoch_deliveries"
     export const InboundEnvelopes = "inbound_envelopes"
     export const OutboundEnvelopes = "outbound_envelopes"
     export const LatestOutboundEnvelope = "latest_outbound_envelope"
