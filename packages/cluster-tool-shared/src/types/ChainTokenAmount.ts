@@ -16,8 +16,8 @@ function isTokenAmountJson(json: unknown): boolean {
 
 /**
  * The proto-JSON input a `TokenAmount` decodes from — validated up front (the
- * refine actually runs `fromJson`) exactly like `OperatorTypeCodec`'s typed
- * string+refine, so DECODE never sees a value `fromJson` would throw on. That
+ * refine actually runs `fromJson`) the same way `OperatorTypeCodec` validates
+ * its wire side, so DECODE never sees a value `fromJson` would throw on. That
  * keeps a malformed `amount` a proper zod ISSUE — `SchemaCodec.check` returns
  * `false` (never throws) and `deserialize` surfaces the issue-path message, not
  * a raw proto error.

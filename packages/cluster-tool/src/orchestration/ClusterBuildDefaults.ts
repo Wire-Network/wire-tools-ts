@@ -1150,12 +1150,27 @@ export namespace ClusterBuildDefaults {
     const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
-      "Schedule groups + bootstrap epoch 0 → 1"
+      "Schedule groups, emit the opreg bootstrap roster, bootstrap epoch 0 → 1"
     ).push(
       Steps.contracts.sysio.epoch.planSchbatchgps<C>(
         Actor.Sysio,
         "schedule-batch-groups",
         "build the initial batch-operator schedule",
+        {}
+      ),
+      // Every mode: wire-opreg-bootstrap.json — the bootstrapped roster + the
+      // window schbatchgps just built (groups[k] serves epoch k + 1), emitted
+      // at the earliest point the schedule exists.
+      Steps.wireOpregBootstrap.planEmit<C>(
+        Actor.Sysio,
+        "emit-wire-opreg-bootstrap",
+        "write wire-opreg-bootstrap.json (bootstrapped operator roster + initial batch-operator schedule)",
+        {}
+      ),
+      Steps.wireOpregBootstrap.planVerify<C>(
+        Actor.Sysio,
+        "verify-wire-opreg-bootstrap",
+        "wire-opreg-bootstrap.json names exactly the depot's bootstrapped operators",
         {}
       )
     )

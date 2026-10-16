@@ -96,7 +96,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
 | `flow-*` (15 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -122,11 +122,13 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
 - **Persisted shapes are zod schema-first.** The complex types in
   `@wireio/cluster-tool-shared` (`ClusterConfig`, `BindConfig`, `ClusterState`,
   `ChainTokenAmount`, `SignatureProviderConfig`, `ExternalOutpostConfig`,
-  `ExternalClusterConfig`, `QueryEngineConfig`) are `z.infer` of a zod schema, and
+  `ExternalClusterConfig`, `QueryEngineConfig`, `WireOpregBootstrap`) are `z.infer` of a zod schema, and
   every serialize/deserialize path goes through the generic `SchemaCodec` factory
-  (`SchemaCodec.create<T>(schema)` → `{ serialize, serializeCompact, deserialize, check, validate }`) — which
+  (`SchemaCodec.create<T>(schema)` → `{ serialize, serializeCompact, deserialize, check, validate, toJSONSchema }`) — which
   validates on both ends (safeParse results ride `Either`, never `if`) and
-  bridges the `TokenAmount` bigint round-trip via a `z.codec`.
+  bridges the `TokenAmount` bigint round-trip via a `z.codec`. A shape published
+  to other teams commits its generated JSON Schema (`scripts/generate-json-schemas.mjs`;
+  `docs/outpost/wire-opreg-bootstrap.schema.json`), gated against drift by jest.
 
 ## The Orchestration Model (read STYLE.md "Orchestration Model" first)
 

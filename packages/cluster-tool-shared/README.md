@@ -21,8 +21,9 @@ typed against these declarations.
 
 | Path | Contents |
 |---|---|
-| `src/cluster/ClusterFiles.ts` | `ClusterFiles` — the on-disk filenames (`cluster-config.json`, `cluster-state.json`, `cluster-keys.json`) |
+| `src/cluster/ClusterFiles.ts` | `ClusterFiles` — the on-disk filenames (`cluster-config.json`, `cluster-state.json`, `cluster-keys.json`, `external-cluster-config.json`, `wire-opreg-bootstrap.json`, a node's `config.ini`) |
 | `src/cluster/ClusterState.ts` | `ClusterState` / `ClusterStateNode` / `ClusterStateNodePorts` / `ClusterStateNodeRole` (`bios` / `producer` / `operator` / `api`) — the secret-free post-bootstrap snapshot (`cluster-state.json`) |
+| `src/cluster/WireOpregBootstrap.ts` | `WireOpregBootstrap` + its key-slot / per-type operator (`type`-discriminated) / batch-operator-groups shapes and `WireOpregBootstrapSchemaCodec` — the cluster's build label and AWS account, the bootstrapped operator roster (account, operator type, public keys per chain) and the initial batch-operator schedule (`wire-opreg-bootstrap.json`); JSON Schema + example in `wire-tools-ts/docs/outpost/` |
 | `src/config/BindConfig.ts` | `BindConfig` + the `BindConfig*` shape family (including the `nodeop.ports.api` list — one port pair per API node), `BindOverrides<T>` (the derived caller-options projection), `Bind*Options`, `ClusterTopologyOptions` |
 | `src/config/ClusterConfig.ts` | `ClusterConfig` (the `cluster-config.json` shape) + `ClusterConfig*` nested family, `CollateralRequirement`, `ClusterExecutablePaths` |
 | `src/config/NodeopReadMode.ts` | `NodeopReadMode` — nodeop's `read-mode` values (`head` / `irreversible` / `speculative`) |
@@ -31,7 +32,10 @@ typed against these declarations.
 | `src/rpc/JsonRPCProtocol.ts` | `JsonRPCProtocol` (`Version` `"2.0"`, `HttpMethod`, `RequestHeaders`, the five standard `ErrorCode`s) + `JsonRPCVersionSchema` / `JsonRPCIdSchema` / `JsonRPCErrorSchema` / `JsonRPCResponseEnvelopeSchema` and its `SchemaCodec` — the ONE JSON-RPC 2.0 spelling shared by the debugging server/client and the query-engine client (server enums reference `ErrorCode` for the standard members) |
 | `src/rpc/JsonRPCTransport.ts` | `JsonRPCTransport.invoke` — the ONE JSON-RPC-over-HTTP pipeline (POST the serialized envelope → 2xx with a body → parse once → validate with the response codec → id check) returning the decoded envelope; each client branches on `result`/`error` and maps failures itself |
 | `src/rpc/JsonRPCTransportError.ts` | `JsonRPCTransportError` + `JsonRPCTransportStage` (`request` / `status` / `read` / `decode` / `id`) — the transport's typed failure, carrying the parsed body of a decode failure for client-specific probing |
+| `src/schema/SchemaCodec.ts` | `SchemaCodec.create<T>(schema)` — the validated `serialize` / `serializeCompact` / `deserialize` / `check` / `validate` codec every persisted shape uses, plus `toJSONSchema()` (the wire-side JSON Schema, draft 2020-12) |
 | `src/types/ChainTokenAmount.ts` | `ChainTokenAmount` — harness-local (chain, token) amount tuple |
+| `src/types/OperatorTypeCodec.ts` | `OperatorTypeCodec.create(members?)` — the codec carrying an `OperatorType` by member NAME in JSON (numeric enum in memory), over the admitted members |
+| `src/types/chainAddressPatterns.ts` | `EvmAddressPattern` / `SolanaAddressPattern` — the chain-native address shapes |
 
 ## Design rules
 
@@ -46,9 +50,9 @@ typed against these declarations.
   (`Report.Format`, `Level`, `LogFileAppender.Format`) are typed as literal
   unions; the enum values satisfy them structurally, so producers need no
   mapping code.
-- **Secret hygiene.** `cluster-state.json` shapes here are secret-free by
-  design; key material (`cluster-keys.json`) is `cluster-tool`-private and has
-  no type here.
+- **Secret hygiene.** `cluster-state.json` and `wire-opreg-bootstrap.json`
+  shapes here are secret-free by design (public keys only); key material
+  (`cluster-keys.json`) is `cluster-tool`-private and has no type here.
 
 ## Consuming
 

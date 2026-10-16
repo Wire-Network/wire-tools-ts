@@ -8,8 +8,10 @@ import {
 
 import { collectStepNames } from "./clusterBuildFixture.js"
 
-/** The four EpochBootstrap steps, in the order the depot requires them. */
+/** The EpochBootstrap steps, in the order the depot requires them. */
 const ScheduleBatchGroupsStep = "schedule-batch-groups"
+const EmitWireOpregBootstrapStep = "emit-wire-opreg-bootstrap"
+const VerifyWireOpregBootstrapStep = "verify-wire-opreg-bootstrap"
 const SeedEthereumRosterStep = "seed-ethereum-roster"
 const SeedSolanaRosterStep = "seed-solana-roster"
 const BootstrapEpochStep = "bootstrap-epoch"
@@ -55,7 +57,7 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
     const names = collectStepNames(cluster.children)
     expect(names.indexOf(SeedEthereumRosterStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+      names.indexOf(VerifyWireOpregBootstrapStep) + 1
     )
     expect(names.indexOf(SeedSolanaRosterStep)).toBe(
       names.indexOf(SeedEthereumRosterStep) + 1
@@ -78,7 +80,28 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     expect(names).not.toContain(SeedEthereumRosterStep)
     expect(names).not.toContain(SeedSolanaRosterStep)
     expect(names.indexOf(BootstrapEpochStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+      names.indexOf(VerifyWireOpregBootstrapStep) + 1
     )
   })
+
+  it.each([false, true])(
+    "emits then verifies wire-opreg-bootstrap.json right after schbatchgps (external outposts: %s)",
+    async external => {
+      // The file names the window schbatchgps just built, so it follows that
+      // step immediately — in every cluster mode, ahead of anything that reads
+      // the schedule.
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          ...(external && { externalOutpostConfig: externalConfigFile, underwriterCount: 0 })
+        }),
+        names = collectStepNames(cluster.children)
+      expect(names.filter(name => name === EmitWireOpregBootstrapStep)).toHaveLength(1)
+      expect(names.indexOf(EmitWireOpregBootstrapStep)).toBe(
+        names.indexOf(ScheduleBatchGroupsStep) + 1
+      )
+      expect(names.indexOf(VerifyWireOpregBootstrapStep)).toBe(
+        names.indexOf(EmitWireOpregBootstrapStep) + 1
+      )
+    }
+  )
 })
