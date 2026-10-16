@@ -1,18 +1,29 @@
+import { execFileSync } from "node:child_process"
+import Crypto from "node:crypto"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { Connection, Keypair } from "@solana/web3.js"
-import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import {
+  BindConfigProvider,
+  DaemonConfig,
+  DaemonKind,
+  StartScriptRenderer
+} from "@wireio/cluster-tool/config"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
-import { toURL } from "@wireio/cluster-tool/utils"
+import { StartScriptVariable, toURL } from "@wireio/cluster-tool/utils"
 
 describe("SolanaOutpostProgramTool", () => {
   let solanaPath: string
   let rpcUrl: string
   beforeAll(async () => {
-    solanaPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-program-"))
+    solanaPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-program-")
+    )
     rpcUrl = toURL(
-      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaRpc)
+      await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultSolanaRpc
+      )
     )
   })
   afterAll(() => {
@@ -41,9 +52,9 @@ describe("SolanaOutpostProgramTool", () => {
     expect(SolanaOutpostProgramTool.programId(solanaPath)?.toBase58()).toBe(
       keypair.publicKey.toBase58()
     )
-    expect(SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()).toBe(
-      keypair.publicKey.toBase58()
-    )
+    expect(
+      SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
+    ).toBe(keypair.publicKey.toBase58())
   })
 
   it("parses the generated IDL", () => {
@@ -60,7 +71,9 @@ describe("SolanaOutpostProgramTool", () => {
   })
 
   it("returns null / throws with the build remediation when artifacts are absent", () => {
-    const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-empty-"))
+    const emptyPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-empty-")
+    )
     try {
       expect(SolanaOutpostProgramTool.programId(emptyPath)).toBeNull()
       expect(() => SolanaOutpostProgramTool.assertProgramId(emptyPath)).toThrow(
@@ -78,7 +91,9 @@ describe("SolanaOutpostProgramTool", () => {
     // Self-contained: stages its own artifacts in a private path rather than
     // mutating the shared `solanaPath`, so this case neither depends on the
     // order of the cases above nor booby-traps any case added after it.
-    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-load-"))
+    const programPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-load-")
+    )
     try {
       const keypair = Keypair.generate()
       Fs.mkdirSync(Path.join(programPath, ".keys"), { recursive: true })
@@ -111,7 +126,9 @@ describe("SolanaOutpostProgramTool", () => {
   })
 
   it("loadReadOnlyProgram binds the connection with no wallet and camelCases the IDL", () => {
-    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-ro-"))
+    const programPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-ro-")
+    )
     try {
       const keypair = Keypair.generate()
       Fs.mkdirSync(Path.join(programPath, "target", "idl"), { recursive: true })
@@ -121,18 +138,26 @@ describe("SolanaOutpostProgramTool", () => {
           address: keypair.publicKey.toBase58(),
           metadata: { name: "liqsol_core", version: "0.1.0", spec: "0.1.0" },
           instructions: [],
-          accounts: [{ name: "GlobalState", discriminator: [0, 1, 2, 3, 4, 5, 6, 7] }],
+          accounts: [
+            { name: "GlobalState", discriminator: [0, 1, 2, 3, 4, 5, 6, 7] }
+          ],
           types: [
             {
               name: "GlobalState",
-              type: { kind: "struct", fields: [{ name: "liq_sequence", type: "u64" }] }
+              type: {
+                kind: "struct",
+                fields: [{ name: "liq_sequence", type: "u64" }]
+              }
             }
           ]
         })
       )
 
       const connection = new Connection(rpcUrl),
-        program = SolanaOutpostProgramTool.loadReadOnlyProgram(connection, programPath)
+        program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+          connection,
+          programPath
+        )
       expect(program.programId.toBase58()).toBe(keypair.publicKey.toBase58())
       expect(program.provider.connection).toBe(connection)
       // No wallet: a read never signs, so none is constructed.
@@ -146,7 +171,9 @@ describe("SolanaOutpostProgramTool", () => {
   })
 
   it("loadProgram carries the build remediation when the IDL is absent", () => {
-    const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-noidl-"))
+    const emptyPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-noidl-")
+    )
     try {
       expect(() =>
         SolanaOutpostProgramTool.loadProgram(
@@ -160,11 +187,375 @@ describe("SolanaOutpostProgramTool", () => {
     }
   })
 
+  describe("assertProgramSoFile", () => {
+    /** Write a `.so` plus a manifest recording `recordedBytes` for it. */
+    function writeProgramArtifacts(
+      root: string,
+      soBytes: Buffer,
+      recordedBytes: Buffer = soBytes,
+      sourceDescribe: string = SolanaOutpostProgramTool.describeCheckout(root),
+      program: SolanaOutpostProgramTool.AnchorProgram = SolanaOutpostProgramTool.ProgramName
+    ): void {
+      Fs.mkdirSync(Path.join(root, "target", "deploy"), { recursive: true })
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programSoFile(root, program),
+        soBytes
+      )
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.buildManifestFile(root),
+        JSON.stringify({
+          schemaVersion: 1,
+          arch: "v3",
+          sourceDescribe,
+          programs: {
+            [program]: {
+              programBinaryPath: Path.relative(
+                root,
+                SolanaOutpostProgramTool.programSoFile(root, program)
+              ),
+              programBinaryLength: recordedBytes.length,
+              programBinarySha256: Crypto.createHash("sha256")
+                .update(recordedBytes)
+                .digest("hex")
+            }
+          }
+        })
+      )
+    }
+
+    /**
+     * Run `body` against a throwaway wire-solana root that is a real git repo
+     * with one commit — `describeCheckout` shells out to git, so the fixture
+     * has to be describable.
+     */
+    function withRoot(prefix: string, body: (root: string) => void): void {
+      const root = Fs.mkdtempSync(Path.join(Os.tmpdir(), prefix))
+      try {
+        const git = (...args: string[]) =>
+          execFileSync(
+            "git",
+            [
+              "-c",
+              "commit.gpgSign=false",
+              "-c",
+              "core.hooksPath=/dev/null",
+              ...args
+            ],
+            {
+              cwd: root,
+              stdio: "pipe",
+              env: {
+                ...process.env,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                GIT_CONFIG_COUNT: "0",
+                GIT_CONFIG_PARAMETERS: ""
+              }
+            }
+          )
+        git("init")
+        git("config", "user.email", "harness@wire.test")
+        git("config", "user.name", "harness")
+        Fs.writeFileSync(Path.join(root, "Anchor.toml"), "[toolchain]\n")
+        git("add", "-A")
+        git("commit", "-m", "fixture")
+        body(root)
+      } finally {
+        Fs.rmSync(root, { recursive: true, force: true })
+      }
+    }
+
+    it("creates Git fixtures despite hostile signing and global hooks configuration", () => {
+      const configPath = Fs.mkdtempSync(
+          Path.join(Os.tmpdir(), "solana-hostile-git-")
+        ),
+        hooksPath = Path.join(configPath, "hooks"),
+        configFile = Path.join(configPath, "gitconfig"),
+        previousEnvironment = process.env
+      Fs.mkdirSync(hooksPath)
+      Fs.writeFileSync(
+        Path.join(hooksPath, "pre-commit"),
+        "#!/bin/sh\nexit 1\n",
+        { mode: 0o755 }
+      )
+      Fs.writeFileSync(
+        configFile,
+        `[commit]\n  gpgSign = true\n[core]\n  hooksPath = ${hooksPath}\n[gpg]\n  program = /no/such/signer\n`
+      )
+      process.env = {
+        ...previousEnvironment,
+        GIT_CONFIG_GLOBAL: configFile,
+        GIT_CONFIG_SYSTEM: configFile
+      }
+      try {
+        withRoot("solana-isolated-git-", root => {
+          expect(SolanaOutpostProgramTool.describeCheckout(root)).toMatch(
+            /^[0-9a-f]+$/
+          )
+        })
+      } finally {
+        process.env = previousEnvironment
+        Fs.rmSync(configPath, { recursive: true, force: true })
+      }
+    })
+
+    it("returns the .so path when it matches the recorded build", () => {
+      withRoot("solana-outpost-so-ok-", root => {
+        writeProgramArtifacts(root, Buffer.from("compiled-liqsol-core"))
+        expect(SolanaOutpostProgramTool.assertProgramSoFile(root)).toBe(
+          SolanaOutpostProgramTool.programSoFile(root)
+        )
+        expect(SolanaOutpostProgramTool.readBuildManifest(root).arch).toBe("v3")
+      })
+    })
+
+    it.each(SolanaOutpostProgramTool.GenesisAnchorPrograms)(
+      "verifies %s against its own manifest entry",
+      program => {
+        withRoot("solana-program-manifest-", root => {
+          writeProgramArtifacts(
+            root,
+            Buffer.from(program),
+            undefined,
+            undefined,
+            program
+          )
+          expect(
+            SolanaOutpostProgramTool.assertProgramSoFile(root, program)
+          ).toBe(SolanaOutpostProgramTool.programSoFile(root, program))
+          Fs.appendFileSync(
+            SolanaOutpostProgramTool.programSoFile(root, program),
+            "stale"
+          )
+          expect(() =>
+            SolanaOutpostProgramTool.assertProgramSoFile(root, program)
+          ).toThrow(/does not match the recorded SBPF v3 build/)
+        })
+      }
+    )
+
+    it("REJECTS a .so whose sha256 differs from the manifest (the stale-binary case)", () => {
+      withRoot("solana-outpost-so-stale-", root => {
+        writeProgramArtifacts(
+          root,
+          Buffer.from("binary-from-another-branch"),
+          Buffer.from("binary-the-build-emitted")
+        )
+        expect(() =>
+          SolanaOutpostProgramTool.assertProgramSoFile(root)
+        ).toThrow(/does not match the recorded SBPF v3 build.*build:programs/s)
+      })
+    })
+
+    it("REJECTS a binary built from a different checkout (the branch-switch case)", () => {
+      withRoot("solana-outpost-so-checkout-", root => {
+        // The .so and its manifest agree with EACH OTHER — only the checkout
+        // they were built from has moved on, which a sha-only check misses.
+        writeProgramArtifacts(
+          root,
+          Buffer.from("compiled-liqsol-core"),
+          Buffer.from("compiled-liqsol-core"),
+          "devnet-v1.5.2-100-gdeadbee"
+        )
+        expect(() =>
+          SolanaOutpostProgramTool.assertProgramSoFile(root)
+        ).toThrow(
+          /built from a different checkout.*devnet-v1\.5\.2-100-gdeadbee/s
+        )
+      })
+    })
+
+    it("accepts the same commit with different abbreviations and tag inventories", () => {
+      withRoot("solana-display-stamp-", root => {
+        execFileSync("git", ["-c", "tag.gpgSign=false", "tag", "fixture-tag"], {
+          cwd: root
+        })
+        writeProgramArtifacts(
+          root,
+          Buffer.from("same-build"),
+          undefined,
+          execFileSync(
+            "git",
+            ["-c", "core.abbrev=7", "describe", "--tags", "--always", "--long"],
+            { cwd: root, encoding: "utf8" }
+          ).trim()
+        )
+        execFileSync("git", ["config", "core.abbrev", "12"], { cwd: root })
+        execFileSync("git", ["tag", "-d", "fixture-tag"], { cwd: root })
+        expect(SolanaOutpostProgramTool.assertProgramSoFile(root)).toBe(
+          SolanaOutpostProgramTool.programSoFile(root)
+        )
+      })
+    })
+
+    it("reads one manifest and retains verified bytes across shared-output replacement", () => {
+      withRoot("solana-verified-bytes-", root => {
+        const bytes = Buffer.from("verified-build")
+        writeProgramArtifacts(root, bytes)
+        const verified = SolanaOutpostProgramTool.readVerifiedPrograms(root, [
+          SolanaOutpostProgramTool.ProgramName
+        ])
+        Fs.writeFileSync(
+          SolanaOutpostProgramTool.programSoFile(root),
+          "replacement"
+        )
+        Fs.unlinkSync(SolanaOutpostProgramTool.buildManifestFile(root))
+        expect(verified.binaries).toEqual([bytes])
+      })
+    })
+
+    it.each([false, true])(
+      "generated start.sh verifies at execution and deploys the private bytes (dirty: %s)",
+      dirty => {
+        withRoot("solana-runtime-script-", root => {
+          const clusterPath = Path.join(root, "cluster"),
+            daemonPath = Path.join(
+              clusterPath,
+              "data",
+              "solana_test_validator"
+            ),
+            scriptFile = Path.join(daemonPath, "start.sh"),
+            stubFile = Path.join(root, "validator-stub"),
+            bytes = Buffer.from("verified-program"),
+            soFile = SolanaOutpostProgramTool.programSoFile(root)
+          Fs.mkdirSync(daemonPath, { recursive: true })
+          Fs.writeFileSync(Path.join(clusterPath, "cluster-config.json"), "{}")
+          Fs.writeFileSync(
+            stubFile,
+            `#!/usr/bin/env bash\nset -eu\nprintf "replacement" > "$${StartScriptVariable.WIRE_SOLANA_PATH}/target/deploy/liqsol_core.so"\ncat "$2"\n`
+          )
+          Fs.chmodSync(stubFile, 0o755)
+          const daemon: DaemonConfig = {
+              kind: DaemonKind.solanaValidator,
+              label: "solana-test-validator",
+              daemonPath,
+              exe: stubFile,
+              argv: ["--bpf-program", soFile],
+              conditions: [],
+              relocations: [],
+              solanaPrograms: [
+                {
+                  name: SolanaOutpostProgramTool.ProgramName,
+                  programId: "fixture",
+                  soFile
+                }
+              ]
+            },
+            script = new StartScriptRenderer(daemon, [
+              { prefix: root, variable: StartScriptVariable.WIRE_SOLANA_PATH }
+            ]).render()
+          // Rendering is valid BEFORE any local build artifacts exist.
+          Fs.writeFileSync(scriptFile, script)
+          expect(script.indexOf("WIRE_SOLANA_BUILD_CHECK")).toBeLessThan(
+            script.indexOf("exec ")
+          )
+          expect(script).toContain(
+            `"\${${DaemonConfig.NodeBinEnvironmentVariable}:-$(command -v ${DaemonConfig.NodeExecutable})}" - "$${StartScriptVariable.WIRE_SOLANA_PATH}" "$${StartScriptVariable.NODE_DIR}"`
+          )
+          const environment = {
+            ...process.env,
+            [StartScriptVariable.WIRE_SOLANA_PATH]: root,
+            WIRE_CLUSTER_DIR: clusterPath,
+            [DaemonConfig.NodeBinEnvironmentVariable]: process.execPath,
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_COUNT: "0"
+          }
+          expect(() =>
+            execFileSync("bash", [scriptFile], {
+              env: environment,
+              stdio: "pipe"
+            })
+          ).toThrow()
+          if (dirty)
+            Fs.appendFileSync(Path.join(root, "Anchor.toml"), "# edited\n")
+          writeProgramArtifacts(root, bytes)
+          expect(
+            execFileSync("bash", [scriptFile], { env: environment })
+          ).toEqual(bytes)
+          expect(Fs.readFileSync(soFile, "utf8")).toBe("replacement")
+          // The manifest still names the verified build, so another launch refuses
+          // the replacement BEFORE it can exec the stub.
+          const marker = "invalid-replacement"
+          Fs.writeFileSync(soFile, marker)
+          expect(() =>
+            execFileSync("bash", [scriptFile], {
+              env: environment,
+              stdio: "pipe"
+            })
+          ).toThrow()
+          expect(Fs.readFileSync(soFile, "utf8")).toBe(marker)
+        })
+      }
+    )
+
+    it("accepts a dirty build but reports it as unverifiable", () => {
+      withRoot("solana-outpost-so-dirty-", root => {
+        // Modify a TRACKED file so the checkout really describes as dirty.
+        Fs.appendFileSync(Path.join(root, "Anchor.toml"), "# edited\n")
+        const dirty = SolanaOutpostProgramTool.describeCheckout(root)
+        expect(dirty).toMatch(
+          new RegExp(`${SolanaOutpostProgramTool.DirtyDescribeSuffix}$`)
+        )
+
+        writeProgramArtifacts(
+          root,
+          Buffer.from("dirty-build"),
+          undefined,
+          dirty
+        )
+        expect(SolanaOutpostProgramTool.assertProgramSoFile(root)).toBe(
+          SolanaOutpostProgramTool.programSoFile(root)
+        )
+      })
+    })
+
+    it("throws when the checkout cannot be described", () => {
+      const notARepo = Fs.mkdtempSync(
+        Path.join(Os.tmpdir(), "solana-outpost-nogit-")
+      )
+      try {
+        expect(() =>
+          SolanaOutpostProgramTool.describeCheckout(notARepo)
+        ).toThrow(/could not describe the wire-solana checkout/s)
+      } finally {
+        Fs.rmSync(notARepo, { recursive: true, force: true })
+      }
+    })
+
+    it("throws when the .so, the manifest, or its program entry is absent", () => {
+      withRoot("solana-outpost-so-missing-", root => {
+        expect(() =>
+          SolanaOutpostProgramTool.assertProgramSoFile(root)
+        ).toThrow(/\.so missing.*build:programs/s)
+
+        Fs.mkdirSync(Path.join(root, "target", "deploy"), { recursive: true })
+        Fs.writeFileSync(SolanaOutpostProgramTool.programSoFile(root), "so")
+        expect(() =>
+          SolanaOutpostProgramTool.assertProgramSoFile(root)
+        ).toThrow(/build manifest missing.*build:programs/s)
+
+        Fs.writeFileSync(
+          SolanaOutpostProgramTool.buildManifestFile(root),
+          JSON.stringify({ schemaVersion: 1, arch: "v3", programs: {} })
+        )
+        expect(() =>
+          SolanaOutpostProgramTool.assertProgramSoFile(root)
+        ).toThrow(/build manifest has no liqsol_core entry/s)
+      })
+    })
+  })
+
   it("throws on a malformed IDL file", () => {
-    const brokenPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-broken-"))
+    const brokenPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "solana-outpost-broken-")
+    )
     try {
       Fs.mkdirSync(Path.join(brokenPath, "target", "idl"), { recursive: true })
-      Fs.writeFileSync(SolanaOutpostProgramTool.programIdlFile(brokenPath), "{not-json")
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programIdlFile(brokenPath),
+        "{not-json"
+      )
       expect(() => SolanaOutpostProgramTool.readIdl(brokenPath)).toThrow()
     } finally {
       Fs.rmSync(brokenPath, { recursive: true, force: true })
