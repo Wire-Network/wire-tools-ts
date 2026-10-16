@@ -1,14 +1,14 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
-const { Wallet } = require("ethers")
-const { KeyType, SlugName, SysioContracts } = require("@wireio/sdk-core")
+const { SlugName, SysioContracts } = require("@wireio/sdk-core")
+const { EthereumDeploymentKind } = require("@wireio/cluster-tool-shared")
 const {
-  AuthExLinkTool,
+  ClusterBuild,
+  OutputStore,
   Report,
   Steps,
   WireCollateralTool,
-  Constants: DepotConstants,
-  privateKeyFromNativeString
+  Constants: DepotConstants
 } = require("@wireio/cluster-tool")
 const {
   ProducerCollateralSteps: Collateral
@@ -36,6 +36,7 @@ afterEach(() => mock.restoreAll())
 test("producer policy requires exactly 2.0 of BOTH depot shadows", () => {
   const defaults = new ProducerRegistrationScenario().defaults
   Assert.equal(defaults.enableMockSyndicationImport, true)
+  Assert.equal(defaults.ethereumDeployment, EthereumDeploymentKind.ladder)
   Assert.deepEqual(
     defaults.requiredProducerCollateral,
     ["LIQSOL", "LIQETH"].map(token => ({
@@ -105,21 +106,18 @@ test("bond-only steps use depot collateral without WIRE funding", async () => {
   Assert.equal(calls.length, 2)
 })
 
-test("Ethereum link signs with the imported fixture identity", async () => {
-  const wallet = Wallet.createRandom()
-  const privateKey = privateKeyFromNativeString(KeyType.EM, wallet.privateKey)
-  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({
-    ethereum: { privateKey: privateKey.toString() }
-  }))
-  const link = mock.method(AuthExLinkTool, "createLink", async () => {})
-  await run(
-    Collateral.planLinkEthereum(Report.Actor.Producer, "link", "link", {}),
-    context({})
-  )
-  const input = link.mock.calls[0].arguments[1]
-  Assert.equal(input.account, Constants.FundingAccount)
-  Assert.equal(input.ethereumWallet.address, wallet.address)
-  Assert.equal(input.privateKey.toString(), privateKey.toString())
+test("LIQETH funding comes from a pre-launch staker linking its own key to the funding account", () => {
+  const build = ClusterBuild.forContext({ outputs: new OutputStore(), config: {} })
+  new ProducerRegistrationScenario().plan(build)
+  const steps = node => (node.steps ? [...node.steps] : node.children.flatMap(steps)),
+    link = steps(build).find(step => step.name === "link-ethereum-funder")
+  Assert.ok(link, "no Ethereum funding link planned")
+  Assert.equal(link.runner, Steps.ethereumLadderImport.runLinkActor)
+  Assert.deepEqual(link.input, {
+    kind: "EthereumLadderImportSteps.LinkActorInput",
+    actorIndex: Constants.FundingStakerIndex,
+    account: Constants.FundingAccount
+  })
 })
 
 const balances = (rows, more = false) =>
@@ -197,8 +195,7 @@ test("cancelled writes do not touch keys or chain state", async () => {
       "fund",
       {},
       Constants.CollateralToken.Solana
-    ),
-    Collateral.planLinkEthereum(Report.Actor.Producer, "link", "link", {})
+    )
   ])
     await Assert.rejects(run(step, {}, aborted), /cancelled/)
 })

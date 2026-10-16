@@ -25,6 +25,11 @@ export namespace EmergencyStopScenarioConstants {
   export const ProbeAmount = 100_000_000n
   /** Native wei per nine-decimal depot unit. */
   export const EthereumScale = 1_000_000_000n
+  /**
+   * The pre-launch staker whose imported LIQETH the bonder redeems: it links its
+   * Ethereum key to the bonder, so the deferred payouts go to its address.
+   */
+  export const EthereumHolderIndex = 0
   /** Funded donor and permissionless Ethereum cranker. */
   export const EthereumDonor = 32
   /** Ethereum pair token and chain. */
@@ -110,6 +115,11 @@ export namespace EmergencyStopScenarioConstants {
   export const EthereumBefore = outputKey<bigint>(
     "emergency.ethereumBefore",
     "native liqETH balance"
+  )
+  /** The holder's liqETH balance once the payout landed, for the paid-once check. */
+  export const EthereumPaid = outputKey<bigint>(
+    "emergency.ethereumPaid",
+    "native liqETH balance after the payout"
   )
   /** Last request before each redemption. */
   export const LastRequest = outputKey<bigint>(

@@ -7,12 +7,14 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/sdk-core": "^1.0.97",
     "@wireio/opp-typescript-models": "^1.0.51",
     "@wireio/shared": "^1.0.96",

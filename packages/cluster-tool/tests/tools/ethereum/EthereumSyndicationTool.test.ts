@@ -432,6 +432,16 @@ describe("EthereumSyndicationTool", () => {
       )
     })
 
+    it("accepts a liqETH balance change within one wei of the amount, and nothing wider", () => {
+      const amount = 500_000_000_000_000_000n
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount - 1n, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount + 1n, amount)).toBe(true)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount - 2n, amount)).toBe(false)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(amount + 2n, amount)).toBe(false)
+      expect(EthereumSyndicationTool.isLiqEthTransferDelta(0n, amount)).toBe(false)
+    })
+
     it("names LIQETH as the pool's token code, at 18 decimals", () => {
       expect(EthereumSyndicationTool.liqEthTokenCode()).toBe(53_413_376_196_608n)
       expect(EthereumSyndicationTool.LiqEthTokenPrecision).toBe(18)
@@ -538,10 +548,12 @@ describe("EthereumSyndicationTool", () => {
       }),
       wait = jest.fn().mockResolvedValue({ status: 1 }),
       sendTransaction = jest.fn().mockResolvedValue({ wait }),
+      estimateGas = jest.fn().mockResolvedValue(400_000n),
       signer = {
         call: reader.call,
         provider: { getTransactionCount: jest.fn().mockResolvedValue(0) },
         getAddress: async () => ManagerAddress,
+        estimateGas,
         sendTransaction
       },
       connect = jest.fn().mockReturnValue(signer),
@@ -553,8 +565,11 @@ describe("EthereumSyndicationTool", () => {
       expect(wallet).toHaveBeenCalledWith(EthereumOutpostBootstrapper.DeployerAccountIndex)
       expect(sendTransaction).toHaveBeenCalledTimes(1)
       const request = sendTransaction.mock.calls[0][0],
-        managerInterface = new ethers.Interface(fixture(OutpostManagerFixture).abi),
-        [target, data] = managerInterface.decodeFunctionData("execute", request.data)
+        managerInterface = new ethers.Interface(fixture(OutpostManagerFixture).abi)
+      // the one send path: the estimate, with the margin, is the limit
+      expect(estimateGas).toHaveBeenCalledTimes(1)
+      expect(request.gasLimit).toBe(EthereumSyndicationTool.gasLimitWithMargin(400_000n))
+      const [target, data] = managerInterface.decodeFunctionData("execute", request.data)
       expect(String(request.to).toLowerCase()).toBe(ManagerAddress)
       expect(String(target).toLowerCase()).toBe(pool)
       expect(poolInterface.decodeFunctionData("initializeSyndication", data).toArray()).toEqual([

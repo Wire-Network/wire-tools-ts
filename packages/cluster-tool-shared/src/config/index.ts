@@ -1,6 +1,7 @@
 export * from "./AWSClusterNodeConfig.js"
 export * from "./BindConfig.js"
 export * from "./ClusterConfig.js"
+export * from "./EthereumLadderSummary.js"
 export * from "./ExternalClusterConfig.js"
 export * from "./ExternalOutpostConfig.js"
 export * from "./NodeopReadMode.js"

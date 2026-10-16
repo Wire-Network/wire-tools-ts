@@ -49,7 +49,9 @@
  *   (run `--help` for the full option list and a pairing example)
  * Options:
  *   --expect-freeze   only for flow-emergency-stop: classify exact OutpostFrozen
- *                     (0x17c7) / EnforcedPause refusals as NOISE. Default: FATAL.
+ *                     (0x17c7) / EnforcedPause (0xd93c0665) refusals, and the
+ *                     second-payment WIRE_NoPendingDesyndication (0x287022ed),
+ *                     as NOISE. Default: FATAL.
  *                     Does not disable any liveness bail.
  */
 
@@ -186,14 +188,17 @@ const EchoWrapperExcludePattern = `${TrxEchoExcludePattern}|signaled NACK|bad pa
  * learns via the NEXT envelope's OPERATORS attestation (1–2 epochs), and until
  * that dispatches the underwriter plugin's commit retries bounce off the
  * outpost's status gate: SOL opp-outpost `0x1795` (OperatorNotActive), ETH
- * `OPP_NotActiveOperator`. Forensically verified (2026-07-04,
+ * `OPP_NotActiveOperator`. The batch operators' deliveries bounce the same
+ * way off liqsol-core's OPP gate, `0x1775` (NotActiveOperator), while the
+ * outpost's group roster trails the depot's by an envelope — six of them in
+ * the first epochs of a 21-operator cluster, then none. Forensically verified (2026-07-04,
  * flow-swap-from-wire): the epoch-2 envelope carried ACTIVE and dispatched 24s
  * after the first bounce — the ~5s retry loop heals on the next attempt, so
  * bailing on growth here kills a healthy flow. The liveness probes (epoch
  * advance, opp delta, per-direction growth) remain the bail gates.
  */
 const RegistrySyncLagPattern =
-  "custom program error: 0x1795|OPP_NotActiveOperator"
+  "custom program error: 0x1795|custom program error: 0x1775(?![0-9a-fA-F])|OPP_NotActiveOperator"
 
 /**
  * Expected NEGATIVE-TEST reverts — a flow deliberately submits an invalid action
@@ -208,8 +213,15 @@ const RegistrySyncLagPattern =
 const NegativeTestRevertPattern =
   "MockYieldEmitter: externalEpochRef not monotonic"
 
-/** Exact freeze reasons; a longer hex code or a containing identifier is not a match. */
-const FreezeRefusalSource = String.raw`custom program error: 0x17c7(?![0-9a-fA-F])|\bEnforcedPause\b(?:\(\))?`
+/**
+ * Exact freeze reasons; a longer hex code or a containing identifier is not a match.
+ * Anvil logs a custom error by its selector when it has no ABI for it, so each
+ * Ethereum refusal is listed in both spellings: `EnforcedPause()` is
+ * `0xd93c0665`. The emergency stop also asserts that a paid pending payout
+ * refuses a second payment, `WIRE_NoPendingDesyndication(uint64)` /
+ * `0x287022ed`, and that refusal is expected only under the same flag.
+ */
+const FreezeRefusalSource = String.raw`custom program error: 0x17c7(?![0-9a-fA-F])|\bEnforcedPause\b(?:\(\))?|custom error 0xd93c0665(?![0-9a-fA-F])|\bWIRE_NoPendingDesyndication\b(?:\([^)]*\))?|custom error 0x287022ed(?![0-9a-fA-F])`
 const FreezeRefusalPattern = new RegExp(FreezeRefusalSource)
 
 /**

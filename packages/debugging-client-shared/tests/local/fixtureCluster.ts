@@ -13,7 +13,8 @@ import {
   createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState,
-  type ClusterStateNode
+  type ClusterStateNode,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import { PidSources, oppDebuggingPath } from "@wireio/debugging-shared"
@@ -159,6 +160,7 @@ export function makeFixtureCluster(): FixtureCluster {
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
+    ethereumDeployment: EthereumDeploymentKind.current,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig()

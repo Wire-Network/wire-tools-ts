@@ -63,15 +63,14 @@ export interface IndexBalanceMetadata {
 export interface IndexPurchaserRow {
   address: string
   totalPretokens: string | number
-  // Other indexer fields exist but are not consumed.
-  [key: string]: unknown
+  // Other indexer fields exist but are not consumed; a row with more (the
+  // `@wireio/opp-snapshot` `OppPurchaserRow`) is accepted as is.
 }
 
 export interface IndexStakerRow {
   address: string
   pretokenYield: string | number
   yieldClaimed?: string | number
-  [key: string]: unknown
 }
 
 export interface IndexBalanceDump {

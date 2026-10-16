@@ -7,7 +7,8 @@ import {
   DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   createUnsetQueryEngineConfig,
-  type ClusterConfig
+  type ClusterConfig,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 
@@ -92,6 +93,7 @@ describe("ClusterConfig shape", () => {
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
+    ethereumDeployment: EthereumDeploymentKind.current,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
@@ -135,6 +137,29 @@ describe("ClusterConfig shape", () => {
     expect(() =>
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     ).toThrow()
+  })
+
+  it("persists an explicit ladder Ethereum deployment and rejects an unknown kind", () => {
+    const ladder = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize({
+        ...config,
+        ethereumDeployment: EthereumDeploymentKind.ladder
+      })
+    )
+    expect(ladder.ethereumDeployment).toBe(EthereumDeploymentKind.ladder)
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    parsed.ethereumDeployment = "mainnet"
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
+    ).toThrow()
+  })
+
+  it("defaults a config with no ethereumDeployment to the current deploy", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.ethereumDeployment
+    expect(
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).ethereumDeployment
+    ).toBe(EthereumDeploymentKind.current)
   })
 
   it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/enableLaunchWithheldOperations/enableMockLiqPools/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {

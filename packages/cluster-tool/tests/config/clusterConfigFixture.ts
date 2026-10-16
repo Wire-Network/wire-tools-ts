@@ -3,7 +3,8 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
-  type ClusterConfig
+  type ClusterConfig,
+  EthereumDeploymentKind
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool"
@@ -120,6 +121,7 @@ export const PersistedFixture: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
+  ethereumDeployment: EthereumDeploymentKind.current,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   // Nothing set: nodeop's read mode, the plugin's limits.

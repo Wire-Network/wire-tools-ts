@@ -68,6 +68,11 @@ export namespace RegistrySteps {
     ["ETHEREUM", "LIQETH"],
     ["SOLANA", "LIQSOL"]
   ] as const
+  /** The Ethereum shadow pair, by name — what the ladder import seeds. */
+  export const EthereumChainCodename = ShadowLiqTokenPairs[0][0]
+  export const EthereumLiqTokenCodename = ShadowLiqTokenPairs[0][1]
+  /** The Solana shadow pair, by name — what a ladder cluster's mock seeding is reduced to. */
+  export const SolanaChainCodename = ShadowLiqTokenPairs[1][0]
   /** Depot-frame precision every liq token is registered at, which its shadow symbol carries. */
   const LiqTokenPrecision = 9
   /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
@@ -444,18 +449,39 @@ export namespace RegistrySteps {
    * window (epoch 0), so these seed ONLY during bootstrap — never from a flow phase.
    */
   export const MockLiqPoolRegistrations: SysioContracts.SysioLiqRegliqpoolAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) =>
+      liqPoolRegistration(chainCodename, tokenCodename, MockLiqPoolShadowSeed)
+    )
+
+  /**
+   * ONE `sysio.liq::regliqpool` row for a shadow: the dev cluster's WIRE seed,
+   * fee and tick pacing, with the shadow seed (`initial_chain_amount`) the
+   * caller measured — the mock pools seed a fixed figure, the ladder import
+   * seeds the frozen outpost's custody net of the imported positions.
+   *
+   * @param chainCodename - The shadow's chain (`ETHEREUM`).
+   * @param tokenCodename - The shadow's liq token (`LIQETH`).
+   * @param initialChainAmount - The LCO shadow minted to `sysio`, in the depot's nine-decimal frame.
+   * @returns The action data.
+   */
+  export function liqPoolRegistration(
+    chainCodename: string,
+    tokenCodename: string,
+    initialChainAmount: number | string
+  ): SysioContracts.SysioLiqRegliqpoolAction {
+    return {
       chain_code: chainCodename,
       token_code: tokenCodename,
       pair_symbol: liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
-      initial_chain_amount: MockLiqPoolShadowSeed,
+      initial_chain_amount: initialChainAmount,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
       locked_shares: MockLiqPoolLockedShares,
       conversion_horizon_sec: MockLiqPoolConversionHorizonSec,
       depth_cap_bps: MockLiqPoolDepthCapBps,
       clip_floor: MockLiqPoolClipFloor
-    }))
+    }
+  }
 
   /**
    * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
@@ -684,17 +710,22 @@ export namespace RegistrySteps {
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    chainCodenames: readonly string[] = ShadowLiqTokenPairs.map(([chain]) => chain)
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.flatMap(
       ([chainCodename, tokenCodename], index) =>
-        LiqContractSteps.planRegliqpool<C>(
-          Report.Actor.Sysio,
-          `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
-          options,
-          MockLiqPoolRegistrations[index]
-        )
+        chainCodenames.includes(chainCodename)
+          ? [
+              LiqContractSteps.planRegliqpool<C>(
+                Report.Actor.Sysio,
+                `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+                `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
+                options,
+                MockLiqPoolRegistrations[index]
+              )
+            ]
+          : []
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
   }

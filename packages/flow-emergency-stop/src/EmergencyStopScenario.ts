@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
   AttestationType,
@@ -10,6 +11,7 @@ import {
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  EthereumPreLaunchSteps,
   EthereumSyndicationTool,
   PendingPayoutReason,
   ProtocolTiming,
@@ -25,7 +27,6 @@ import {
   readEnvelopeAttestations,
   verifyStep,
   type ClusterBuild,
-  type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { EmergencyStopScenarioConstants as Constants } from "./EmergencyStopScenarioConstants.js"
@@ -44,6 +45,9 @@ export class EmergencyStopScenario extends SyndicationScenario {
   readonly description =
     "Andon cord, deferred payouts, automatic shortfall pull and recovery"
   override readonly defaults: ClusterBuildOptions = {
+    // The Ethereum lanes freeze and pay out of the pool the go-live seeded over the
+    // frozen pre-launch ladder; the mock flags add the Solana side.
+    ethereumDeployment: EthereumDeploymentKind.ladder,
     enableMockSyndicationImport: true,
     enableMockLiqPools: true,
     epochDurationSec: SyndicationScenario.EpochDurationSec,
@@ -884,12 +888,13 @@ export class EmergencyStopScenario extends SyndicationScenario {
       "EthereumSetup",
       "Link the imported LIQETH position"
     ).push(
-      EmergencyStopSteps.planAction(
+      Steps.ethereumLadderImport.planLinkActor(
         Actor.User,
         "link-imported-ethereum",
-        "sweep imported Ethereum position",
+        "sweep a pre-launch staker's imported Ethereum position",
         write,
-        Action.linkEthereum
+        Constants.EthereumHolderIndex,
+        SyndicationScenario.Bonder
       ),
       EthereumSyndicationTool.planDepositLiqEth(
         Actor.User,
@@ -1005,7 +1010,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
             Constants.EthereumBefore,
             await EthereumSyndicationTool.readLiqEthBalance(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
+              EmergencyStopScenario.ethereumAddress()
             )
           )
           const { rows, more } = await ctx.wire
@@ -1074,7 +1079,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               Assert.strictEqual(pending.depotAmount, Constants.Payout)
               Assert.strictEqual(
                 pending.recipient.toLowerCase(),
-                EmergencyStopScenario.ethereumAddress(ctx).toLowerCase()
+                EmergencyStopScenario.ethereumAddress().toLowerCase()
               )
               Assert.strictEqual(
                 pending.reason,
@@ -1095,7 +1100,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
           Assert.strictEqual(
             await EthereumSyndicationTool.readLiqEthBalance(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
+              EmergencyStopScenario.ethereumAddress()
             ),
             ctx.outputs.assert(Constants.EthereumBefore)
           )
@@ -1141,7 +1146,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
           Assert.strictEqual(
             await EthereumSyndicationTool.readLiqEthBalance(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
+              EmergencyStopScenario.ethereumAddress()
             ),
             ctx.outputs.assert(Constants.EthereumBefore)
           )
@@ -1164,16 +1169,19 @@ export class EmergencyStopScenario extends SyndicationScenario {
       verifyStep(
         Actor.User,
         "ethereum-paid",
-        "native payout equals depot units scaled to wei",
+        "native payout equals depot units scaled to wei, up to liqETH share rounding",
         async ctx => {
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(
+          const paid = await EthereumSyndicationTool.readLiqEthBalance(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
+              EmergencyStopScenario.ethereumAddress()
             ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+            delta = paid - ctx.outputs.assert(Constants.EthereumBefore),
+            payout = Constants.Payout * Constants.EthereumScale
+          Assert.ok(
+            EthereumSyndicationTool.isLiqEthTransferDelta(delta, payout),
+            `the holder's liqETH moved by ${delta} wei, not the ${payout} wei payout`
           )
+          ctx.outputs.set(Constants.EthereumPaid, paid)
           Assert.ok(
             !(await EthereumSyndicationTool.readPendingDesyndication(
               ctx,
@@ -1198,10 +1206,9 @@ export class EmergencyStopScenario extends SyndicationScenario {
           Assert.strictEqual(
             await EthereumSyndicationTool.readLiqEthBalance(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
+              EmergencyStopScenario.ethereumAddress()
             ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+            ctx.outputs.assert(Constants.EthereumPaid)
           )
         }
       )
@@ -1211,10 +1218,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
 
 /** Read-only identity helpers shared by Ethereum verifications. */
 export namespace EmergencyStopScenario {
-  /** Imported holder's native Ethereum address. */
-  export function ethereumAddress(ctx: ClusterBuildContext): string {
-    const address =
-      Steps.registry.readMockSyndicationBonder(ctx).ethereum.address
-    return address.startsWith("0x") ? address : `0x${address}`
+  /** The imported holder's native Ethereum address: the linked pre-launch staker's. */
+  export function ethereumAddress(): string {
+    return EthereumPreLaunchSteps.actorWallet(Constants.EthereumHolderIndex).address
   }
 }

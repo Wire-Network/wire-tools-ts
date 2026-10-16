@@ -1,15 +1,12 @@
-import { ChainKind } from "@wireio/opp-typescript-models"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { EthereumPreLaunchSteps, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
- * Constants for the emissions + dclaim payout soak flow. Values carry over from
- * the previously-validated jest suite (gate-tuned 2026-06): a ~30-minute soak
- * window sampled every ≥60s, five controlled stakers seeded through
- * `sysio.dclaim::importseed` alongside a bulk synthetic load, and exact
- * per-staker claim payouts. The old suite's `process.env` tuning knobs
- * (`SOAK_DURATION_MS`, `CONTROLLED_STAKER_COUNT`, `BULK_*`, `SYNTHETIC_SEED`)
- * are preserved verbatim so local runs can shorten/grow the scenario without a
- * rebuild — the e2e gate sets none of them, so the defaults below apply there.
+ * Constants for the emissions + dclaim payout soak flow: a ~30-minute soak
+ * window sampled every ≥60s, and exact claim payouts for the pre-launch buyers
+ * whose pretokens the ladder import seeded into `sysio.dclaim`. The
+ * `SOAK_DURATION_MS` / `EPOCH_DURATION_SEC` env knobs let local runs shorten or
+ * grow the soak without a rebuild — the e2e gate sets neither, so the defaults
+ * below apply there.
  */
 export namespace EmissionsSoakScenarioConstants {
   /** Parse an integer env override, falling back to the gate-tuned default. */
@@ -52,64 +49,33 @@ export namespace EmissionsSoakScenarioConstants {
   /** Bootstrapped underwriters in the bootstrap roster. */
   export const UnderwriterCount = 0
 
-  // ── Controlled stakers (the test holds their ETH wallets) ─────────────────
+  // ── Claimants (the ladder's pre-launch buyers; the harness holds their keys) ──
 
-  /** Controlled ETH stakers whose link → claim path runs end-to-end. */
-  export const ControlledStakerCount = envInteger("CONTROLLED_STAKER_COUNT", 5)
-  /** WIRE-account prefix for controlled stakers (`soak.sa`, `soak.sb`, …). */
-  export const ControlledStakerAccountPrefix = "soak.s"
-  /**
-   * Anvil-mnemonic HD index base for the controlled stakers' ETH wallets —
-   * deterministic derivation keeps private keys out of step inputs / the
-   * report. Base 40 sits past every bootstrap operator slot, the shared swap
-   * user (32), and the collateral-deposit flow's depositor (35).
-   */
-  export const ControlledStakerEthereumHdIndexBase = 40
-  /** Per controlled staker, source-decimal (18) amount on the ETH side (100e18). */
-  export const ControlledStakerSourceUnits = 100_000_000_000_000_000_000n
-  /** EVM source-decimal (1e18) → WIRE-atomic (1e9) conversion divisor. */
-  export const WireAtomicDivisor = 1_000_000_000n
-  /**
-   * Exact WIRE atomic each controlled staker is seeded with (and must receive
-   * on claim): `ControlledStakerSourceUnits / 1e9`, zero dust by construction.
-   */
-  export const PerStakerClaimAtomic =
-    ControlledStakerSourceUnits / WireAtomicDivisor
-  /**
-   * WIRE atomic pre-funded from `sysio` to `sysio.dclaim` to cover every
-   * controlled-staker claim; a real launch pre-funds DClaim the same way.
-   */
-  export const ClaimPreFundAtomic =
-    PerStakerClaimAtomic * BigInt(ControlledStakerCount)
+  /** One claimant: a pre-launch actor and the WIRE account it links its Ethereum key to. */
+  export interface Claimant {
+    /** The pre-launch actor (`EthereumPreLaunchSteps`): stakers first, then buyers. */
+    readonly actorIndex: number
+    /** The WIRE account the actor's dclaim seed sweeps into and claims from. */
+    readonly wireAccount: string
+  }
+
+  /** WIRE-account prefix for claimants (`soak.sa`, `soak.sb`, …). */
+  export const ClaimantAccountPrefix = "soak.s"
+  /** Sysio-name-safe letters for claimant account suffixes. */
+  export const ClaimantAccountSuffixes = "abcdefghijklmnopqrstuvwxyz"
   /** Memo on the dclaim pre-fund transfer. */
-  export const PreFundMemo = "pre-fund for importseed claim payouts"
+  export const PreFundMemo = "pre-fund for the pre-launch buyers' claim payouts"
 
-  // ── Bulk synthetic load (exercises larger importseed batches) ─────────────
-
-  /** Standalone ETH purchaser rows. */
-  export const BulkEthereumPurchasers = envInteger("BULK_ETH_PURCHASERS", 40)
-  /** Standalone ETH staker rows. */
-  export const BulkEthereumStakers = envInteger("BULK_ETH_STAKERS", 40)
-  /** ETH addresses appearing in BOTH purchasers and stakers (dedup path). */
-  export const BulkEthereumOverlapping = envInteger("BULK_ETH_OVERLAPPING", 8)
-  /** ETH stakers with non-zero `yieldClaimed` (netting path). */
-  export const BulkEthereumYieldClaimed = envInteger(
-    "BULK_ETH_YIELD_CLAIMED",
-    8
-  )
-  /** Standalone SOL purchaser rows. */
-  export const BulkSolanaPurchasers = envInteger("BULK_SOL_PURCHASERS", 20)
-  /** Standalone SOL staker rows. */
-  export const BulkSolanaStakers = envInteger("BULK_SOL_STAKERS", 20)
-  /** Deterministic PRNG seed for the synthetic dumps (reproducible failures). */
-  export const SyntheticSeed = envInteger("SYNTHETIC_SEED", 1)
-
-  // ── importseed chain kinds (proto `ChainKind` members) ────────────────────
-
-  /** Proto `ChainKind` for the ETH dump. */
-  export const EthereumChain = ChainKind.EVM
-  /** Proto `ChainKind` for the SOL dump. */
-  export const SolanaChain = ChainKind.SVM
+  /**
+   * The claimants: every pre-launch buyer. Their pretoken purchases are what the
+   * ladder import seeded into `sysio.dclaim`, so each has a credit to claim.
+   */
+  export function claimants(): Claimant[] {
+    return Array.from({ length: EthereumPreLaunchSteps.BuyerCount }, (_, index) => ({
+      actorIndex: EthereumPreLaunchSteps.buyerActorIndex(index),
+      wireAccount: `${ClaimantAccountPrefix}${ClaimantAccountSuffixes[index]}`
+    }))
+  }
 
   // ── Expected bootstrap emission splits (pinned — alerts on default drift) ──
 
@@ -134,10 +100,7 @@ export namespace EmissionsSoakScenarioConstants {
     MsPerSecond
   /** Poll interval for the `pending_claims` wait (ms). */
   export const PendingClaimsPollIntervalMs = 2_000
-  /**
-   * Row limit for the `unmapped` verification query — the default 100 would
-   * undercount bulk fixtures larger than one page.
-   */
+  /** Row limit for the `unmapped` verification query: every seeded row on one page. */
   export const UnmappedQueryLimit = 5000
   /** Ceiling on each single-write step (multi-finality-wait headroom). */
   export const ActionStepTimeoutMs = 120_000

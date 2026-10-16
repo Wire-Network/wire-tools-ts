@@ -6,13 +6,11 @@ import { promisify, stripVTControlCharacters } from "node:util"
 
 import { BN } from "@coral-xyz/anchor"
 import { ComputeBudgetProgram } from "@solana/web3.js"
-import { ChainKind } from "@wireio/opp-typescript-models"
-import { PrivateKey, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
 import { match } from "ts-pattern"
-import { isError, Wallet } from "ethers"
+import { isError } from "ethers"
 import {
-  AuthExLinkTool,
   ClusterBuildStep,
   EthereumSyndicationTool,
   SolanaFundingTool,
@@ -45,7 +43,6 @@ export namespace EmergencyStopSteps {
     desyndicate = "desyndicate",
     paySolana = "paySolana",
     replaySolana = "replaySolana",
-    linkEthereum = "linkEthereum",
     payEthereum = "payEthereum",
     recreditSolana = "recreditSolana",
     donateSolana = "donateSolana",
@@ -178,17 +175,6 @@ export namespace EmergencyStopSteps {
           )
         )
         .with(Action.replaySolana, () => replaySolana(ctx))
-        .with(Action.linkEthereum, () => {
-          const privateKey = PrivateKey.from(
-            Steps.registry.readMockSyndicationBonder(ctx).ethereum.privateKey
-          )
-          return AuthExLinkTool.createLink(ctx.wire, {
-            chainKind: ChainKind.EVM,
-            account: SyndicationScenario.Bonder,
-            privateKey,
-            ethereumWallet: new Wallet(privateKey.toNativeString())
-          })
-        })
         .with(Action.payEthereum, () =>
           EthereumSyndicationTool.runPayPendingDesyndication(
             ctx,

@@ -41,6 +41,7 @@
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.51",
     "@wireio/sdk-core": "^1.0.97",
+    "@wireio/opp-snapshot": "^1.0.0",
     "@wireio/shared": "^1.0.96",
     "@wireio/shared-node": "^1.0.96",
     "archiver": "^8.0.0",

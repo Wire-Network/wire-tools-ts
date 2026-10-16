@@ -1,11 +1,10 @@
 import Assert from "node:assert"
+import { EthereumDeploymentKind } from "@wireio/cluster-tool-shared"
 import { getLogger } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
-  convertImportSeed,
   FlowScenario,
-  formatWireAsset,
   pollUntil,
   Report,
   sleep,
@@ -16,22 +15,12 @@ import {
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { EmissionsSoakScenarioConstants as Constants } from "./EmissionsSoakScenarioConstants.js"
-import {
-  ClaimantIdentitiesKey,
-  EthereumSeedConversionKey,
-  PreClaimBalancesKey,
-  toSeedConversionSummary
-} from "./EmissionsSoakScenarioOutputs.js"
-import {
-  buildControlledStakerIdentities,
-  buildSyntheticEthereumDump,
-  buildSyntheticSolanaDump
-} from "./EmissionsSoakScenarioSyntheticDump.js"
+import { PreClaimBalancesKey } from "./EmissionsSoakScenarioOutputs.js"
 import { EmissionsSoakScenarioSteps } from "./steps/EmissionsSoakScenarioSteps.js"
 
 const log = getLogger(__filename)
 
-const { SysioContractAccount, SysioContractName } = SysioContracts
+const { SysioContractName } = SysioContracts
 const { Actor } = Report
 
 /** The `sysio::t5state` singleton row (a read; asserts the row exists). */
@@ -68,11 +57,11 @@ async function readCapConfig(
 }
 
 /**
- * Emissions + `sysio.dclaim` Payout Soak — bootstraps a new cluster (the
- * bootstrap seeds the emissions config + `dclaim::setconfig`), generates a
- * synthetic indexer dump in-flow (no committed fixtures, no live API call),
- * imports it via `sysio.dclaim::importseed`, then drives a long stretch of
- * synced epochs to verify:
+ * Emissions + `sysio.dclaim` Payout Soak — bootstraps a ladder cluster: the
+ * pre-launch Ethereum outpost is deployed, used and frozen, and the bootstrap
+ * imports its capital-index snapshot, which seeds `sysio.dclaim` with the
+ * pre-launch buyers' pretokens and seals the import. The flow then drives a
+ * long stretch of synced epochs to verify:
  *
  *   (a) **Stability** — the chain stays synced for the configured duration
  *       (default 30 min at 60s epochs ⇒ ~30 epochs; `SOAK_DURATION_MS`
@@ -80,56 +69,31 @@ async function readCapConfig(
  *   (b) **Emissions accrual** — every `pay_cadence_epochs` boundary fires
  *       `payepoch`; `t5_state.total_distributed` advances monotonically and
  *       respects `t5_distributable - t5_floor`.
- *   (c) **importseed → link → claim** — controlled staker accounts (this flow
- *       holds their ETH wallets) complete AuthEx linking, whose inline
- *       `linkswept` sweeps `unmapped_tokens` into `pending_claims` → `claim`
- *       pays each staker its exact seeded WIRE. dclaim is pre-funded from
- *       `sysio` for the synthetic load; imports and claims use only that funding.
+ *   (c) **seed → link → claim** — each pre-launch buyer (the harness holds
+ *       its key) links its Ethereum key to a new WIRE account, whose inline
+ *       `linkswept` sweeps its `unmapped_tokens` row into `pending_claims` →
+ *       `claim` pays it exactly the WIRE the import seeded. dclaim is
+ *       pre-funded from `sysio` with exactly those credits.
  *
- * Phases: `ConfigureEmissions` → `GenerateAndImport` → `SetupClaimers` →
+ * Phases: `ConfigureEmissions` → `LadderSeed` → `SetupClaimers` →
  * `StabilityLoop` → `Claim`.
  */
 export class EmissionsSoakScenario extends FlowScenario {
   readonly name = "flow-emissions-soak"
   readonly description =
-    "Emissions accrue monotonically over a multi-epoch soak while importseed-seeded stakers link and claim exact WIRE payouts"
+    "Emissions accrue monotonically over a multi-epoch soak while the pre-launch buyers the ladder import seeded link and claim exact WIRE payouts"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
-    underwriterCount: Constants.UnderwriterCount
+    underwriterCount: Constants.UnderwriterCount,
+    // The dclaim seed is the frozen pre-launch outpost's, imported at bootstrap.
+    ethereumDeployment: EthereumDeploymentKind.ladder
   }
 
   plan(cluster: ClusterBuild): void {
-    // Pure value generation (no chain side effects): the synthetic corpus is
-    // built here so the batch/staker step fan-out is known at registration
-    // time — one write step per importseed batch, one per claimer action.
-    const identities = buildControlledStakerIdentities(
-        Constants.ControlledStakerCount,
-        Constants.ControlledStakerAccountPrefix,
-        Constants.ControlledStakerEthereumHdIndexBase
-      ),
-      ethereumDump = buildSyntheticEthereumDump({
-        seed: Constants.SyntheticSeed,
-        purchaserCount: Constants.BulkEthereumPurchasers,
-        stakerCount: Constants.BulkEthereumStakers,
-        overlappingCount: Constants.BulkEthereumOverlapping,
-        yieldClaimedCount: Constants.BulkEthereumYieldClaimed,
-        controlled: identities,
-        controlledSourceUnits: Constants.ControlledStakerSourceUnits
-      }),
-      solanaDump = buildSyntheticSolanaDump({
-        seed: Constants.SyntheticSeed + 1,
-        purchaserCount: Constants.BulkSolanaPurchasers,
-        stakerCount: Constants.BulkSolanaStakers
-      }),
-      ethereumConversion = toSeedConversionSummary(
-        convertImportSeed(ethereumDump, { chain: Constants.EthereumChain })
-      ),
-      solanaConversion = toSeedConversionSummary(
-        convertImportSeed(solanaDump, { chain: Constants.SolanaChain })
-      ),
+    const claimants = Constants.claimants(),
       actionOptions = { timeoutMs: Constants.ActionStepTimeoutMs },
       soakOptions = {
         timeoutMs: Constants.SoakDurationMs + Constants.SoakTimeoutMarginMs
@@ -172,15 +136,15 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "dclaim-config",
-        "capcfg exists with the import window open",
+        "capcfg exists with the import window sealed by the ladder import",
         async ctx => {
           const capConfig = await readCapConfig(ctx)
           // The table serializes bool as 0/1; coerce so the assertion is on
           // the logical value regardless of clio's encoding shape.
           Assert.strictEqual(
             Boolean(capConfig.imported_complete),
-            false,
-            "import window must still be open at bootstrap"
+            true,
+            "the bootstrap's ladder import must have sealed the dclaim window"
           )
         }
       ),
@@ -198,155 +162,100 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
     )
 
-    // ── 2. GenerateAndImport — seed dclaim from the synthetic dumps, one
-    //       write step per importseed batch, then close the import window. ──
+    // ── 2. LadderSeed — the bootstrap's import seeded every pre-launch buyer. ──
     ClusterBuildPhase.create(
       cluster,
-      "GenerateAndImport",
-      "Convert the synthetic dumps and seed dclaim via importseed + importdone"
+      "LadderSeed",
+      "Every pre-launch buyer has a dclaim credit from the ladder import, parked in unmapped_tokens"
     ).push(
-      EmissionsSoakScenarioSteps.planUnlockWallet(
-        Actor.Sysio,
-        "unlock-wallet-import",
-        "open + unlock the cluster wallet for the import burst",
-        actionOptions
-      ),
-      EmissionsSoakScenarioSteps.planPublishSeedData(
-        Actor.Sysio,
-        "publish-seed-data",
-        "publish the controlled-staker roster + converted importseed batches",
-        {},
-        identities,
-        ethereumConversion,
-        solanaConversion
-      ),
       verifyStep(
         Actor.Sysio,
-        "controlled-credits-exact",
-        "every controlled staker survives conversion with the exact atomic credit",
+        "claimant-credits-seeded",
+        "the ladder import seeded a non-zero WIRE credit for every pre-launch buyer",
         async ctx => {
-          const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            conversion = ctx.outputs.assert(EthereumSeedConversionKey),
-            credits = conversion.batches.flatMap(batch => batch.credits),
-            expectedAtomic = Constants.PerStakerClaimAtomic.toString()
-          roster.forEach(identity => {
-            const credit = credits.find(
-              candidate => candidate.native_address === identity.addressHex
-            )
+          claimants.forEach(claimant => {
+            const atomic = EmissionsSoakScenarioSteps.seededAtomic(ctx, claimant)
             Assert.ok(
-              credit != null,
-              `controlled staker ${identity.wireAccount} missing from the importseed credits`
+              atomic > 0n,
+              `pre-launch buyer ${claimant.actorIndex} was seeded no WIRE`
             )
-            Assert.strictEqual(
-              credit.wire_atomic,
-              expectedAtomic,
-              `controlled staker ${identity.wireAccount} credit mismatch`
-            )
+            log.info(`[soak] ${claimant.wireAccount} seeded ${atomic} atomic`)
           })
         }
-      ),
-      ...ethereumConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.planImportSeedBatch(
-          Actor.Sysio,
-          `import-ethereum-batch-${index + 1}`,
-          `push importseed ETH batch ${index + 1}/${ethereumConversion.batches.length} (${batch.credits.length} credits)`,
-          actionOptions,
-          Constants.EthereumChain,
-          index,
-          batch.credits.length
-        )
-      ),
-      ...solanaConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.planImportSeedBatch(
-          Actor.Sysio,
-          `import-solana-batch-${index + 1}`,
-          `push importseed SOL batch ${index + 1}/${solanaConversion.batches.length} (${batch.credits.length} credits)`,
-          actionOptions,
-          Constants.SolanaChain,
-          index,
-          batch.credits.length
-        )
-      ),
-      EmissionsSoakScenarioSteps.planImportDone(
-        Actor.Sysio,
-        "import-done",
-        "close the import window (sysio.dclaim::importdone)",
-        actionOptions
       ),
       verifyStep(
         Actor.Sysio,
         "unmapped-populated",
-        "unmapped_tokens holds at least one row per controlled staker",
+        "unmapped_tokens holds at least one row per claimant",
         async ctx => {
-          const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            { rows } = await ctx.wire
-              .getSysioContract(SysioContractName.dclaim)
-              .tables.unmapped.query({ limit: Constants.UnmappedQueryLimit })
+          const { rows } = await ctx.wire
+            .getSysioContract(SysioContractName.dclaim)
+            .tables.unmapped.query({ limit: Constants.UnmappedQueryLimit })
           Assert.ok(
-            rows.length >= roster.length,
-            `unmapped_tokens rows ${rows.length} < controlled stakers ${roster.length}`
+            rows.length >= claimants.length,
+            `unmapped_tokens rows ${rows.length} < claimants ${claimants.length}`
           )
           log.info(`[soak] unmapped_tokens populated with ${rows.length} rows`)
         }
       )
     )
 
-    // ── 3. SetupClaimers — pre-fund dclaim, provision each staker's WIRE
-    //       account, authex-link its ETH wallet, sweep its credit. ──
-    const preFundAsset = formatWireAsset(Constants.ClaimPreFundAtomic)
+    // ── 3. SetupClaimers — pre-fund dclaim with exactly the claimants' credits,
+    //       provision each claimant's WIRE account, link its Ethereum key. ──
     ClusterBuildPhase.create(
       cluster,
       "SetupClaimers",
-      "Pre-fund dclaim + provision and link every controlled staker"
+      "Pre-fund dclaim + provision and link every claimant"
     ).push(
-      Steps.contracts.sysio.token.planTransfer(
+      EmissionsSoakScenarioSteps.planUnlockWallet(
+        Actor.Sysio,
+        "unlock-wallet-setup",
+        "open + unlock the cluster wallet for the setup burst",
+        actionOptions
+      ),
+      EmissionsSoakScenarioSteps.planPrefundDclaim(
         Actor.Sysio,
         "prefund-dclaim",
-        `pre-fund sysio.dclaim with ${preFundAsset} for the controlled-staker obligations`,
+        "pre-fund sysio.dclaim with exactly the claimants' seeded WIRE",
         actionOptions,
-        {
-          from: SysioContractAccount[SysioContractName.system],
-          to: SysioContractAccount[SysioContractName.dclaim],
-          quantity: preFundAsset,
-          memo: Constants.PreFundMemo
-        }
+        claimants
       ),
-      ...identities.map(identity =>
+      ...claimants.map(claimant =>
         EmissionsSoakScenarioSteps.planProvisionClaimer(
           Actor.User,
-          `provision-${identity.wireAccount}`,
-          `provision ${identity.wireAccount} (account + resource policy)`,
+          `provision-${claimant.wireAccount}`,
+          `provision ${claimant.wireAccount} (account + resource policy)`,
           actionOptions,
-          identity.wireAccount
+          claimant.wireAccount
         )
       ),
-      ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.planAuthexLink(
+      ...claimants.map(claimant =>
+        Steps.ethereumLadderImport.planLinkActor(
           Actor.User,
-          `authex-link-${identity.wireAccount}`,
-          `authex-link ${identity.wireAccount}'s ETH wallet (hd=${identity.ethereumHdIndex})`,
+          `authex-link-${claimant.wireAccount}`,
+          `authex-link ${claimant.wireAccount} to pre-launch buyer ${claimant.actorIndex}'s Ethereum key`,
           actionOptions,
-          identity
+          claimant.actorIndex,
+          claimant.wireAccount
         )
       ),
       verifyStep(
         Actor.Sysio,
         "pending-claims-populated",
-        "pending_claims rows land for every linked staker",
+        "pending_claims rows land for every linked claimant",
         async ctx => {
-          const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            linkedAccounts = new Set(
-              roster.map(identity => identity.wireAccount)
-            )
+          const linkedAccounts = new Set(
+            claimants.map(claimant => claimant.wireAccount)
+          )
           await pollUntil(
-            "pending_claims populated for all linked stakers",
+            "pending_claims populated for all linked claimants",
             async () => {
               const { rows } = await ctx.wire
                 .getSysioContract(SysioContractName.dclaim)
                 .tables.pclaims.query()
               return (
                 rows.filter(row => linkedAccounts.has(row.wire_account))
-                  .length === roster.length
+                  .length === claimants.length
               )
             },
             Constants.PendingClaimsTimeoutMs,
@@ -419,7 +328,7 @@ export class EmissionsSoakScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "Claim",
-      "Each controlled staker claims and receives its exact seeded WIRE"
+      "Each claimant claims and receives its exact seeded WIRE"
     ).push(
       EmissionsSoakScenarioSteps.planUnlockWallet(
         Actor.User,
@@ -430,45 +339,44 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.User,
         "snapshot-preclaim-balances",
-        "record each staker's WIRE balance",
+        "record each claimant's WIRE balance",
         async ctx => {
-          const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            entries = await Promise.all(
-              roster.map(
-                async identity =>
-                  [
-                    identity.wireAccount,
-                    await ctx.wire.getWireBalance(identity.wireAccount)
-                  ] as const
-              )
+          const entries = await Promise.all(
+            claimants.map(
+              async claimant =>
+                [
+                  claimant.wireAccount,
+                  await ctx.wire.getWireBalance(claimant.wireAccount)
+                ] as const
             )
+          )
           ctx.outputs.set(PreClaimBalancesKey, Object.fromEntries(entries))
         }
       ),
-      ...identities.map(identity =>
+      ...claimants.map(claimant =>
         EmissionsSoakScenarioSteps.planClaim(
           Actor.User,
-          `claim-${identity.wireAccount}`,
-          `${identity.wireAccount} claims its pending WIRE`,
+          `claim-${claimant.wireAccount}`,
+          `${claimant.wireAccount} claims its pending WIRE`,
           actionOptions,
-          identity.wireAccount
+          claimant.wireAccount
         )
       ),
       verifyStep(
         Actor.User,
         "claim-deltas-exact",
-        `each staker's WIRE balance grows by exactly ${Constants.PerStakerClaimAtomic} atomic`,
+        "each claimant's WIRE balance grows by exactly the WIRE the ladder import seeded",
         async ctx => {
-          const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            preClaimBalances = ctx.outputs.assert(PreClaimBalancesKey)
+          const preClaimBalances = ctx.outputs.assert(PreClaimBalancesKey)
           await Promise.all(
-            roster.map(async identity => {
-              const after = await ctx.wire.getWireBalance(identity.wireAccount),
-                delta = after - preClaimBalances[identity.wireAccount]
+            claimants.map(async claimant => {
+              const seeded = EmissionsSoakScenarioSteps.seededAtomic(ctx, claimant),
+                after = await ctx.wire.getWireBalance(claimant.wireAccount),
+                delta = after - preClaimBalances[claimant.wireAccount]
               Assert.strictEqual(
                 delta,
-                Constants.PerStakerClaimAtomic,
-                `claim delta for ${identity.wireAccount}: ${delta} != ${Constants.PerStakerClaimAtomic}`
+                seeded,
+                `claim delta for ${claimant.wireAccount}: ${delta} != ${seeded}`
               )
             })
           )

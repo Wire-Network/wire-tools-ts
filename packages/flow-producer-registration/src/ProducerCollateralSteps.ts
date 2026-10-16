@@ -1,11 +1,7 @@
 import Assert from "node:assert"
-import { Asset, PrivateKey, SysioContracts } from "@wireio/sdk-core"
-import { ChainKind } from "@wireio/opp-typescript-models"
-import { Wallet } from "ethers"
+import { Asset, SysioContracts } from "@wireio/sdk-core"
 import {
-  AuthExLinkTool,
   ClusterBuildStep,
-  Steps,
   WireClient,
   WireCollateralTool,
   verifyStep,
@@ -22,43 +18,6 @@ export namespace ProducerCollateralSteps {
     readonly kind: "ProducerCollateralSteps.FundingInput"
     readonly token: Constants.CollateralToken
   }
-  export interface LinkInput extends StepInput {
-    readonly kind: "ProducerCollateralSteps.LinkInput"
-  }
-
-  /** Deliver the imported Ethereum shadow to the same fixture account as LIQSOL. */
-  export function planLinkEthereum(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions
-  ) {
-    return ClusterBuildStep.create<ClusterBuildContext, LinkInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "ProducerCollateralSteps.LinkInput" },
-      runLinkEthereum
-    )
-  }
-  export async function runLinkEthereum(
-    ctx: ClusterBuildContext,
-    _input: LinkInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const privateKey = PrivateKey.from(
-      Steps.registry.readMockSyndicationBonder(ctx).ethereum.privateKey
-    )
-    await AuthExLinkTool.createLink(ctx.wire, {
-      chainKind: ChainKind.EVM,
-      account: Constants.FundingAccount,
-      privateKey,
-      ethereumWallet: new Wallet(privateKey.toNativeString())
-    })
-  }
-
   /** Transfer existing backed shadow; this step never issues tokens. */
   export function planFunding(
     actor: Report.Actor,

@@ -47,6 +47,27 @@ import {
 } from "../../utils/ethereumUtils.js"
 
 export namespace EthereumSyndicationTool {
+  /**
+   * How far a liqETH balance can move from the amount transferred into it.
+   * liqETH is share-based: `balanceOf` floors `shares × pooled / totalShares`,
+   * so once the index is off 1:1 a transfer of `amount` can land as
+   * `amount ± 1` wei in the recipient's balance.
+   */
+  export const LiqEthBalanceRoundingWei = 1n
+
+  /**
+   * Whether a liqETH balance change matches a transferred amount, within the
+   * share rounding ({@link LiqEthBalanceRoundingWei}).
+   *
+   * @param delta - The observed balance change, in wei.
+   * @param amount - The amount transferred, in wei.
+   * @returns True when the change is the amount up to the rounding.
+   */
+  export function isLiqEthTransferDelta(delta: bigint, amount: bigint): boolean {
+    const difference = delta - amount
+    return difference <= LiqEthBalanceRoundingWei && -difference <= LiqEthBalanceRoundingWei
+  }
+
   /** `outpost-addrs.json` key + artifact basename of the syndication pool. */
   export const SyndicationPoolContractName = "SyndicationPool"
   /** Artifact dir segments of `SyndicationPool` under `artifacts/contracts`. */
@@ -86,6 +107,11 @@ export namespace EthereumSyndicationTool {
   export const LiqEthTokenPrecision = 18
   /** Confirmations every write waits for. */
   export const Confirmations = 1
+  /** Head-room over `eth_estimateGas` every write is sent with; see {@link gasLimitWithMargin}. */
+  export const GasLimitMarginPercent = 25n
+  /** EIP-7825's per-transaction gas cap (2^24), which anvil enforces with `--enable-tx-gas-limit`. */
+  export const TransactionGasCap = 16_777_216n
+  export const PercentDenominator = 100n
 
   /** `SyndicationPool` functions the tool encodes, by ABI name. */
   export enum PoolFunction {
@@ -466,18 +492,38 @@ export namespace EthereumSyndicationTool {
    * @param label - What is being sent, for the failure message.
    * @throws If the transaction reverts.
    */
-  async function send(
+  export async function sendTransaction(
     signer: ethers.Signer,
     request: ethers.TransactionRequest,
     label: string
   ): Promise<void> {
     const nonce = await resolveLatestNonce(signer),
-      response = await signer.sendTransaction({ ...request, nonce }),
+      gasLimit = gasLimitWithMargin(await signer.estimateGas(request)),
+      response = await signer.sendTransaction({ ...request, nonce, gasLimit }),
       receipt = await response.wait(Confirmations)
     Assert.ok(
       receipt?.status === 1,
       `${label}: reverted (status=${receipt?.status ?? "null"})`
     )
+  }
+
+  /**
+   * The gas limit a write is sent with: the node's estimate plus
+   * {@link GasLimitMarginPercent}, capped at {@link TransactionGasCap}. The
+   * estimate is the LEAST gas the simulation passes with, and the pre-launch
+   * OPP's send path is gas-sensitive (`gasleft()` tags, forwarded sub-calls):
+   * sent with exactly the estimate, a transaction that simulates clean can
+   * still revert on-chain — two of three ladder stakes passed by luck before
+   * the third died at the estimate (2026-10-12). A pure value helper.
+   *
+   * @param estimate - `eth_estimateGas` for the request.
+   * @returns The limit to send with.
+   */
+  export function gasLimitWithMargin(estimate: bigint): bigint {
+    const withMargin =
+      (estimate * (PercentDenominator + GasLimitMarginPercent)) /
+      PercentDenominator
+    return withMargin < TransactionGasCap ? withMargin : TransactionGasCap
   }
 
   // ── reads ────────────────────────────────────────────────────────────────
@@ -662,7 +708,7 @@ export namespace EthereumSyndicationTool {
       "EthereumSyndicationTool.planDepositLiqEth: amountWei must be positive"
     )
     const holder = hdWallet(ctx, input.ethereumHdIndex)
-    await send(
+    await sendTransaction(
       holder,
       depositLiqEthRequest(loadDepositManager(ctx, holder), input.amountWei),
       "EthereumSyndicationTool.planDepositLiqEth"
@@ -729,7 +775,7 @@ export namespace EthereumSyndicationTool {
         pool.outpostChainCode(), pool.liqTokenCode(),
         pool.liqTokenPrecision(), pool.yieldDeadband()
       ])
-    await send(signer, {
+    await sendTransaction(signer, {
       to: manager.target,
       data: manager.interface.encodeFunctionData(ManagerFunction.execute, [
         await pool.getAddress(),
@@ -796,7 +842,7 @@ export namespace EthereumSyndicationTool {
     signal.throwIfAborted()
     const holder = hdWallet(ctx, input.ethereumHdIndex),
       pool = loadSyndicationPool(ctx, holder)
-    await send(
+    await sendTransaction(
       holder,
       approveLiqEthRequest(
         loadLiqEthToken(ctx, holder),
@@ -874,7 +920,7 @@ export namespace EthereumSyndicationTool {
       "EthereumSyndicationTool.planSyndicate: amount must be positive"
     )
     const holder = hdWallet(ctx, input.ethereumHdIndex)
-    await send(
+    await sendTransaction(
       holder,
       syndicateRequest(
         loadSyndicationPool(ctx, holder),
@@ -946,7 +992,7 @@ export namespace EthereumSyndicationTool {
     )
     const donor = hdWallet(ctx, input.ethereumHdIndex),
       pool = loadSyndicationPool(ctx, donor)
-    await send(
+    await sendTransaction(
       donor,
       donateToPoolRequest(
         loadLiqEthToken(ctx, donor),
@@ -1014,7 +1060,7 @@ export namespace EthereumSyndicationTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const panic = hdWallet(ctx, input.ethereumHdIndex)
-    await send(
+    await sendTransaction(
       panic,
       setPausedRequest(loadSyndicationPool(ctx, panic), input.paused),
       `EthereumSyndicationTool.planSetPaused ${input.paused}`
@@ -1079,7 +1125,7 @@ export namespace EthereumSyndicationTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const caller = hdWallet(ctx, input.ethereumHdIndex)
-    await send(
+    await sendTransaction(
       caller,
       payPendingDesyndicationRequest(
         loadSyndicationPool(ctx, caller),

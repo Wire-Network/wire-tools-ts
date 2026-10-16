@@ -1,12 +1,6 @@
-// WireDclaimSeedTool.test.ts — harness home of the unit-level importseed
-// coverage that previously lived at the bottom of the old flow-emissions-soak
-// jest suite (EmissionsSoak.test.ts). Flows carry no jest suites anymore, so
-// the `convertImportSeed` + synthetic-dump sanity assertions land here.
-//
-// The synthetic-dump fixture below is a minimal, deterministic mirror of the
-// flow-side generator (flow-emissions-soak's EmissionsSoakScenarioSyntheticDump)
-// — harness tests never import from flow-* packages, so the fixture is
-// self-contained.
+// WireDclaimSeedTool.test.ts — unit coverage of `convertImportSeed` and
+// `serializeBatchForClio` against a minimal, deterministic synthetic indexer
+// dump in the `/opp/balances` shape.
 
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {

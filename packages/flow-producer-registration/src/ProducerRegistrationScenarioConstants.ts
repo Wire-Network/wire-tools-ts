@@ -65,6 +65,11 @@ export namespace ProducerRegistrationScenarioConstants {
     CollateralToken.Ethereum
   ]
   export const FundingAccount = "prodbonder"
+  /**
+   * The pre-launch staker whose imported LIQETH funds the bond: it links its Ethereum key to
+   * {@link FundingAccount}. Its stake is well above the 2.0 bond.
+   */
+  export const FundingStakerIndex = 0
   export const Precision = 9
 
   /** Encode a shadow amount for collateral and remit claims. */
