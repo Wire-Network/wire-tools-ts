@@ -1,6 +1,7 @@
 import Os from "node:os"
 import Fs from "node:fs"
 import Path from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { Level } from "@wireio/shared"
 import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 
@@ -22,7 +23,7 @@ describe("LoggingManager.configure", () => {
     expect(Fs.existsSync(expected)).toBe(true)
   })
 
-  it("writes records to <clusterPath>/<LogSubpath>/<LogFilename>", () => {
+  it("writes records to <clusterPath>/<LogSubpath>/<LogFilename>", async () => {
     const log = LoggingManager.getGlobalLogger()
     log.fatal("probe-message")
     const file = Path.join(
@@ -37,6 +38,7 @@ describe("LoggingManager.configure", () => {
     while (Date.now() < deadline) {
       contents = Fs.readFileSync(file, "utf8")
       if (contents.includes("probe-message")) break
+      await delay(20)
     }
     expect(contents).toContain("probe-message")
   })
