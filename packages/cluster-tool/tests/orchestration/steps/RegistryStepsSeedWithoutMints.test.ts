@@ -12,6 +12,9 @@ const { SysioTokensChainkind } = SysioContracts
 const SolanaChainCode = "SOLANA"
 const SolanaMintTokenCodes = ["LIQSOL", "USDCSOL", "USDTSOL"]
 const ExpectedChainRegistrations = 3
+/** Depot shadow bindings must exist before operator collateral is configured. */
+const DepotShadowTokenCodes = ["LIQETH", "LIQSOL"]
+const DepotChainCode = "WIRE"
 
 enum ActionName {
   regchain = "regchain",
@@ -47,9 +50,12 @@ describe("Steps.registry.runSeedRegistry without sol-mock-mints.json (launch pol
           .with(ActionName.regtoken, () =>
             recorded.regtoken.push(data as SysioContracts.SysioTokensRegtokenAction)
           )
-          .with(ActionName.regctok, () =>
+          .with(ActionName.regctok, () => {
+            const binding = data as SysioContracts.SysioTokensRegctokAction
+            expect(recorded.regchain.some(chain => chain.code === binding.chain_code)).toBe(true)
+            expect(recorded.regtoken.some(token => token.code === binding.token_code)).toBe(true)
             recorded.regctok.push(data as SysioContracts.SysioTokensRegctokAction)
-          )
+          })
           .otherwise(noop)
         return null
       })
@@ -82,6 +88,14 @@ describe("Steps.registry.runSeedRegistry without sol-mock-mints.json (launch pol
       ).toBe("")
     })
     expect(recorded.regchain).toHaveLength(ExpectedChainRegistrations)
+    DepotShadowTokenCodes.forEach(code => {
+      expect(bindings.find(binding =>
+        binding.chain_code === DepotChainCode && binding.token_code === code
+      )).toMatchObject({ contract_addr: "", is_native: false })
+    })
+    expect(bindings.filter(binding =>
+      binding.chain_code === DepotChainCode && binding.is_native
+    ).map(binding => binding.token_code)).toEqual([DepotChainCode])
   })
 
   it("rejects when an already-aborted signal is supplied (nothing is pushed)", async () => {
