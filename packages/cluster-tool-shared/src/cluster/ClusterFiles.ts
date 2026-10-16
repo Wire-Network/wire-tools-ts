@@ -29,4 +29,10 @@ export namespace ClusterFiles {
    * `package` and later by external flow runs).
    */
   export const ExternalConfigFilename = "external-cluster-config.json" as const
+  /**
+   * The `WireOpregBootstrap` JSON — the bootstrapped operator roster and the
+   * initial batch-operator schedule — written by every cluster bootstrap into
+   * the cluster directory. Public data only (no key material).
+   */
+  export const WireOpregBootstrapFilename = "wire-opreg-bootstrap.json" as const
 }

@@ -24,7 +24,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 
 | Command | What it does |
 |---|---|
-| `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json`, then exit. |
+| `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json` / `wire-opreg-bootstrap.json`, then exit. |
 | `run` | Rehydrate keys from `cluster-keys.json`, RE-DERIVE topology from the config (never a stored launch command), relaunch `kiod` + every node, gate on liveness, block until Ctrl+C. |
 | `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
@@ -333,6 +333,7 @@ After `create`:
 ├── cluster-config.json           # resolved config (paths, ports, binaries, signatureProvider, externalOutposts)
 ├── cluster-state.json            # node topology snapshot (re-derivable via NodeConfig.plan)
 ├── cluster-keys.json             # 0600 — producer node key sets + every operator account's keys
+├── wire-opreg-bootstrap.json     # bootstrapped operator roster + initial batch-operator schedule (public data; docs/outpost/)
 ├── genesis.json                  # shared chain genesis
 ├── external-cluster-config.json  # ONLY in a create-external-config output dir
 ├── wallet/                       # kiod wallet

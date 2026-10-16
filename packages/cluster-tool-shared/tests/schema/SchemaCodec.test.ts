@@ -95,4 +95,30 @@ describe("SchemaCodec", () => {
       expect(rehydrated.amount.amount).toBe(1_000_000n)
     })
   })
+
+  describe("toJSONSchema", () => {
+    it("emits the draft-2020-12 schema of the wire form", () => {
+      const schema = PersonSchemaCodec.toJSONSchema()
+      expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema")
+      expect(SchemaCodec.JSONSchemaTarget).toBe("draft-2020-12")
+      expect(schema.type).toBe("object")
+      expect(schema.required).toEqual(["name", "age"])
+    })
+
+    it("projects a codec field to its INPUT (wire) side", () => {
+      const NameCodecSchema = z.object({
+          upper: z.codec(z.string(), z.custom<string>(), {
+            decode: (text: string): string => text.toUpperCase(),
+            encode: (text: string): string => text.toLowerCase()
+          })
+        }),
+        schema = SchemaCodec.create(NameCodecSchema).toJSONSchema()
+      expect(schema.properties.upper).toEqual({ type: "string" })
+    })
+
+    it("throws when a member has no JSON form on its input side (a bare z.custom)", () => {
+      const CustomSchema = z.object({ value: z.custom<symbol>() })
+      expect(() => SchemaCodec.create(CustomSchema).toJSONSchema()).toThrow()
+    })
+  })
 })

@@ -81,6 +81,26 @@ describe("ExternalClusterConfig", () => {
     expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
   })
 
+  it("lists every OperatorType member name in the operator type's JSON Schema enum", () => {
+    expect(ExternalClusterConfigSchemaCodec.toJSONSchema()).toMatchObject({
+      properties: {
+        accounts: {
+          properties: {
+            operators: {
+              items: {
+                properties: {
+                  type: {
+                    enum: ["UNKNOWN", "PRODUCER", "BATCH", "UNDERWRITER", "CHALLENGER"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+  })
+
   it("allows an omitted solana section (ETH-only external cluster)", () => {
     const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
     delete parsed.solana
