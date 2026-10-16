@@ -1,6 +1,7 @@
 {
   "name": "@wireio/cluster-tool-shared",
-  "version": "0.1.3",
+  "version": "0.1.7",
+  "description": "Shared zod schema-first shapes (persisted configs and wire envelopes) behind SchemaCodec",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -34,7 +35,7 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.42",
     "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.96",
+    "@wireio/sdk-core": "^1.0.97",
     "@wireio/shared": "^1.0.96",
     "zod": "^4.4.3"
   },

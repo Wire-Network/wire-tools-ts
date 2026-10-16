@@ -6,6 +6,8 @@ import { isString, Level, NestedError } from "@wireio/shared"
 import {
   AWSClusterNodeConfigSchemaCodec,
   AWSSSMSignatureProviderOptionsSchema,
+  BatchOperatorUnderwritingConfigSchema,
+  type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
   NodeopReadMode,
@@ -24,6 +26,7 @@ import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
 import { Constants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
+import { QueryEngineConfigProvider } from "../config/QueryEngineConfigProvider.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 
 /**
@@ -86,6 +89,12 @@ const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(
 const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(
   z.array(z.array(ChainTokenAmountSchema))
 )
+
+/** Validated codec for the flag-less `batchOperatorUnderwriting` member (every field optional). */
+const batchOperatorUnderwritingCodec =
+  SchemaCodec.create<BatchOperatorUnderwritingOptions>(
+    BatchOperatorUnderwritingConfigSchema.partial()
+  )
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -253,20 +262,31 @@ export function describeQueryEngineReadModeFlag(): string {
   return `nodeop ${Constants.READ_MODE_OPTION} the API nodes' query engine serves at — ${QueryEngineReadModeSchema.options.join(" | ")}; omit for nodeop's default (${NodeopReadMode.head}); the plugin rejects ${NodeopReadMode.speculative}`
 }
 
+/** What an omitted `--query-engine-<limit>` leaves in force when the harness sets no default. */
+const PluginDefaultDescription = "the plugin's default"
+
 /**
  * The `describe` (`--help`) text of one `--query-engine-<limit>` flag — the
  * ONE wording both `create` and `create-api-node` register.
  *
- * Changing it changes the `--help` of every limit flag on both commands.
+ * Changing it changes the `--help` of every limit flag on both commands. The
+ * omitted-value text interpolates the harness default from
+ * `QueryEngineConfigProvider.createDefaultOptions` when the limit has one,
+ * else names the plugin's own default.
  *
- * @param option - The limit's own plugin option (its ini key), from
- *   `Constants.QUERY_ENGINE_LIMIT_OPTIONS`.
+ * @param limit - The limit's entry in `Constants.QUERY_ENGINE_LIMIT_OPTIONS`
+ *   (its `QueryEngineConfig` member and its plugin option / ini key).
  * @returns The flag's `describe` text.
  */
 export function describeQueryEngineLimitFlag(
-  option: Constants.QueryEngineLimitOption["option"]
+  limit: Constants.QueryEngineLimitOption
 ): string {
-  return `nodeop ${option} on the API nodes; omit for the plugin's default`
+  const omitted = asOption(
+    QueryEngineConfigProvider.createDefaultOptions()[limit.member]
+  )
+    .map(value => `${value}`)
+    .getOrElse(PluginDefaultDescription)
+  return `nodeop ${limit.option} on the API nodes; omit for ${omitted}`
 }
 
 /** Infer a leaf's yargs type from its default `value`, or its `explicitType` when `null`. */
@@ -422,16 +442,18 @@ function buildReportShape(): OptionShapeObject {
  * The `queryEngine` sub-tree: the API nodes' read mode (an UNSEEDED choice) and
  * one UNSEEDED number leaf per plugin limit. `optionalChoicesLeaf` /
  * `optionalLeaf`, never `leaf`: a seeded default would always reach the config
- * and override nodeop's / the plugin's own default, which is the ONE author.
+ * as a CALLER setting (tripping the at-least-one-API-node rule) and re-spell
+ * the defaults, whose ONE home is `QueryEngineConfigProvider.createDefaultOptions`
+ * (the query deadline) or nodeop / the plugin (everything else).
  */
 function buildQueryEngineShape(): OptionShapeObject {
   // Bound to a typed local, never spread inline: an object spread drops the
   // `Object.fromEntries` index signature, so the limit leaves would go
   // unchecked against `OptionShapeObject`.
   const limits: OptionShapeObject = Object.fromEntries(
-    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ member, option }) => [
-      member,
-      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(option))
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(limit => [
+      limit.member,
+      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(limit))
     ])
   )
   return {
@@ -552,6 +574,10 @@ export function buildOptionShape(
       false,
       "import mock syndication positions for the bonder and back mock shadow at bootstrap"
     ),
+    enableBatchOperatorUnderwriting: leaf(
+      false,
+      "run the batch_operator_plugin underwriter role on every batch operator, bonding from its own account"
+    ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
       OptionLeafType.string,
@@ -575,6 +601,8 @@ export function buildOptionShape(
     requiredBatchOperatorCollateral: [],
     requiredUnderwriterCollateral: [],
     underwriterCollateral: [],
+    // ── batch-operator underwriting tuning (flag-less object → no flags) ──
+    batchOperatorUnderwriting: {},
     // ── outputs ──
     logging: buildLoggingShape(),
     report: buildReportShape()
@@ -937,6 +965,9 @@ export function toClusterBuildOptions(
 /** The one non-flag member whose element type is `ChainTokenAmount[]`, not `CollateralRequirement`. */
 const UnderwriterCollateralKey = "underwriterCollateral" as const
 
+/** The one non-flag member that is an object (`BatchOperatorUnderwritingOptions`), not an array. */
+const BatchOperatorUnderwritingKey = "batchOperatorUnderwriting" as const
+
 /**
  * `ClusterBuildOptions` members with NO flag representation (object-arrays —
  * `buildOptionShape` declares them empty). They flow from a caller's `defaults`
@@ -947,7 +978,8 @@ const NonFlagOptionKeys = [
   "requiredProducerCollateral",
   "requiredBatchOperatorCollateral",
   "requiredUnderwriterCollateral",
-  UnderwriterCollateralKey
+  UnderwriterCollateralKey,
+  BatchOperatorUnderwritingKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A `ClusterBuildOptions` member with no flag representation. */
@@ -1040,11 +1072,17 @@ function assertDocumentLeafValue(
 function decodeNonFlagOption(
   key: NonFlagOptionKey,
   value: unknown
-): CollateralRequirement[] | ChainTokenAmount[][] {
+):
+  | CollateralRequirement[]
+  | ChainTokenAmount[][]
+  | BatchOperatorUnderwritingOptions {
   const text = JSON.stringify(value)
   return match(key)
     .with(UnderwriterCollateralKey, () =>
       underwriterCollateralCodec.deserialize(text)
+    )
+    .with(BatchOperatorUnderwritingKey, () =>
+      batchOperatorUnderwritingCodec.deserialize(text)
     )
     .otherwise(() => collateralRequirementsCodec.deserialize(text))
 }

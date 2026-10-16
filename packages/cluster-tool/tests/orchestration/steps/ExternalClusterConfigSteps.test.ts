@@ -49,7 +49,10 @@ import {
 } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { seedProducerOperators } from "../outputs/operatorAccountFixture.js"
-import { PersistedFixture } from "../../config/clusterConfigFixture.js"
+import {
+  fixtureProducerTopologyOverrides,
+  PersistedFixture
+} from "../../config/clusterConfigFixture.js"
 
 const External = Steps.externalClusterConfig,
   signal = new AbortController().signal,
@@ -102,15 +105,12 @@ const ExternalEthereumRpcUrl = "https://ethereum-rpc.external.example/"
 const ExternalSolanaRpcUrl = "https://solana-rpc.external.example/"
 
 /**
- * The deployed ETH outpost addresses the operator daemons' argv resolves
- * through — every key `OperatorDaemonTool.assertAddress` demands (batch reads
- * OPP + OPPInbound, underwriter reads OperatorRegistry + ReserveManager).
+ * The deployed ETH outpost addresses the batch-operator daemon's argv resolves
+ * through (OPP + OPPInbound).
  */
 const OutpostAddresses = {
   OPP: "0x1111111111111111111111111111111111111111",
-  OPPInbound: "0x2222222222222222222222222222222222222222",
-  OperatorRegistry: "0x3333333333333333333333333333333333333333",
-  ReserveManager: "0x4444444444444444444444444444444444444444"
+  OPPInbound: "0x2222222222222222222222222222222222222222"
 }
 
 /** The one hardhat artifact the ABI generation needs (`ethereumAbiFiles.length > 0`). */
@@ -425,9 +425,14 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     return entry.account
   }
 
-  /** Seed a local cluster's on-disk state (config in-memory via the fixture). */
-  function seedLocalCluster() {
-    const ctx = fixtureContext(sandboxPaths())
+  /**
+   * Seed a local cluster's on-disk state (config in-memory via the fixture).
+   *
+   * @param configOverrides - Top-level fixture fields (a producer topology) the seeded cluster
+   *   is planned with; a test re-seeding with them passes the SAME overrides to `runContext`.
+   */
+  function seedLocalCluster(configOverrides: Partial<ClusterConfig> = {}) {
+    const ctx = fixtureContext({ ...sandboxPaths(), ...configOverrides })
     Fs.mkdirSync(ctx.config.dataPath, { recursive: true })
     Fs.mkdirSync(ctx.config.walletPath, { recursive: true })
     ctx.keyStore.pushNodes({
@@ -625,46 +630,79 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
 
   /**
    * Append the PRODUCER operator accounts `runProducerMaterialization` puts in
-   * the operator map — each carrying its hosting NODE's `wire` and its OWN
-   * `wireFinalizer` (sibling producers on one node share the K1, never the BLS).
+   * the operator map for every planned producer node — each carrying its
+   * hosting NODE's `wire`, recorded under the publication label the topology
+   * decides (`NodeConfig.producerPublicationLabel`): a node's SOLE producer
+   * carries the node's BLS under the node's name; siblings on a shared node own
+   * their BLS (they share the K1, never the BLS) under their own labels.
    *
-   * Their keys are published under the NODE name (`node_00`), never under the
-   * producer account, so the emit side must resolve producer → node or every
-   * producer K1 **and BLS** ref is refused.
+   * The emit side resolves each ref from that RECORDED label; deriving its own
+   * producer → node mapping would refuse every producer K1 **and BLS** ref of
+   * the other shape.
    *
-   * @returns The producer account names seeded, and their hosting node's name.
+   * @param configOverrides - The topology the local cluster was seeded with.
+   * @returns The producer account names seeded, each with its publication label.
    */
-  function injectProducerAccounts() {
-    const config = runContext().config,
+  function injectProducerAccounts(configOverrides: Partial<ClusterConfig> = {}) {
+    const config = runContext(
+        externalBindFile,
+        PersistedFixture.signatureProvider,
+        undefined,
+        null,
+        configOverrides
+      ).config,
       keys = ClusterState.loadKeys(config),
-      node = NodeConfig.plan(config).find(
-        planned => planned.role === NodeRole.producer
-      ),
-      nodeKeys = keys.nodes.find(entry => entry.index === node.index)
-    // A producer ACCOUNT shares its node's K1 but owns its BLS, and BOTH halves are published
-    // under its OWN label — custody is per identity, so splitting them across two labels would
-    // leave one ref dangling.
-    node.producers.forEach(producer =>
-      keys.operators.push({
-        label: producer,
-        publicationLabel: producer,
-        account: producer,
-        type: OperatorType.PRODUCER,
-        wire: {
-          type: KeyType.K1,
-          publicKey: nodeKeys.wire.publicKey,
-          awsSecretId: secretId(producer, KeyType.K1)
-        },
-        wireFinalizer: {
-          type: KeyType.BLS,
-          publicKey: `PUB_BLS_${producer}`,
-          proofOfPossession: `SIG_BLS_${producer}`,
-          awsSecretId: secretId(producer, KeyType.BLS)
-        }
-      })
-    )
+      injected = NodeConfig.plan(config)
+        .filter(planned => planned.role === NodeRole.producer)
+        .flatMap(node => {
+          const nodeKeys = keys.nodes.find(entry => entry.index === node.index)
+          return node.producers.map(producer => {
+            const publicationLabel = NodeConfig.producerPublicationLabel(node, producer),
+              isNodeIdentity = publicationLabel === node.name
+            keys.operators.push({
+              label: producer,
+              publicationLabel,
+              account: producer,
+              type: OperatorType.PRODUCER,
+              wire: {
+                type: KeyType.K1,
+                publicKey: nodeKeys.wire.publicKey,
+                awsSecretId: secretId(publicationLabel, KeyType.K1)
+              },
+              wireFinalizer: {
+                type: KeyType.BLS,
+                publicKey: isNodeIdentity
+                  ? nodeKeys.wireFinalizer.publicKey
+                  : `PUB_BLS_${producer}`,
+                proofOfPossession: isNodeIdentity
+                  ? nodeKeys.wireFinalizer.proofOfPossession
+                  : `SIG_BLS_${producer}`,
+                awsSecretId: secretId(publicationLabel, KeyType.BLS)
+              }
+            })
+            return { producer, publicationLabel }
+          })
+        })
     ClusterState.saveKeys(config, keys)
-    return { producers: node.producers, nodeName: node.name }
+    return injected
+  }
+
+  /**
+   * The sorted SSM secret ids an emitted config's FIRST record for `accountName`
+   * references.
+   */
+  function ssmSecretIdsOf(
+    emitted: ReturnType<typeof ExternalClusterConfigSchemaCodec.deserialize>,
+    accountName: string
+  ): string[] {
+    return emitted.accounts.operators
+      .find(entry => entry.accountName === accountName)
+      .keyProviders.flatMap(provider =>
+        provider.providerType === SignatureProviderType.SSM
+          ? [provider.awsSecretId]
+          : []
+      )
+      .sort()
   }
 
   /**
@@ -1643,26 +1681,42 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   // key — `regfinkey` enforces global uniqueness, so a shared one would let only the first
   // sibling register. Both refs — and the BLS one especially, it is the finality key — resolve
   // to that ACCOUNT's own published ids, which is what the publication walker writes.
-  it("resolves producer-account refs (K1 AND BLS) to their OWN published ids", async () => {
-    const { producers } = injectProducerAccounts(),
+  it("resolves SHARED-node producer-account refs (K1 AND BLS) to their OWN published ids", async () => {
+    const injected = injectProducerAccounts(),
       emitted = await emitWithProvider(SSMProvider)
-    expect(producers.length).toBeGreaterThan(0)
-    producers.forEach(producer => {
-      const op = emitted.accounts.operators.find(
-          entry => entry.accountName === producer
-        ),
-        secretIds = op.keyProviders
-          .flatMap(provider =>
-            provider.providerType === SignatureProviderType.SSM
-              ? [provider.awsSecretId]
-              : []
-          )
-          .sort()
-      expect(secretIds).toEqual([
+    expect(injected.length).toBeGreaterThan(1)
+    injected.forEach(({ producer, publicationLabel }) => {
+      expect(publicationLabel).toBe(producer)
+      expect(ssmSecretIdsOf(emitted, producer)).toEqual([
         `/wire/test/${producer}/BLS`,
         `/wire/test/${producer}/K1`
       ])
     })
+  })
+
+  // A node hosting ONE producer: the producer signs and votes with the node's own keys, which
+  // `create` published under the NODE's name — the path a deployment fetches by node.
+  it("resolves a node's SOLE producer's refs (K1 AND BLS) to the NODE's published ids", async () => {
+    const topology = fixtureProducerTopologyOverrides(1, 1)
+    seedLocalCluster(topology)
+    const injected = injectProducerAccounts(topology),
+      ctx = runContext(externalBindFile, SSMProvider, undefined, null, topology)
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    await External.runEmit(ctx, null, signal)
+    const emitted = ExternalClusterConfigSchemaCodec.deserialize(
+        Fs.readFileSync(externalConfigFile(), "utf-8")
+      ),
+      published = new Set(
+        Steps.keys
+          .signatureProviderKeyPublications(ctx.config)
+          .map(publication => publication.secretId)
+      )
+    expect(injected).toEqual([{ producer: "defproducera", publicationLabel: "node_00" }])
+    const secretIds = ssmSecretIdsOf(emitted, "defproducera")
+    expect(secretIds).toEqual(["/wire/test/node_00/BLS", "/wire/test/node_00/K1"])
+    secretIds.forEach(id => expect(published).toContain(id))
   })
 
   // The guard is DERIVED from the publication walker, so it must track the

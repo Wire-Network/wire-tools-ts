@@ -15,7 +15,7 @@ The OPP message flow spans three chains:
   `sysio.opreg`, `sysio.chalg`, `sysio.synd`, `sysio.bond`, `sysio.liq`, `sysio.swap`
   (a depot-local AMM with no outpost participation), `sysio.andon`, `sysio.dclaim`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OutpostManager.sol`,
-  `SyndicationPool.sol`, `BAR.sol`, `StakingManager.sol` (an inert placeholder) (+ `liqEth`).
+  `SyndicationPool.sol`, `BAR.sol` (+ `liqEth`).
 - **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
   loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
   `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol
@@ -133,7 +133,6 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
-| `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` (Ethereum) → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
@@ -153,14 +152,15 @@ and outbound queue entries are intermediate checks.
 | `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
 | `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
+| `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
 
-The other seven enabled flows (`flow-batch-operator-slashing`,
+The other six enabled flows (`flow-batch-operator-slashing`,
 `flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
-`flow-operator-collateral-deposit`, `flow-producer-registration`,
-`flow-yield-distribution`) submit no user LIQ syndication/desyndication. Imported
+`flow-operator-collateral-deposit`, `flow-producer-registration`) exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
@@ -193,7 +193,7 @@ the successful runs above selected the installed pinned 4.2.0 toolchain explicit
 ### Removed reserve and swap flows
 
 The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
-flags have been deleted. The 13 remaining flows exercise supported functionality.
+flags have been deleted. The 15 remaining flows exercise supported functionality.
 Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows
@@ -258,15 +258,26 @@ pnpm test
 
 ### Commit checks
 
-Run `pnpm check` to execute the same gate as the pre-commit hook: full lint,
-TypeScript build, the runner regressions, all eight Jest projects, and every flow
-`test:unit` script. This does not launch live flows. The hook uses the mise-pinned
-toolchain when available; Node 24.9 or newer is required.
+Run `pnpm check` (or `./scripts/check.mjs`, which takes no arguments) to execute the
+same gate as the pre-commit hook. It runs five stages in order and stops at the first
+failure:
 
-Each stage reports its duration and prints progress every 30 seconds. Lint has a
-two-minute deadline; build and tests have a fifteen-minute deadline. A timeout or
+| # | Stage | Command | Deadline |
+|---|---|---|---|
+| 1 | `package-layout-check` | `./scripts/check-package-layout.mjs` — every package root holds only the standard layout | 2 min |
+| 2 | `wql-types-check` | `./scripts/generate-wql-types.mjs --check` — WIRE QL grammar + engine schema drift | 2 min |
+| 3 | `ql-app-icons-check` | `./scripts/generate-ql-app-icons.mjs --check` — desktop app icon drift | 2 min |
+| 4 | `lint` | `pnpm lint` | 2 min |
+| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
+
+This does not launch live flows. The hook uses the mise-pinned toolchain when
+available; Node 24.9 or newer is required.
+
+Each stage reports its duration and prints progress every 30 seconds. A timeout or
 interrupt terminates the stage's process group on Linux/WSL/macOS, escalating after
-five seconds, and fails the gate. No timeout is treated as a passing test.
+five seconds, and fails the gate. No timeout is treated as a passing test. A stage
+that exits 127 is reported as "could not start" (command not found), and a stage
+killed by a signal is reported with the signal's name.
 
 Jest defaults to two workers: CPU-count concurrency oversubscribes the host's
 socket-probing path on WSL. For a controlled comparison on another host, run
@@ -424,19 +435,10 @@ depot needs them too:
 |---|---|
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
-| `EmergencyStop` | `sysio.andon::setpanic(andon.panic)`, then `addpuller(sysio.synd)`, so a custody shortfall pulls the cord — both before any liq token is registered |
-| `SyndicationConfig` | after `LiqConfig`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+| `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
+| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
 
-`setpanic` and `addpuller` run after the four cord readers are deployed, not
-before them as `docs/contract-upgrade-order.md` orders a live upgrade: the panic
-account must exist first, and the bootstrap creates it only once the bootstrap
-node owner can grant its resource policy, which is after `OPPContracts`. The
-order is still safe, because what the rule protects is traffic: a reader that
-runs before `setpanic` reads the cord as clear, and during the bootstrap no
-traffic reaches the readers: the liq tokens are registered only after
-`EmergencyStop`, and no envelope is accepted until `EpochBootstrap` starts the
-first epoch. By then the panic account is named and `sysio.synd` is a registered
-puller.
+Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
 
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:
@@ -479,9 +481,11 @@ command comes first).
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
-| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
+| `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
@@ -648,7 +652,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus any set `--query-engine-*` value as its `read-mode` / `query-*` line |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -659,8 +663,9 @@ ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
 `--http-threads` (4), `--agent-name` (`wire-api-node`), and
 `[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
-(unset — an omitted one renders no line, leaving nodeop's `head` read mode and
-the plugin's own limit defaults in force).
+(`--query-engine-timeout-ms` 30000; every other one unset — an omitted one
+renders no line, leaving nodeop's `head` read mode and the plugin's own limit
+defaults in force).
 
 Flag names follow **nodeop's own option names** wherever one exists, so the ini
 line and the flag that produced it read the same — except the `--query-engine-*`

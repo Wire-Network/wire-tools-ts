@@ -27,6 +27,7 @@ import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisio
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
 import { Steps, SyndicationUserSteps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
@@ -53,20 +54,12 @@ const WireSupply = "1000000000.000000000 WIRE"
 /** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
 const WireSymbol = "9,WIRE"
 /**
- * `sysio.liq`'s T5 kicker: the share of every yield intake requested from T5
- * and folded into the same index bump, in basis points. Mirrors the contract
- * default, so a cluster pays yield the way the network will.
- */
-const LiqKickerBps = 200
-/**
  * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
  * and `clear`, which move no funds; its resource policy pays for them.
  */
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
 const AndonPermissionRamWeight = "0.0100 SYS"
-/** This policy adds permission RAM only; it allocates no CPU or network weight. */
-const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -158,9 +151,7 @@ export namespace ClusterBuildDefaults {
       ),
       bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
-      batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
+      batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
       producerNodes = plannedNodes.filter(
         node => node.role === NodeRole.producer
@@ -225,9 +216,9 @@ export namespace ClusterBuildDefaults {
     )
     // Producer ACCOUNT identities are materialized HERE, before any node starts and before the
     // SSM publication below, because a producing node renders one `--signature-provider` per
-    // hosted account at launch — each account owns its finalizer key, so those keys must exist
-    // (and, under SSM, be published) first. This is pure key work; the matching chain WRITE
-    // (`newaccount`) waits for `sysio.system` and lands in the `Producers` group far below.
+    // hosted account at launch — those keys must exist (and, under SSM, be published) first.
+    // This is pure key work; the matching chain WRITE (`newaccount`) waits for `sysio.system`
+    // and lands in the `Producers` group far below.
     const producerSpecs = producerNodes.flatMap(node =>
       node.producers.map(label => ({
         label,
@@ -235,13 +226,16 @@ export namespace ClusterBuildDefaults {
         // The hosting node comes from `NodeConfig.plan` — the ONE author of the producer→node
         // assignment. Re-deriving `index % producerNodeCount` here made a second copy that had
         // to agree with it by hand.
-        producerNodeIndex: node.index
+        producerNodeIndex: node.index,
+        // Decided at PLAN time so the Report records it: the node's name when the node hosts
+        // this producer alone (it signs and votes with the node's own keys), else its own label.
+        publicationLabel: NodeConfig.producerPublicationLabel(node, label)
       }))
     )
     WireOperatorProvisioningTool.planProducerIdentityPhase<C>(
       prerequisites,
       "ProducerIdentities",
-      "Materialize genesis producer identities (node K1 + each account's own finalizer key)",
+      "Materialize genesis producer identities (the hosting node's keys; a finalizer key per account on a shared node)",
       {},
       producerSpecs
     )
@@ -795,15 +789,15 @@ export namespace ClusterBuildDefaults {
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        {
-          owner: SysioContractAccount[SysioContractName.andon],
-          issuer: Constants.BOOTSTRAP_NODE_OWNER,
-          net_weight: NoResourceWeight,
-          cpu_weight: NoResourceWeight,
-          ram_weight: AndonPermissionRamWeight,
-          time_block: 0,
-          network_gen: 0
-        }
+        // This policy adds permission RAM only; it allocates no CPU or network weight.
+        SyndicationUserSteps.nodeOwnerPolicy(
+          SysioContractAccount[SysioContractName.andon],
+          {
+            net: Constants.NO_RESOURCE_WEIGHT,
+            cpu: Constants.NO_RESOURCE_WEIGHT,
+            ram: AndonPermissionRamWeight
+          }
+        )
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
@@ -972,7 +966,7 @@ export namespace ClusterBuildDefaults {
     )
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
     // the swap's governance + system token, one shadow symbol per registered liq
-    // token, the T5 kicker. Registry setup a real depot performs too — unconditional.
+    // token. Registry setup a real depot performs too — unconditional.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "SwapConfig",
@@ -998,19 +992,6 @@ export namespace ClusterBuildDefaults {
       "Open the shadow liq symbols on sysio.liq",
       {}
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "LiqConfig",
-      "Configure sysio.liq"
-    ).push(
-      Steps.contracts.sysio.liq.planSetkicker<C>(
-        Actor.Sysio,
-        "configure-liq-kicker",
-        "set the T5 yield kicker",
-        {},
-        { bps: LiqKickerBps }
-      )
-    )
     // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
     // sysio.synd rules, and the verify of the syndication preconditions. A pair with
     // no syndconfig row releases nothing, so a real depot configures it too —
@@ -1033,18 +1014,13 @@ export namespace ClusterBuildDefaults {
         {}
       )
     }
-    if (config.enableMockSyndicationImport) {
-      Steps.registry.planMockSyndicationImport<C>(
-        prerequisites,
-        "MockSyndicationImport",
-        "Import the mock bonder positions during epoch zero",
-        {}
-      )
-    }
-    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
-      Steps.mockShadowBacking.planSolana<C>(prerequisites)
-      Steps.mockShadowBacking.planEthereum<C>(prerequisites)
-    }
+    // Underwriting batch operators are funded by the same epoch-zero import, to their own
+    // ED keys — which exist only once the operators are provisioned. The import (and the
+    // backing that must follow ALL mock shadow) then moves after that provisioning, still
+    // before `EpochBootstrap` closes the bootstrap window; every other cluster keeps it here.
+    const underwritingImport = isUnderwritingImport(config)
+    if (!underwritingImport)
+      planMockImportAndBacking<C>(prerequisites, config, batchOperators)
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -1129,6 +1105,21 @@ export namespace ClusterBuildDefaults {
         Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
+
+    if (config.batchOperatorUnderwriting != null)
+      Steps.registry.planBatchOperatorUnderwritingResources<C>(
+        postContractDeployment,
+        "BatchOperatorUnderwritingResources",
+        "Grant each underwriting batch operator RAM for its sysio.bond rows",
+        {},
+        batchOperators
+      )
+    if (underwritingImport)
+      planMockImportAndBacking<C>(
+        postContractDeployment,
+        config,
+        batchOperators
+      )
 
     // API nodes are mesh members that no bootstrap step reads, so they start
     // outside the bootstrap's finality-sensitive window, right before the
@@ -1253,6 +1244,58 @@ export namespace ClusterBuildDefaults {
     }
 
     planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Whether the epoch-zero mock import also funds the batch operators, which moves it after
+   * their provisioning: both the import and batch-operator underwriting are on.
+   *
+   * @param config - The resolved cluster config.
+   * @return Whether the import funds the operators.
+   */
+  function isUnderwritingImport(config: ClusterConfig): boolean {
+    return (
+      config.enableMockSyndicationImport &&
+      config.batchOperatorUnderwriting != null
+    )
+  }
+
+  /**
+   * Plan the epoch-zero mock syndication import (with each FUNDED underwriting operator's
+   * credit — the first `batchOperatorUnderwriting.fundedOperatorCount` — when
+   * {@link isUnderwritingImport}) and the custody backing that must follow every mock shadow
+   * mint, each only when its option is on.
+   *
+   * @param parent - The PhaseGroup the phases join.
+   * @param config - The resolved cluster config.
+   * @param batchOperators - The bootstrap batch-operator labels.
+   */
+  function planMockImportAndBacking<C extends ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    config: ClusterConfig,
+    batchOperators: readonly string[]
+  ): void {
+    const underwritingImport = isUnderwritingImport(config)
+    if (config.enableMockSyndicationImport) {
+      Steps.registry.planMockSyndicationImport<C>(
+        parent,
+        "MockSyndicationImport",
+        underwritingImport
+          ? "Import the mock bonder and batch-operator underwriting positions during epoch zero"
+          : "Import the mock bonder positions during epoch zero",
+        {},
+        underwritingImport
+          ? batchOperators.slice(
+              0,
+              config.batchOperatorUnderwriting.fundedOperatorCount
+            )
+          : []
+      )
+    }
+    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
+      Steps.mockShadowBacking.planSolana<C>(parent)
+      Steps.mockShadowBacking.planEthereum<C>(parent)
+    }
   }
 
   /**

@@ -20,6 +20,7 @@ import {
   type ExternalOutpostConfig
 } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureProducerTopologyOverrides } from "../../config/clusterConfigFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
 function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
@@ -353,8 +354,18 @@ describe("WireOperatorProvisioningTool.planProducerIdentityPhase", () => {
       "materialize genesis producer identities",
       {},
       [
-        { label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 },
-        { label: "defproducerb", type: OperatorType.PRODUCER, producerNodeIndex: 1 }
+        {
+          label: "defproducera",
+          type: OperatorType.PRODUCER,
+          producerNodeIndex: 0,
+          publicationLabel: "node_00"
+        },
+        {
+          label: "defproducerb",
+          type: OperatorType.PRODUCER,
+          producerNodeIndex: 1,
+          publicationLabel: "defproducerb"
+        }
       ]
     )
     expect(phase.steps.map(step => step.name)).toEqual([
@@ -373,14 +384,33 @@ describe("WireOperatorProvisioningTool.planProducerIdentityPhase", () => {
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
         label: "defproducera",
-        producerNodeIndex: 0
+        producerNodeIndex: 0,
+        publicationLabel: "node_00"
       },
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
         label: "defproducerb",
-        producerNodeIndex: 1
+        producerNodeIndex: 1,
+        publicationLabel: "defproducerb"
       }
     ])
+    // The Report names where each identity's keys publish.
+    expect(phase.steps.map(step => step.description)).toEqual([
+      "materialize producer defproducera identity from node 0 (keys published under node_00)",
+      "materialize producer defproducerb identity from node 1 (keys published under defproducerb)"
+    ])
+  })
+
+  it("refuses a spec that carries no publicationLabel — it is decided at plan time from the topology", () => {
+    expect(() =>
+      WireOperatorProvisioningTool.planProducerIdentityPhase(
+        fakeParent(),
+        "ProducerIdentities",
+        "materialize",
+        {},
+        [{ label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }]
+      )
+    ).toThrow(/publicationLabel is required/)
   })
 
   it("refuses a spec that names no hosting node — a genesis identity shares that node's K1", () => {
@@ -587,9 +617,10 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
 })
 
 /**
- * A GENESIS producer's identity: the hosting node's K1 for block signing, plus a finalizer key
- * MINTED FOR THE ACCOUNT — never the node's, because `regfinkey` enforces a global uniqueness
- * check and siblings on one node would collide on the node's key.
+ * A GENESIS producer's identity, from its hosting node's key set. A node's SOLE producer IS the
+ * node's identity — the node's K1 and BLS, published under the node's name, nothing generated or
+ * re-imported. Siblings on a SHARED node keep the node's K1 but each get a finalizer key minted
+ * for the account, because `regfinkey` enforces a global uniqueness check.
  */
 describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
   const signal = new AbortController().signal,
@@ -607,9 +638,12 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
       }
     }
 
-  /** A context holding the node's key set, with the adopt-or-create seam and the wallet doubled. */
-  function materializationContext() {
-    const ctx = fixtureContext(),
+  /**
+   * A context over a `producerCount`-producer topology on ONE node, holding that node's key set,
+   * with the adopt-or-create seam and the wallet doubled.
+   */
+  function materializationContext(producerCount: number) {
+    const ctx = fixtureContext(fixtureProducerTopologyOverrides(1, producerCount)),
       addPrivateKey = jest.fn().mockResolvedValue(undefined),
       adopt = jest
         .spyOn(Steps.keys, "adoptOrCreateSignatureProviderKey")
@@ -626,17 +660,46 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
     return { ctx, adopt, addPrivateKey }
   }
 
+  /** The materialization input for `label` on the fixture node, publishing under `publicationLabel`. */
+  function materializeInput(
+    label: string,
+    publicationLabel: string
+  ): WireOperatorProvisioningTool.MaterializeProducerInput {
+    return {
+      kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
+      label,
+      producerNodeIndex: NodeIndex,
+      publicationLabel
+    }
+  }
+
   afterEach(() => jest.restoreAllMocks())
 
-  it("takes the node's K1, mints the account's OWN finalizer key, and stores the account under its own handle", async () => {
-    const { ctx, adopt, addPrivateKey } = materializationContext()
+  it("a node's SOLE producer takes the node's K1 AND BLS, publishes under the node's name, and generates + imports nothing", async () => {
+    const { ctx, adopt, addPrivateKey } = materializationContext(1)
     await WireOperatorProvisioningTool.runProducerMaterialization(
       ctx,
-      {
-        kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
-        label: "defproducera",
-        producerNodeIndex: NodeIndex
-      },
+      materializeInput("defproducera", "node_00"),
+      signal
+    )
+    const stored = ctx.keyStore.assertOperator("defproducera")
+    expect(stored.type).toBe(OperatorType.PRODUCER)
+    // A producer never goes through roa::newuser: its on-chain name IS its handle.
+    expect(stored.account).toBe("defproducera")
+    expect(stored.publicationLabel).toBe("node_00")
+    expect(stored.wire).toEqual(NodeKeys.keys.wire)
+    expect(stored.wireFinalizer).toEqual(NodeKeys.keys.wireFinalizer)
+    // No finalizer key is minted, and nothing is re-imported: the wallet step already holds both
+    // node keys, and kiod rejects a re-import with `key_exist_exception`.
+    expect(adopt).not.toHaveBeenCalled()
+    expect(addPrivateKey).not.toHaveBeenCalled()
+  })
+
+  it("on a SHARED node takes the node's K1, mints the account's OWN finalizer key, and stores the account under its own handle", async () => {
+    const { ctx, adopt, addPrivateKey } = materializationContext(2)
+    await WireOperatorProvisioningTool.runProducerMaterialization(
+      ctx,
+      materializeInput("defproducera", "defproducera"),
       signal
     )
     // Exactly one key is generated, and it is the BLS finalizer key for THIS account.
@@ -645,8 +708,6 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
     expect(adopt.mock.calls[0][2]).toBe("defproducera")
 
     const stored = ctx.keyStore.assertOperator("defproducera")
-    expect(stored.type).toBe(OperatorType.PRODUCER)
-    // A producer never goes through roa::newuser: its on-chain name IS its handle.
     expect(stored.account).toBe("defproducera")
     expect(stored.publicationLabel).toBe("defproducera")
     expect(stored.wire).toEqual(NodeKeys.keys.wire)
@@ -659,15 +720,11 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
   })
 
   it("gives sibling producers on one node the SAME K1 and DIFFERENT finalizer keys", async () => {
-    const { ctx } = materializationContext()
+    const { ctx } = materializationContext(2)
     for (const label of ["defproducera", "defproducerb"]) {
       await WireOperatorProvisioningTool.runProducerMaterialization(
         ctx,
-        {
-          kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
-          label,
-          producerNodeIndex: NodeIndex
-        },
+        materializeInput(label, label),
         signal
       )
     }
@@ -677,20 +734,54 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
     expect(a.wireFinalizer.publicKey).not.toBe(b.wireFinalizer.publicKey)
   })
 
-  it("fails loudly for a node index the key store never generated", async () => {
-    const { ctx, adopt } = materializationContext()
+  it.each([
+    ["a sole producer carrying its own label", 1, "defproducera"],
+    ["a shared-node producer carrying the node's name", 2, "node_00"]
+  ] as const)(
+    "refuses %s — the input drifted from the topology",
+    async (_name, producerCount, publicationLabel) => {
+      const { ctx, adopt } = materializationContext(producerCount)
+      await expect(
+        WireOperatorProvisioningTool.runProducerMaterialization(
+          ctx,
+          materializeInput("defproducera", publicationLabel),
+          signal
+        )
+      ).rejects.toThrow(/does not match node node_00's topology/)
+      expect(adopt).not.toHaveBeenCalled()
+      expect(ctx.keyStore.operator("defproducera")).toBeUndefined()
+    }
+  )
+
+  it("fails loudly for a node index the topology never planned", async () => {
+    const { ctx, adopt } = materializationContext(1)
     await expect(
       WireOperatorProvisioningTool.runProducerMaterialization(
         ctx,
         {
           kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
           label: "defproducerz",
-          producerNodeIndex: 7
+          producerNodeIndex: 7,
+          publicationLabel: "defproducerz"
         },
         signal
       )
-    ).rejects.toThrow()
+    ).rejects.toThrow(/no planned producer node at index 7/)
     expect(adopt).not.toHaveBeenCalled()
+  })
+
+  it("fails loudly for a planned node whose keys the key store never generated", async () => {
+    const ctx = fixtureContext(fixtureProducerTopologyOverrides(1, 1)),
+      adopt = jest.spyOn(Steps.keys, "adoptOrCreateSignatureProviderKey")
+    await expect(
+      WireOperatorProvisioningTool.runProducerMaterialization(
+        ctx,
+        materializeInput("defproducera", "node_00"),
+        signal
+      )
+    ).rejects.toThrow(/no generated keys for producer node 0/)
+    expect(adopt).not.toHaveBeenCalled()
+    expect(ctx.keyStore.operator("defproducera")).toBeUndefined()
   })
 })
 

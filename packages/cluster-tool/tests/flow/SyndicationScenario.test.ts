@@ -1,9 +1,22 @@
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { Keypair } from "@solana/web3.js"
+import { oppDebuggingPath } from "@wireio/debugging-shared"
+import {
+  AttestationType,
+  ChainKind,
+  DebugOutpostEndpointsType,
+  LIQYield,
+  SyndicateLIQ
+} from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationScenario } from "@wireio/cluster-tool/flow"
 import {
   ClusterBuild,
+  type ClusterBuildPhase,
   Steps,
   SyndicationUserSteps,
   outputKey
@@ -12,19 +25,60 @@ import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import {
+  attestationEntry,
+  envelopeBytes,
+  writeOppArtifact
+} from "./oppArtifactFixture.js"
 
 const signal = new AbortController().signal,
   { Actor } = Report,
   { SysioContractName } = SysioContracts,
-  account = "synd.user"
+  account = "synd.user",
+  /** The syndicated amount every decoded-intake case relays, in base units. */
+  intakeAmount = 2_000_000_001n,
+  /** The epoch the held fixture envelope reached consensus in. */
+  intakeEpoch = 4,
+  /** The bond request the held fixture envelope carries. */
+  intakeRequest = 11
 
 /** Expose shared composition to exercise its production setup and cleanup boundaries. */
 class Scenario extends SyndicationScenario {
   readonly name = "test-syndication"
   readonly description = "composition fixture"
+  constructor(
+    private readonly provider: SyndicationScenario.BondProvider | null = SyndicationScenario.DefaultBondProvider
+  ) {
+    super()
+  }
   plan(cluster: ClusterBuild): void {
-    this.planSetup(cluster, [{ account, keypairName: account, linked: false }])
+    this.planSetup(
+      cluster,
+      [{ account, keypairName: account, linked: false }],
+      this.provider
+    )
     this.planFinish(cluster)
+  }
+}
+
+/** The planned setup group's phases, as the test reads them. */
+interface PlannedGroup {
+  readonly children: readonly ClusterBuildPhase[]
+}
+
+/** The bond-provider phase of a planned setup: its name, Step names and Step inputs. */
+function providerPhase(provider?: SyndicationScenario.BondProvider) {
+  const cluster = ClusterBuild.forContext(fixtureContext())
+  new Scenario(provider).plan(cluster)
+  const group = cluster.children[0] as unknown as PlannedGroup,
+    phase = group.children[1]
+  return {
+    name: phase.name,
+    description: phase.description,
+    steps: phase.steps.map(step => step.name),
+    inputs: phase.steps.map(
+      step => step.input as unknown as Record<string, unknown>
+    )
   }
 }
 
@@ -41,10 +95,23 @@ describe("syndication scenario accounting", () => {
   })
   it("round trips base units without floating point, including dust", () => {
     expect(
-      SyndicationScenario.units(SyndicationScenario.quantity(2_000_000_001n))
+      WireSyndicationTool.assetUnits(
+        SyndicationScenario.quantity(2_000_000_001n)
+      )
     ).toBe(2_000_000_001n)
     expect(SyndicationScenario.quantity(0n)).toBe("0.000000000 LIQSOL")
     expect(() => SyndicationScenario.quantity(-1n)).toThrow("negative")
+  })
+  it("keeps the participant policy on the shared node-owner builder", () => {
+    expect(SyndicationScenario.resourcePolicy(account)).toEqual({
+      owner: account,
+      issuer: Constants.BOOTSTRAP_NODE_OWNER,
+      net_weight: "25.0000 SYS",
+      cpu_weight: "25.0000 SYS",
+      ram_weight: "25.0000 SYS",
+      time_block: 0,
+      network_gen: 0
+    })
   })
   it("uses the account as resource-policy owner", () => {
     expect(SyndicationScenario.resourcePolicy(account).owner).toBe(account)
@@ -145,7 +212,8 @@ describe("syndication scenario accounting", () => {
       desynd_refill: 4,
       window_sec: 60,
       bounty: 5,
-      challenge_extra: 6
+      challenge_extra: 6,
+      min_desyndicate: 1
     }
     ctx.outputs.set(SyndicationScenario.OriginalConfigKey, config)
     await step.runner(ctx, step.input, signal)
@@ -237,5 +305,293 @@ describe("shared syndication user writes", () => {
       "missing wallet"
     )
     expect(link).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("decoded syndication intake", () => {
+  const user: SyndicationScenario.User = {
+    account,
+    keypairName: account,
+    linked: true
+  }
+  let clusterPath: string
+
+  /** A `SyndicateLIQ` from `wallet` for `amount`, as the Solana outpost relays it. */
+  function syndication(
+    wallet: Keypair,
+    amount: bigint,
+    totalSyndicated: bigint
+  ): Uint8Array {
+    return SyndicateLIQ.toBinary({
+      chainCode: 0n,
+      user: { kind: ChainKind.SVM, address: wallet.publicKey.toBytes() },
+      amount: { tokenCode: SyndicationScenario.TokenCode, amount },
+      sequence: 1n,
+      totalSyndicated
+    })
+  }
+
+  /** Persist one Solana → depot envelope carrying `syndications`. */
+  function relay(...syndications: Uint8Array[]): void {
+    writeOppArtifact(
+      oppDebuggingPath(clusterPath),
+      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+      envelopeBytes(
+        syndications.map(data =>
+          attestationEntry(AttestationType.SYNDICATE_LIQ, data)
+        )
+      )
+    )
+  }
+
+  /** The depot's held envelope row for the fixture intake. */
+  function heldEnvelope(): SysioContracts.SysioSyndEnvelopeRowType {
+    return {
+      chain_code: SyndicationScenario.Chain,
+      token_code: SyndicationScenario.Token,
+      epoch_index: intakeEpoch,
+      digest: "",
+      synd_total: intakeAmount.toString(),
+      yield_total: 0,
+      item_count: 1,
+      state: SysioContracts.SysioSyndEnvelopeState.HELD,
+      request_id: intakeRequest,
+      released: 0,
+      burned: 0,
+      outcome: SysioContracts.SysioSyndRequestOutcome.PENDING,
+      forfeit: 0,
+      bounty_returned: 0,
+      hold_share: 0,
+      hold_beneficiary: "",
+      share_pending: false
+    }
+  }
+
+  beforeEach(() => {
+    clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "synd-intake-test-"))
+  })
+  afterEach(() => {
+    Fs.rmSync(clusterPath, { recursive: true, force: true })
+  })
+
+  it("decodes only the user's syndication of the amount", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate()
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    relay(
+      syndication(wallet, intakeAmount, intakeAmount),
+      syndication(wallet, intakeAmount + 1n, intakeAmount + 1n),
+      syndication(Keypair.generate(), intakeAmount, intakeAmount)
+    )
+    const decoded = await SyndicationScenario.readDecodedSyndications(
+      ctx,
+      user,
+      intakeAmount
+    )
+    expect(decoded).toHaveLength(1)
+    expect(decoded[0].amount.amount).toBe(intakeAmount)
+    expect(Buffer.from(decoded[0].user.address)).toEqual(
+      wallet.publicKey.toBuffer()
+    )
+  })
+
+  it("orders the custody attestations of both types by sequence, once each", async () => {
+    const ctx = fixtureContext({ clusterPath })
+    await expect(
+      SyndicationScenario.readCustodyAttestations(ctx)
+    ).resolves.toEqual([])
+    const wallet = Keypair.generate(),
+      syndicate = (sequence: bigint, amount: bigint, totalSyndicated: bigint) =>
+        attestationEntry(
+          AttestationType.SYNDICATE_LIQ,
+          SyndicateLIQ.toBinary({
+            chainCode: 0n,
+            user: { kind: ChainKind.SVM, address: wallet.publicKey.toBytes() },
+            amount: { tokenCode: SyndicationScenario.TokenCode, amount },
+            sequence,
+            totalSyndicated
+          })
+        ),
+      liqYield = attestationEntry(
+        AttestationType.LIQ_YIELD,
+        LIQYield.toBinary({
+          chainCode: 0n,
+          amount: { tokenCode: SyndicationScenario.TokenCode, amount: 1n },
+          sequence: 2n,
+          epoch: 0n,
+          totalSyndicated: 11n
+        })
+      )
+    writeOppArtifact(
+      oppDebuggingPath(clusterPath),
+      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+      envelopeBytes([
+        syndicate(3n, 5n, 16n),
+        liqYield,
+        syndicate(1n, 10n, 10n)
+      ]),
+      1
+    )
+    // The same envelope delivered again persists again; it must not duplicate a sequence.
+    writeOppArtifact(
+      oppDebuggingPath(clusterPath),
+      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+      envelopeBytes([syndicate(1n, 10n, 10n)]),
+      2
+    )
+    await expect(
+      SyndicationScenario.readCustodyAttestations(ctx)
+    ).resolves.toEqual([
+      {
+        type: AttestationType.SYNDICATE_LIQ,
+        sequence: 1n,
+        amount: 10n,
+        totalSyndicated: 10n
+      },
+      {
+        type: AttestationType.LIQ_YIELD,
+        sequence: 2n,
+        amount: 1n,
+        totalSyndicated: 11n
+      },
+      {
+        type: AttestationType.SYNDICATE_LIQ,
+        sequence: 3n,
+        amount: 5n,
+        totalSyndicated: 16n
+      }
+    ])
+  })
+
+  it("decodes nothing before the relayed envelope is persisted", async () => {
+    const ctx = fixtureContext({ clusterPath })
+    jest
+      .spyOn(SolanaFundingTool, "loadKeypair")
+      .mockReturnValue(Keypair.generate())
+    relay()
+    await expect(
+      SyndicationScenario.readDecodedSyndications(ctx, user, intakeAmount)
+    ).resolves.toEqual([])
+  })
+
+  it("waits for the persisted attestation after the depot holds the envelope", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate(),
+      epoch = outputKey<number>("test.intake.epoch", "consensus epoch"),
+      request = outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+        "test.intake.request",
+        "bond request"
+      ),
+      step = SyndicationScenario.planVerifyIntake(
+        Actor.Sysio,
+        "verify-intake",
+        "verify intake",
+        {},
+        user,
+        intakeAmount,
+        epoch,
+        request
+      )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    // The depot holds the envelope from the first poll; the debugging plugin persists the
+    // relayed artifact only after that first read.
+    const read = jest
+      .spyOn(WireSyndicationTool, "readHeldEnvelope")
+      .mockImplementationOnce(async () => heldEnvelope())
+      .mockImplementation(async () => {
+        relay(syndication(wallet, intakeAmount, intakeAmount))
+        return heldEnvelope()
+      })
+    await step.runner(ctx, step.input, signal)
+    expect(read.mock.calls.length).toBeGreaterThan(1)
+    expect(ctx.outputs.get(epoch)).toBe(intakeEpoch)
+    expect(ctx.outputs.get(request)).toBe(intakeRequest)
+  })
+
+  it("refuses a custody attestation below its own syndication", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate(),
+      step = SyndicationScenario.planVerifyIntake(
+        Actor.Sysio,
+        "verify-intake",
+        "verify intake",
+        {},
+        user,
+        intakeAmount,
+        outputKey<number>("test.intake.epoch", "consensus epoch"),
+        outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+          "test.intake.request",
+          "bond request"
+        )
+      )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    jest
+      .spyOn(WireSyndicationTool, "readHeldEnvelope")
+      .mockResolvedValue(heldEnvelope())
+    relay(syndication(wallet, intakeAmount, intakeAmount - 1n))
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      "below its own syndication"
+    )
+  })
+})
+
+describe("syndication bond provider and fee arithmetic", () => {
+  it("keeps the default bonder's Report rows byte-for-byte", () => {
+    expect(providerPhase()).toEqual({
+      name: "ProvisionBonder",
+      description: "Deliver the imported shadow to its bonder",
+      steps: [
+        "create-bonder",
+        "bonder-resources",
+        "link-bonder",
+        "verify-bonder"
+      ],
+      inputs: expect.arrayContaining([
+        expect.objectContaining({ account: SyndicationScenario.Bonder })
+      ])
+    })
+  })
+  it("provisions a named provider account under its own role", () => {
+    const phase = providerPhase({
+      account: "synd.uwriter",
+      role: "underwriter"
+    })
+    expect(phase.name).toBe("ProvisionUnderwriter")
+    expect(phase.steps).toEqual([
+      "create-underwriter",
+      "underwriter-resources",
+      "link-underwriter",
+      "verify-underwriter"
+    ])
+    expect(phase.inputs[0]).toEqual(
+      expect.objectContaining({ account: "synd.uwriter" })
+    )
+    expect(phase.inputs[2]).toEqual(
+      expect.objectContaining({
+        account: "synd.uwriter",
+        keypairName: Steps.registry.MockSyndicationBonderLabel
+      })
+    )
+    expect(JSON.stringify(phase.inputs)).not.toContain(
+      SyndicationScenario.Bonder
+    )
+  })
+  it("provisions no bond provider when the flow's operators underwrite", () => {
+    const cluster = ClusterBuild.forContext(fixtureContext())
+    new Scenario(null).plan(cluster)
+    const group = cluster.children[0] as unknown as PlannedGroup
+    expect(group.children.map(phase => phase.name)).toEqual([
+      "SnapshotConfiguration",
+      `Provision-${account}`,
+      "LaunchOutpost"
+    ])
+  })
+  it("rounds fees down and coverage up to the increment", () => {
+    expect(SyndicationScenario.feeOf(2_000_000_001n, 100)).toBe(20_000_000n)
+    expect(SyndicationScenario.feeOf(99n, 100)).toBe(0n)
+    expect(SyndicationScenario.feeOf(0n, 100)).toBe(0n)
+    expect(SyndicationScenario.coveredOf(2_000_000_001n)).toBe(2_010_000_000n)
+    expect(SyndicationScenario.coveredOf(2_000_000_000n)).toBe(2_000_000_000n)
+    expect(SyndicationScenario.coveredOf(0n)).toBe(0n)
   })
 })

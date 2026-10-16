@@ -1,0 +1,19 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test-cjs",
+    "ignoreDeprecations": "6.0",
+    "composite": true,
+    "incremental": true,
+    "paths": {
+      "@wireio/ql-shared": ["./src"],
+      "@wireio/ql-shared/*": ["./src/*"]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.cjs.json" }
+  ],
+  "include": ["tests", "tests/**/*.json"],
+  "exclude": ["tests/bench/tsconfig.json"]
+}

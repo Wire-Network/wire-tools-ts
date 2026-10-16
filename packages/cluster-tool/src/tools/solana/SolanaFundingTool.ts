@@ -40,10 +40,6 @@ const log = getLogger(__filename)
  * `@solana/spl-token`'s `createMint`, which relies on a WebSocket subscription
  * for confirmation the test validator doesn't reliably serve) and confirmed via
  * the polling {@link confirmSignature}.
- *
- * Recipient ATAs for swap *destinations* are NOT pre-created — the on-chain
- * `handle_swap_remit` SPL branch creates them on demand with the Reserve PDA as
- * rent payer.
  */
 export namespace SolanaFundingTool {
   /** Minimum SPL mint decimal scale. */
@@ -313,6 +309,21 @@ export namespace SolanaFundingTool {
     return Keypair.fromSecretKey(
       Uint8Array.from(JSON.parse(Fs.readFileSync(file, "utf8")))
     )
+  }
+
+  /**
+   * A persisted keypair's public key as hex — the byte encoding the depot keys parked
+   * credit and syndication items by.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The keypair's durable handle.
+   * @returns The 32-byte Ed25519 public key, hex-encoded.
+   * @throws If no keypair is persisted under `name`.
+   */
+  export function publicKeyHex(dataPath: string, name: string): string {
+    return SolanaFundingTool.loadKeypair(dataPath, name)
+      .publicKey.toBuffer()
+      .toString("hex")
   }
 
   /**

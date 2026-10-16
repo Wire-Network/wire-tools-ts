@@ -65,9 +65,7 @@ const artifactsFixture: OperatorDaemonArtifacts = {
   ethereumAbiFiles: ["/cluster/data/eth-abis/OPP.json"],
   ethereumAddresses: {
     OPP: "0x1111111111111111111111111111111111111111",
-    OPPInbound: "0x2222222222222222222222222222222222222222",
-    OperatorRegistry: "0x3333333333333333333333333333333333333333",
-    ReserveManager: "0x4444444444444444444444444444444444444444"
+    OPPInbound: "0x2222222222222222222222222222222222222222"
   },
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"

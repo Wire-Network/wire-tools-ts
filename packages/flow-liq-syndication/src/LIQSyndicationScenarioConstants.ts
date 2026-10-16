@@ -1,5 +1,6 @@
 import { SlugName } from "@wireio/sdk-core"
 import {
+  Constants as HarnessConstants,
   ProtocolTiming,
   SolanaLiqSyndicationTool,
   SolanaOutpostBootstrapper
@@ -28,7 +29,7 @@ export namespace LIQSyndicationScenarioConstants {
   )
 
   /** Depot token codename used by typed syndication table reads. */
-  export const LIQTokenCodename = "LIQSOL"
+  export const LIQTokenCodename = HarnessConstants.LIQSOL_CODENAME
 
   /**
    * Depot token slug code the outpost's REAL liqSOL mint is registered under.

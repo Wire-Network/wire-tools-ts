@@ -2,7 +2,6 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
 import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
@@ -14,6 +13,7 @@ import {
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
+  type BatchOperatorUnderwritingConfig,
   type BindConfig,
   type BindOptions,
   type ClusterConfig,
@@ -23,11 +23,12 @@ import {
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
   type ExternalOutpostConfig,
-  type QueryEngineConfig
+  type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
-import { KeyType } from "@wireio/sdk-core"
+import { TokenAmount } from "@wireio/opp-typescript-models"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
 import {
   ListenAllAddress,
@@ -115,15 +116,19 @@ function assertApiCount(options: ClusterBuildOptions): number {
 
 /**
  * A query-engine setting with no API node to read it is a misconfiguration,
- * not a default: every set member requires at least one planned API node.
+ * not a default: every member the CALLER set requires at least one planned API
+ * node. The harness's own defaults
+ * (`QueryEngineConfigProvider.createDefaultOptions`) are not caller settings,
+ * so they never trip this on a cluster without API nodes.
  *
  * @param apiCount - The planned API-node count.
- * @param queryEngine - The resolved query-engine config.
+ * @param queryEngine - The caller's query-engine options.
+ * @returns The caller's options, for resolution.
  */
 function assertQueryEngineUse(
   apiCount: number,
-  queryEngine: QueryEngineConfig
-): void {
+  queryEngine: QueryEngineOptions = {}
+): QueryEngineOptions {
   const setMembers = Object.entries(queryEngine)
     .filter(([, value]) => value != null)
     .map(([member]) => member)
@@ -131,6 +136,7 @@ function assertQueryEngineUse(
     apiCount > 0 || setMembers.length === 0,
     `ClusterConfigProvider: query-engine settings (${setMembers.join(", ")}) require at least one API node — set apiCount (--api-count)`
   )
+  return queryEngine
 }
 
 /**
@@ -160,6 +166,61 @@ export namespace ClusterConfigProvider {
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
   export const DefaultUnderwriterCount = 0
+  /** The shadow token the default underwriting cap is held in. */
+  export const DefaultBatchUnderwriterExposureToken = Constants.LIQSOL_CODENAME
+  /**
+   * The default LIQSOL exposure cap of an underwriting batch operator, in base units: well
+   * above a flow's coverage and below the 100 LIQSOL mock import each funded operator holds.
+   * Lowering it below a request's coverage leaves that request unbonded.
+   */
+  export const DefaultBatchUnderwriterMaxExposureUnits = 10_000_000_000n
+  /** {@link DefaultBatchUnderwriterMaxExposureUnits} of {@link DefaultBatchUnderwriterExposureToken}. */
+  export const DefaultBatchUnderwriterMaxExposure: TokenAmount =
+    TokenAmount.create({
+      tokenCode: BigInt(SlugName.from(DefaultBatchUnderwriterExposureToken)),
+      amount: DefaultBatchUnderwriterMaxExposureUnits
+    })
+
+  /**
+   * Resolve the underwriter role's configuration: `null` when
+   * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
+   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposure} as the one cap.
+   *
+   * @param options - The caller's options.
+   * @param batchOperatorCount - The resolved batch-operator roster size.
+   * @return The configuration, or `null` for relay-only operators.
+   * @throws If underwriting options are set with the role off, more operators are funded
+   *   than exist, or `maxExposure` is empty.
+   */
+  export function resolveBatchOperatorUnderwriting(
+    options: ClusterBuildOptions,
+    batchOperatorCount: number
+  ): BatchOperatorUnderwritingConfig {
+    if (options.enableBatchOperatorUnderwriting !== true) {
+      Assert.ok(
+        options.batchOperatorUnderwriting == null,
+        "ClusterConfigProvider: batchOperatorUnderwriting is set but enableBatchOperatorUnderwriting is off"
+      )
+      return null
+    }
+    const fundedOperatorCount =
+      options.batchOperatorUnderwriting?.fundedOperatorCount ??
+      batchOperatorCount
+    Assert.ok(
+      Number.isInteger(fundedOperatorCount) &&
+        fundedOperatorCount >= 0 &&
+        fundedOperatorCount <= batchOperatorCount,
+      `ClusterConfigProvider: batchOperatorUnderwriting.fundedOperatorCount ${fundedOperatorCount} must be 0..${batchOperatorCount}`
+    )
+    const maxExposure = options.batchOperatorUnderwriting?.maxExposure ?? [
+      DefaultBatchUnderwriterMaxExposure
+    ]
+    Assert.ok(
+      maxExposure.length > 0,
+      "ClusterConfigProvider: batchOperatorUnderwriting.maxExposure must name at least one cap"
+    )
+    return { fundedOperatorCount, maxExposure }
+  }
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
@@ -180,11 +241,9 @@ export namespace ClusterConfigProvider {
     // holds the host-global bind lock) on its way to failing.
     const batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
-      queryEngine = asOption(
-        QueryEngineConfigProvider.resolve(options.queryEngine)
-      )
-        .tap(resolved => assertQueryEngineUse(apiCount, resolved))
-        .get(),
+      queryEngine = QueryEngineConfigProvider.resolve(
+        assertQueryEngineUse(apiCount, options.queryEngine)
+      ),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -250,6 +309,10 @@ export namespace ClusterConfigProvider {
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
+      batchOperatorUnderwriting: resolveBatchOperatorUnderwriting(
+        options,
+        batchOperatorCount
+      ),
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,

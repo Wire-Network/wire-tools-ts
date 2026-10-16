@@ -2,6 +2,8 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
+import { TokenAmount } from "@wireio/opp-typescript-models"
+import { SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   NodeopReadMode,
@@ -9,6 +11,7 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import { QueryEngineConfigProvider } from "@wireio/cluster-tool/config"
 import {
   applyClusterBuildOptionsArgs,
   AWSClusterNodeConfigFlag,
@@ -158,10 +161,24 @@ describe("query-engine help text", () => {
   })
 
   it("describeQueryEngineLimitFlag names the limit's option and that omitting it keeps the plugin's default", () => {
-    const option = "query-max-groups",
-      text = describeQueryEngineLimitFlag(option)
-    expect(text).toContain(option)
+    const limit = Constants.QUERY_ENGINE_LIMIT_OPTIONS.find(
+        ({ member }) => member === "maxGroups"
+      ),
+      text = describeQueryEngineLimitFlag(limit)
+    expect(text).toContain(limit.option)
     expect(text).toContain("omit for the plugin's default")
+  })
+
+  it("describeQueryEngineLimitFlag names the harness default the query deadline resolves to when omitted", () => {
+    const limit = Constants.QUERY_ENGINE_LIMIT_OPTIONS.find(
+        ({ member }) => member === "timeoutMs"
+      ),
+      text = describeQueryEngineLimitFlag(limit)
+    expect(text).toContain(limit.option)
+    expect(text).toContain(
+      `omit for ${QueryEngineConfigProvider.DefaultTimeoutMs}`
+    )
+    expect(text).not.toContain("the plugin's default")
   })
 
   it("registers every --query-engine-* flag with exactly its helper's text", () => {
@@ -170,9 +187,9 @@ describe("query-engine help text", () => {
     expect(options.get(toQueryEngineFlag("readMode"))?.describe).toBe(
       describeQueryEngineReadModeFlag()
     )
-    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(({ member, option }) =>
-      expect(options.get(toQueryEngineFlag(member))?.describe).toBe(
-        describeQueryEngineLimitFlag(option)
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.forEach(limit =>
+      expect(options.get(toQueryEngineFlag(limit.member))?.describe).toBe(
+        describeQueryEngineLimitFlag(limit)
       )
     )
   })
@@ -557,6 +574,17 @@ describe("toClusterBuildOptions reverse parse", () => {
     ).toBe(false)
   })
 
+  it("round trips the batch-operator underwriting leaf, off by default", () => {
+    expect(
+      toClusterBuildOptions({ "enable-batch-operator-underwriting": true })
+        .enableBatchOperatorUnderwriting
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-batch-operator-underwriting": false })
+        .enableBatchOperatorUnderwriting
+    ).toBe(false)
+  })
+
   it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
     // Registration is MANDATORY: this reverse parse reads argv ONLY through
     // flattenOptionLeaves(buildOptionShape(...)), so an unregistered field is
@@ -864,6 +892,36 @@ describe("--cluster-build-options-file", () => {
     expect(loaded.bind?.kiod?.port).toBe(1234)
     expect(loaded.bind?.nodeop?.ports?.bios?.http).toBe(5555)
     expect(loaded.logging?.levels?.console).toBe("debug")
+  })
+
+  it("decodes the flag-less batchOperatorUnderwriting member, bigint cap intact", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        enableBatchOperatorUnderwriting: true,
+        batchOperatorUnderwriting: {
+          fundedOperatorCount: 1,
+          maxExposure: [
+            TokenAmount.toJson(
+              TokenAmount.create({
+                tokenCode: BigInt(SlugName.from("LIQSOL")),
+                amount: 2_010_000_000n
+              })
+            )
+          ]
+        }
+      })
+    )
+    expect(loaded.batchOperatorUnderwriting.fundedOperatorCount).toBe(1)
+    expect(loaded.batchOperatorUnderwriting.maxExposure[0].amount).toBe(
+      2_010_000_000n
+    )
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({
+          batchOperatorUnderwriting: { fundedOperatorCount: -1 }
+        })
+      )
+    ).toThrow()
   })
 
   it("sizes the bind node-port arrays from the document's own counts", () => {

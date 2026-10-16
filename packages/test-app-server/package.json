@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-app-server",
-  "version": "0.1.8",
+  "version": "0.1.12",
   "private": true,
   "scripts": {
     "compile": "tsc -b tsconfig.json",
@@ -11,7 +11,7 @@
     "clean": "rm -rf lib dist"
   },
   "dependencies": {
-    "@wireio/sdk-core": "^1.0.96",
+    "@wireio/sdk-core": "^1.0.97",
     "@wireio/shared": "^1.0.96",
     "@wireio/wallet-ext-sdk": "^0.1.84",
     "buffer": "^6.0.3",

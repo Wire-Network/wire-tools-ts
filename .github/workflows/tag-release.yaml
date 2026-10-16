@@ -2,17 +2,28 @@ name: "Tag Release"
 
 # Gate 2 of the two-gate release flow (see prepare-release.yaml). The job runs
 # under the `release` Environment, so it PAUSES for a required reviewer before it
-# creates anything. After approval it reads the version the merged prepare PR put
-# on master, runs the build/test gate, publishes every non-private workspace
-# package to npm on the version's channel, tags master, and publishes a GitHub
-# release. Nothing is pushed to master here, so wire-platform-ruleset-1 needs no
-# bypass — its rules target branches only, so the tag stays legal.
+# creates anything. Before that gate, the `resolve` job reads the version the
+# merged prepare PR put on master and the `package-app` jobs build the WIRE QL
+# desktop app installers (@wireio/ql-tool-app: Linux AppImage + deb, macOS dmg for
+# arm64 + x64, Windows nsis — unsigned) on one runner per OS from that same
+# commit. After approval the `tag` job runs the build/test gate, publishes every
+# non-private workspace package to npm on the version's channel (ql-shared and
+# ql-tool-cli included; ql-tool-app is private and ships only as installers),
+# tags the commit, and publishes a GitHub release with the installers attached.
+# Nothing is pushed to master here, so wire-platform-ruleset-1 needs no bypass —
+# its rules target branches only, so the tag stays legal.
 #
-# No inputs: the release version is whatever master currently carries. Its suffix
-# IS the channel: no suffix => stable => npm dist-tag `latest`; a `-<preid>.N`
-# suffix => that preid is the dist-tag (e.g. dev, rc). The two human gates
-# (the release-PR merge + the release Environment's required reviewers) are the
-# safety, not a typed version.
+# The release version is whatever master currently carries. Its suffix IS the
+# channel: no suffix => stable => npm dist-tag `latest`; a `-<preid>.N` suffix =>
+# that preid is the dist-tag (e.g. dev, rc). The two human gates (the release-PR
+# merge + the release Environment's required reviewers) are the safety, not a
+# typed version.
+#
+# `dry_run` (manual dispatch only) runs the whole flow against the DISPATCHED ref
+# instead of master and changes nothing: an existing tag is a warning, the tag
+# job runs without the release Environment, npm publish runs with --dry-run, and
+# the tag + release steps only report what they would create. The installers stay
+# downloadable as the run's ql-tool-app-* artifacts.
 
 on:
   # Auto-triggered when a release/prep-v* PR merges to master — the human
@@ -27,7 +38,12 @@ on:
   pull_request:
     types: [closed]
     branches: [master]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build, test and package the dispatched ref without publishing, tagging or releasing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write # create the tag + the GitHub release
@@ -41,39 +57,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tag:
-    name: Tag master and publish
+  resolve:
+    name: Resolve the release version
     # Manual dispatch, or a MERGED, SAME-REPO release-prep PR — everything
     # else (unmerged closes, non-release branches, fork PRs whose head happens
-    # to be named release/prep-v*) skips.
+    # to be named release/prep-v*) skips, and every job below skips with it.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release/prep-v'))
     runs-on: ubuntu-latest
-    # Required reviewers on this Environment are gate 2 — nothing below runs until
-    # a human approves the deployment.
-    environment: release
     env:
       GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      dist_tag: ${{ steps.resolve.outputs.dist_tag }}
     steps:
+      # A real release always comes from master; a dry run tests the ref it was
+      # dispatched on.
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: master
+          ref: ${{ inputs.dry_run == true && github.sha || 'master' }}
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-
-      - name: Resolve the release version and channel from master
+      - name: Resolve the release version and channel
         id: resolve
         run: |
           set -euo pipefail
@@ -96,8 +109,12 @@ jobs:
 
           tag="v${version}"
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
-            echo "::error::Tag ${tag} already exists. Prepare the next bump instead of re-tagging." >&2
-            exit 1
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "::warning::Tag ${tag} already exists; a real release would stop here."
+            else
+              echo "::error::Tag ${tag} already exists. Prepare the next bump instead of re-tagging." >&2
+              exit 1
+            fi
           fi
 
           {
@@ -108,7 +125,108 @@ jobs:
             echo "dist_tag=$dist_tag"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Releasing ${tag} on $(git rev-parse HEAD) (npm dist-tag ${dist_tag})"
+          echo "Releasing ${tag} on $(git rev-parse HEAD) (npm dist-tag ${dist_tag}, dry run: ${DRY_RUN})"
+
+
+  # One installer build per OS, all from the resolved commit. electron-builder
+  # only builds a platform's installers on that platform (dmg needs macOS,
+  # nsis is built natively on Windows), so this is a matrix of three runners.
+  # The webpack bundles in dist/app consume @wireio/ql-shared's lib/ output,
+  # which the repository build emits.
+  package-app:
+    name: Package ql-tool-app (${{ matrix.platform }})
+    needs: resolve
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            installers: |
+              packages/ql-tool-app/dist/package/*.AppImage
+              packages/ql-tool-app/dist/package/*.deb
+          - platform: mac
+            runner: macos-latest
+            installers: |
+              packages/ql-tool-app/dist/package/*.dmg
+          - platform: win
+            runner: windows-latest
+            installers: |
+              packages/ql-tool-app/dist/package/*.exe
+    runs-on: ${{ matrix.runner }}
+    env:
+      # No code signing yet: never look up a signing identity in the runner's
+      # keychain / certificate store.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      # The repository build (`tsc -b` over every project reference) is the build
+      # path the gate exercises; it emits ql-shared's lib/ that the app's webpack
+      # bundles consume.
+      - name: Install and build the workspace
+        run: |
+          pnpm install
+          pnpm build
+
+      # package:<platform> downloads the Electron binary (setup:electron), builds
+      # the webpack bundles and runs electron-builder for this OS's targets.
+      - name: Build the ${{ matrix.platform }} installers
+        run: pnpm --filter @wireio/ql-tool-app run "package:${{ matrix.platform }}"
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ql-tool-app-${{ matrix.platform }}
+          path: ${{ matrix.installers }}
+          if-no-files-found: error
+
+  tag:
+    name: Tag and publish
+    needs: [resolve, package-app]
+    runs-on: ubuntu-latest
+    # Required reviewers on this Environment are gate 2 — nothing below runs until
+    # a human approves the deployment. A dry run changes nothing, so it runs
+    # without the Environment (an empty name means no environment).
+    environment: ${{ inputs.dry_run != true && 'release' || '' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Fetched before anything irreversible, so a missing installer stops the
+      # release before npm or the tag are touched.
+      - name: Download the ql-tool-app installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ql-tool-app-*
+          path: release-assets
+          merge-multiple: true
 
       # Gate the release on the same install/build + root jest run ci.yaml uses.
       - name: Install, build and test
@@ -141,19 +259,25 @@ jobs:
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          DIST_TAG: ${{ steps.resolve.outputs.dist_tag }}
+          DIST_TAG: ${{ needs.resolve.outputs.dist_tag }}
         run: |
-          # Publishes all non-private workspace packages in dependency order on
+          # Publishes all non-private workspace packages (including
+          # @wireio/ql-shared and @wireio/ql-tool-cli) in dependency order on
           # the channel's dist-tag; `workspace:*` deps are rewritten to concrete
           # versions. --no-git-checks avoids failure in CI environments. No
           # --provenance: npm provenance requires a public source repo and this
-          # repo is private.
-          pnpm -r publish --access public --no-git-checks --tag "$DIST_TAG"
+          # repo is private. A dry run packs every package without uploading.
+          args=(--access public --no-git-checks --tag "$DIST_TAG")
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          pnpm -r publish "${args[@]}"
 
       - name: Create the annotated tag
+        if: ${{ inputs.dry_run != true }}
         env:
-          TAG: ${{ steps.resolve.outputs.tag }}
-          SHA: ${{ steps.resolve.outputs.sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           set -euo pipefail
           # An annotated tag is TWO API calls in order: the tag object, then the
@@ -167,13 +291,37 @@ jobs:
           echo "Created annotated tag ${TAG} -> ${SHA}"
 
       - name: Publish the GitHub release
+        if: ${{ inputs.dry_run != true }}
         env:
-          TAG: ${{ steps.resolve.outputs.tag }}
-          PRERELEASE: ${{ steps.resolve.outputs.prerelease }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
         run: |
           set -euo pipefail
           args=(--verify-tag --title "$TAG" --generate-notes)
           if [[ "$PRERELEASE" == "true" ]]; then
             args+=(--prerelease)
           fi
-          gh release create "$TAG" "${args[@]}"
+          # Every installer the package-app jobs built is attached to the release.
+          gh release create "$TAG" release-assets/* "${args[@]}"
+
+      # gh has no dry-run mode for `release create`, so a dry run lists the tag and
+      # the release it would create, with every installer it would attach.
+      - name: Report the release a real run would publish
+        if: ${{ inputs.dry_run == true }}
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Dry run: nothing was published"
+            echo
+            echo "- Tag: \`${TAG}\` -> \`${SHA}\`"
+            echo "- Prerelease: ${PRERELEASE}"
+            echo "- Installers that would be attached (also this run's ql-tool-app-* artifacts):"
+            echo
+            echo '```'
+            ls -l release-assets/
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

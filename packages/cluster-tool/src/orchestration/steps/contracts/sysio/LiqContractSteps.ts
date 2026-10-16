@@ -8,14 +8,13 @@ import {
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
-const { SysioContractName, SysioContractAccount } = SysioContracts
+const { SysioContractName } = SysioContracts
 
 /**
  * Steps for `sysio.liq` actions — the shadow liq token.
  *
  * The contract-signed actions (`create`, `regliqpool`, `recredit`) ride the
- * client's default authorization, the contract account. `setkicker` is
- * governance's: the contract requires the system account. `claim` is signed by
+ * client's default authorization, the contract account. `claim` is signed by
  * the holder named in its data. Sweeping parked shadow and desyndicating are
  * `sysio.synd`'s actions (`Steps.contracts.sysio.synd`).
  */
@@ -30,7 +29,9 @@ export namespace LiqContractSteps {
    * `sysio.liq::create` — open one shadow symbol, bound to an active liq token
    * of the chain and token registries. Signed by the contract.
    */
-  export function planCreate<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreate<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -59,50 +60,6 @@ export namespace LiqContractSteps {
       .actions.create.invoke(input.data)
   }
 
-  /** Input for {@link planSetkicker} — the generated `liq::setkicker` data. */
-  export interface SetkickerInput extends StepInput {
-    readonly kind: "LiqContractSteps.SetkickerInput"
-    readonly data: SysioContracts.SysioLiqSetkickerAction
-  }
-
-  /**
-   * `sysio.liq::setkicker` — set the T5 kicker folded into every yield intake,
-   * in basis points of the intake. Governance's action: signed by the system
-   * account, the authority council proposals execute as.
-   */
-  export function planSetkicker<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioLiqSetkickerAction
-  ): ClusterBuildStep<C, SetkickerInput> {
-    return ClusterBuildStep.create<C, SetkickerInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "LiqContractSteps.SetkickerInput", data },
-      runSetkicker
-    )
-  }
-
-  /** Named runner — `sysio.liq::setkicker`, signed by the system account. */
-  export async function runSetkicker<C extends ClusterBuildContext>(
-    ctx: C,
-    input: SetkickerInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.liq)
-      .actions.setkicker.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(
-          SysioContractAccount[SysioContractName.system]
-        )
-      })
-  }
-
   /** Input for {@link planRegliqpool} — the generated `liq::regliqpool` data. */
   export interface RegliqpoolInput extends StepInput {
     readonly kind: "LiqContractSteps.RegliqpoolInput"
@@ -116,7 +73,9 @@ export namespace LiqContractSteps {
    * gates it to the epoch-0 bootstrap window, so it only ever runs
    * pre-EpochBootstrap. Signed by the contract.
    */
-  export function planRegliqpool<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegliqpool<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -155,7 +114,9 @@ export namespace LiqContractSteps {
    * `sysio.liq::claim` — pay a holder every subunit of WIRE owed to their
    * shadow row and settle it at the current index. Signed by the holder.
    */
-  export function planClaim<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClaim<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -198,7 +159,9 @@ export namespace LiqContractSteps {
    * a release the outpost neither paid nor stored (`docs/sysio-synd.md`, the
    * recredit rule). Signed by the contract.
    */
-  export function planRecredit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRecredit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,

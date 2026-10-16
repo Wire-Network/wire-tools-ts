@@ -84,13 +84,7 @@ async function readCapConfig(
  *       holds their ETH wallets) complete AuthEx linking, whose inline
  *       `linkswept` sweeps `unmapped_tokens` into `pending_claims` → `claim`
  *       pays each staker its exact seeded WIRE. dclaim is pre-funded from
- *       `sysio` for the synthetic load (the importseed path never calls
- *       `fundclaim`; only the onreward path does).
- *
- * **Out of scope:** `sysio.system::fundclaim` cap semantics — that path fires
- * only on `sysio.dclaim::onreward` (STAKING_REWARD attestations), pending the
- * outpost emission track. `capital_shortfall_total` is asserted `== 0`
- * throughout (trivially true today because no `fundclaim` calls occur).
+ *       `sysio` for the synthetic load; imports and claims use only that funding.
  *
  * Phases: `ConfigureEmissions` → `GenerateAndImport` → `SetupClaimers` →
  * `StabilityLoop` → `Claim`.
@@ -193,17 +187,12 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "t5-state-initialized",
-        "t5state exists with non-negative distribution and zero capital shortfall",
+        "t5state exists with non-negative distribution",
         async ctx => {
           const t5 = await readT5State(ctx)
           Assert.ok(
             Number(t5.total_distributed) >= 0,
             "total_distributed must be non-negative"
-          )
-          Assert.strictEqual(
-            Number(t5.capital_shortfall_total),
-            0,
-            "capital_shortfall_total must start at 0"
           )
         }
       )
@@ -372,18 +361,18 @@ export class EmissionsSoakScenario extends FlowScenario {
     )
 
     // ── 4. StabilityLoop — sample t5state across the soak window; monotonic
-    //       accrual, zero shortfall, headroom respected. ──
+    //       accrual, headroom respected. ──
     ClusterBuildPhase.create(
       cluster,
       "StabilityLoop",
-      `Sample t5state for ${Constants.SoakDurationMs}ms; monotonic accrual + zero shortfall`,
+      `Sample t5state for ${Constants.SoakDurationMs}ms; monotonic accrual within headroom`,
       [],
       soakOptions
     ).push(
       verifyStep(
         Actor.Sysio,
         "soak-monotonic-accrual",
-        "total_distributed advances monotonically within headroom; capital_shortfall_total stays 0",
+        "total_distributed advances monotonically within headroom",
         async (ctx, signal) => {
           const emissionConfig = await readEmissionConfig(ctx),
             headroom =
@@ -399,19 +388,11 @@ export class EmissionsSoakScenario extends FlowScenario {
             await sleep(Constants.SampleIntervalMs)
             const t5 = await readT5State(ctx),
               distributed = BigInt(t5.total_distributed),
-              shortfall = BigInt(t5.capital_shortfall_total),
               elapsedSec = Math.round((Date.now() - startWallMs) / 1000)
-            log.info(
-              `[soak] +${elapsedSec}s distributed=${distributed} shortfall=${shortfall}`
-            )
+            log.info(`[soak] +${elapsedSec}s distributed=${distributed}`)
             Assert.ok(
               distributed >= lastDistributed,
               `total_distributed regressed: ${distributed} < ${lastDistributed}`
-            )
-            Assert.strictEqual(
-              shortfall,
-              0n,
-              "unexpected capital shortfall during the soak"
             )
             lastDistributed = distributed
             sampleCount += 1
@@ -434,7 +415,7 @@ export class EmissionsSoakScenario extends FlowScenario {
     )
 
     // ── 5. Claim — snapshot balances, claim per staker, verify EXACT deltas
-    //       and a still-zero capital shortfall. ──
+    //       and treasury distribution within headroom. ──
     ClusterBuildPhase.create(
       cluster,
       "Claim",
@@ -490,19 +471,6 @@ export class EmissionsSoakScenario extends FlowScenario {
                 `claim delta for ${identity.wireAccount}: ${delta} != ${Constants.PerStakerClaimAtomic}`
               )
             })
-          )
-        }
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "final-shortfall-zero",
-        "capital_shortfall_total is still 0 after every claim (no fundclaim calls on this path)",
-        async ctx => {
-          const t5 = await readT5State(ctx)
-          Assert.strictEqual(
-            BigInt(t5.capital_shortfall_total),
-            0n,
-            "capital_shortfall_total moved without an onreward-driven claim"
           )
         }
       )

@@ -77,8 +77,8 @@ export namespace EthereumOutpostSteps {
       // ordering; neither the position nor the sort order of an operator in a
       // persisted `cluster-keys.json` is guaranteed, so the ordinal is only
       // meaningful once the list has been filtered by label prefix.
-      batchOperatorLabels = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
+      batchOperatorLabels = Constants.batchOperatorLabels(
+        config.batchOperatorCount
       ),
       addresses = await mapSeries(
         batchOperatorLabels,

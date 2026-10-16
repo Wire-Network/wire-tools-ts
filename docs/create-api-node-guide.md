@@ -57,7 +57,7 @@ flags, which are the spellings shared with `create` and render as nodeop's
 | `--query-engine-worker-threads` | no | plugin default | `query-worker-threads` — only when set |
 | `--query-engine-max-in-flight` | no | plugin default | `query-max-in-flight` — only when set |
 | `--query-engine-max-query-bytes` | no | plugin default | `query-max-query-bytes` — only when set |
-| `--query-engine-timeout-ms` | no | plugin default | `query-timeout-ms` — only when set |
+| `--query-engine-timeout-ms` | no | `30000` | `query-timeout-ms` — always rendered |
 | `--query-engine-max-capture-ms` | no | plugin default | `query-max-capture-ms` — only when set |
 | `--query-engine-max-abi-bytes` | no | plugin default | `query-max-abi-bytes` — only when set |
 | `--query-engine-max-scan-rows` | no | plugin default | `query-max-scan-rows` — only when set |
@@ -108,6 +108,7 @@ agent-name = wire-api-node
 http-server-address = 0.0.0.0:8888
 p2p-peer-address = peer-a.example:9876
 p2p-peer-address = peer-b.example:9876
+query-timeout-ms = 30000
 
 plugin = sysio::net_plugin
 plugin = sysio::chain_api_plugin
@@ -115,10 +116,15 @@ plugin = sysio::trace_api_plugin
 plugin = sysio::query_engine_plugin
 ```
 
+`query-timeout-ms` is the one query-engine line rendered without a flag: the
+plugin's own default (1000 ms) would reject every client `timeout_ms` above it,
+since a request may only lower the node's deadline. Pass
+`--query-engine-timeout-ms` to choose another value.
+
 With `--query-engine-read-mode irreversible --query-engine-max-in-flight 8`
 added to the same command, the two set values render right after the peer lines
 (`read-mode` first, then the limits in the plugin's order); every other line is
-unchanged, and an unset `--query-engine-*` flag renders no line at all:
+unchanged, and any other unset `--query-engine-*` flag renders no line at all:
 
 ```ini
 chain-state-db-size-mb = 1024
@@ -132,6 +138,7 @@ p2p-peer-address = peer-a.example:9876
 p2p-peer-address = peer-b.example:9876
 read-mode = irreversible
 query-max-in-flight = 8
+query-timeout-ms = 30000
 
 plugin = sysio::net_plugin
 plugin = sysio::chain_api_plugin
@@ -163,7 +170,9 @@ node is that rule's sanctioned non-public exception, which is why it keeps
 
 `query_engine_plugin` is a further addition to the baseline; the artifact
 requires a nodeop built with it. A set `--query-engine-read-mode` makes the
-artifact own `read-mode` — a deployment overlay must not append another.
+artifact own `read-mode` — a deployment overlay must not append another. The
+artifact always owns `query-timeout-ms`; an overlay that needs a different
+deadline passes `--query-engine-timeout-ms` instead of appending the key.
 
 `database-map-mode` is deliberately **not** emitted here — the API-node baseline
 governs this file, and the cluster commands' `mapped_private` default is scoped

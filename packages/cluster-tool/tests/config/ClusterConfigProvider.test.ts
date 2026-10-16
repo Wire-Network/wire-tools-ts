@@ -8,7 +8,8 @@ import {
   NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { KeyType } from "@wireio/sdk-core"
+import { TokenAmount } from "@wireio/opp-typescript-models"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import {
@@ -58,6 +59,95 @@ describe("ClusterConfigProvider", () => {
           solanaPath: "/s"
         })
       ).rejects.toThrow(/clusterPath is required/)
+    })
+  })
+
+  describe("resolveBatchOperatorUnderwriting", () => {
+    const cap = TokenAmount.create({
+      tokenCode: BigInt(SlugName.from("LIQSOL")),
+      amount: 2_010_000_000n
+    })
+
+    it("is null when the role is off", () => {
+      expect(
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting({}, 3)
+      ).toBeNull()
+    })
+
+    it("defaults to every operator funded with the 10 LIQSOL cap", () => {
+      const resolved = ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+        { enableBatchOperatorUnderwriting: true },
+        3
+      )
+      expect(resolved).toEqual({
+        fundedOperatorCount: 3,
+        maxExposure: [ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure]
+      })
+      expect(
+        ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure.amount
+      ).toBe(10_000_000_000n)
+    })
+
+    it("carries a funded-operator count and caps", () => {
+      expect(
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: {
+              fundedOperatorCount: 1,
+              maxExposure: [cap]
+            }
+          },
+          3
+        )
+      ).toEqual({ fundedOperatorCount: 1, maxExposure: [cap] })
+    })
+
+    it("refuses tuning with the role off and more funded operators than exist", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          { batchOperatorUnderwriting: { fundedOperatorCount: 1 } },
+          3
+        )
+      ).toThrow(/enableBatchOperatorUnderwriting is off/)
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: { fundedOperatorCount: 4 }
+          },
+          3
+        )
+      ).toThrow(/must be 0\.\.3/)
+    })
+
+    it("refuses an empty exposure-cap list with the role on", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: { maxExposure: [] }
+          },
+          3
+        )
+      ).toThrow(/maxExposure must name at least one cap/)
+    })
+
+    it("persists the typed config through cluster-config.json, bigints intact", () => {
+      const config = {
+          ...fixtureConfig(),
+          batchOperatorUnderwriting: {
+            fundedOperatorCount: 1,
+            maxExposure: [cap]
+          }
+        },
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize(config)
+        )
+      expect(reloaded.batchOperatorUnderwriting.fundedOperatorCount).toBe(1)
+      expect(reloaded.batchOperatorUnderwriting.maxExposure[0].amount).toBe(
+        2_010_000_000n
+      )
     })
   })
 
@@ -560,8 +650,13 @@ describe("ClusterConfigProvider", () => {
       expect(config.apiCount).toBe(ClusterConfigProvider.DefaultApiCount)
       expect(ClusterConfigProvider.DefaultApiCount).toBe(0)
       expect(config.bind.nodeop.ports.api).toEqual([])
+      // The harness default deadline is not a caller setting, so it does not
+      // demand an API node.
       expect(config.queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
+      )
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
       )
     })
 
@@ -586,7 +681,7 @@ describe("ClusterConfigProvider", () => {
       }
     )
 
-    it("persists the query-engine config — unset by default, caller values when set", async () => {
+    it("persists the query-engine config — the defaults, caller values when set", async () => {
       const config = await ClusterConfigProvider.resolve({
         ...baseOptions(),
         apiCount: 1,
@@ -598,6 +693,20 @@ describe("ClusterConfigProvider", () => {
       expect(config.queryEngine.readMode).toBe(NodeopReadMode.irreversible)
       expect(config.queryEngine.maxResultRows).toBe(500)
       expect(config.queryEngine.workerThreads).toBeNull()
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
+      )
+    })
+
+    it("rejects a caller query deadline when no API node is planned", async () => {
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          queryEngine: { timeoutMs: QueryEngineConfigProvider.DefaultTimeoutMs }
+        })
+      ).rejects.toThrow(
+        /query-engine settings \(timeoutMs\) require at least one API node/
+      )
     })
 
     it("rejects query-engine settings when no API node is planned", async () => {

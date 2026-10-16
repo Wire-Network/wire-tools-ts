@@ -28,6 +28,7 @@ import { type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs
 import { Localhost, toURL } from "@wireio/cluster-tool/utils"
 import {
   fixtureConfig,
+  fixtureProducerTopology,
   PersistedFixture
 } from "../../config/clusterConfigFixture.js"
 
@@ -439,6 +440,41 @@ describe("NodeopProcess", () => {
       // REGION-LESS, `{cluster}` = the AWS account (`dev`), not the cluster dir.
       expect(nodeop.args.some(arg => arg.includes("SSM:/wire/dev/"))).toBe(true)
       expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
+    })
+
+    it("an SSM cluster's node hosting ONE producer fetches both keys from the NODE's path", async () => {
+      const ssm = ssmCluster(),
+        [planned] = NodeConfig.plan(
+          fixtureProducerTopology(1, 1, {
+            clusterPath: ssm.clusterPath,
+            dataPath: ssm.dataPath,
+            executables: ssm.executables,
+            signatureProvider: ssm.signatureProvider,
+            awsClusterNodeConfig: ssm.awsClusterNodeConfig
+          })
+        ).filter(candidate => candidate.role === NodeRole.producer),
+        [producer] = planned.producers
+      const nodeop = await NodeopProcess.create(manager, {
+        node: planned,
+        operators: [
+          producerOperator(
+            producer,
+            NodeConfig.producerPublicationLabel(planned, producer)
+          )
+        ]
+      })
+      const specs = nodeop.args.filter(
+        (_arg, index) =>
+          nodeop.args[index - 1] === NodeopProcess.SignatureProviderFlag
+      )
+      expect(specs).toHaveLength(2)
+      expect(specs[0].endsWith(`SSM:/wire/dev/${planned.name}/K1`)).toBe(true)
+      expect(specs[1].endsWith(`SSM:/wire/dev/${planned.name}/BLS`)).toBe(true)
+      expect(specs.some(spec => spec.includes(`/${producer}/`))).toBe(false)
+      // The node still produces under the producer's on-chain name.
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining(["--producer-name", producer])
+      )
     })
 
     /** The bios node planned over `cluster`. */

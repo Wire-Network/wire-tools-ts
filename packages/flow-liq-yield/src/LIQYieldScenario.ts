@@ -18,6 +18,7 @@ import {
   SolanaFundingTool,
   SolanaLiqSyndicationTool,
   Steps,
+  SyndicationScenario,
   SyndicationUserSteps,
   WireClient,
   WireState,
@@ -53,11 +54,6 @@ async function readCurrentEpochIndex(
   return rows[0].current_epoch_index
 }
 
-/** The base units of an ABI asset string (`"2.000000000 LIQSOL"` → `2000000000n`). */
-function assetUnits(quantity: string): bigint {
-  return BigInt(Asset.from(quantity).units.toString())
-}
-
 /** The user's persisted Solana public key, as the 32 bytes `sysio.synd` parks against. */
 function readUserPubkeyBytes(ctx: ClusterBuildContext): Uint8Array {
   return SolanaFundingTool.loadKeypair(
@@ -86,14 +82,10 @@ async function readParkedShadow(ctx: ClusterBuildContext): Promise<bigint> {
 async function readHolding(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioLiqAccountType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.liq)
-    .tables.accounts.query({
-      scope: Constants.UserAccount,
-      limit: Constants.TableQueryLimit
-    })
-  return rows.find(
-    row => Asset.from(row.balance).symbol.name === Constants.LIQTokenCodename
+  return WireSyndicationTool.readLiqAccount(
+    ctx,
+    Constants.UserAccount,
+    Constants.LIQTokenCodename
   )
 }
 
@@ -128,7 +120,9 @@ async function readPendingYield(ctx: ClusterBuildContext): Promise<bigint> {
       ),
       limit: 1
     })
-  return rows.length === 0 ? 0n : assetUnits(rows[0].quantity)
+  return rows.length === 0
+    ? 0n
+    : WireSyndicationTool.assetUnits(rows[0].quantity)
 }
 
 /** The shadow's circulating supply (base units). */
@@ -146,7 +140,7 @@ async function readShadowSupply(ctx: ClusterBuildContext): Promise<bigint> {
     rows.length === 1,
     `sysio.liq::stat has no ${Constants.LIQTokenCodename} row — the shadow was never opened`
   )
-  return assetUnits(rows[0].supply)
+  return WireSyndicationTool.assetUnits(rows[0].supply)
 }
 
 /** The user's WIRE balance on `sysio.token` (base units; `0n` before any transfer reaches them). */
@@ -160,7 +154,7 @@ async function readWireBalance(ctx: ClusterBuildContext): Promise<bigint> {
   const row = rows.find(
     account => Asset.from(account.balance).symbol.name === WireSymbolCode
   )
-  return row == null ? 0n : assetUnits(row.balance)
+  return row == null ? 0n : WireSyndicationTool.assetUnits(row.balance)
 }
 
 /** The symbol code of the WIRE token the yield is paid in. */
@@ -176,7 +170,8 @@ function owedWire(
   index: bigint
 ): bigint {
   const accrued =
-    (assetUnits(holding.balance) * (index - BigInt(holding.index_checkpoint))) /
+    (WireSyndicationTool.assetUnits(holding.balance) *
+      (index - BigInt(holding.index_checkpoint))) /
     Constants.YieldIndexScale
   return BigInt(holding.owed_wire) + accrued
 }
@@ -296,7 +291,7 @@ export class LIQYieldScenario extends FlowScenario {
         "user-resource-policy",
         "allocate resources to the yield recipient",
         depotWriteStepOptions,
-        Constants.resourcePolicy(Constants.UserAccount)
+        SyndicationScenario.resourcePolicy(Constants.UserAccount)
       ),
       SolanaFundingTool.planKeypairAirdrop(
         Actor.User,
@@ -326,7 +321,7 @@ export class LIQYieldScenario extends FlowScenario {
         "bonder-resource-policy",
         "allocate resources to the bonder",
         depotWriteStepOptions,
-        Constants.resourcePolicy(Constants.BonderAccount)
+        SyndicationScenario.resourcePolicy(Constants.BonderAccount)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.Underwriter,
@@ -342,20 +337,14 @@ export class LIQYieldScenario extends FlowScenario {
         "the imported shadow is liquid bonding capacity",
         async ctx => {
           Steps.registry.readMockSyndicationBonder(ctx)
-          const { rows } = await ctx.wire
-              .getSysioContract(SysioContractName.liq)
-              .tables.accounts.query({
-                scope: Constants.BonderAccount,
-                limit: Constants.TableQueryLimit
-              }),
-            holding = rows.find(
-              row =>
-                Asset.from(row.balance).symbol.name ===
-                Constants.LIQTokenCodename
-            )
+          const holding = await WireSyndicationTool.readLiqAccount(
+            ctx,
+            Constants.BonderAccount,
+            Constants.LIQTokenCodename
+          )
           Assert.ok(holding != null, "bonder import was not delivered")
           Assert.strictEqual(
-            assetUnits(holding.balance),
+            WireSyndicationTool.assetUnits(holding.balance),
             BigInt(Steps.registry.MockSyndicationImportAmount)
           )
         }
@@ -544,7 +533,7 @@ export class LIQYieldScenario extends FlowScenario {
             "createlink's sweep opened no shadow row for the user"
           )
           Assert.strictEqual(
-            assetUnits(holding.balance),
+            WireSyndicationTool.assetUnits(holding.balance),
             Constants.SyndicateAmount
           )
           Assert.strictEqual(await readParkedShadow(ctx), 0n)
@@ -798,8 +787,10 @@ export class LIQYieldScenario extends FlowScenario {
           ctx.outputs.set(
             LIQYieldScenario.RedemptionAmountKey,
             Constants.SyndicateAmount -
-              (Constants.SyndicateAmount * BigInt(config.desynd_fee_bps)) /
-                Constants.FeeDenominator
+              SyndicationScenario.feeOf(
+                Constants.SyndicateAmount,
+                config.desynd_fee_bps
+              )
           )
           ctx.outputs.set(
             LIQYieldScenario.LiqsolBalanceBeforeKey,
@@ -829,7 +820,10 @@ export class LIQYieldScenario extends FlowScenario {
         "the user's shadow row is empty and the supply fell by the burned amount",
         async ctx => {
           const holding = await readHolding(ctx)
-          Assert.strictEqual(assetUnits(holding.balance), 0n)
+          Assert.strictEqual(
+            WireSyndicationTool.assetUnits(holding.balance),
+            0n
+          )
         }
       ),
       verifyStep(
@@ -937,7 +931,8 @@ async function readReservoirQueued(ctx: ClusterBuildContext): Promise<bigint> {
         Constants.LIQTokenCodename
     )
     .reduce(
-      (sum, reservoir) => sum + assetUnits(reservoir.balance.quantity),
+      (sum, reservoir) =>
+        sum + WireSyndicationTool.assetUnits(reservoir.balance.quantity),
       0n
     )
 }

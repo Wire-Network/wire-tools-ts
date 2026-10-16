@@ -77,8 +77,7 @@ export namespace EmissionsSoakScenarioConstants {
     ControlledStakerSourceUnits / WireAtomicDivisor
   /**
    * WIRE atomic pre-funded from `sysio` to `sysio.dclaim` to cover every
-   * controlled-staker claim (the importseed path never calls `fundclaim`; only
-   * the onreward path does — a real launch pre-funds dclaim the same way).
+   * controlled-staker claim; a real launch pre-funds DClaim the same way.
    */
   export const ClaimPreFundAtomic =
     PerStakerClaimAtomic * BigInt(ControlledStakerCount)

@@ -1,23 +1,22 @@
 /**
- * OperatorDaemonTool — everything an OPERATOR nodeop daemon (batch operator /
- * underwriter) needs beyond the base node args: the OPP plugin set, the WIRE +
- * outpost `--signature-provider` specs (from the operator's {@link OperatorAccount}
- * in `ctx.keyStore`), the outpost client specs, and the deploy artifacts (ETH ABI
+ * OperatorDaemonTool — everything a batch-operator nodeop daemon needs beyond the base
+ * node args: the OPP plugin set, the WIRE + outpost `--signature-provider` specs (from
+ * the operator's {@link OperatorAccount} in `ctx.keyStore`), the outpost client specs,
+ * the optional underwriter role of the same plugin, and the deploy artifacts (ETH ABI
  * files with embedded addresses, the SOL program id + IDL).
  *
  * {@link planArtifactPreparation} is a Step (run once, after both outpost deploys) that
  * writes the cluster-local artifact files and stores the typed
- * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} /
- * {@link underwriterArgs} are PURE value builders the operator-node start runner
- * composes into `NodeopProcess` extra args.
+ * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} is the PURE value builder
+ * the operator-node start runner composes into `NodeopProcess` extra args.
  */
 
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { type ClusterConfig, NodeopReadMode } from "@wireio/cluster-tool-shared"
-import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType } from "@wireio/sdk-core"
+import { OperatorType, type TokenAmount } from "@wireio/opp-typescript-models"
+import { Asset, KeyType, SlugName } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
@@ -61,6 +60,54 @@ export namespace OperatorDaemonTool {
     "sysio::cron_plugin"
   ] as const
 
+  // ── underwriter role on the batch-operator daemon ─────────────────────────
+
+  /**
+   * The shadow asset a configured exposure cap renders as: its base units at the liq-token
+   * precision, in its token's symbol (`10.000000000 LIQSOL`).
+   *
+   * @param cap - A `batchOperatorUnderwriting.maxExposure` entry.
+   * @return The asset.
+   */
+  export function exposureAsset(cap: TokenAmount): Asset {
+    return Asset.fromUnits(
+      cap.amount.toString(),
+      Constants.liqSymbol(SlugName.toString(Number(cap.tokenCode)))
+    )
+  }
+
+  /** What a batch operator underwrites with, beyond its own account and key. */
+  export interface BatchUnderwriting {
+    /**
+     * The `--batch-underwriter-max-exposure` caps, one asset per shadow token underwritten.
+     * Empty means the node does not run the underwriter role: with no cap the plugin would
+     * underwrite nothing.
+     */
+    readonly maxExposure: readonly Asset[]
+  }
+
+  /** A relay-only batch operator: no underwriter role. */
+  export const NoBatchUnderwriting: BatchUnderwriting = { maxExposure: [] }
+
+  /**
+   * The underwriting a cluster's batch operators run: its configured caps when
+   * `batchOperatorUnderwriting` is set, else {@link NoBatchUnderwriting}. Funded or not,
+   * every operator runs the role; an unfunded one holds nothing to bond.
+   *
+   * @param config - The resolved cluster config.
+   * @return The underwriting.
+   */
+  export function underwritingFromConfig(
+    config: ClusterConfig
+  ): BatchUnderwriting {
+    return config.batchOperatorUnderwriting == null
+      ? NoBatchUnderwriting
+      : {
+          maxExposure:
+            config.batchOperatorUnderwriting.maxExposure.map(exposureAsset)
+        }
+  }
+
   /** `plugins` with the external-debugging sink removed when the server is off. */
   const debuggingGatedPlugins = (
     plugins: readonly string[],
@@ -72,8 +119,21 @@ export namespace OperatorDaemonTool {
 
   // ── daemon tuning + protocol constants ────────────────────────────────────
 
-  /** batch_operator_plugin epoch poll interval (ms). */
+  /**
+   * batch_operator_plugin epoch poll interval (ms): one plugin pass. With the underwriter role
+   * on, it is the role's spacing while a request is in play, so paying a bond back takes two
+   * passes after its challenge window opens, one to approve and one to claim.
+   */
   export const BatchEpochPollMs = 15_000
+  /**
+   * The underwriter role's crank spacing while no envelope request is in play — the
+   * plugin's own `UNDERWRITER_IDLE_CRANK_INTERVAL = fc::minutes(5)`
+   * (wire-sysio `plugins/batch_operator_plugin/src/batch_operator_plugin.cpp`), not a flag
+   * this tool renders. Kept beside {@link BatchEpochPollMs} because both bound how soon the
+   * daemon acts; only `sysio.synd::crank` issues a request, so a syndication that arrives
+   * while nothing is in play can wait this long for one.
+   */
+  export const UnderwriterIdleCrankIntervalMs = 300_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 30_000
   /** The `sysio.chains` codename identifying the ETH outpost. */
@@ -359,13 +419,20 @@ export namespace OperatorDaemonTool {
    * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
    * the operator's own WIRE signature provider (its unique `wire` K1 — the
    * `account`'s active key) + batch plugin config + both outpost client
-   * specs.
+   * specs. With `underwriting`, the same node also runs the plugin's underwriter
+   * role as the SAME account (`--batch-underwriter-account`, permission `active`):
+   * the one WIRE provider above satisfies both roles, which the plugin resolves
+   * separately.
+   *
+   * @param underwriting - The underwriter role's caps; {@link NoBatchUnderwriting} for a
+   *   relay-only node.
    */
   export function batchOperatorArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
     network: OperatorDaemonNetwork,
-    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor,
+    underwriting: BatchUnderwriting
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.BATCH,
@@ -389,6 +456,7 @@ export namespace OperatorDaemonTool {
         )
       ),
       ...pair("--batch-operator-account", operator.account),
+      ...underwriterArgs(operator, underwriting),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
         "--batch-delivery-timeout-ms",
@@ -407,6 +475,23 @@ export namespace OperatorDaemonTool {
       ...pair(
         "--solana-outpost-program-name",
         SolanaOutpostProgramTool.ProgramName
+      )
+    ]
+  }
+
+  /**
+   * The underwriter role's flags: the operator's own account and one cap per token; none for a
+   * relay-only node.
+   */
+  function underwriterArgs(
+    operator: OperatorAccount,
+    underwriting: BatchUnderwriting
+  ): string[] {
+    if (underwriting.maxExposure.length === 0) return []
+    return [
+      ...pair("--batch-underwriter-account", operator.account),
+      ...underwriting.maxExposure.flatMap(cap =>
+        pair("--batch-underwriter-max-exposure", cap.toString())
       )
     ]
   }
@@ -465,7 +550,13 @@ export namespace OperatorDaemonTool {
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
       daemonArgs = match(operator.type)
         .with(OperatorType.BATCH, () =>
-          batchOperatorArgs(operator, artifacts, network, keySourceFor)
+          batchOperatorArgs(
+            operator,
+            artifacts,
+            network,
+            keySourceFor,
+            underwritingFromConfig(ctx.config)
+          )
         )
         .otherwise(() => {
           throw new Error(

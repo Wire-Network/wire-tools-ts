@@ -27,13 +27,6 @@ export namespace DebuggingDefaults {
   export const Scheme = "http"
 
   /**
-   * JSON-RPC 2.0 protocol version string. Clients and servers reject
-   * requests whose `jsonrpc` field does not match exactly. Bumping this
-   * breaks backwards compatibility with older peers.
-   */
-  export const JsonrpcVersion = "2.0"
-
-  /**
    * Express JSON body parser limit. Envelopes containing large protobuf
    * blobs brush against this — raise it if legitimate payloads start
    * getting rejected with 413.
