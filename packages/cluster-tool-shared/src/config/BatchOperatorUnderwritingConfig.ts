@@ -10,7 +10,7 @@ import { TokenAmountCodec } from "../types/ChainTokenAmount.js"
 export const BatchOperatorUnderwritingConfigSchema = z.object({
   /**
    * How many bootstrap batch operators, in label order from `batchop.a`, the epoch-zero mock
-   * import funds. The rest run the role holding nothing, so they never bond. Changing it
+   * import funds with both LIQSOL and LIQETH. The rest run the role holding nothing, so they never bond. Changing it
    * changes which operators can underwrite.
    */
   fundedOperatorCount: z.number().int().nonnegative(),
@@ -30,7 +30,7 @@ export type BatchOperatorUnderwritingConfig = z.infer<
 /**
  * Caller options: every member optional; `ClusterConfigProvider.resolveBatchOperatorUnderwriting`
  * defaults `fundedOperatorCount` to every bootstrap batch operator and `maxExposure` to
- * `10.000000000 LIQSOL`.
+ * `10.000000000 LIQSOL` and `10.000000000 LIQETH`.
  */
 export type BatchOperatorUnderwritingOptions =
   Partial<BatchOperatorUnderwritingConfig>

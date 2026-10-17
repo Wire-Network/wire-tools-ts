@@ -191,7 +191,7 @@ export namespace RegistrySteps {
    *
    * @param batchOperatorLabels - Batch operators that underwrite
    *   and are funded (`batchOperatorUnderwriting.fundedOperatorCount`): each also gets a
-   *   {@link MockBatchOperatorUnderwritingPair} credit to its own ED key, imported
+   *   credit for each shadow to its own matching ED/EM key, imported
    *   before the seal. Their identities must already be in `ctx.keyStore`, so a caller passing
    *   any plans this phase after operator provisioning. Empty by default.
    */
@@ -220,13 +220,16 @@ export namespace RegistrySteps {
           input
         )
       ),
-      ...batchOperatorLabels.map(label =>
-        planBatchOperatorSyndicationCredit<C>(
-          Report.Actor.Sysio,
-          `import-underwriting-${label}`,
-          `import ${label}'s underwriting LIQSOL to its own ED key during epoch zero`,
-          options,
-          label
+      ...batchOperatorLabels.flatMap(label =>
+        MockSyndicationImportCredits.map(credit =>
+          planBatchOperatorSyndicationCredit<C>(
+            Report.Actor.Sysio,
+            `import-underwriting-${label}-${credit.token_code.toLowerCase()}`,
+            `import ${label}'s underwriting ${credit.token_code} to its own linked key during epoch zero`,
+            options,
+            label,
+            credit.keyType
+          )
         )
       ),
       SyndContractSteps.planImportdone<C>(
@@ -251,16 +254,19 @@ export namespace RegistrySteps {
     readonly kind: "RegistrySteps.BatchOperatorCreditInput"
     /** The batch operator's durable handle in `ctx.keyStore`. */
     readonly label: string
+    /** Curve selecting the shadow and the operator's linked outpost key. */
+    readonly keyType: MockSyndicationImportInput["keyType"]
   }
 
   /**
-   * One import of a batch operator's underwriting credit; its ED key is read at execution time.
+   * One import of a batch operator's underwriting credit; its linked key is read at execution time.
    *
    * @param actor - Report actor.
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step options.
    * @param label - The batch operator's durable handle in `ctx.keyStore`.
+   * @param keyType - The linked outpost key selecting the shadow credit.
    * @return The Step.
    */
   export function planBatchOperatorSyndicationCredit<
@@ -270,21 +276,22 @@ export namespace RegistrySteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    label: string
+    label: string,
+    keyType: MockSyndicationImportInput["keyType"] = KeyType.ED
   ): ClusterBuildStep<C, BatchOperatorCreditInput> {
     return ClusterBuildStep.create<C, BatchOperatorCreditInput>(
       actor,
       name,
       description,
       options,
-      { kind: "RegistrySteps.BatchOperatorCreditInput", label },
+      { kind: "RegistrySteps.BatchOperatorCreditInput", label, keyType },
       runBatchOperatorSyndicationCredit
     )
   }
 
   /**
-   * Named runner — ONE `importsynd` of {@link MockBatchOperatorUnderwritingPair} credit to
-   * the operator's own ED key. The key is the one its SVM `createlink` linked, so the credit
+   * Named runner — ONE `importsynd` credit to the operator's own ED or EM key.
+   * The key is the one its matching `createlink` linked, so the credit
    * lands liquid in the operator's account (or parks for that link to sweep).
    */
   export async function runBatchOperatorSyndicationCredit<
@@ -295,22 +302,24 @@ export namespace RegistrySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.label)
+    const operator = ctx.keyStore.assertOperator(input.label),
+      credit = assertImportCredit(input.keyType),
+      key = input.keyType === KeyType.ED ? operator.solana : operator.ethereum
     Assert.ok(
-      operator.solana != null,
-      `mock syndication import: batch operator ${input.label} has no ED key`
+      key != null,
+      `mock syndication import: batch operator ${input.label} has no ${KeyType[input.keyType]} key`
     )
     await SyndContractSteps.runImportsynd(
       ctx,
       {
         kind: "SyndContractSteps.ImportsyndInput",
         data: {
-          chain_code: MockBatchOperatorUnderwritingPair.chain_code,
-          token_code: MockBatchOperatorUnderwritingPair.token_code,
+          chain_code: credit.chain_code,
+          token_code: credit.token_code,
           credits: [
             {
-              pubkey: PublicKey.from(operator.solana.publicKey).data.hexString,
-              amount: MockBatchOperatorUnderwritingPair.amount
+              pubkey: PublicKey.from(key.publicKey).data.hexString,
+              amount: credit.amount
             }
           ]
         }
@@ -497,7 +506,9 @@ export namespace RegistrySteps {
       )
     })
     await eachSeries(input.batchOperatorLabels, label =>
-      assertBatchOperatorCredit(ctx, label)
+      eachSeries(MockSyndicationImportCredits, credit =>
+        assertBatchOperatorCredit(ctx, label, credit)
+      )
     )
     Assert.deepStrictEqual(
       await WireSyndicationTool.readMismatches(ctx),
@@ -508,19 +519,24 @@ export namespace RegistrySteps {
 
   /**
    * Assert a batch operator holds exactly its underwriting credit: liquid in its account
-   * when its SVM link existed at import, else parked against its ED key for that link.
+   * when its link existed at import, else parked against its ED or EM key for that link.
    */
   async function assertBatchOperatorCredit<C extends ClusterBuildContext>(
     ctx: C,
-    label: string
+    label: string,
+    credit: MockSyndicationImportInput
   ): Promise<void> {
     const operator = ctx.keyStore.assertOperator(label),
-      { token_code } = MockBatchOperatorUnderwritingPair,
+      { token_code } = credit,
+      solana = credit.keyType === KeyType.ED,
+      key = solana ? operator.solana : operator.ethereum,
       parked = await WireSyndicationTool.readParked(
         ctx,
         token_code,
-        SysioContracts.SysioSyndChainkind.CHAIN_KIND_SVM,
-        PublicKey.from(operator.solana.publicKey).data.hexString
+        solana
+          ? SysioContracts.SysioSyndChainkind.CHAIN_KIND_SVM
+          : SysioContracts.SysioSyndChainkind.CHAIN_KIND_EVM,
+        PublicKey.from(key.publicKey).data.hexString
       ),
       parkedBalance = parked ? BigInt(parked.balance) : 0n,
       liquid = await WireSyndicationTool.readLiqBalance(
@@ -530,8 +546,8 @@ export namespace RegistrySteps {
       )
     Assert.strictEqual(
       parkedBalance + liquid,
-      BigInt(MockBatchOperatorUnderwritingPair.amount),
-      `mock syndication import: ${label} holds ${liquid} liquid + ${parkedBalance} parked ${token_code}, expected ${MockBatchOperatorUnderwritingPair.amount}`
+      BigInt(credit.amount),
+      `mock syndication import: ${label} holds ${liquid} liquid + ${parkedBalance} parked ${token_code}, expected ${credit.amount}`
     )
     Assert.ok(
       parkedBalance === 0n || liquid === 0n,
