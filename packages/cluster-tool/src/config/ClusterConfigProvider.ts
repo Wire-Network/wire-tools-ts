@@ -181,10 +181,19 @@ export namespace ClusterConfigProvider {
       amount: DefaultBatchUnderwriterMaxExposureUnits
     })
 
+  /** Default outstanding coverage caps for both supported syndication shadows, at depot precision. */
+  export const DefaultBatchUnderwriterMaxExposures: readonly TokenAmount[] = [
+    DefaultBatchUnderwriterMaxExposure,
+    TokenAmount.create({
+      tokenCode: BigInt(SlugName.from("LIQETH")),
+      amount: DefaultBatchUnderwriterMaxExposureUnits
+    })
+  ]
+
   /**
    * Resolve the underwriter role's configuration: `null` when
    * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
-   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposure} as the one cap.
+   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps.
    *
    * @param options - The caller's options.
    * @param batchOperatorCount - The resolved batch-operator roster size.
@@ -213,7 +222,7 @@ export namespace ClusterConfigProvider {
       `ClusterConfigProvider: batchOperatorUnderwriting.fundedOperatorCount ${fundedOperatorCount} must be 0..${batchOperatorCount}`
     )
     const maxExposure = options.batchOperatorUnderwriting?.maxExposure ?? [
-      DefaultBatchUnderwriterMaxExposure
+      ...DefaultBatchUnderwriterMaxExposures
     ]
     Assert.ok(
       maxExposure.length > 0,
