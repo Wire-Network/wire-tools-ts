@@ -1,6 +1,7 @@
 import Os from "node:os"
 import Fs from "node:fs"
 import Path from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { Level } from "@wireio/shared"
 import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 
@@ -22,7 +23,7 @@ describe("LoggingManager.configure", () => {
     expect(Fs.existsSync(expected)).toBe(true)
   })
 
-  it("writes records to <clusterPath>/<LogSubpath>/<LogFilename>", () => {
+  it("writes records to <clusterPath>/<LogSubpath>/<LogFilename>", async () => {
     const log = LoggingManager.getGlobalLogger()
     log.fatal("probe-message")
     const file = Path.join(
@@ -31,12 +32,15 @@ describe("LoggingManager.configure", () => {
       LoggingManager.LogFilename
     )
     expect(Fs.existsSync(file)).toBe(true)
-    // FileAppender flushes async via queueMicrotask; retry briefly.
-    const deadline = Date.now() + 500
+    // Yield so the appender's microtask and file I/O can finish before checking.
+    const flushBudgetMs = 500,
+      flushPollIntervalMs = 10,
+      deadline = Date.now() + flushBudgetMs
     let contents = ""
     while (Date.now() < deadline) {
-      contents = Fs.readFileSync(file, "utf8")
+      contents = await Fs.promises.readFile(file, "utf8")
       if (contents.includes("probe-message")) break
+      await sleep(flushPollIntervalMs)
     }
     expect(contents).toContain("probe-message")
   })
