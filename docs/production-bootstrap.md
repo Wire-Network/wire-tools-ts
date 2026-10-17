@@ -476,17 +476,25 @@ drops every `SYNDICATE_LIQ` of the pair).
       `sysio.synd::importdone`, and a verify that both are parked with no custody mismatch.
     - `--enable-batch-operator-underwriting` with `--enable-mock-syndication-import`: one more
       `sysio.synd::importsynd` per FUNDED bootstrap batch operator (the first
-      `batchOperatorUnderwriting.fundedOperatorCount` in label order, default all) — `100000000000` LIQSOL to
-      the operator's own ED key, which lands liquid in its linked account — before `importdone`. Because those
+      `batchOperatorUnderwriting.fundedOperatorCount` in label order, default all) per shadow — `100000000000`
+      each of LIQSOL to the operator's ED key and LIQETH to its EM key, liquid in its linked account — before `importdone`. Because those
       keys exist only after operator provisioning, the import, its verify and the custody backing then run after
       Stage 12's provisioning instead, still inside the epoch-0 window. The option also gives each operator a node-owner
       `sysio.roa::addpolicy` RAM grant for its `sysio.bond` rows and runs the `batch_operator_plugin`
-      underwriter role on its node; it is a dev/test setup like the other mock flags.
+      underwriter role on its node. Only the mock import is a dev/test setup;
+      the underwriting role also works with real liquid shadow balances.
     - With either flag, outpost custody is then funded (Solana pool ATA, Ethereum `SyndicationPool`) to back
       all outstanding mock shadow.
 
 ## Stage 12 — Operator provisioning + first epoch
 The genesis-replacing real producer schedule is already live. NOTHING here uses `forcereg`.
+
+Automatic syndication underwriting is a separate opt-in from OPP delivery.
+Enable `--enable-batch-operator-underwriting` when creating the depot, select the
+per-token caps (the defaults cover LIQSOL and LIQETH), and supply liquid shadow LIQ to the
+operators. The RAM grant and runtime role do not depend on mock imports. See
+[underwriting operations](syndication-underwriting-operations.md) for configuration,
+capital requirements, deployed-node recovery, and verification.
 
 39. `sysio.chains::setoutpost({code, outpost})` — `[sysio.chains@active]` — writes each outpost chain's remote
     addresses once the daemon artifacts are published: `ETHEREUM` gets `opp_addr` = `OPP` and
