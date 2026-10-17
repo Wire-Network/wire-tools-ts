@@ -428,6 +428,11 @@ wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 
 ### Underwriting, syndication and the emergency stop
 
+Automatic underwriting requires `--enable-batch-operator-underwriting`, matching
+per-token exposure caps, and liquid shadow LIQ in the operator accounts. The role
+defaults to off even when OPP delivery works. See the
+[setup and existing-testnet recovery procedure](docs/syndication-underwriting-operations.md).
+
 Every `create` sets these up on the depot; no flag gates them, because a real
 depot needs them too:
 
@@ -481,7 +486,7 @@ command comes first).
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
+| `--enable-batch-operator-underwriting` | | `false` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -560,7 +565,9 @@ config; the Solana program id is parsed from the IDL):
 ```
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
-values are rejected; syndication bond providers do not need a daemon.
+values are rejected. Manual syndication bond providers can submit actions directly;
+automatic underwriting runs in the batch operators only when explicitly enabled
+and funded, as described in the [underwriting setup](docs/syndication-underwriting-operations.md).
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)

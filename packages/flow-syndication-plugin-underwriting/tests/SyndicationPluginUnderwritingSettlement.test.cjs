@@ -8,6 +8,7 @@ const {
   Constants: HarnessConstants,
   OutputStore,
   SolanaLiqSyndicationTool,
+  EthereumSyndicationTool,
   SyndicationScenario,
   WireCollateralTool,
   WireSyndicationTool
@@ -67,7 +68,7 @@ function planned() {
         batchOperatorUnderwriting: {
           fundedOperatorCount: operatorCount,
           maxExposure: [
-            ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure
+            ...ClusterConfigProvider.DefaultBatchUnderwriterMaxExposures
           ]
         }
       }
@@ -105,6 +106,12 @@ test("after setup the flow pushes no underwriter action and provisions no bonder
       "SolanaLiqSyndicationTool.SyndInput",
       "SolanaLiqSyndicationTool.SyndInput",
       "SyndicationUserSteps.LinkSolanaKeyInput",
+      "AccountSteps.CreateKeyedInput",
+      "SyndicationUserSteps.ResourcePolicyInput",
+      "SyndicationUserSteps.LinkEthereumKeyInput",
+      "EthereumSyndicationTool.DepositLiqEthInput",
+      "EthereumSyndicationTool.ApproveLiqEthInput",
+      "EthereumSyndicationTool.SyndicateInput",
       "SyndicationScenario.RestoreConfigInput"
     ]
   )
@@ -116,7 +123,7 @@ test("the cluster runs the underwriter role on its batch operators", () => {
   Assert.equal(scenario.defaults.enableBatchOperatorUnderwriting, true)
   Assert.equal(scenario.defaults.enableMockSyndicationImport, true)
   Assert.equal(scenario.defaults.underwriterCount, 0)
-  // No tuning: every operator is funded at the default 10 LIQSOL cap.
+  // No tuning: every operator is funded with a 10-token cap for each shadow.
   Assert.equal(scenario.defaults.batchOperatorUnderwriting, undefined)
   Assert.deepEqual(
     ClusterConfigProvider.resolveBatchOperatorUnderwriting(
@@ -125,8 +132,23 @@ test("the cluster runs the underwriter role on its batch operators", () => {
     ),
     {
       fundedOperatorCount: 3,
-      maxExposure: [ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure]
+      maxExposure: [
+        ...ClusterConfigProvider.DefaultBatchUnderwriterMaxExposures
+      ]
     }
+  )
+})
+
+test("Ethereum acquisition has share-price headroom while syndication stays exact", () => {
+  const { all } = planned(),
+    deposit = all.find(step => step.name === "ethereum-deposit").input,
+    syndicate = all.find(step => step.name === "ethereum-syndicate").input
+  Assert.equal(deposit.amountWei, Constants.EthereumDepositAmount)
+  Assert.ok(deposit.amountWei > syndicate.amount)
+  Assert.equal(syndicate.amount, Constants.EthereumNativeAmount)
+  Assert.equal(
+    Constants.EthereumNativeAmount,
+    Constants.EthereumPlan.amount * 1_000_000_000n
   )
 })
 
@@ -648,3 +670,74 @@ test("first-release reading retries until the second envelope holds still", asyn
   Assert.equal(BigInt(observation.second.released), Constants.Plan.laterAmount)
   Assert.ok(secondReads >= 4, "the moved reading must have been discarded")
 })
+
+test("Ethereum setup verifies funded capital and refuses a one-unit custody shortfall", async () => {
+  const { ctx, all } = planned(),
+    amount = 100_000_000_000n,
+    outstanding = 410_000_000_000n
+  mock.method(WireSyndicationTool, "readLiqBalance", async (_ctx, account) =>
+    account === Constants.EthereumUser ? 0n : amount
+  )
+  mock.method(WireSyndicationTool, "readOutstanding", async () => outstanding)
+  mock.method(WireSyndicationTool, "readSyndicationConfig", async () => ({
+    synd_fee_bps: 0
+  }))
+  const custody = mock.method(
+    EthereumSyndicationTool,
+    "readPoolBalanceDepot",
+    async () => outstanding
+  )
+  mock.method(
+    EthereumSyndicationTool,
+    "readSyndicatedPrincipal",
+    async () => outstanding
+  )
+  await runner(ctx, all, "ethereum-underwriting-funded")()
+  Assert.deepEqual(ctx.outputs.assert(Constants.EthereumBefore), {
+    holder: 0n,
+    operators: amount * BigInt(operatorCount)
+  })
+  custody.mock.mockImplementation(async () => outstanding - 1n)
+  await Assert.rejects(runner(ctx, all, "ethereum-underwriting-funded"))
+})
+
+for (const short of [0n, 1n]) {
+  test(`Ethereum settlement verifies actual wallet principal (${short} units short)`, async () => {
+    const { ctx, all } = planned(),
+      plan = Constants.EthereumPlan,
+      capital = 100_000_000_000n,
+      outstanding = 410_000_000_000n + plan.amount
+    ctx.outputs.set(Constants.EthereumBefore, {
+      holder: 0n,
+      operators: capital * BigInt(operatorCount)
+    })
+    ctx.outputs.set(plan.firstEpoch, 2)
+    mock.method(WireSyndicationTool, "readLiqBalance", async (_ctx, account) =>
+      account === Constants.EthereumUser ? plan.amount - short : capital
+    )
+    mock.method(WireSyndicationTool, "readEnvelope", async () => ({
+      synd_total: plan.amount.toString(),
+      yield_total: "0",
+      released: plan.amount.toString()
+    }))
+    mock.method(WireSyndicationTool, "readOutstanding", async () => outstanding)
+    mock.method(WireSyndicationTool, "readMismatches", async () => [])
+    mock.method(WireSyndicationTool, "readCord", async () => undefined)
+    mock.method(
+      EthereumSyndicationTool,
+      "readPoolBalanceDepot",
+      async () => outstanding
+    )
+    mock.method(
+      EthereumSyndicationTool,
+      "readSyndicatedPrincipal",
+      async () => outstanding
+    )
+    if (short === 0n) await runner(ctx, all, "ethereum-settled")()
+    else
+      await Assert.rejects(
+        runner(ctx, all, "ethereum-settled"),
+        /entire LIQETH principal/
+      )
+  })
+}

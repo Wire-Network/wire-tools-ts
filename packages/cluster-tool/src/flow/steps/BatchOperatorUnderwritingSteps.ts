@@ -2,7 +2,7 @@ import Assert from "node:assert"
 
 import type { BatchOperatorUnderwritingConfig } from "@wireio/cluster-tool-shared"
 import { AttestationType } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../../Constants.js"
 import {
   ClusterBuildStep,
@@ -289,16 +289,20 @@ export namespace BatchOperatorUnderwritingSteps {
   }
 
   /**
-   * The operators' LIQSOL exposure cap, in base units, as their daemon args render it.
+   * The operators' exposure cap for one shadow, in base units, as their daemon args render it.
    *
    * @param ctx - The build context of an underwriting cluster.
+   * @param token - The shadow codename; LIQSOL by default.
    * @return The cap.
    */
-  export function maxExposure(ctx: ClusterBuildContext): bigint {
+  export function maxExposure(
+    ctx: ClusterBuildContext,
+    token: string = SyndicationScenario.Token
+  ): bigint {
     const cap = assertUnderwriting(ctx).maxExposure.find(
-      amount => amount.tokenCode === SyndicationScenario.TokenCode
+      amount => amount.tokenCode === BigInt(SlugName.from(token))
     )
-    Assert.ok(cap, `no ${SyndicationScenario.Token} exposure cap is configured`)
+    Assert.ok(cap, `no ${token} exposure cap is configured`)
     return cap.amount
   }
 
@@ -385,6 +389,8 @@ export namespace BatchOperatorUnderwritingSteps {
    * @param after - The epoch the envelope must follow, or `null` for the first.
    * @param epoch - Where the envelope's epoch is recorded.
    * @param request - Where its request id is recorded.
+   * @param chain - The outpost codename; SOLANA by default.
+   * @param token - The shadow codename; LIQSOL by default.
    * @return The verify Step.
    */
   export function planVerifyRecorded(
@@ -395,7 +401,9 @@ export namespace BatchOperatorUnderwritingSteps {
     amount: bigint,
     after: OutputKey<number> | null,
     epoch: OutputKey<number>,
-    request: WireSyndicationTool.RequestKey
+    request: WireSyndicationTool.RequestKey,
+    chain: string = SyndicationScenario.Chain,
+    token: string = SyndicationScenario.Token
   ): ClusterBuildStep {
     return verifyStep(
       actor,
@@ -407,11 +415,7 @@ export namespace BatchOperatorUnderwritingSteps {
             `${name}: the envelope has an issued request`,
             async () =>
               findRecordedEnvelope(
-                await WireSyndicationTool.readEnvelopes(
-                  ctx,
-                  SyndicationScenario.Chain,
-                  SyndicationScenario.Token
-                ),
+                await WireSyndicationTool.readEnvelopes(ctx, chain, token),
                 amount,
                 floor
               ),
@@ -692,6 +696,7 @@ export namespace BatchOperatorUnderwritingSteps {
    * @param options - Step options.
    * @param plan - The flow's plan.
    * @param request - The request to wait on.
+   * @param token - The shadow whose configured exposure cap is enforced.
    * @return The verify Step.
    */
   export function planVerifyBonded(
@@ -700,7 +705,8 @@ export namespace BatchOperatorUnderwritingSteps {
     description: string,
     options: ClusterBuildStepOptions,
     plan: Plan,
-    request: WireSyndicationTool.RequestKey
+    request: WireSyndicationTool.RequestKey,
+    token: string = SyndicationScenario.Token
   ): ClusterBuildStep {
     return verifyStep(
       actor,
@@ -726,15 +732,15 @@ export namespace BatchOperatorUnderwritingSteps {
             `request ${requestId} is bonded by ${bond.underwriter}, not a funded batch operator`
           )
           Assert.ok(
-            BigInt(bond.amount) <= maxExposure(ctx),
-            `${bond.underwriter} bonded ${bond.amount}, above its ${maxExposure(ctx)} cap`
+            BigInt(bond.amount) <= maxExposure(ctx, token),
+            `${bond.underwriter} bonded ${bond.amount}, above its ${maxExposure(ctx, token)} cap`
           )
         })
         Assert.strictEqual(
           bonds.reduce((sum, bond) => sum + BigInt(bond.amount), 0n),
           BigInt(row.covered)
         )
-        await assertExposureWithinCap(ctx, plan)
+        await assertExposureWithinCap(ctx, plan, token)
       },
       options
     )
@@ -761,10 +767,13 @@ export namespace BatchOperatorUnderwritingSteps {
    * no more than the exposure cap the plugin enforces per underwriter and token.
    *
    * @param ctx - The build context.
+   * @param plan - The flow's recorded requests for this token.
+   * @param token - The shadow whose configured exposure cap is enforced.
    */
   export async function assertExposureWithinCap(
     ctx: ClusterBuildContext,
-    plan: Plan
+    plan: Plan,
+    token: string = SyndicationScenario.Token
   ): Promise<void> {
     const unpaid = (
         await mapSeries(recordedRequests(ctx, plan), requestId =>
@@ -783,8 +792,8 @@ export namespace BatchOperatorUnderwritingSteps {
       )
     outstanding.forEach((amount, underwriter) =>
       Assert.ok(
-        amount <= maxExposure(ctx),
-        `${underwriter} has ${amount} bonded and unclaimed, above its ${maxExposure(ctx)} cap`
+        amount <= maxExposure(ctx, token),
+        `${underwriter} has ${amount} bonded and unclaimed, above its ${maxExposure(ctx, token)} cap`
       )
     )
   }

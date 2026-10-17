@@ -74,18 +74,27 @@ describe("ClusterConfigProvider", () => {
       ).toBeNull()
     })
 
-    it("defaults to every operator funded with the 10 LIQSOL cap", () => {
+    it("defaults to every operator funded with 10-token caps for both shadows", () => {
       const resolved = ClusterConfigProvider.resolveBatchOperatorUnderwriting(
         { enableBatchOperatorUnderwriting: true },
         3
       )
       expect(resolved).toEqual({
         fundedOperatorCount: 3,
-        maxExposure: [ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure]
+        maxExposure: ClusterConfigProvider.DefaultBatchUnderwriterMaxExposures
       })
       expect(
         ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure.amount
       ).toBe(10_000_000_000n)
+      expect(
+        resolved.maxExposure.map(cap => [
+          SlugName.toString(Number(cap.tokenCode)),
+          cap.amount
+        ])
+      ).toEqual([
+        ["LIQSOL", 10_000_000_000n],
+        ["LIQETH", 10_000_000_000n]
+      ])
     })
 
     it("carries a funded-operator count and caps", () => {

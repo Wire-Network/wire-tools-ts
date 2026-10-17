@@ -79,6 +79,25 @@ describe("BatchOperatorUnderwritingSteps operators and cap", () => {
     ).toBe(SyndicationScenario.TokenCode)
   })
 
+  it("selects the token's own cap and refuses an uncovered token", () => {
+    const ctx = underwritingContext(1)
+    ctx.config.batchOperatorUnderwriting.maxExposure.push(
+      TokenAmount.create({
+        tokenCode: BigInt(SlugName.from("LIQETH")),
+        amount: 3_000_000_000n
+      })
+    )
+    expect(BatchOperatorUnderwritingSteps.maxExposure(ctx, "LIQETH")).toBe(
+      3_000_000_000n
+    )
+    expect(BatchOperatorUnderwritingSteps.maxExposure(ctx, "LIQSOL")).toBe(
+      10_000_000_000n
+    )
+    expect(() =>
+      BatchOperatorUnderwritingSteps.maxExposure(ctx, "UNKNOWN")
+    ).toThrow(/no UNKNOWN exposure cap/)
+  })
+
   it("refuses a relay-only cluster", () => {
     const ctx = fixtureContext()
     expect(() =>
