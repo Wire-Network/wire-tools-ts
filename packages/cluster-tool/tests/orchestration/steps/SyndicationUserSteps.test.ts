@@ -1,9 +1,13 @@
 import { Keypair } from "@solana/web3.js"
-import { SysioContracts } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
+import { ChainKind } from "@wireio/opp-typescript-models"
+import { Wallet } from "ethers"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationUserSteps } from "@wireio/cluster-tool/orchestration/steps"
 import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
+import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
+import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
@@ -14,6 +18,65 @@ const signal = new AbortController().signal,
   net = 495_000_000n
 
 afterEach(() => jest.restoreAllMocks())
+
+describe("SyndicationUserSteps Ethereum link", () => {
+  it("links the syndicating wallet and propagates a refused link", async () => {
+    const ctx = fixtureContext(),
+      wallet = Wallet.createRandom(),
+      readWallet = jest
+        .spyOn(EthereumSyndicationTool, "hdWallet")
+        .mockReturnValue(wallet),
+      link = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined),
+      step = SyndicationUserSteps.planLinkEthereumKey(
+        Report.Actor.User,
+        "link",
+        "link",
+        {},
+        account,
+        48
+      )
+    expect(step.runner).toBe(SyndicationUserSteps.runLinkEthereumKey)
+    expect(step.input).toEqual({
+      kind: "SyndicationUserSteps.LinkEthereumKeyInput",
+      account,
+      ethereumHdIndex: 48
+    })
+    await step.runner(ctx, step.input, signal)
+    expect(readWallet).toHaveBeenCalledWith(ctx, 48)
+    expect(link.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        chainKind: ChainKind.EVM,
+        account,
+        ethereumWallet: wallet
+      })
+    )
+    expect(link.mock.calls[0][1].privateKey.type).toBe(KeyType.EM)
+    link.mockRejectedValue(new Error("link refused"))
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      "link refused"
+    )
+  })
+
+  it("refuses cancellation before reading or linking the wallet", async () => {
+    const readWallet = jest.spyOn(EthereumSyndicationTool, "hdWallet"),
+      link = jest.spyOn(AuthExLinkTool, "createLink"),
+      step = SyndicationUserSteps.planLinkEthereumKey(
+        Report.Actor.User,
+        "link",
+        "link",
+        {},
+        account,
+        48
+      )
+    await expect(
+      step.runner(fixtureContext(), step.input, AbortSignal.abort())
+    ).rejects.toThrow()
+    expect(readWallet).not.toHaveBeenCalled()
+    expect(link).not.toHaveBeenCalled()
+  })
+})
 
 describe("SyndicationUserSteps.nodeOwnerPolicy", () => {
   it("builds the node owner's addpolicy with the given weights", () => {
