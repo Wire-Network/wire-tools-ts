@@ -123,24 +123,60 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  * provisioned through the ONE
  * {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism
  * into per-account {@link OperatorAccount}s. Composed entirely from the
- * {@link Steps} palette. The CLI `create` command runs `create(options).build()`.
+ * {@link Steps} palette. The CLI `create` command and every flow compose it
+ * through {@link create}.
  */
 export namespace ClusterBuildDefaults {
-  /** Resolve config + context, compose the bootstrap phases, return the build. */
+  /**
+   * How a caller composes the bootstrap, beyond what the resolved config
+   * describes.
+   *
+   * @typeParam C - The build's context type.
+   */
+  export interface CreateOptions<
+    C extends ClusterBuildContext = ClusterBuildContext
+  > {
+    /** Build the run's context from the resolved config (a flow's own context). */
+    createContext?: (config: ClusterConfig, log: Logger) => C
+    /**
+     * Take a LOCAL Solana outpost out of pre-launch (Launching, then
+     * PostLaunch) right after its deploy, before any operator daemon starts the
+     * OPP exchange. Set by the `wire-cluster-tool create` command only: flows
+     * start from a PreLaunch outpost and drive that transition in their own
+     * phases. External outposts are never flipped.
+     */
+    launchSolanaOutpost?: boolean
+  }
+
+  /**
+   * Resolve config + context, compose the bootstrap phases, return the build.
+   *
+   * @param options - The cluster build options.
+   * @param createOptions - How the caller composes the bootstrap.
+   * @returns The composed build, not yet run.
+   */
   export async function create<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     options: ClusterBuildOptions = {},
-    createContext?: (config: ClusterConfig, log: Logger) => C
+    createOptions: CreateOptions<C> = {}
   ): Promise<ClusterBuild<C>> {
-    const cluster = await ClusterBuild.create<C>(options, [], createContext)
-    compose(cluster)
+    const { createContext, launchSolanaOutpost = false } = createOptions,
+      cluster = await ClusterBuild.create<C>(options, [], createContext)
+    compose(cluster, launchSolanaOutpost)
     return cluster
   }
 
-  /** Compose every bootstrap phase onto `cluster` (order = the top-level sequence). */
+  /**
+   * Compose every bootstrap phase onto `cluster` (order = the top-level sequence).
+   *
+   * @param cluster - The build to compose onto.
+   * @param launchSolanaOutpost - Whether a local Solana outpost leaves pre-launch
+   *   at bootstrap ({@link CreateOptions.launchSolanaOutpost}).
+   */
   function compose<C extends ClusterBuildContext>(
-    cluster: ClusterBuild<C>
+    cluster: ClusterBuild<C>,
+    launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
       // Seeded by `ClusterBuild.create` from
@@ -949,6 +985,15 @@ export namespace ClusterBuildDefaults {
           { timeoutMs: 900_000 }
         )
       )
+      // `create` only: the fresh outpost holds no pre-launch positions, so it
+      // goes PostLaunch here, before the operator daemons start OPP.
+      if (launchSolanaOutpost)
+        Steps.solanaOutpost.planLaunch<C>(
+          prerequisites,
+          "SolanaOutpostLaunch",
+          "Take the Solana outpost out of pre-launch (Launching, then PostLaunch)",
+          { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs }
+        )
     }
 
     // ── registry + syndication configuration ──

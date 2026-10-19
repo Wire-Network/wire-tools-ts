@@ -22,7 +22,7 @@ import {
   NodeRole,
   SSMClientProvider
 } from "@wireio/cluster-tool/config"
-import { Steps } from "@wireio/cluster-tool/orchestration"
+import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 
 const mockSend = jest.fn()
@@ -210,6 +210,31 @@ describe("ClusterManager.prepareClusterPath", () => {
 const pinnedClusterRoot = Fs.mkdtempSync(
   Path.join(Os.tmpdir(), "cluster-manager-pinned-")
 )
+
+describe("ClusterManager.create", () => {
+  let root: string
+
+  beforeEach(() => {
+    root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cluster-create-"))
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    Fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it("composes the bootstrap with the Solana outpost launch", async () => {
+    // Rejecting stops `create` at the composition seam, before any launch.
+    const composed = new Error("composed"),
+      compose = jest
+        .spyOn(ClusterBuildDefaults, "create")
+        .mockRejectedValue(composed),
+      options = { clusterPath: Path.join(root, "cluster") }
+    await expect(ClusterManager.create(options)).rejects.toBe(composed)
+    expect(compose).toHaveBeenCalledTimes(1)
+    expect(compose).toHaveBeenCalledWith(options, { launchSolanaOutpost: true })
+  })
+})
 
 describe("ClusterManager.destroy", () => {
   /** The shared-root `ClusterConfig`, its dataPath laid out like a real cluster. */
