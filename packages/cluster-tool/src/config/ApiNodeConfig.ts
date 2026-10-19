@@ -6,6 +6,7 @@ import {
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaults } from "lodash"
+import { Constants } from "../Constants.js"
 import { assertEndpoint } from "../utils/netUtils.js"
 import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 
@@ -39,6 +40,8 @@ export interface ApiNodeTuningOptions {
   httpMaxInFlightRequests?: number
   /** `http-threads` — size of the HTTP plugin's thread pool. */
   httpThreads?: number
+  /** `vote-threads` — size of the vote processor's thread pool (0 turns voting off). */
+  voteThreads?: number
   /** `agent-name` — the node's advertised p2p handshake name (a net_plugin option). */
   agentName?: string
 }
@@ -112,6 +115,7 @@ export function createApiNodeDefaultOptions(): Partial<ApiNodeOptions> {
       enableAccountQueries: ApiNodeConfig.DefaultEnableAccountQueries,
       httpMaxInFlightRequests: ApiNodeConfig.DefaultHttpMaxInFlightRequests,
       httpThreads: ApiNodeConfig.DefaultHttpThreads,
+      voteThreads: ApiNodeConfig.DefaultVoteThreads,
       agentName: ApiNodeConfig.DefaultAgentName
     },
     queryEngine: QueryEngineConfigProvider.createDefaultOptions()
@@ -176,6 +180,13 @@ export namespace ApiNodeConfig {
   export const DefaultHttpMaxInFlightRequests = 100
   /** `http-threads` — the ticket baseline. */
   export const DefaultHttpThreads = 4
+  /**
+   * `vote-threads` — the value every cluster node's `config.ini` carries
+   * (`Constants.NODEOP_EXTRA_ARGS.voteThreads`), so a standalone API node
+   * processes and relays finalizer votes like a cluster API node. Changing the
+   * cluster value changes this default too.
+   */
+  export const DefaultVoteThreads = Constants.NODEOP_EXTRA_ARGS.voteThreads
   /** `agent-name` — how this node identifies itself in the p2p handshake. */
   export const DefaultAgentName = "wire-api-node"
 
