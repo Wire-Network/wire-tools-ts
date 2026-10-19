@@ -61,8 +61,11 @@ export namespace ClusterManager {
     // `PublishOperatorSignatureProviderKeys` after operator provisioning) —
     // each source's keys must be in SSM BEFORE their consumer nodeops start
     // and fetch them. Absent entirely under KEY.
+    // `create` also takes a local Solana outpost PostLaunch and bootstraps backed
+    // automatic underwriting against local outposts; flows do neither.
     const build = await ClusterBuildDefaults.create(options, {
-      launchSolanaOutpost: true
+      launchSolanaOutpost: true,
+      enableAutomaticUnderwriting: true
     })
     ClusterBuildPhase.create(
       build,

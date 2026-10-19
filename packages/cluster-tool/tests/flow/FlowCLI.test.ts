@@ -53,7 +53,7 @@ describe("FlowCLI.run", () => {
     jest.restoreAllMocks()
   })
 
-  it("composes the bootstrap with the scenario's context and never launches the Solana outpost", async () => {
+  it("composes the bootstrap with the scenario's context and never sets a create-only option", async () => {
     // Rejecting stops `run` at the composition seam, before any launch.
     const composed = new Error("composed"),
       compose = jest
@@ -64,8 +64,9 @@ describe("FlowCLI.run", () => {
     expect(compose).toHaveBeenCalledTimes(1)
     const [options, createOptions] = compose.mock.calls[0]
     expect(options.clusterPath).toBe(mockParsedArgv.clusterPath)
-    // The scenario drives the outpost's launch state itself.
+    // The scenario drives the outpost's launch state and declares its own mock data.
     expect(createOptions).not.toHaveProperty("launchSolanaOutpost")
+    expect(createOptions).not.toHaveProperty("enableAutomaticUnderwriting")
     expect(
       createOptions.createContext(fixtureConfig(), getLogger("flow-cli-test"))
     ).toBeInstanceOf(FlowTestContext)

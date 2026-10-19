@@ -128,8 +128,9 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  */
 export namespace ClusterBuildDefaults {
   /**
-   * How a caller composes the bootstrap, beyond what the resolved config
-   * describes.
+   * How a caller composes the bootstrap: the run's context, which create-only
+   * phases join it, and which create-only options are merged into the caller's
+   * before the config resolves.
    *
    * @typeParam C - The build's context type.
    */
@@ -146,7 +147,30 @@ export namespace ClusterBuildDefaults {
      * phases. External outposts are never flipped.
      */
     launchSolanaOutpost?: boolean
+    /**
+     * Bootstrap backed automatic underwriting against LOCAL outposts: merge
+     * {@link AutomaticUnderwritingOverrides} over the caller's options before the
+     * config resolves. Every batch operator then runs the underwriter role, the
+     * funded operators get their epoch-zero LIQ credit, the mock LIQ yield pools
+     * are seeded, and the bootstrap backs all of that shadow with verified
+     * custody on the outposts it just deployed. Set by the `wire-cluster-tool
+     * create` command only, with no opt-out. An `externalOutpostConfig` build
+     * keeps the caller's options. Flows declare these options in their
+     * scenario defaults.
+     */
+    enableAutomaticUnderwriting?: boolean
   }
+
+  /**
+   * The {@link ClusterBuildOptions} members
+   * {@link CreateOptions.enableAutomaticUnderwriting} forces on. Changing this set
+   * changes what every local `wire-cluster-tool create` bootstraps.
+   */
+  export const AutomaticUnderwritingOverrides = {
+    enableBatchOperatorUnderwriting: true,
+    enableMockSyndicationImport: true,
+    enableMockLiqPools: true
+  } as const satisfies ClusterBuildOptions
 
   /**
    * Resolve config + context, compose the bootstrap phases, return the build.
@@ -161,10 +185,39 @@ export namespace ClusterBuildDefaults {
     options: ClusterBuildOptions = {},
     createOptions: CreateOptions<C> = {}
   ): Promise<ClusterBuild<C>> {
-    const { createContext, launchSolanaOutpost = false } = createOptions,
-      cluster = await ClusterBuild.create<C>(options, [], createContext)
+    const {
+        createContext,
+        launchSolanaOutpost = false,
+        enableAutomaticUnderwriting = false
+      } = createOptions,
+      cluster = await ClusterBuild.create<C>(
+        mergeAutomaticUnderwriting(options, enableAutomaticUnderwriting),
+        [],
+        createContext
+      )
     compose(cluster, launchSolanaOutpost)
     return cluster
+  }
+
+  /**
+   * Merge {@link AutomaticUnderwritingOverrides} over `options` when automatic
+   * underwriting is requested and the outposts are local (no
+   * `externalOutpostConfig`, whether passed as a flag or in an options file).
+   *
+   * @param options - The caller's cluster build options.
+   * @param enableAutomaticUnderwriting - {@link CreateOptions.enableAutomaticUnderwriting}.
+   * @return The merged options, or `options` itself when nothing applies.
+   */
+  export function mergeAutomaticUnderwriting(
+    options: ClusterBuildOptions,
+    enableAutomaticUnderwriting: CreateOptions["enableAutomaticUnderwriting"]
+  ): ClusterBuildOptions {
+    if (!enableAutomaticUnderwriting || options.externalOutpostConfig != null)
+      return options
+    log.info(
+      `local outposts: automatic underwriting on (${Object.keys(AutomaticUnderwritingOverrides).join(", ")})`
+    )
+    return { ...options, ...AutomaticUnderwritingOverrides }
   }
 
   /**
@@ -1047,10 +1100,10 @@ export namespace ClusterBuildDefaults {
       "Configure sysio.bond + each shadow pair on sysio.synd",
       {}
     )
-    // Mock shadow-liq yield pools — opt-in via `--enable-mock-liq-pools` (default
-    // off, so a real / external depot never mints unbacked shadow). Seeded HERE,
-    // pre-EpochBootstrap, because the contract gates `regliqpool` to the epoch-0
-    // bootstrap window, exactly like `regreserve`.
+    // Mock shadow-liq yield pools — on for a local `create` (automatic underwriting)
+    // or a flow that opts in; refused for external outposts, so a real depot never
+    // mints unbacked shadow. Seeded HERE, pre-EpochBootstrap, because the contract
+    // gates `regliqpool` to the epoch-0 bootstrap window, exactly like `regreserve`.
     if (config.enableMockLiqPools) {
       Steps.registry.planMockLiqPools<C>(
         prerequisites,
