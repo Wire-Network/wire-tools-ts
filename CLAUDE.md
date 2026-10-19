@@ -370,6 +370,20 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
+**`create` takes a local Solana outpost PostLaunch; flows do not.** `create`
+composes the bootstrap with `ClusterBuildDefaults.create(options,
+{ launchSolanaOutpost: true })`, which adds the `SolanaOutpostLaunch` phase right
+after the local `SolanaOutpost` deploy: `set_wire_state` Launching, then
+PostLaunch (signed by the deployer, the liqsol `global_config.admin`), then a
+read-back of `GlobalState.wire_state`. It precedes every operator daemon, so OPP
+runs against a PostLaunch outpost from the first epoch. The PostLaunch paths
+(`synd`, `report_liq_yield`, `DESYNDICATE_LIQ` payouts) also need the liqSOL mint
+mapped to its depot token code (`set_token_address`), which this phase does not
+write. External outposts are never flipped. `FlowCLI` never sets the option: a
+flow's outpost starts PreLaunch and the scenario drives the transition
+(`SyndicationScenario`'s `LaunchOutpost`, `flow-liq-syndication`,
+`flow-liq-yield`).
+
 **Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's

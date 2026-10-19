@@ -108,6 +108,19 @@ the path flags.
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
 
+**Solana outpost launch state.** Against local outposts (no
+`--external-outpost-config`), `create` takes the new `liqsol_core` outpost out of
+pre-launch in the `SolanaOutpostLaunch` phase: `set_wire_state` Launching, then
+PostLaunch, both signed by the deployer (the liqsol `global_config.admin`), then a
+read-back that `GlobalState.wire_state` decodes to `{ postLaunch: {} }`. The phase
+runs right after the `SolanaOutpost` deploy and before any operator daemon starts
+the OPP exchange. PostLaunch is the only state in which the outpost queues
+`SYNDICATE_LIQ`, reports `LIQ_YIELD` and pays `DESYNDICATE_LIQ`; each of those
+also needs the liqSOL mint mapped to its depot token code on the outpost config
+(`set_token_address`), which this phase does not write. An external outpost is
+never flipped. Flows compose the same bootstrap without this phase: their outpost
+starts PreLaunch and the scenario drives the transition itself.
+
 ### `run` / `destroy`
 
 Both take only `--cluster-path` (`-d`). `run` blocks until Ctrl+C (clean
@@ -380,6 +393,11 @@ const build = await ClusterBuildDefaults.create({
 })
 const report = await build.build()   // one Report.StepResult per Step
 ```
+
+`ClusterBuildDefaults.create(options, createOptions)` takes the caller's
+composition choices as its second argument: `createContext` builds a flow's own
+context, and `launchSolanaOutpost: true` (what the `create` command passes) adds
+the `SolanaOutpostLaunch` phase described under [`create`](#create).
 
 Persisted shapes + their validated codecs live in `@wireio/cluster-tool-shared`
 (`ClusterConfig` / `BindConfig` / `ClusterState` / `SignatureProviderConfig` /
