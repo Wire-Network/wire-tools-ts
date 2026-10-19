@@ -223,7 +223,7 @@ describe("ClusterManager.create", () => {
     Fs.rmSync(root, { recursive: true, force: true })
   })
 
-  it("composes the bootstrap with the Solana outpost launch", async () => {
+  it("composes the bootstrap with the Solana outpost launch and automatic underwriting", async () => {
     // Rejecting stops `create` at the composition seam, before any launch.
     const composed = new Error("composed"),
       compose = jest
@@ -232,7 +232,10 @@ describe("ClusterManager.create", () => {
       options = { clusterPath: Path.join(root, "cluster") }
     await expect(ClusterManager.create(options)).rejects.toBe(composed)
     expect(compose).toHaveBeenCalledTimes(1)
-    expect(compose).toHaveBeenCalledWith(options, { launchSolanaOutpost: true })
+    expect(compose).toHaveBeenCalledWith(options, {
+      launchSolanaOutpost: true,
+      enableAutomaticUnderwriting: true
+    })
   })
 })
 

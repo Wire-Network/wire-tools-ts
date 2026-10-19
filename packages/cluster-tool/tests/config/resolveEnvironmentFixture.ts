@@ -2,6 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { ExternalOutpostConfigSchemaCodec } from "@wireio/cluster-tool-shared"
 
 /**
  * A disposable on-disk environment for tests that drive the REAL
@@ -78,4 +79,34 @@ export function fixtureResolveEnvironment(prefix: string): ResolveEnvironment {
       Fs.rmSync(rootPath, { recursive: true, force: true })
     }
   }
+}
+
+/** The external-outpost config file written under the environment root. */
+const ExternalOutpostConfigFilename = "external-outpost.json"
+
+/** The Ethereum chain id (Sepolia) the external-outpost fixture declares. */
+const ExternalOutpostChainId = 11_155_111
+
+/**
+ * Write a minimal `ExternalOutpostConfig` under `rootPath`: enough for
+ * `ClusterConfigProvider.resolve` to take the external-outpost path. The files it
+ * references are never read during resolve or composition.
+ *
+ * @param rootPath - The environment root ({@link ResolveEnvironment.rootPath}).
+ * @returns The written config file's path.
+ */
+export function fixtureExternalOutpostConfig(rootPath: string): string {
+  const configFile = Path.join(rootPath, ExternalOutpostConfigFilename)
+  Fs.writeFileSync(
+    configFile,
+    ExternalOutpostConfigSchemaCodec.serialize({
+      ethereum: {
+        addressFile: "outpost-addrs.json",
+        abiFiles: ["eth-abis/OPP.json"],
+        chainId: ExternalOutpostChainId
+      },
+      solana: { idlFile: "solana-idls/liqsol_core.json" }
+    })
+  )
+  return configFile
 }

@@ -17,10 +17,12 @@ import {
   ClusterConfigProvider,
   NodeConfig,
   NodeRole,
-  QueryEngineConfigProvider
+  QueryEngineConfigProvider,
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
@@ -856,18 +858,7 @@ describe("ClusterConfigProvider", () => {
 
     beforeEach(() => {
       environment = fixtureResolveEnvironment("external-underwriters-")
-      externalConfigFile = Path.join(environment.rootPath, "external.json")
-      Fs.writeFileSync(
-        externalConfigFile,
-        JSON.stringify({
-          ethereum: {
-            addressFile: "outpost-addrs.json",
-            abiFiles: ["eth-abis/OPP.json"],
-            chainId: 11_155_111
-          },
-          solana: { idlFile: "solana-idls/liqsol_core.json" }
-        })
-      )
+      externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
     })
 
     afterEach(() => {
@@ -916,6 +907,92 @@ describe("ClusterConfigProvider", () => {
       expect(config.underwriterCount).toBe(
         ClusterConfigProvider.DefaultUnderwriterCount
       )
+    })
+  })
+
+  describe("external outposts vs mock data", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-mock-data-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base options for a LOCAL-outpost resolve over the sandbox. */
+    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...extra
+      }
+    }
+
+    /** Base options for an EXTERNAL-outpost resolve. */
+    function externalOptions(
+      extra: ClusterBuildOptions = {}
+    ): ClusterBuildOptions {
+      return localOptions({
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        ...extra
+      })
+    }
+
+    it("refuses exactly the two mock-data options", () => {
+      expect(ClusterConfigProvider.MockDataOptionKeys).toEqual([
+        "enableMockLiqPools",
+        "enableMockSyndicationImport"
+      ])
+    })
+
+    it("refuses before resolving anything else, so no port is claimed", async () => {
+      // `buildPath` is asserted before `resolveBind`; omitting it fails there
+      // unless the mock-data refusal runs first.
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          externalOutpostConfig: fixtureExternalOutpostConfig(
+            environment.rootPath
+          ),
+          enableMockLiqPools: true
+        })
+      ).rejects.toThrow(/Mock data cannot be seeded against external outposts/)
+    })
+
+    it.each(ClusterConfigProvider.MockDataOptionKeys)(
+      "refuses %s, naming it",
+      async key => {
+        await expect(
+          ClusterConfigProvider.resolve(externalOptions({ [key]: true }))
+        ).rejects.toThrow(
+          new RegExp(
+            `Mock data cannot be seeded against external outposts \\(${key} `
+          )
+        )
+      }
+    )
+
+    it("keeps batch-operator underwriting the caller's choice", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        externalOptions({ enableBatchOperatorUnderwriting: true })
+      )
+      expect(config.batchOperatorUnderwriting).not.toBeNull()
+      expect(config.enableMockLiqPools).toBe(false)
+    })
+
+    it("allows both mock flags against LOCAL outposts", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({
+          enableMockLiqPools: true,
+          enableMockSyndicationImport: true
+        })
+      )
+      expect(config.enableMockLiqPools).toBe(true)
+      expect(config.enableMockSyndicationImport).toBe(true)
     })
   })
 

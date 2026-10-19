@@ -62,18 +62,24 @@ export interface ClusterBuildOptions {
   bind?: BindOptions
   /**
    * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
-   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an
-   * external / real-world depot mints NO unbacked shadow unless a caller (or a
-   * flow's scenario `defaults`) opts in. The depot contract gates `regliqpool`
+   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer. Flows
+   * opt in through scenario defaults; a local `wire-cluster-tool create` forces
+   * it on; external outposts refuse it. The depot contract gates `regliqpool`
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockLiqPools?: boolean
-  /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
+  /**
+   * Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock
+   * shadow in outpost custody (`--enable-mock-syndication-import`). Default `false`
+   * at every layer. Flows opt in through scenario defaults; a local
+   * `wire-cluster-tool create` forces it on; external outposts refuse it.
+   */
   enableMockSyndicationImport?: boolean
   /**
    * Run the `batch_operator_plugin` underwriter role on every batch-operator daemon, bonding
-   * from the operator's own account (`--enable-batch-operator-underwriting`). Default false;
-   * flows opt in through defaults. Requires a nodeop built with the underwriter role.
+   * from the operator's own account (`--enable-batch-operator-underwriting`). Default false.
+   * Flows opt in through defaults; a local `wire-cluster-tool create` forces it on.
+   * Requires a nodeop built with the underwriter role.
    */
   enableBatchOperatorUnderwriting?: boolean
   /**

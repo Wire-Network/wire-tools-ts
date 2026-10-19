@@ -430,7 +430,8 @@ wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 
 Automatic underwriting requires `--enable-batch-operator-underwriting`, matching
 per-token exposure caps, and liquid shadow LIQ in the operator accounts. The role
-defaults to off even when OPP delivery works. See the
+defaults to off even when OPP delivery works, except in a local `create`, which forces
+it on together with both mock inventories. See the
 [setup and existing-testnet recovery procedure](docs/syndication-underwriting-operations.md).
 
 Every `create` sets these up on the depot; no flag gates them, because a real
@@ -484,9 +485,9 @@ command comes first).
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |

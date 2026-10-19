@@ -467,7 +467,7 @@ contract/mint addresses via the same shapes.
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`
 drops every `SYNDICATE_LIQ` of the pair).
-38. **Mock data — opt-in only, never production.** Both run inside the epoch-0 window:
+38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`
       yield pool per shadow on `sysio.swap`, each seeded with `10000000000` shadow and `10000000000` WIRE base
       units, fee `30`, 30 s conversion horizon, 3000 bps depth cap, clip floor `1000`.

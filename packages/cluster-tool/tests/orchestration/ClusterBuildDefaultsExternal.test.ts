@@ -1,7 +1,7 @@
-import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -12,21 +12,7 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
 
   beforeEach(() => {
     environment = fixtureResolveEnvironment("compose-variant-")
-    externalConfigFile = Path.join(
-      environment.rootPath,
-      "external-outpost.json"
-    )
-    Fs.writeFileSync(
-      externalConfigFile,
-      JSON.stringify({
-        ethereum: {
-          addressFile: "outpost-addrs.json",
-          abiFiles: ["eth-abis/OPP.json"],
-          chainId: 11_155_111
-        },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
-      })
-    )
+    externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
   })
 
   afterEach(() => {
@@ -45,10 +31,7 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("omits the local outpost deploys + adds the liveness phase in external mode", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile,
-      // External mode has no local outpost to bond underwriter collateral on,
-      // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
-      underwriterCount: 0
+      externalOutpostConfig: externalConfigFile
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MaterializeExternalOutposts")

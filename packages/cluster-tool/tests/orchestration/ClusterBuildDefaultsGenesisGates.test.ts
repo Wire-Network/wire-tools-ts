@@ -1,4 +1,3 @@
-import Fs from "node:fs"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, SysioContracts } from "@wireio/sdk-core"
@@ -7,6 +6,7 @@ import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -37,18 +37,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
 
   beforeEach(() => {
     environment = fixtureResolveEnvironment("genesis-gates-")
-    externalConfigFile = Path.join(environment.rootPath, "external-outpost.json")
-    Fs.writeFileSync(
-      externalConfigFile,
-      JSON.stringify({
-        ethereum: {
-          addressFile: "outpost-addrs.json",
-          abiFiles: ["eth-abis/OPP.json"],
-          chainId: 11_155_111
-        },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
-      })
-    )
+    externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
   })
 
   afterEach(() => {
@@ -65,12 +54,11 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
     }
   }
 
-  /** Base options for an EXTERNAL-mode build (underwriters are excluded there). */
+  /** Base options for an EXTERNAL-mode build. */
   function externalOptions() {
     return {
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile,
-      underwriterCount: 0
+      externalOutpostConfig: externalConfigFile
     }
   }
 

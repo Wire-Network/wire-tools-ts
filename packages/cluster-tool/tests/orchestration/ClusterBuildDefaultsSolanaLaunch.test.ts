@@ -1,4 +1,3 @@
-import Fs from "node:fs"
 import Path from "node:path"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 import {
@@ -8,6 +7,7 @@ import {
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -86,28 +86,10 @@ describe("ClusterBuildDefaults — Solana outpost launch (create only)", () => {
   })
 
   it("never launches an EXTERNAL outpost", async () => {
-    const externalConfigFile = Path.join(
-      environment.rootPath,
-      "external-outpost.json"
-    )
-    Fs.writeFileSync(
-      externalConfigFile,
-      JSON.stringify({
-        ethereum: {
-          addressFile: "outpost-addrs.json",
-          abiFiles: ["eth-abis/OPP.json"],
-          chainId: 11_155_111
-        },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
-      })
-    )
     const cluster = await ClusterBuildDefaults.create(
       {
         ...baseOptions(),
-        externalOutpostConfig: externalConfigFile,
-        // External mode has no local outpost to bond underwriter collateral on,
-        // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
-        underwriterCount: 0
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath)
       },
       { launchSolanaOutpost: true }
     )

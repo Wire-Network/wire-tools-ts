@@ -2,15 +2,17 @@
 
 OPP delivery and syndication underwriting are separate roles. Successful delivery
 does not mean a batch operator will bond the resulting `sysio.bond` request.
-`create` configures the contracts, but automatic underwriting defaults to **off**.
+`create` configures the contracts. Against local outposts it also forces automatic
+underwriting on; with `--external-outpost-config` the role defaults to **off**.
 The role lives in `batch_operator_plugin`; `underwriter-count` is the retired swap
 daemon count and must remain zero.
 
 ## New clusters
 
-Add `--enable-batch-operator-underwriting` to the existing `create` command. This
-grants each batch operator RAM for bond rows and adds the following to its runtime
-arguments, including the generated `start.sh`:
+A local `create` (no `--external-outpost-config`) forces
+`--enable-batch-operator-underwriting` on. Against external outposts, add the flag to
+the `create` command. Either way, it grants each batch operator RAM for bond rows and
+adds the following to its runtime arguments, including the generated `start.sh`:
 
 ```text
 --batch-underwriter-account <that operator's WIRE account>
@@ -54,20 +56,21 @@ funds still held by a pending syndication are not that inventory. Fund operators
 from already liquid shadow balances or reconciled launch imports. A first deposit
 cannot supply the capital needed to underwrite itself.
 
-For a disposable local test cluster, also setting
-`--enable-mock-syndication-import` imports 100 LIQSOL and 100 LIQETH per funded operator and backs
+A local `create` also forces `--enable-mock-syndication-import` on, which imports
+100 LIQSOL and 100 LIQETH per funded operator and backs
 the imported shadow in outpost custody. Omit the example's `fundedOperatorCount: 0`
 to fund every operator this way. Each credit uses the operator's matching linked
 ED or EM key, and both backing checkpoints run after all imports. Mock seeding
 is not a funding procedure for an existing deployed network.
 
-The platform's automatic cluster Action enables the role, imports and yield
-pools for `dev`, `sandbox` and `test`. It explicitly disables them for `prod`.
-Both locally bootstrapped outposts must cover the entire minted shadow supply
-before operator startup and the first epoch, with Ethereum principal initialized
-to the same obligation. The Action refuses automatic mock seeding against remote
-outposts; deploy its backed outpost state with its depot snapshot rather than
-replacing an outpost with an empty deployment. Andon checks remain enabled.
+`wire-cluster-tool create` applies this policy itself, so the platform's cluster
+Action passes no extra flags: a local-outpost build gets the role, the imports and
+the yield pools, and an `--external-outpost-config` build gets none of them forced on
+and refuses both mock flags. Both locally bootstrapped outposts must cover the entire
+minted shadow supply before operator startup and the first epoch, with Ethereum
+principal initialized to the same obligation. Deploy the backed outpost state with its
+depot snapshot rather than replacing an outpost with an empty deployment. Andon checks
+remain enabled.
 
 ## Existing testnet
 

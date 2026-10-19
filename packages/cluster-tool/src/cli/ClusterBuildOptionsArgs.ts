@@ -568,15 +568,15 @@ export function buildOptionShape(
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
     enableMockLiqPools: leaf(
       false,
-      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
+      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap; forced on by a local create"
     ),
     enableMockSyndicationImport: leaf(
       false,
-      "import mock syndication positions for the bonder and back mock shadow at bootstrap"
+      "import mock syndication positions for the bonder and back mock shadow at bootstrap; forced on by a local create"
     ),
     enableBatchOperatorUnderwriting: leaf(
       false,
-      "run the batch_operator_plugin underwriter role on every batch operator, bonding from its own account"
+      "run the batch_operator_plugin underwriter role on every batch operator, bonding from its own account; forced on by a local create"
     ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
