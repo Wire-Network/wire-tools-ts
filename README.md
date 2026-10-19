@@ -551,16 +551,30 @@ config; the Solana program id is parsed from the IDL):
 ```json
 {
   "ethereum": {
+    "oppProtocol": { "emit": [1], "receive": [1] },
     "addressFile": "/opt/wire/eth/outpost-addrs.json",
     "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
     "chainId": 11155111
   },
-  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+  "solana": {
+    "oppProtocol": { "emit": [1], "receive": [1] },
+    "idlFile": "/opt/wire/sol/liqsol_core.json"
+  }
 }
 ```
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
 values are rejected; syndication bond providers do not need a daemon.
+
+`oppProtocol` is required for each remote outpost. Declare the capabilities of its
+deployed implementation, using the reviewed `opp-compatibility.json` matrix in
+the platform manifest as the V1 reference. Before either outpost is activated, every emitted version
+must be supported by its receiver in **both directions**. Missing declarations,
+zero/reserved versions, and incompatible pairs fail closed. Exported external
+configs preserve the declaration. These records describe the reviewed release;
+operators remain responsible for matching it to the actual deployed code.
+See the platform manifest's `docs/opp-compatibility.md` for the V1 matrix and
+receiver-first rolling-upgrade/rollback order.
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)

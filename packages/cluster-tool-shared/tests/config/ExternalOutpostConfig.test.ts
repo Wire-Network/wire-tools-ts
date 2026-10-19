@@ -12,11 +12,12 @@ const SolanaRpcUrl = "https://solana-rpc.external.example/"
 describe("ExternalOutpostConfig", () => {
   const config: ExternalOutpostConfig = {
     ethereum: {
+      oppProtocol: { emit: [1], receive: [1, 2] },
       addressFile: "outpost-addrs.json",
       abiFiles: ["eth-abis/OPP.json", "eth-abis/OPPInbound.json"],
       chainId: 1
     },
-    solana: { idlFile: "solana-idls/opp_outpost.json" }
+    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/opp_outpost.json" }
   }
 
   it("round-trips through the codec", () => {
@@ -27,15 +28,24 @@ describe("ExternalOutpostConfig", () => {
     ).toEqual(config)
   })
 
+  it("requires explicit protocol capabilities on both remote outposts", () => {
+    for (const chain of ["ethereum", "solana"] as const) {
+      const missing = JSON.parse(JSON.stringify(config))
+      delete missing[chain].oppProtocol
+      expect(() => ExternalOutpostConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
+    }
+  })
+
   it("round-trips the optional liqEth + SPL-mints FILE references", () => {
     const full: ExternalOutpostConfig = {
       ethereum: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         addressFile: "outpost-addrs.json",
         abiFiles: ["eth-abis/OPP.json"],
         chainId: 1,
         liqEthAddressFile: "liqeth-addrs.json"
       },
-      solana: { idlFile: "idl.json", mintsFile: "sol-mock-mints.json" }
+      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json", mintsFile: "sol-mock-mints.json" }
     }
     expect(
       ExternalOutpostConfigSchemaCodec.deserialize(
@@ -49,12 +59,13 @@ describe("ExternalOutpostConfig", () => {
     // by any local binding, so it travels on the outpost config itself.
     const remote: ExternalOutpostConfig = {
       ethereum: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         addressFile: "outpost-addrs.json",
         abiFiles: ["eth-abis/OPP.json"],
         chainId: 1,
         rpcUrl: EthereumRpcUrl
       },
-      solana: { idlFile: "idl.json", rpcUrl: SolanaRpcUrl }
+      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json", rpcUrl: SolanaRpcUrl }
     }
     const decoded = ExternalOutpostConfigSchemaCodec.deserialize(
       ExternalOutpostConfigSchemaCodec.serialize(remote)
@@ -78,8 +89,9 @@ describe("ExternalOutpostConfig", () => {
   it("requires ethereum.addressFile", () => {
     expect(
       ExternalOutpostConfigSchema.safeParse({
-        ethereum: { abiFiles: [], chainId: 1 },
-        solana: { idlFile: "x" }
+        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] },
+      abiFiles: [], chainId: 1 },
+        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "x" }
       }).success
     ).toBe(false)
   })
@@ -87,8 +99,8 @@ describe("ExternalOutpostConfig", () => {
   it("rejects a non-positive chainId", () => {
     expect(
       ExternalOutpostConfigSchema.safeParse({
-        ethereum: { addressFile: "a", abiFiles: [], chainId: 0 },
-        solana: { idlFile: "x" }
+        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "a", abiFiles: [], chainId: 0 },
+        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "x" }
       }).success
     ).toBe(false)
   })
@@ -96,7 +108,7 @@ describe("ExternalOutpostConfig", () => {
   it("requires the solana idlFile", () => {
     expect(
       ExternalOutpostConfigSchema.safeParse({
-        ethereum: { addressFile: "a", abiFiles: [], chainId: 1 },
+        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "a", abiFiles: [], chainId: 1 },
         solana: {}
       }).success
     ).toBe(false)

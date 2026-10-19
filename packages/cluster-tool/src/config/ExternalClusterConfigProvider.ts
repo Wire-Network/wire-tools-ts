@@ -79,7 +79,7 @@ export namespace ExternalClusterConfigProvider {
       },
       solana:
         config.solana != null
-          ? { idlFile: resolveRef(config.solana.idlFile) }
+          ? { ...config.solana, idlFile: resolveRef(config.solana.idlFile) }
           : config.solana
     }
   }

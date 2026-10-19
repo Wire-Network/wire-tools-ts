@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
+import { OppProtocolCapabilitiesSchema } from "./OppProtocolCapabilities.js"
 
 /**
  * An already-deployed Ethereum outpost's structural references. All `*File`
@@ -9,6 +10,8 @@ import { SchemaCodec } from "../schema/index.js"
  * and composed into {@link ExternalClusterConfig}'s ethereum section.
  */
 export const ExternalOutpostConfigEthereumSchema = z.object({
+  /** Required release/deployment declaration; never inferred for a remote outpost. */
+  oppProtocol: OppProtocolCapabilitiesSchema,
   /** The deploy's `outpost-addrs.json` — REQUIRED (ETH addresses are deploy-time-random). */
   addressFile: z.string(),
   /**
@@ -42,6 +45,8 @@ export type ExternalOutpostConfigEthereum = z.infer<
  * SOLE source; the program id is parsed from it (`declare_id!`-pinned).
  */
 export const ExternalOutpostConfigSolanaSchema = z.object({
+  /** Required release/deployment declaration; never inferred for a remote outpost. */
+  oppProtocol: OppProtocolCapabilitiesSchema,
   /** The `opp-outpost` IDL file — SOLE IDL source; program id parsed from it. */
   idlFile: z.string(),
   /** Authoritative outpost RPC endpoint when set — WINS over the bind-derived URL

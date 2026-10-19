@@ -58,8 +58,9 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       clusterPath: Path.join(dir, "cluster"),
       dataPath,
       externalOutposts: {
-        ethereum: { addressFile, abiFiles: [abiFile], chainId: 11_155_111 },
-        solana: { idlFile }
+        ethereum: { addressFile, abiFiles: [abiFile], chainId: 11_155_111,
+          oppProtocol: { emit: [1], receive: [1, 2] } },
+        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile }
       }
     })
   }

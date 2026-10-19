@@ -732,6 +732,7 @@ export namespace ClusterConfigProvider {
         Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
     return {
       ethereum: {
+        ...config.ethereum,
         addressFile: resolveRef(config.ethereum.addressFile),
         abiFiles: config.ethereum.abiFiles.map(resolveRef),
         chainId: config.ethereum.chainId,
@@ -740,6 +741,7 @@ export namespace ClusterConfigProvider {
           : {})
       },
       solana: {
+        ...config.solana,
         idlFile: resolveRef(config.solana.idlFile),
         ...(config.solana.mintsFile != null
           ? { mintsFile: resolveRef(config.solana.mintsFile) }

@@ -17,6 +17,7 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   ExternalClusterConfigSchemaCodec,
+  OppProtocolCapabilities,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -1243,6 +1244,7 @@ export namespace ExternalClusterConfigSteps {
       liqEthAddressFile = Path.join(deploymentsDir, "liqeth-addrs.json")
     return {
       addressFile: Path.join(deploymentsDir, ExternalOutpostAddressFilename),
+      oppProtocol: OppProtocolCapabilities.Current,
       abiFiles,
       chainId: AnvilProcess.DefaultChainId,
       ...(Fs.existsSync(liqEthAddressFile) ? { liqEthAddressFile } : {})
@@ -1263,7 +1265,11 @@ export namespace ExternalClusterConfigSteps {
       ),
       mintsFile = Path.join(merged.dataPath, "sol-mock-mints.json")
     return Fs.existsSync(idlFile)
-      ? { idlFile, ...(Fs.existsSync(mintsFile) ? { mintsFile } : {}) }
+      ? {
+          idlFile,
+          oppProtocol: OppProtocolCapabilities.Current,
+          ...(Fs.existsSync(mintsFile) ? { mintsFile } : {})
+        }
       : null
   }
 

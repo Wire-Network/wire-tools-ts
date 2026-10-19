@@ -390,11 +390,12 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     return {
       ethereum: {
         addressFile,
+        oppProtocol: { emit: [1], receive: [1, 2] },
         abiFiles: [abiFile],
         chainId: ExternalChainId,
         rpcUrl: ExternalEthereumRpcUrl
       },
-      solana: { idlFile, rpcUrl: ExternalSolanaRpcUrl }
+      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile, rpcUrl: ExternalSolanaRpcUrl }
     }
   }
 
@@ -764,6 +765,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       Fs.readFileSync(externalConfigFile(), "utf-8")
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
+    expect(emitted.ethereum.oppProtocol).toEqual({ emit: [1], receive: [1] })
+    expect(emitted.solana.oppProtocol).toEqual({ emit: [1], receive: [1] })
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
     // `accountName` is the operator's ON-CHAIN name (`account`), never the
     // durable handle the node config and the SSM secret id are keyed by.
@@ -1138,6 +1141,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // the daemons silently fell back to the bind.
     expect(merged.externalOutposts.ethereum.rpcUrl).toBe(ExternalEthereumRpcUrl)
     expect(merged.externalOutposts.solana.rpcUrl).toBe(ExternalSolanaRpcUrl)
+    expect(merged.externalOutposts.ethereum.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
+    expect(merged.externalOutposts.solana.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
+    const emittedProtocolConfig = ExternalClusterConfigSchemaCodec.deserialize(
+      Fs.readFileSync(externalConfigFile(), "utf-8")
+    )
+    expect(emittedProtocolConfig.ethereum.oppProtocol).toEqual(merged.externalOutposts.ethereum.oppProtocol)
+    expect(emittedProtocolConfig.solana.oppProtocol).toEqual(merged.externalOutposts.solana.oppProtocol)
     expect(merged.externalOutposts.ethereum.chainId).toBe(ExternalChainId)
     expect(
       merged.externalOutposts.ethereum.addressFile.startsWith(externalDir)

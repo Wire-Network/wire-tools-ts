@@ -297,11 +297,12 @@ describe("ClusterConfigProvider", () => {
         },
         externalOutposts: {
           ethereum: {
+            oppProtocol: { emit: [1], receive: [1, 2] },
             addressFile: "/x/outpost-addrs.json",
             abiFiles: ["/x/eth-abis/OPP.json"],
             chainId: 1
           },
-          solana: { idlFile: "/x/idl.json" }
+          solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "/x/idl.json" }
         }
       })
       const round = ClusterConfigProvider.deserialize(
@@ -852,11 +853,12 @@ describe("ClusterConfigProvider", () => {
         externalConfigFile,
         JSON.stringify({
           ethereum: {
+            oppProtocol: { emit: [1], receive: [1, 2] },
             addressFile: "outpost-addrs.json",
             abiFiles: ["eth-abis/OPP.json"],
             chainId: 11_155_111
           },
-          solana: { idlFile: "solana-idls/liqsol_core.json" }
+          solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
         })
       )
     })
@@ -895,6 +897,8 @@ describe("ClusterConfigProvider", () => {
       )
       expect(config.underwriterCount).toBe(0)
       expect(config.externalOutposts).not.toBeNull()
+      expect(config.externalOutposts.ethereum.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
+      expect(config.externalOutposts.solana.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
     })
 
     it("defaults local mode to zero retired daemons", async () => {

@@ -335,8 +335,8 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
 
   it("GATES OUT fund + airdrop in external-outpost mode (depot-side steps stay)", () => {
     const kinds = fundedKinds({
-      ethereum: { addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
-      solana: { idlFile: "idl.json" }
+      ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
+      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json" }
     })
     expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")

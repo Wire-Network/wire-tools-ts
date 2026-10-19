@@ -323,11 +323,12 @@ describe("ClusterManager.run", () => {
    */
   const ExternalOutposts: ExternalOutpostConfig = {
     ethereum: {
+      oppProtocol: { emit: [1], receive: [1, 2] },
       addressFile: "/ext/outpost-addrs.json",
       abiFiles: ["/ext/eth-abis/OPP.json"],
       chainId: 11_155_111
     },
-    solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
+    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "/ext/solana-idls/liqsol_core.json" }
   }
 
   afterEach(() => {

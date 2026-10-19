@@ -52,6 +52,7 @@ describe("ExternalClusterConfig", () => {
     },
     wire: { epochDurationSec: 60 },
     ethereum: {
+      oppProtocol: { emit: [1], receive: [1, 2] },
       addressFile: "outpost-addrs.json",
       abiFiles: ["eth-abis/OPP.json"],
       chainId: 1

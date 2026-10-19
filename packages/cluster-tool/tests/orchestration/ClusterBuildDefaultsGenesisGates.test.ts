@@ -42,11 +42,12 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       externalConfigFile,
       JSON.stringify({
         ethereum: {
+          oppProtocol: { emit: [1], receive: [1, 2] },
           addressFile: "outpost-addrs.json",
           abiFiles: ["eth-abis/OPP.json"],
           chainId: 11_155_111
         },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
+        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
       })
     )
   })

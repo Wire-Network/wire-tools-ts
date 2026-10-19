@@ -115,13 +115,14 @@ function externalOutposts(
 ): ExternalOutpostConfig {
   return {
     ethereum: {
+      oppProtocol: { emit: [1], receive: [1, 2] },
       addressFile: "/external/outpost-addrs.json",
       abiFiles: ["/external/eth-abis/OPP.json"],
       chainId: ExternalChainId,
       ...(ethereumRpcUrl != null ? { rpcUrl: ethereumRpcUrl } : {})
     },
     solana: {
-      idlFile: "/external/liqsol_core.json",
+      oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "/external/liqsol_core.json",
       ...(solanaRpcUrl != null ? { rpcUrl: solanaRpcUrl } : {})
     }
   }
