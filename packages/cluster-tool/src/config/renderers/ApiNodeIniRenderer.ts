@@ -43,6 +43,12 @@ import { QueryEngineConfigProvider } from "../QueryEngineConfigProvider.js"
  * non-public-API exception, which is why it carries `trace_api_plugin` and the
  * elevated finality-status storage straight from the ticket baseline.
  *
+ * **Why `vote-threads` is emitted.** nodeop's chain_plugin turns vote processing
+ * on by default only for a node with a `producer-name`. Any other node keeps it
+ * off unless `vote-threads` is set, and with it off the node neither processes
+ * nor relays finalizer votes over p2p. The line gives the standalone API node
+ * the same vote-thread count every cluster node's `config.ini` carries.
+ *
  * **`database-map-mode` is deliberately NOT emitted.** The ticket baseline
  * governs this file, and SHARED-28's `mapped_private` default is scoped to the
  * cluster commands' nodeop argv.
@@ -71,6 +77,7 @@ export class ApiNodeIniRenderer implements Renderer {
           tuning.httpMaxInFlightRequests
         ),
         toIniLine(ApiNodeIniRenderer.HttpThreadsOption, tuning.httpThreads),
+        toIniLine(ApiNodeIniRenderer.VoteThreadsOption, tuning.voteThreads),
         toIniLine(ApiNodeIniRenderer.AgentNameOption, tuning.agentName),
         toIniLine(
           ApiNodeIniRenderer.HttpServerAddressOption,
@@ -141,6 +148,8 @@ export namespace ApiNodeIniRenderer {
   export const HttpMaxInFlightRequestsOption = "http-max-in-flight-requests"
   /** `http-threads` — size of the HTTP plugin's thread pool. */
   export const HttpThreadsOption = "http-threads"
+  /** `vote-threads` — size of the vote processor's thread pool (a chain_plugin option). */
+  export const VoteThreadsOption = "vote-threads"
   /** `agent-name` — the node's advertised p2p handshake name (a net_plugin option). */
   export const AgentNameOption = "agent-name"
   /** `http-server-address` — the deployment endpoint this node serves on. */

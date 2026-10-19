@@ -49,6 +49,8 @@ export interface CreateApiNodeArgv {
   httpMaxInFlightRequests?: number
   /** `--http-threads`. */
   httpThreads?: number
+  /** `--vote-threads`. */
+  voteThreads?: number
   /** `--agent-name`. */
   agentName?: string
   /** `--genesis-json`. */
@@ -164,6 +166,10 @@ function applyCreateApiNodeArgs(builder: Argv) {
         type: "number",
         describe: `nodeop ${ApiNodeIniRenderer.HttpThreadsOption} (default ${ApiNodeConfig.DefaultHttpThreads})`
       })
+      .option(ApiNodeIniRenderer.VoteThreadsOption, {
+        type: "number",
+        describe: `nodeop ${ApiNodeIniRenderer.VoteThreadsOption} — 0 stops the node processing and relaying finalizer votes (default ${ApiNodeConfig.DefaultVoteThreads})`
+      })
       .option(ApiNodeIniRenderer.AgentNameOption, {
         type: "string",
         describe: `nodeop ${ApiNodeIniRenderer.AgentNameOption} (default ${ApiNodeConfig.DefaultAgentName})`
@@ -256,6 +262,7 @@ export function toApiNodeOptions(args: CreateApiNodeArgv): ApiNodeOptions {
       enableAccountQueries: args.enableAccountQueries,
       httpMaxInFlightRequests: args.httpMaxInFlightRequests,
       httpThreads: args.httpThreads,
+      voteThreads: args.voteThreads,
       agentName: args.agentName
     },
     queryEngine: {

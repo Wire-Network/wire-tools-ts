@@ -677,7 +677,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP / vote-thread tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -686,7 +686,8 @@ programmatic caller agree: `--chain-state-db-size-mb` (1024),
 `--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
 ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
-`--http-threads` (4), `--agent-name` (`wire-api-node`), and
+`--http-threads` (4), `--vote-threads` (4 — without it a non-producing node
+neither processes nor relays finalizer votes), `--agent-name` (`wire-api-node`), and
 `[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
 (`--query-engine-timeout-ms` 30000; every other one unset — an omitted one
 renders no line, leaving nodeop's `head` read mode and the plugin's own limit

@@ -213,6 +213,7 @@ passing a genesis.
 | `--enable-account-queries` | | `true` | `enable-account-queries` (negation is off — disable with `=false`) |
 | `--http-max-in-flight-requests` | | `100` | `http-max-in-flight-requests` |
 | `--http-threads` | | `4` | `http-threads` |
+| `--vote-threads` | | `4` | `vote-threads` — without it a non-producing node neither processes nor relays finalizer votes |
 | `--agent-name` | | `wire-api-node` | `agent-name` |
 | `--genesis-json` | | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | `read-mode` (`head` or `irreversible`) — only when set |
