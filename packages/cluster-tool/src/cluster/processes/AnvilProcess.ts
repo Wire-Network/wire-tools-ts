@@ -21,7 +21,7 @@ export interface AnvilOptions {
   binary?: string
   /** Additional CLI flags. */
   extraArgs?: string[]
-  /** `--slots-in-an-epoch` (run-phase finality emulation; omit during deploy). */
+  /** `--slots-in-an-epoch` (finality lag; independent of the mining interval). */
   slotsInAnEpoch?: number
   /** `--block-time` seconds (run-phase interval mining; omit during deploy). */
   blockTimeSec?: number
@@ -31,10 +31,10 @@ export interface AnvilOptions {
 export interface AnvilConfig extends Required<AnvilOptions> {}
 
 /**
- * Manages an anvil (Foundry) local Ethereum node. The run-phase finality knobs
- * (`slotsInAnEpoch` / `blockTimeSec`) are opt-in — they MUST NOT be set during
- * the deploy phase (`--block-time` disables instamine, which the hardhat deploy
- * depends on).
+ * Manages an anvil (Foundry) local Ethereum node. The finality lag
+ * (`slotsInAnEpoch`) is independent of interval mining (`blockTimeSec`). Omit
+ * `blockTimeSec` during deployment to preserve the instamine behavior required
+ * by Hardhat; the finality lag can be configured from startup.
  */
 export class AnvilProcess extends ManagedProcess {
   /**
@@ -178,7 +178,7 @@ export namespace AnvilProcess {
 
   /** Default EVM chain id (Foundry's standard). */
   export const DefaultChainId = 31_337
-  /** `--slots-in-an-epoch` value for the run-phase anvil (finalize after 2 blocks). */
+  /** `--slots-in-an-epoch` for cluster anvil processes (finalize after 2 blocks). */
   export const SlotsInAnEpoch = 1
   /** `--block-time` seconds for the run-phase anvil. */
   export const BlockTimeSec = 1

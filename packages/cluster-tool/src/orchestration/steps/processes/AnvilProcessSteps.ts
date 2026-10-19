@@ -13,7 +13,8 @@ export namespace AnvilProcessSteps {
    * Start the run-time anvil (get-or-create from `ctx.processManager`). It starts
    * in **instamine** mode (no `--block-time`) so the Hardhat outpost deploy — which
    * depends on instant mining — succeeds; {@link planEnableIntervalMining} switches it
-   * to interval mining afterward. Idempotent: a no-op if the anvil is already up.
+   * to interval mining afterward. The finality lag matches a restarted cluster
+   * from startup. Idempotent: a no-op if the anvil is already up.
    */
   export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -36,6 +37,7 @@ export namespace AnvilProcessSteps {
       host: ctx.config.bind.anvil.address,
       port: ctx.config.bind.anvil.port,
       chainId: AnvilProcess.DefaultChainId,
+      slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
       stateFile: Path.join(
         ctx.config.dataPath,
         AnvilProcess.StateSubpath,
