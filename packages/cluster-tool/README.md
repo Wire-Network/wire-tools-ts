@@ -91,9 +91,9 @@ the path flags.
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](../../docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -107,6 +107,34 @@ the path flags.
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
+
+**Solana outpost launch state.** Against local outposts (no
+`--external-outpost-config`), `create` takes the new `liqsol_core` outpost out of
+pre-launch in the `SolanaOutpostLaunch` phase: `set_wire_state` Launching, then
+PostLaunch, both signed by the deployer (the liqsol `global_config.admin`), then a
+read-back that `GlobalState.wire_state` decodes to `{ postLaunch: {} }`. The phase
+runs right after the `SolanaOutpost` deploy and before any operator daemon starts
+the OPP exchange. PostLaunch is the only state in which the outpost queues
+`SYNDICATE_LIQ`, reports `LIQ_YIELD` and pays `DESYNDICATE_LIQ`; each of those
+also needs the liqSOL mint mapped to its depot token code on the outpost config
+(`set_token_address`), which this phase does not write. An external outpost is
+never flipped. Flows compose the same bootstrap without this phase: their outpost
+starts PreLaunch and the scenario drives the transition itself.
+
+**Automatic underwriting.** Against local outposts, `create` also forces on
+`--enable-batch-operator-underwriting`, `--enable-mock-syndication-import` and
+`--enable-mock-liq-pools`, whatever the command line or options file says. Every
+batch operator runs the underwriter role, the funded operators receive their
+epoch-zero LIQ credit, and the mock LIQ yield pools are seeded. The bootstrap backs
+all of that shadow with custody on the outposts it deployed, and verifies the backing
+before the first epoch. Ship the generated outpost state together with the depot: a
+fresh outpost deployment holds none of that backing.
+
+A local `create` therefore needs a nodeop built with the underwriter role. With
+`--external-outpost-config`, nothing is forced on, and `create` refuses either mock
+flag, because the harness cannot back shadow on outposts it did not deploy.
+Batch-operator underwriting stays available there as an explicit flag. Flows set
+these options in their scenario defaults instead.
 
 ### `run` / `destroy`
 
@@ -380,6 +408,13 @@ const build = await ClusterBuildDefaults.create({
 })
 const report = await build.build()   // one Report.StepResult per Step
 ```
+
+`ClusterBuildDefaults.create(options, createOptions)` takes the caller's
+composition choices as its second argument: `createContext` builds a flow's own
+context, and `launchSolanaOutpost: true` (what the `create` command passes) adds
+the `SolanaOutpostLaunch` phase described under [`create`](#create).
+`enableAutomaticUnderwriting: true` (also passed by `create`) forces on the three
+automatic-underwriting options against local outposts.
 
 Persisted shapes + their validated codecs live in `@wireio/cluster-tool-shared`
 (`ClusterConfig` / `BindConfig` / `ClusterState` / `SignatureProviderConfig` /

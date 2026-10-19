@@ -313,14 +313,16 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off — seed the
+requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off, forced
+on by a local `create`, refused with `--external-outpost-config` — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
-custody), `--enable-mock-syndication-import` (default off — import the mock
-bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off — every batch-operator
+custody), `--enable-mock-syndication-import` (default off, forced on by a local
+`create`, refused with `--external-outpost-config` — import the mock
+bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off, forced on by a local `create` — every batch-operator
 daemon also runs the `batch_operator_plugin` underwriter role from its own account
 and gets a node-owner RAM grant for its `sysio.bond` rows; with the import on, each
-operator's ED key also gets an epoch-zero LIQSOL credit, and the import moves after
-operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
+funded operator's ED and EM keys also get an epoch-zero LIQSOL and LIQETH credit, and the
+import moves after operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -370,6 +372,31 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
+**`create` takes a local Solana outpost PostLaunch; flows do not.** `create`
+composes the bootstrap with `ClusterBuildDefaults.create(options,
+{ launchSolanaOutpost: true })`, which adds the `SolanaOutpostLaunch` phase right
+after the local `SolanaOutpost` deploy: `set_wire_state` Launching, then
+PostLaunch (signed by the deployer, the liqsol `global_config.admin`), then a
+read-back of `GlobalState.wire_state`. It precedes every operator daemon, so OPP
+runs against a PostLaunch outpost from the first epoch. The PostLaunch paths
+(`synd`, `report_liq_yield`, `DESYNDICATE_LIQ` payouts) also need the liqSOL mint
+mapped to its depot token code (`set_token_address`), which this phase does not
+write. External outposts are never flipped. `FlowCLI` never sets the option: a
+flow's outpost starts PreLaunch and the scenario drives the transition
+(`SyndicationScenario`'s `LaunchOutpost`, `flow-liq-syndication`,
+`flow-liq-yield`).
+
+**`create` bootstraps backed automatic underwriting against local outposts; flows do
+not.** `create` also passes `enableAutomaticUnderwriting: true`.
+`ClusterBuildDefaults.mergeAutomaticUnderwriting` then merges
+`ClusterBuildDefaults.AutomaticUnderwritingOverrides` over the options before the
+config resolves: batch-operator underwriting, the mock syndication import, and the
+mock LIQ pools. The existing gated phases then compose with their custody backing.
+There is no opt-out on a local `create`. An `externalOutpostConfig` build keeps the
+caller's options, and `ClusterConfigProvider.resolve` refuses either mock flag there.
+`FlowCLI` never sets the option: a flow declares these options in its
+`Scenario.defaults`.
+
 **Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
@@ -385,13 +412,13 @@ Ethereum then seeds principal through `OutpostManager.execute` in a separate
 Step, preserving the pool configuration. Verification requires principal to equal
 the backing and custody to cover it before the epoch relay can realize yield. A flow
 whose batch operators underwrite sets `enableBatchOperatorUnderwriting: true` in
-`Scenario.defaults` too, never `plan()`: with the import on, each operator's ED key
-gets an epoch-zero LIQSOL credit, which reorders the bootstrap — the import, its
+`Scenario.defaults` too, never `plan()`: with the import on, each funded operator's ED
+and EM keys get an epoch-zero LIQSOL and LIQETH credit, which reorders the bootstrap — the import, its
 verify and the custody backing run after operator provisioning rather than in the
 prerequisites group. The flag-less `batchOperatorUnderwriting` default tunes it:
 `fundedOperatorCount` (the first N operators get the credit; the rest run the role
 unfunded) and `maxExposure` (the caps, `TokenAmount[]`); both default to every operator
-funded at a 10 LIQSOL cap.
+funded, with caps of 10 LIQSOL and 10 LIQETH.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
