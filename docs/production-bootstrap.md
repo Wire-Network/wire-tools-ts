@@ -524,7 +524,9 @@ are prepared just before the provisioning above; the operator nodeop daemons sta
 infrastructure, before the first epoch.
 
 43. `sysio.epoch::schbatchgps({})` — `[sysio.epoch@active]` — initialize batch-operator groups from the
-    AVAILABLE (bootstrapped) batch ops. Local outposts are then seeded with that schedule before the first
+    AVAILABLE (bootstrapped) batch ops. The tooling then writes `<cluster-path>/wire-opreg-bootstrap.json`
+    (not a depot action): the cluster's label and AWS account, the bootstrapped operator roster with public
+    keys, this schedule and the epoch duration — see [`outpost/README.md`](outpost/README.md). Local outposts are then seeded with that schedule before the first
     envelope (chain-side, not depot actions): Ethereum `OPPInbound.installInitialRoster` replaces the
     provisional roster, and Solana `opp_bootstrap` seeds the outpost's operator registry. External outposts
     are seeded by their own operators.

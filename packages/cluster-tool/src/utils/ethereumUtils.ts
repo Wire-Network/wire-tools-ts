@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { ethers } from "ethers"
+import { EvmAddressPattern } from "@wireio/cluster-tool-shared"
 
 /**
  * The ONE sanctioned ethers typed-view boundary: construct an
@@ -26,9 +27,6 @@ export function contractView<View extends object>(
   return new ethers.Contract(address, abi, runner) as View &
     ethers.BaseContract
 }
-
-/** Shape of a deployed 20-byte EVM address (`0x` + 40 hex chars). */
-export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
 
 /**
  * Load a deployed outpost contract from the run's wire-ethereum deploy

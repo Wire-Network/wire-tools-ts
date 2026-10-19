@@ -34,13 +34,14 @@
   },
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.42",
-    "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.97",
-    "@wireio/shared": "^1.0.96",
+    "@wireio/opp-typescript-models": "^1.0.54",
+    "@wireio/sdk-core": "^1.0.102",
+    "@wireio/shared": "^1.0.102",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
+    "ajv": "^8.20.0",
     "ts-jest": "^29.4.6",
     "typescript": "^6.0.2"
   }

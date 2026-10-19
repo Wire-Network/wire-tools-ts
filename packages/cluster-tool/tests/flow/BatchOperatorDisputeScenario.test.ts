@@ -1,7 +1,9 @@
 import {
   BatchOperatorDisputeConstants as Constants,
   BatchOperatorDisputeScenario,
+  BatchOperatorSlashingScenario,
   BatchOperatorDisputeSteps as DisputeSteps,
+  BatchOperatorTerminalTieScenario,
   type BatchOperatorDisputeScenarioOptions
 } from "@wireio/cluster-tool/flow"
 import {
@@ -16,6 +18,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
+import { fixtureOperatorRow } from "../orchestration/steps/contracts/sysio/opregOperatorRowFixture.js"
 
 const TerminalTieOptions = {
   name: "terminal-tie-test",
@@ -38,6 +41,48 @@ const ContestedEpoch = 17,
   DisputeId = "42",
   CanonicalAccount = "wireno.x3f9k",
   CanonicalChecksum = "canonical-checksum"
+
+interface OperatorStatusFixture {
+  readonly ctx: ClusterBuildContext
+  readonly label: string
+}
+
+function epochStateRow(
+  overrides: Partial<SysioContracts.SysioEpochEpochStateType> = {}
+): SysioContracts.SysioEpochEpochStateType {
+  return {
+    current_epoch_index: ContestedEpoch,
+    current_epoch_start: "2026-08-28T00:00:00.000",
+    next_epoch_start: "2026-08-28T00:01:00.000",
+    current_batch_op_group: 0,
+    batch_op_groups: [["wireno.a", "wireno.b", "wireno.c"]],
+    last_consensus_hash: "",
+    is_paused: false,
+    ...overrides
+  }
+}
+
+function chainInfo(headBlockTime: string) {
+  return {
+    server_version: "test",
+    chain_id: "00".repeat(32),
+    head_block_num: 10,
+    last_irreversible_block_num: 9,
+    head_block_time: headBlockTime,
+    head_block_id: "11".repeat(32),
+    head_block_producer: "sysio"
+  }
+}
+
+function registerDisputeOperators(ctx: ClusterBuildContext): string[] {
+  return Constants.DisputeOperators.map((label, index) => {
+    const account = `wireno.disp${index}`
+    ctx.keyStore.setOperator(
+      fixtureOperatorAccount(label, OperatorType.BATCH, account)
+    )
+    return account
+  })
+}
 
 class TestBatchOperatorDisputeScenario extends BatchOperatorDisputeScenario {
   constructor(options: BatchOperatorDisputeScenarioOptions) {
@@ -77,7 +122,7 @@ function phaseNamed(
 
 function configuredGroupSizeStep() {
   const build = newBuild()
-  new TestBatchOperatorDisputeScenario(TerminalTieOptions).plan(build)
+  new BatchOperatorTerminalTieScenario().plan(build)
   const degradedGroup = phaseNamed(
     groupNamed(build, "SetupDispute"),
     "DegradeLiveGroup"
@@ -159,6 +204,24 @@ function disputeRunnerFixture(
   return ctx
 }
 
+function operatorStatusFixture(
+  status: SysioContracts.SysioOpregOperatorstatus
+): OperatorStatusFixture {
+  const ctx = fixtureContext(),
+    label = "dispop.b",
+    account = "wireno.observe",
+    contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.opreg)
+  ctx.keyStore.setOperator(
+    fixtureOperatorAccount(label, OperatorType.BATCH, account)
+  )
+  jest.spyOn(contract.tables.operators, "query").mockResolvedValue({
+    rows: [fixtureOperatorRow(account, undefined, { status })],
+    more: false
+  })
+  jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+  return { ctx, label }
+}
+
 function awaitDisputeInput(
   expectedCandidateCount: number
 ): DisputeSteps.AwaitDisputeOpenedInput {
@@ -169,13 +232,19 @@ function awaitDisputeInput(
 }
 
 describe("BatchOperatorDisputeScenario", () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+    jest.useRealTimers()
+  })
+
   it("keeps the configured three-member group while opening a two-candidate dispute", () => {
-    const scenario = new TestBatchOperatorDisputeScenario(TerminalTieOptions)
+    const scenario = new BatchOperatorTerminalTieScenario()
     const build = newBuild()
 
     scenario.plan(build)
 
     expect(scenario.defaults.operatorsPerEpoch).toBe(3)
+    expect(scenario.name).toBe("flow-batch-operator-terminal-tie")
 
     const setup = groupNamed(build, "SetupDispute")
     const degradedGroup = phaseNamed(setup, "DegradeLiveGroup")
@@ -202,7 +271,10 @@ describe("BatchOperatorDisputeScenario", () => {
 
   it("preserves the original three-candidate composition", () => {
     const build = newBuild()
-    new TestBatchOperatorDisputeScenario(ThreeWayOptions).plan(build)
+    const scenario = new BatchOperatorSlashingScenario()
+    scenario.plan(build)
+
+    expect(scenario.name).toBe("flow-batch-operator-slashing")
 
     expect(
       groupNamed(build, "SetupDispute").children.some(
@@ -384,5 +456,188 @@ describe("BatchOperatorDisputeScenario", () => {
     ).rejects.toThrow("expected exactly 3 dispute candidates, got 2")
 
     expect(ctx.outputs.has(DisputeSteps.DisputeResolutionKey)).toBe(false)
+  })
+
+  it("submits a tagged envelope through the canonical msgch action runner", async () => {
+    const ctx = fixtureContext(),
+      account = "wireno.deliver",
+      contract = ctx.wire.getSysioContract(
+        SysioContracts.SysioContractName.msgch
+      ),
+      query = jest
+        .spyOn(contract.tables.outpcons, "query")
+        .mockResolvedValue({ rows: [], more: false }),
+      invoke = jest
+        .spyOn(contract.actions.deliver, "invoke")
+        .mockResolvedValue(undefined)
+    ctx.outputs.set(DisputeSteps.ContestedEpochKey, ContestedEpoch)
+    ctx.keyStore.setOperator(
+      fixtureOperatorAccount("dispop.a", OperatorType.BATCH, account)
+    )
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+
+    await DisputeSteps.runDeliverTaggedEnvelope(
+      ctx,
+      {
+        kind: "BatchOperatorDisputeSteps.DeliverTaggedEnvelopeInput",
+        batchOperatorLabel: "dispop.a",
+        chainCode: 9_001,
+        tag: "canonical"
+      },
+      new AbortController().signal
+    )
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith(
+      {
+        batch_op_name: account,
+        chain_code: 9_001,
+        data: expect.stringMatching(/^[0-9a-f]+$/)
+      },
+      { authorization: [{ actor: account, permission: "active" }] }
+    )
+  })
+
+  it("votes for the stored canonical target through the canonical chalg runner", async () => {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(
+        SysioContracts.SysioContractName.chalg
+      ),
+      invoke = jest
+        .spyOn(contract.actions.votedispute, "invoke")
+        .mockResolvedValue(undefined)
+    ctx.outputs.set(DisputeSteps.DisputeResolutionKey, {
+      disputeId: Number(DisputeId),
+      canonicalChecksum: CanonicalChecksum
+    })
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+
+    await DisputeSteps.runVoteCanonicalDispute(
+      ctx,
+      {
+        kind: "BatchOperatorDisputeSteps.VoteCanonicalDisputeInput",
+        owner: "voter1"
+      },
+      new AbortController().signal
+    )
+
+    expect(invoke).toHaveBeenCalledWith(
+      {
+        owner: "voter1",
+        dispute_id: Number(DisputeId),
+        chosen_checksum: CanonicalChecksum
+      },
+      { authorization: [{ actor: "voter1", permission: "active" }] }
+    )
+  })
+
+  it("stages the contested epoch only after the chain clock passes its boundary", async () => {
+    const ctx = fixtureContext()
+    jest
+      .spyOn(ctx.wire, "getEpochState")
+      .mockResolvedValue({ rows: [epochStateRow()], more: false })
+    jest
+      .spyOn(ctx.wire, "getInfo")
+      .mockResolvedValue(chainInfo("2026-08-28T00:02:00.000"))
+
+    await DisputeSteps.runStageContestedEpoch(
+      ctx,
+      null,
+      new AbortController().signal
+    )
+
+    expect(ctx.outputs.assert(DisputeSteps.ContestedEpochKey)).toBe(
+      ContestedEpoch
+    )
+  })
+
+  it("settles only after the dispute-owned epoch is stable", async () => {
+    jest.useFakeTimers()
+    const ctx = fixtureContext(),
+      accounts = registerDisputeOperators(ctx)
+    jest.spyOn(ctx.wire, "getEpochState").mockResolvedValue({
+      rows: [epochStateRow({ batch_op_groups: [accounts] })],
+      more: false
+    })
+
+    const result = DisputeSteps.settleOnDisputeEpoch(ctx)
+    await jest.runAllTimersAsync()
+
+    await expect(result).resolves.toBe(ContestedEpoch)
+  })
+
+  it("accepts only the resolved canonical winner", async () => {
+    const ctx = disputeRunnerFixture(2),
+      contract = ctx.wire.getSysioContract(
+        SysioContracts.SysioContractName.chalg
+      )
+    ctx.outputs.set(DisputeSteps.DisputeResolutionKey, {
+      disputeId: Number(DisputeId),
+      canonicalChecksum: CanonicalChecksum
+    })
+    jest.spyOn(contract.tables.disputes, "query").mockResolvedValue({
+      rows: [
+        {
+          ...disputeRow(2),
+          status:
+            SysioContracts.SysioChalgDisputestatus.DISPUTE_STATUS_RESOLVED,
+          winning_checksum: CanonicalChecksum
+        }
+      ],
+      more: false
+    })
+
+    await expect(
+      DisputeSteps.runAwaitDisputeResolved(
+        ctx,
+        null,
+        new AbortController().signal
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it("observes an operator become SLASHED", async () => {
+    const { ctx, label } = operatorStatusFixture(
+      SysioContracts.SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED
+    )
+
+    await expect(
+      DisputeSteps.runAwaitOperatorSlashed(
+        ctx,
+        {
+          kind: "BatchOperatorDisputeSteps.AwaitOperatorSlashedInput",
+          label
+        },
+        new AbortController().signal
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it("observes an operator become ACTIVE", async () => {
+    const { ctx, label } = operatorStatusFixture(
+      SysioContracts.SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+    )
+
+    await expect(
+      DisputeSteps.runAwaitOperatorActive(
+        ctx,
+        {
+          kind: "BatchOperatorDisputeSteps.AwaitOperatorActiveInput",
+          label
+        },
+        new AbortController().signal
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it("performs no semantic runner work when pre-aborted", async () => {
+    const ctx = fixtureContext(),
+      controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      DisputeSteps.runStageContestedEpoch(ctx, null, controller.signal)
+    ).rejects.toMatchObject({ name: "AbortError" })
+    expect(ctx.outputs.has(DisputeSteps.ContestedEpochKey)).toBe(false)
   })
 })

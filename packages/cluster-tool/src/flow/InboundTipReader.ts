@@ -1,6 +1,6 @@
 import type { SysioContracts } from "@wireio/sdk-core"
 
-import { parseChainTip } from "./EnvelopeCanonicalCodec.js"
+import { parseChainTip } from "./envelopeCanonicalCodec.js"
 import { SingleFlightCache } from "./SingleFlightCache.js"
 
 /**

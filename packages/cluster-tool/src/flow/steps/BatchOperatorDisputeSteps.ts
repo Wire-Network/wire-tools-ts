@@ -15,12 +15,12 @@ import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Steps } from "../../orchestration/steps/index.js"
 import { Report } from "../../report/Report.js"
 import { isNotEmpty, matchesProtoEnum } from "../../utils/predicateUtils.js"
-import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
+import { bytesToHex, encodeTaggedEnvelope } from "../envelopeCanonicalCodec.js"
 import {
   InboundTipReader,
   type OutpostInboundTips
 } from "../InboundTipReader.js"
-import { BatchOperatorDisputeConstants as Constants } from "../BatchOperatorDisputeConstants.js"
+import { BatchOperatorDisputeConstants as Constants } from "../batchOperatorDisputeConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
   SysioContracts
@@ -28,14 +28,10 @@ const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
 const log = getLogger(__filename)
 
 /**
- * Shared step factories + dispute-domain reads for batch-operator disputes.
- * The `sysio.chalg::votedispute`, `sysio.msgch::deliver`, and
- * `sysio.opreg::processbatch` actions have no shared `Steps.*` palette factories
- * yet, so this namespace supplies them in the
- * same shape (`(actor, name, description, options, ...args) → ClusterBuildStep`,
- * ABI-exact action names, typed `StepInput`s, named runners). Cross-step values
- * (the contested epoch, the open dispute's id + canonical checksum) ride
- * `ctx.outputs` via the typed keys below.
+ * Shared semantic steps + dispute-domain reads for batch-operator disputes.
+ * Raw ABI writes stay on the canonical `Steps.contracts.sysio.*` palette;
+ * this namespace prepares dispute-specific action data from typed cross-step
+ * outputs and delegates the write to that palette.
  */
 export namespace BatchOperatorDisputeSteps {
   // ── Cross-step output keys ────────────────────────────────────────────────
@@ -173,11 +169,10 @@ export namespace BatchOperatorDisputeSteps {
     ctx: ClusterBuildContext,
     label: string
   ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-    const account = ctx.keyStore.assertOperator(label).account,
-      { rows } = await ctx.wire
-        .getSysioContract(SysioContractName.opreg)
-        .tables.operators.query({ limit: Constants.OperatorTableReadLimit })
-    return rows.find(row => row.account === account)
+    const account = ctx.keyStore.assertOperator(label).account
+    return (await Steps.contracts.sysio.opreg.readOperators(ctx)).find(
+      row => row.account === account
+    )
   }
 
   /**
@@ -341,74 +336,11 @@ export namespace BatchOperatorDisputeSteps {
     return epoch
   }
 
-  // ── Step: sysio.opreg::planProcessbatch (write) ───────────────────────────────
+  // ── Step: prepare + submit one tagged dispute envelope ───────────────────
 
-  /** Input for {@link planProcessbatch} — the operator's `label` handle + account-less action data. */
-  export interface ProcessbatchInput extends StepInput {
-    readonly kind: "BatchOperatorDisputeSteps.ProcessbatchInput"
-    readonly label: string
-    readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
-  }
-
-  /**
-   * `sysio.opreg::processbatch` — force a dispute operator ACTIVE. Normally an
-   * operator flips UNKNOWN→ACTIVE via `reevaluate_eligibility`, which only
-   * fires on a deposit event; the dispute operators post no collateral, so
-   * nothing would ever evaluate them. `planProcessbatch(label, was_eligible=false,
-   * is_eligible=true)` IS the eligibility callback and flips status directly;
-   * it only needs `sysio.opreg` auth (= `sysio@active` = the kiod dev key
-   * in-cluster). They carry no bond, which is fine — the flow asserts the
-   * SLASHED status flip, not a bond amount.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step option overrides.
-   * @param label - The operator's durable harness `label` handle (its resolved
-   *   `account` is what the action carries).
-   * @param data - The generated action data.
-   * @returns The definition step.
-   */
-  export function planProcessbatch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    label: string,
-    data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
-  ): ClusterBuildStep<C, ProcessbatchInput> {
-    return ClusterBuildStep.create<C, ProcessbatchInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "BatchOperatorDisputeSteps.ProcessbatchInput", label, data },
-      runProcessbatch
-    )
-  }
-
-  /** Named runner — `sysio.opreg::processbatch` for the operator's resolved account. */
-  export async function runProcessbatch<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ProcessbatchInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .actions.processbatch.invoke({
-        ...input.data,
-        account: ctx.keyStore.assertOperator(input.label).account
-      })
-  }
-
-  // ── Step: sysio.msgch::planDeliver (write) ────────────────────────────────────
-
-  /** Input for {@link planDeliver}. */
-  export interface DeliverInput extends StepInput {
-    readonly kind: "BatchOperatorDisputeSteps.DeliverInput"
+  /** Input for {@link planDeliverTaggedEnvelope}. */
+  export interface DeliverTaggedEnvelopeInput extends StepInput {
+    readonly kind: "BatchOperatorDisputeSteps.DeliverTaggedEnvelopeInput"
     readonly batchOperatorLabel: string
     readonly chainCode: number
     readonly tag: string
@@ -431,7 +363,7 @@ export namespace BatchOperatorDisputeSteps {
    * @param tag - The envelope payload tag (drives the checksum).
    * @returns The definition step.
    */
-  export function planDeliver<
+  export function planDeliverTaggedEnvelope<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     actor: Report.Actor,
@@ -441,26 +373,26 @@ export namespace BatchOperatorDisputeSteps {
     batchOperatorLabel: string,
     chainCode: number,
     tag: string
-  ): ClusterBuildStep<C, DeliverInput> {
-    return ClusterBuildStep.create<C, DeliverInput>(
+  ): ClusterBuildStep<C, DeliverTaggedEnvelopeInput> {
+    return ClusterBuildStep.create<C, DeliverTaggedEnvelopeInput>(
       actor,
       name,
       description,
       options,
       {
-        kind: "BatchOperatorDisputeSteps.DeliverInput",
+        kind: "BatchOperatorDisputeSteps.DeliverTaggedEnvelopeInput",
         batchOperatorLabel,
         chainCode,
         tag
       },
-      runDeliver
+      runDeliverTaggedEnvelope
     )
   }
 
   /** Named runner — encode the tagged envelope for the contested epoch, deliver it. */
-  export async function runDeliver<C extends ClusterBuildContext>(
+  export async function runDeliverTaggedEnvelope<C extends ClusterBuildContext>(
     ctx: C,
-    input: DeliverInput,
+    input: DeliverTaggedEnvelopeInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
@@ -484,25 +416,25 @@ export namespace BatchOperatorDisputeSteps {
     const batchOperatorAccount = ctx.keyStore.assertOperator(
       input.batchOperatorLabel
     ).account
-    await ctx.wire
-      .getSysioContract(SysioContractName.msgch)
-      .actions.deliver.invoke(
-        {
+    await Steps.contracts.sysio.msgch.runDeliver(
+      ctx,
+      {
+        kind: "MsgchContractSteps.DeliverInput",
+        data: {
           batch_op_name: batchOperatorAccount,
           chain_code: input.chainCode,
           data: bytesToHex(envelope)
-        },
-        {
-          authorization: WireClient.activeAuthorization(batchOperatorAccount)
         }
-      )
+      },
+      signal
+    )
   }
 
-  // ── Step: sysio.chalg::planVotedispute (write) ────────────────────────────────
+  // ── Step: vote for the stored canonical dispute candidate ────────────────
 
-  /** Input for {@link planVotedispute}. */
-  export interface VotedisputeInput extends StepInput {
-    readonly kind: "BatchOperatorDisputeSteps.VotedisputeInput"
+  /** Input for {@link planVoteCanonicalDispute}. */
+  export interface VoteCanonicalDisputeInput extends StepInput {
+    readonly kind: "BatchOperatorDisputeSteps.VoteCanonicalDisputeInput"
     readonly owner: string
   }
 
@@ -518,7 +450,7 @@ export namespace BatchOperatorDisputeSteps {
    * @param owner - The voting Tier-1 owner.
    * @returns The definition step.
    */
-  export function planVotedispute<
+  export function planVoteCanonicalDispute<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     actor: Report.Actor,
@@ -526,37 +458,37 @@ export namespace BatchOperatorDisputeSteps {
     description: string,
     options: ClusterBuildStepOptions,
     owner: string
-  ): ClusterBuildStep<C, VotedisputeInput> {
-    return ClusterBuildStep.create<C, VotedisputeInput>(
+  ): ClusterBuildStep<C, VoteCanonicalDisputeInput> {
+    return ClusterBuildStep.create<C, VoteCanonicalDisputeInput>(
       actor,
       name,
       description,
       options,
-      { kind: "BatchOperatorDisputeSteps.VotedisputeInput", owner },
-      runVotedispute
+      { kind: "BatchOperatorDisputeSteps.VoteCanonicalDisputeInput", owner },
+      runVoteCanonicalDispute
     )
   }
 
   /** Named runner — ONE `votedispute` for the stored dispute + canonical checksum. */
-  export async function runVotedispute<C extends ClusterBuildContext>(
+  export async function runVoteCanonicalDispute<C extends ClusterBuildContext>(
     ctx: C,
-    input: VotedisputeInput,
+    input: VoteCanonicalDisputeInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
     const target = ctx.outputs.assert(DisputeResolutionKey)
-    await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .actions.votedispute.invoke(
-        {
+    await Steps.contracts.sysio.chalg.runVotedispute(
+      ctx,
+      {
+        kind: "ChalgContractSteps.VotedisputeInput",
+        data: {
           owner: input.owner,
           dispute_id: target.disputeId,
           chosen_checksum: target.canonicalChecksum
-        },
-        {
-          authorization: WireClient.activeAuthorization(input.owner)
         }
-      )
+      },
+      signal
+    )
   }
 
   // ── Step: stage the contested epoch (boundary wait + capture) ─────────────
@@ -824,7 +756,7 @@ export namespace BatchOperatorDisputeSteps {
 
   /**
    * Poll until the operator flips OPERATOR_STATUS_ACTIVE (after its
-   * {@link planProcessbatch} eligibility flip lands).
+   * `sysio.opreg::processbatch` eligibility flip lands).
    *
    * @param actor - The narrative subject.
    * @param name - Step name.

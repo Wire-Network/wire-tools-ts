@@ -131,8 +131,6 @@ export namespace BatchOperatorDisputeConstants {
   /** Envelope fixture: message payload version. */
   export const EnvelopeVersion = 0
 
-  /** Row ceiling for `sysio.opreg::operators` reads (bootstrap ops + underwriters + dispute ops). */
-  export const OperatorTableReadLimit = 100
   /** Row ceiling for `sysio.chalg::disputes` reads. */
   export const DisputeTableReadLimit = 100
   /** Row ceiling for `sysio.msgch::outpcons` reads (one row per active outpost). */

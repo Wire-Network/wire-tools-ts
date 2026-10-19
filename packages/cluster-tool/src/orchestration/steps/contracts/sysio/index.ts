@@ -2,6 +2,7 @@ import { AndonContractSteps } from "./AndonContractSteps.js"
 import { BiosContractSteps } from "./BiosContractSteps.js"
 import { BondContractSteps } from "./BondContractSteps.js"
 import { ChainsContractSteps } from "./ChainsContractSteps.js"
+import { ChalgContractSteps } from "./ChalgContractSteps.js"
 import { DclaimContractSteps } from "./DclaimContractSteps.js"
 import { EpochContractSteps } from "./EpochContractSteps.js"
 import { LiqContractSteps } from "./LiqContractSteps.js"
@@ -25,6 +26,7 @@ export namespace SysioContractSteps {
   export import bios = BiosContractSteps
   export import bond = BondContractSteps
   export import chains = ChainsContractSteps
+  export import chalg = ChalgContractSteps
   export import dclaim = DclaimContractSteps
   export import epoch = EpochContractSteps
   export import liq = LiqContractSteps

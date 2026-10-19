@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
@@ -150,6 +151,51 @@ export namespace OpregContractSteps {
       })
   }
 
+  /** Input for {@link planProcessbatch} — a harness label plus generated action data. */
+  export interface ProcessbatchInput extends StepInput {
+    readonly kind: "OpregContractSteps.ProcessbatchInput"
+    /** Harness label resolved to the generated WIRE account during execution. */
+    readonly label: string
+    /** Generated action data except the account resolved from {@link label}. */
+    readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
+  }
+
+  /** Plan `sysio.opreg::processbatch` for an operator resolved by harness label. */
+  export function planProcessbatch<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
+  ): ClusterBuildStep<C, ProcessbatchInput> {
+    return ClusterBuildStep.create<C, ProcessbatchInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "OpregContractSteps.ProcessbatchInput", label, data },
+      runProcessbatch
+    )
+  }
+
+  /** Resolve the harness operator label and invoke `sysio.opreg::processbatch`. */
+  export async function runProcessbatch<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ProcessbatchInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .actions.processbatch.invoke({
+        ...input.data,
+        account: ctx.keyStore.assertOperator(input.label).account
+      })
+  }
+
   /** Input for {@link planDeposit} — the generated `opreg::deposit` data. */
   export interface DepositInput extends StepInput {
     readonly kind: "OpregContractSteps.DepositInput"
@@ -286,5 +332,35 @@ export namespace OpregContractSteps {
       .actions.claimremit.invoke(input.data, {
         authorization: WireClient.activeAuthorization(input.data.account)
       })
+  }
+
+  // ── Reads (execute freely inside runners / verify steps) ─────────────────
+
+  /**
+   * Row limit of {@link readOperators}. A read that comes back with `more` set is
+   * refused rather than trusted, so an operator past the limit can never read as
+   * absent; raising it only widens that one read.
+   */
+  export const OperatorTableReadLimit = 100
+
+  /**
+   * Every `sysio.opreg::operators` row, from ONE complete read through the typed
+   * table accessor.
+   *
+   * @param ctx - The build context.
+   * @returns Every operator row, in table order.
+   * @throws When the table holds more than {@link OperatorTableReadLimit} rows.
+   */
+  export async function readOperators<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioOpregOperatorEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.operators.query({ limit: OperatorTableReadLimit })
+    Assert.ok(
+      !more,
+      `OpregContractSteps: sysio.opreg::operators has more than ${OperatorTableReadLimit} rows; the read is truncated`
+    )
+    return rows
   }
 }

@@ -4,10 +4,12 @@ import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../../../outputs/operatorAccountFixture.js"
+import { fixtureOperatorRow } from "./opregOperatorRowFixture.js"
 
 const OperatorLabel = "batchop.a",
   GeneratedAccount = "wireno.x3f9k",
-  AuditReason = "test live-group degradation"
+  AuditReason = "test live-group degradation",
+  ProcessbatchData = { was_eligible: false, is_eligible: true } as const
 
 function terminateFixture() {
   const ctx = fixtureContext()
@@ -128,6 +130,69 @@ describe("Steps.contracts.sysio.opreg", () => {
 
     expect(assertOperator).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("processbatch carries the operator label and eligibility transition", () => {
+    const step = Steps.contracts.sysio.opreg.planProcessbatch(
+      Report.Actor.Sysio,
+      "activate-batchop-a",
+      "mark batchop.a eligible",
+      {},
+      OperatorLabel,
+      ProcessbatchData
+    )
+
+    expect(step.input).toEqual({
+      kind: "OpregContractSteps.ProcessbatchInput",
+      label: OperatorLabel,
+      data: ProcessbatchData
+    })
+    expect(step.runner).toBe(Steps.contracts.sysio.opreg.runProcessbatch)
+  })
+
+  it("processbatch resolves the operator label and invokes the generated account", async () => {
+    const { ctx } = terminateFixture(),
+      contract = ctx.wire.getSysioContract(
+        SysioContracts.SysioContractName.opreg
+      ),
+      invoke = jest
+        .spyOn(contract.actions.processbatch, "invoke")
+        .mockResolvedValue(undefined)
+
+    await Steps.contracts.sysio.opreg.runProcessbatch(
+      ctx,
+      {
+        kind: "OpregContractSteps.ProcessbatchInput",
+        label: OperatorLabel,
+        data: ProcessbatchData
+      },
+      new AbortController().signal
+    )
+
+    expect(invoke).toHaveBeenCalledWith({
+      account: GeneratedAccount,
+      ...ProcessbatchData
+    })
+  })
+
+  it("processbatch rejects a pre-aborted signal before resolving the label", async () => {
+    const { ctx } = terminateFixture(),
+      assertOperator = jest.spyOn(ctx.keyStore, "assertOperator"),
+      controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      Steps.contracts.sysio.opreg.runProcessbatch(
+        ctx,
+        {
+          kind: "OpregContractSteps.ProcessbatchInput",
+          label: OperatorLabel,
+          data: ProcessbatchData
+        },
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: "AbortError" })
+    expect(assertOperator).not.toHaveBeenCalled()
   })
 
   describe("depot-native collateral actions", () => {
@@ -319,6 +384,48 @@ describe("Steps.contracts.sysio.opreg", () => {
         )
       ).rejects.toThrow()
       expect(invoke).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("operators read", () => {
+    /** A fixture context whose `sysio.opreg::operators` query is stubbable. */
+    function operatorsContext() {
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(
+          SysioContracts.SysioContractName.opreg
+        )
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      return { ctx, query: jest.spyOn(contract.tables.operators, "query") }
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("readOperators returns every row of one complete read at OperatorTableReadLimit", async () => {
+      const { ctx, query } = operatorsContext(),
+        rows = [
+          fixtureOperatorRow("wireno.a1b2c"),
+          fixtureOperatorRow("wireno.d3e4f")
+        ]
+      query.mockResolvedValue({ rows, more: false })
+      await expect(
+        Steps.contracts.sysio.opreg.readOperators(ctx)
+      ).resolves.toEqual(rows)
+      expect(query).toHaveBeenCalledWith({
+        limit: Steps.contracts.sysio.opreg.OperatorTableReadLimit
+      })
+    })
+
+    it("readOperators refuses a truncated read", async () => {
+      const { ctx, query } = operatorsContext()
+      query.mockResolvedValue({
+        rows: [fixtureOperatorRow("wireno.a1b2c")],
+        more: true
+      })
+      await expect(
+        Steps.contracts.sysio.opreg.readOperators(ctx)
+      ).rejects.toThrow(
+        `sysio.opreg::operators has more than ${Steps.contracts.sysio.opreg.OperatorTableReadLimit} rows; the read is truncated`
+      )
     })
   })
 })

@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { ethers } from "ethers"
 import { defaults, range } from "lodash"
 import Assert from "node:assert"
+import { EvmAddressPattern } from "@wireio/cluster-tool-shared"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { Constants } from "../../Constants.js"
@@ -17,10 +18,7 @@ import {
   withFileLock
 } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
-import {
-  EvmAddressPattern,
-  loadOutpostContract
-} from "../../utils/ethereumUtils.js"
+import { loadOutpostContract } from "../../utils/ethereumUtils.js"
 
 const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)

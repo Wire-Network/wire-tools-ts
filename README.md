@@ -571,6 +571,23 @@ distribution (there is no local chain to advance). A LOCAL cluster instead gates
 on `sysio.epoch::current_epoch_index` passing the bootstrap epoch. A remote
 `anvil`/`solana` bind address WITHOUT `--external-outpost-config` fails fast.
 
+### Bootstrapped operator roster (`wire-opreg-bootstrap.json`)
+
+Every bootstrap — `create` and every flow, local or `--external-outpost-config` —
+writes `<cluster-path>/wire-opreg-bootstrap.json` right after
+`sysio.epoch::schbatchgps`: the cluster's build `label` and `awsAccount`, each
+bootstrapped operator's WIRE account, operator type (`PRODUCER` / `BATCH` /
+`UNDERWRITER`) and public keys with their key types (`K1` / `BLS` / `EM` /
+`ED`), the initial batch-operator groups with the first active group, and the
+depot's epoch duration. `awsAccount` is `awsClusterNodeConfig.account` (or
+`null`); the cluster-tool writes `label: null` and the
+`create-wire-platform-cluster` workflow sets it after a successful create. It
+holds public data only. The
+`verify-wire-opreg-bootstrap` step checks it against `sysio.opreg` in the same
+bootstrap. Its JSON Schema, an example and the field reference are in
+[`docs/outpost/`](docs/outpost/README.md); the TypeScript codec is
+`WireOpregBootstrapSchemaCodec` (`@wireio/cluster-tool-shared`).
+
 ### Exporting a deployable external config
 
 `create-external-config` clones a CREATED, STOPPED local cluster into a fresh,

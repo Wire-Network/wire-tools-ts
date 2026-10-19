@@ -13,6 +13,10 @@ describe("ClusterFiles", () => {
     )
   })
 
+  it("carries the bootstrapped operator roster filename", () => {
+    expect(ClusterFiles.WireOpregBootstrapFilename).toBe("wire-opreg-bootstrap.json")
+  })
+
   it("carries the per-nodeop config.ini filename, distinct from the cluster JSON config", () => {
     expect(ClusterFiles.NodeConfigFilename).toBe("config.ini")
     expect(ClusterFiles.NodeConfigFilename).not.toBe(ClusterFiles.ConfigFilename)

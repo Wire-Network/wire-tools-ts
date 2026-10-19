@@ -19,7 +19,7 @@ import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
 import { matchesProtoEnum } from "../utils/predicateUtils.js"
 import { FlowScenario } from "./FlowScenario.js"
-import { BatchOperatorDisputeConstants as Constants } from "./BatchOperatorDisputeConstants.js"
+import { BatchOperatorDisputeConstants as Constants } from "./batchOperatorDisputeConstants.js"
 import { BatchOperatorDisputeSteps as DisputeSteps } from "./steps/index.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
@@ -417,7 +417,7 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       "One group of exactly the 3 dispute operators"
     ).push(
       ...Constants.DisputeOperators.map(operator =>
-        DisputeSteps.planProcessbatch(
+        Steps.contracts.sysio.opreg.planProcessbatch(
           Actor.Sysio,
           `force-eligible-${operator}`,
           `flip ${operator} eligible via opreg::processbatch`,
@@ -534,7 +534,7 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       { parallelize: true }
     ).push(
       ...deliveryOperators.map(operator =>
-        DisputeSteps.planDeliver(
+        DisputeSteps.planDeliverTaggedEnvelope(
           Actor.BatchOperator,
           `${operator}-deliver-solana`,
           `${operator} delivers the consensus SOLANA envelope`,
@@ -554,7 +554,7 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       { parallelize: true }
     ).push(
       ...deliveryOperators.map((operator, index) =>
-        DisputeSteps.planDeliver(
+        DisputeSteps.planDeliverTaggedEnvelope(
           Actor.BatchOperator,
           `${operator}-deliver-ethereum`,
           `${operator} delivers its divergent ETHEREUM envelope (${candidateTags[index]})`,
@@ -596,7 +596,7 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       // clears the live quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the
       // 3 voters + the bootstrap owner wireno).
       ...Constants.Tier1VoterNames.map(voter =>
-        DisputeSteps.planVotedispute(
+        DisputeSteps.planVoteCanonicalDispute(
           Actor.User,
           `vote-${voter}`,
           `${voter} votes the canonical checksum via sysio.chalg::votedispute`,
