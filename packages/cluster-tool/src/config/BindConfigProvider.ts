@@ -18,7 +18,9 @@ import {
   isUdpPortFree,
   isIpv6PortFree,
   ListenAllAddress,
-  Localhost
+  Localhost,
+  MaximumPort,
+  MinimumPort
 } from "../utils/netUtils.js"
 import { mkdirs, withFileLock } from "../utils/fsUtils.js"
 import { isPidAlive, processCommandBasename } from "../utils/processUtils.js"
@@ -290,11 +292,12 @@ export namespace BindConfigProvider {
       // this resolve and no other cluster via the registry is ever handed the
       // companion.
       claimSolanaHttp = async (): Promise<number> => {
-        const http = await claim(
+        const http = await pickSolanaRpc(
           options.solana?.ports?.http ?? null,
           DefaultSolanaRpc,
-          "solana.http"
+          claimed
         )
+        claimed.add(http)
         claimed.add(http + SolanaWsPortOffset)
         return http
       },
@@ -708,6 +711,71 @@ export namespace BindConfigProvider {
         protocol
       )
     )
+  }
+
+  /**
+   * Find a free Solana RPC port whose derived WebSocket companion is also
+   * free. Like {@link findAvailable}, this reads the registry under its lock;
+   * planned clusters use {@link resolve} to persist both reservations.
+   *
+   * @param preferred - Preferred RPC port; redraw when either port is unavailable.
+   * @returns The RPC port of a currently free RPC/WebSocket pair.
+   */
+  export function findAvailableSolanaRpc(
+    preferred = DefaultSolanaRpc
+  ): Promise<number> {
+    return withFileLock(portLockPath(), () =>
+      pickSolanaRpc(null, preferred, readRegistryPortExclusions())
+    )
+  }
+
+  const SolanaRpcPickAttempts = 16
+
+  /** Select BOTH implicit RPC ports while the caller holds the registry lock. */
+  async function pickSolanaRpc(
+    callerPin: number,
+    fallbackDefault: number,
+    claimed: Set<number>
+  ): Promise<number> {
+    if (callerPin != null) {
+      Assert.ok(
+        Number.isInteger(callerPin) &&
+          callerPin >= MinimumPort &&
+          callerPin + SolanaWsPortOffset <= MaximumPort,
+        `invalid Solana RPC port ${callerPin}: RPC and WebSocket ports must fit in ${MinimumPort}-${MaximumPort}`
+      )
+    }
+    const picked = await Bluebird.reduce(
+      range(callerPin != null ? 1 : SolanaRpcPickAttempts),
+      async (found: number, attempt: number) => {
+        if (found != null) return found
+        const http = await pickPort(
+            callerPin,
+            attempt === 0 ? fallbackDefault : null,
+            claimed,
+            "solana.http"
+          ),
+          websocket = http + SolanaWsPortOffset,
+          available =
+            websocket <= MaximumPort &&
+            !isReservedPort(websocket) &&
+            !claimed.has(websocket) &&
+            (await getPort({ port: websocket, exclude: claimed })) ===
+              websocket &&
+            (await isIpv6PortFree(websocket))
+        Assert.ok(
+          callerPin == null || available,
+          `Solana RPC port ${http} is pinned but its WebSocket companion ${websocket} is unavailable or reserved`
+        )
+        return available ? http : null
+      },
+      null as number
+    )
+    Assert.ok(
+      picked != null,
+      `no free Solana RPC/WebSocket port pair found within ${SolanaRpcPickAttempts} attempts`
+    )
+    return picked
   }
 
   /**
