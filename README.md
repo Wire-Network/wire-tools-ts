@@ -494,7 +494,7 @@ command comes first).
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
-| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
+| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
@@ -546,37 +546,58 @@ specs, so archives are sensitive; `cluster-keys.json` is NEVER included.
 
 ### External outpost clusters
 
-Point a cluster at Ethereum + Solana outposts that already run on real chains
-instead of the local anvil / solana-test-validator: pass
-`--external-outpost-config <file>` at `create` (the depot bootstraps normally but
-no local outpost is started or deployed), together with a `--bind-config` whose
-`anvil` / `solana` addresses are the REMOTE RPC endpoints. The
-`ExternalOutpostConfig` is fully self-described (RPC endpoints come from the bind
-config; the Solana program id is parsed from the IDL):
+Bootstrap a depot against Ethereum + Solana outposts that already run on their
+own chains, instead of the local anvil / solana-test-validator: pass
+`--external-outpost-config <file>` at `create`. The file is TRUSTED and holds
+values only — the outposts' real-world deployed addresses and public keys:
 
 ```json
 {
   "ethereum": {
-    "addressFile": "/opt/wire/eth/outpost-addrs.json",
-    "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
-    "chainId": 11155111
+    "chainId": 560048,
+    "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
+    "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
+    "liqEthAddresses": { "LiqEthToken": "0x…" }
   },
-  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+  "solana": {
+    "rpcUrl": "https://api.testnet.solana.com",
+    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+  }
 }
 ```
+
+- `outpostAddresses` is the outpost deploy record (`outpost-addrs-<network>.json`)
+  and must carry `OPP`, `OPPInbound` and `BAR`. `liqEthAddresses` (the liqEth
+  deploy record) and `solana.mints` (`[{ code, mint, decimals }]`) are optional.
+- `rpcUrl` is the endpoint the operator daemons dial. Without it they dial the
+  bind config's `anvil` / `solana` address.
+- The platform's `docs/ops/cluster-inputs/external-outpost-config.json` is a
+  complete example (Hoodi + Solana testnet).
+
+What `create` does with it:
+
+- **Never contacts an outpost.** No anvil or solana-test-validator starts,
+  nothing is deployed and no endpoint is probed. The harness's own outpost
+  clients refuse to run in this mode.
+- **Builds the daemon artifacts from source.** The ABI files come from the
+  wire-ethereum build and the `liqsol_core` IDL from the wire-solana build, with
+  the config's addresses and program id overlaid — the same step a local cluster
+  runs.
+- **Syncs the batch operators without their daemon.** Each batch-operator node
+  starts without `batch_operator_plugin` (so without an outpost client), syncs
+  the depot chain and is stopped with the rest of the cluster. Its `start.sh`
+  carries the full daemon args, so the deployed node runs the plugin.
+- **Gates** success on the depot's head block advancing, an outbound envelope
+  being queued for every registered outpost, and every batch-operator node having
+  synced — not on epoch distribution (there is no local chain to advance). A LOCAL
+  cluster instead gates on `sysio.epoch::current_epoch_index` passing the
+  bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
+  `--external-outpost-config` fails fast.
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
 values are rejected. Manual syndication bond providers can submit actions directly;
 automatic underwriting runs in the batch operators only when explicitly enabled
 and funded, as described in the [underwriting setup](docs/syndication-underwriting-operations.md).
-
-At `create` the harness verifies the external endpoints are reachable
-(`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
-and gates bootstrap success on the depot's head block advancing AND on an
-outbound envelope being queued for every registered outpost — NOT on epoch
-distribution (there is no local chain to advance). A LOCAL cluster instead gates
-on `sysio.epoch::current_epoch_index` passing the bootstrap epoch. A remote
-`anvil`/`solana` bind address WITHOUT `--external-outpost-config` fails fast.
 
 ### Bootstrapped operator roster (`wire-opreg-bootstrap.json`)
 

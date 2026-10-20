@@ -404,8 +404,9 @@ the panic account's pause role, then anvil switches to interval mining; solana-t
 four wire-solana programs at genesis (`liqsol_core` hosts the OPP outpost), the liqsol surface is stood up by
 wire-solana's own `init-*` scripts, and the OPP PDAs are initialized with the native-SOL token binding and
 precision. These deploys produce the artifact files (`outpost-addrs.json`, `liqeth-addrs.json`) the registry
-rows below read their chain-side addresses from; in external-outpost mode the operator-supplied artifacts
-(including `sol-mock-mints.json`) are copied into place instead. Production registers the canonical
+rows below read their chain-side addresses from; in external-outpost mode the same records (and
+`sol-mock-mints.json`, when the config carries mints) are written from the trusted
+`--external-outpost-config` values instead. Production registers the canonical
 contract/mint addresses via the same shapes.
 
 31. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description, outpost})` —
