@@ -1,3 +1,4 @@
+import { BatchOperatorDisputeConstants as Constants } from "./batchOperatorDisputeConstants.js"
 import { BatchOperatorDisputeScenario } from "./BatchOperatorDisputeScenario.js"
 
 /** Two live operators contest a three-member schedule after one termination. */
@@ -7,10 +8,13 @@ export class BatchOperatorTerminalTieScenario extends BatchOperatorDisputeScenar
       name: "flow-batch-operator-terminal-tie",
       description:
         "A three-member schedule loses one operator; its two live deliverers tie, then the canonical candidate wins the dispute vote and the losing deliverer is slashed",
-      deliveryOperators: ["dispop.a", "dispop.b"],
-      candidateTags: ["canonical", "fork"],
-      losingOperators: ["dispop.b"],
-      terminatedOperator: "dispop.c"
+      deliveryOperators: [
+        Constants.CanonicalOperator,
+        Constants.LosingOperators[0]
+      ],
+      candidateTags: [Constants.EnvelopeTags[0], Constants.EnvelopeTags[1]],
+      losingOperators: [Constants.LosingOperators[0]],
+      terminatedOperator: Constants.DisputeOperators[2]
     })
   }
 }

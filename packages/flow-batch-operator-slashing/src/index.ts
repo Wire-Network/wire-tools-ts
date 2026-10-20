@@ -1,3 +1,5 @@
+import "source-map-support/register"
+
 import { BatchOperatorSlashingScenario, FlowCLI } from "@wireio/cluster-tool"
 
 /** Run the batch-operator-slashing flow as an executable — exit code = report success. */

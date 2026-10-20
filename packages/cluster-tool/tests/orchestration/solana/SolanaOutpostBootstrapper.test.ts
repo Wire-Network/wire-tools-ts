@@ -1,5 +1,9 @@
+import Fs from "node:fs"
+
 import * as anchor from "@coral-xyz/anchor"
-import { PublicKey } from "@solana/web3.js"
+import { PublicKey, Keypair, Connection, Transaction } from "@solana/web3.js"
+import { SlugName } from "@wireio/sdk-core"
+import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana/SolanaOutpostProgramTool"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
@@ -140,5 +144,79 @@ describe("SolanaOutpostBootstrapper.oppBootstrap argument validation", () => {
         epochDurationSec
       )
     ).rejects.toThrow(/program keypair missing/)
+  })
+})
+
+describe("SolanaOutpostBootstrapper token registration", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  it("binds LIQSOL to the deployed token program's mint and sets both precisions", async () => {
+    const rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultSolanaRpc
+      )
+    )
+    const bootstrapper = new SolanaOutpostBootstrapper({
+      solanaPath: "/repo/sol",
+      rpcUrl
+    })
+    const deployer = Keypair.generate()
+    const tokenProgram = Keypair.generate().publicKey
+    bootstrapper.programId = Keypair.generate().publicKey
+    const transaction = new Transaction()
+    const builder = {
+      accounts: jest.fn().mockReturnThis(),
+      signers: jest.fn().mockReturnThis(),
+      transaction: jest.fn().mockResolvedValue(transaction)
+    }
+    const methods = {
+      initializeOutpost: jest.fn().mockReturnValue(builder),
+      initializeGlobalConfig: jest.fn().mockReturnValue(builder),
+      setTokenAddress: jest.fn().mockReturnValue(builder),
+      setTokenPrecision: jest.fn().mockReturnValue(builder)
+    }
+    jest.spyOn(Fs, "existsSync").mockReturnValue(true)
+    jest.spyOn(Connection.prototype, "getAccountInfo").mockResolvedValue(null)
+    jest
+      .spyOn(SolanaOutpostProgramTool, "assertProgramId")
+      .mockReturnValue(tokenProgram)
+    const program = new anchor.Program(
+      {
+        address: bootstrapper.programId.toBase58(),
+        metadata: { name: "bootstrap_test", version: "0.1.0", spec: "0.1.0" },
+        instructions: []
+      },
+      new anchor.AnchorProvider(
+        new Connection(rpcUrl),
+        new anchor.Wallet(deployer),
+        {}
+      )
+    )
+    Object.assign(program.methods, methods)
+    jest.spyOn(SolanaOutpostProgramTool, "loadProgram").mockReturnValue(program)
+    // Exercise the real initialization and instruction construction without RPC writes.
+    jest
+      .spyOn(bootstrapper, "runSimpleAuthorityInstruction" as never)
+      .mockResolvedValue(undefined as never)
+    await bootstrapper["initializePDAs"](deployer)
+
+    const solCode = new anchor.BN(SlugName.from("SOL"))
+    const liqsolCode = new anchor.BN(SlugName.from("LIQSOL"))
+    const [mint] = PublicKey.findProgramAddressSync(
+      [Buffer.from("liqsol_mint")],
+      tokenProgram
+    )
+    expect(SolanaOutpostProgramTool.assertProgramId).toHaveBeenCalledWith(
+      "/repo/sol",
+      SolanaOutpostProgramTool.AnchorProgram.liqsolToken
+    )
+    expect(methods.setTokenAddress.mock.calls).toEqual([
+      [solCode, PublicKey.default],
+      [liqsolCode, mint]
+    ])
+    expect(methods.setTokenPrecision.mock.calls).toEqual([
+      [solCode, 9],
+      [liqsolCode, 9]
+    ])
   })
 })

@@ -429,6 +429,12 @@ wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 
 ### Underwriting, syndication and the emergency stop
 
+Automatic underwriting requires `--enable-batch-operator-underwriting`, matching
+per-token exposure caps, and liquid shadow LIQ in the operator accounts. The role
+defaults to off even when OPP delivery works, except in a local `create`, which forces
+it on together with both mock inventories. See the
+[setup and existing-testnet recovery procedure](docs/syndication-underwriting-operations.md).
+
 Every `create` sets these up on the depot; no flag gates them, because a real
 depot needs them too:
 
@@ -480,9 +486,9 @@ command comes first).
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -561,7 +567,9 @@ config; the Solana program id is parsed from the IDL):
 ```
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
-values are rejected; syndication bond providers do not need a daemon.
+values are rejected. Manual syndication bond providers can submit actions directly;
+automatic underwriting runs in the batch operators only when explicitly enabled
+and funded, as described in the [underwriting setup](docs/syndication-underwriting-operations.md).
 
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
@@ -670,7 +678,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP / vote-thread tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -679,7 +687,8 @@ programmatic caller agree: `--chain-state-db-size-mb` (1024),
 `--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
 ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
-`--http-threads` (4), `--agent-name` (`wire-api-node`), and
+`--http-threads` (4), `--vote-threads` (4 — without it a non-producing node
+neither processes nor relays finalizer votes), `--agent-name` (`wire-api-node`), and
 `[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
 (`--query-engine-timeout-ms` 30000; every other one unset — an omitted one
 renders no line, leaving nodeop's `head` read mode and the plugin's own limit

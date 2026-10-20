@@ -133,6 +133,7 @@ describe("createCreateApiNodeCommand", () => {
         ["enable-account-queries", "boolean"],
         ["http-max-in-flight-requests", "number"],
         ["http-threads", "number"],
+        ["vote-threads", "number"],
         ["agent-name", "string"],
         ["genesis-json", "string"]
       ])
@@ -158,6 +159,7 @@ describe("createCreateApiNodeCommand", () => {
         "output-path",
         "p2p-peer-address",
         "transaction-finality-status-max-storage-size-gb",
+        "vote-threads",
         "query-engine-read-mode",
         "query-engine-worker-threads",
         "query-engine-max-in-flight",
@@ -241,6 +243,9 @@ describe("createCreateApiNodeCommand", () => {
       options.get(ApiNodeIniRenderer.HttpThreadsOption).describe
     ).toContain(String(ApiNodeConfig.DefaultHttpThreads))
     expect(
+      options.get(ApiNodeIniRenderer.VoteThreadsOption).describe
+    ).toContain(`(default ${ApiNodeConfig.DefaultVoteThreads})`)
+    expect(
       options.get(ApiNodeIniRenderer.HttpMaxInFlightRequestsOption).describe
     ).toContain(String(ApiNodeConfig.DefaultHttpMaxInFlightRequests))
     expect(options.get(ApiNodeIniRenderer.AgentNameOption).describe).toContain(
@@ -269,6 +274,7 @@ describe("createCreateApiNodeCommand", () => {
       ApiNodeIniRenderer.EnableAccountQueriesOption,
       ApiNodeIniRenderer.HttpMaxInFlightRequestsOption,
       ApiNodeIniRenderer.HttpThreadsOption,
+      ApiNodeIniRenderer.VoteThreadsOption,
       ApiNodeIniRenderer.AgentNameOption,
       Constants.CHAIN_STATE_DB_SIZE_MB_OPTION
     ].forEach(option => expect(options.has(option)).toBe(true))
@@ -286,6 +292,7 @@ describe("toApiNodeOptions", () => {
       enableAccountQueries: false,
       httpMaxInFlightRequests: 500,
       httpThreads: 16,
+      voteThreads: 8,
       agentName: "custom-api",
       genesisJson: "/tmp/genesis.json",
       queryEngineReadMode: NodeopReadMode.irreversible,
@@ -302,6 +309,7 @@ describe("toApiNodeOptions", () => {
         enableAccountQueries: false,
         httpMaxInFlightRequests: 500,
         httpThreads: 16,
+        voteThreads: 8,
         agentName: "custom-api"
       },
       // `toEqual` ignores the members whose flags were omitted (undefined).
@@ -340,10 +348,14 @@ describe("toApiNodeOptions", () => {
     expect(options.chainStateDbSizeMb).toBeUndefined()
     expect(options.genesisJsonFile).toBeUndefined()
     expect(options.tuning.httpThreads).toBeUndefined()
+    expect(options.tuning.voteThreads).toBeUndefined()
     expect(options.queryEngine.readMode).toBeUndefined()
     expect(options.queryEngine.maxInFlight).toBeUndefined()
     expect(ApiNodeConfig.resolve(options).tuning.httpThreads).toBe(
       ApiNodeConfig.DefaultHttpThreads
+    )
+    expect(ApiNodeConfig.resolve(options).tuning.voteThreads).toBe(
+      ApiNodeConfig.DefaultVoteThreads
     )
     // An unset query-engine member resolves to the harness defaults: the query
     // deadline, else nodeop's / the plugin's own default.
@@ -534,6 +546,7 @@ describe("createCreateApiNodeCommand handler (end to end)", () => {
         httpServerAddress: HttpServerAddress,
         p2pPeerAddress: ["10.0.0.6:9876"],
         httpThreads: 16,
+        voteThreads: 8,
         queryEngineMaxInFlight: 8
       })
       const configFile = Path.join(outputPath, ClusterFiles.NodeConfigFilename),
@@ -544,6 +557,7 @@ describe("createCreateApiNodeCommand handler (end to end)", () => {
       // query-engine flag, and a repeatable peer all survive the mapping.
       const ini = Fs.readFileSync(configFile, "utf-8")
       expect(ini).toContain(toIniLine(ApiNodeIniRenderer.HttpThreadsOption, 16))
+      expect(ini).toContain(toIniLine(ApiNodeIniRenderer.VoteThreadsOption, 8))
       expect(ini).toContain("query-max-in-flight = 8")
       expect(ini).toContain(
         toIniLine(ApiNodeIniRenderer.P2pPeerAddressOption, "10.0.0.6:9876")

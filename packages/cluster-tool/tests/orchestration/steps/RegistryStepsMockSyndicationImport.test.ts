@@ -295,7 +295,7 @@ describe("RegistrySteps mock syndication import", () => {
       expect(write).toHaveBeenCalledTimes(1)
     })
 
-    it("plans one credit per operator after the bonder's and before the seal", () => {
+    it("plans both token credits per operator before the seal", () => {
       const phase = RegistrySteps.planMockSyndicationImport(
         ClusterBuild.forContext(context),
         "import",
@@ -309,51 +309,76 @@ describe("RegistrySteps mock syndication import", () => {
         RegistrySteps.runMockSyndicationCredit,
         RegistrySteps.runBatchOperatorSyndicationCredit,
         RegistrySteps.runBatchOperatorSyndicationCredit,
+        RegistrySteps.runBatchOperatorSyndicationCredit,
+        RegistrySteps.runBatchOperatorSyndicationCredit,
         SyndContractSteps.runImportdone,
         RegistrySteps.runVerifyMockSyndicationImport
       ])
       expect(phase.steps[3].input).toEqual({
         kind: "RegistrySteps.BatchOperatorCreditInput",
-        label: "batchop.a"
+        label: "batchop.a",
+        keyType: KeyType.ED
       })
-      expect(phase.steps[6].input).toEqual({
+      expect(phase.steps[4].input).toEqual({
+        kind: "RegistrySteps.BatchOperatorCreditInput",
+        label: "batchop.a",
+        keyType: KeyType.EM
+      })
+      expect(phase.steps[8].input).toEqual({
         kind: "RegistrySteps.VerifyMockSyndicationImportInput",
         batchOperatorLabels: labels
       })
     })
 
-    it("imports the LIQSOL credit to the operator's own ED key in one action", async () => {
-      seedOperators()
-      const write = jest
-        .spyOn(SyndContractSteps, "runImportsynd")
-        .mockResolvedValue(undefined)
-      await RegistrySteps.runBatchOperatorSyndicationCredit(
-        context,
-        { kind: "RegistrySteps.BatchOperatorCreditInput", label: "batchop.b" },
-        signal
-      )
-      expect(write).toHaveBeenCalledTimes(1)
-      expect(write.mock.calls[0][1].data).toEqual({
-        chain_code: "SOLANA",
-        token_code: "LIQSOL",
-        credits: [
-          {
-            pubkey: PublicKey.from(
-              context.keyStore.assertOperator("batchop.b").solana.publicKey
-            ).data.hexString,
-            amount: RegistrySteps.MockBatchOperatorUnderwritingPair.amount
-          }
-        ]
-      })
-      await expect(
-        RegistrySteps.runBatchOperatorSyndicationCredit(
+    it.each([
+      [KeyType.ED, "SOLANA", "LIQSOL"],
+      [KeyType.EM, "ETHEREUM", "LIQETH"]
+    ] as const)(
+      "imports the %s credit to the operator's matching linked key",
+      async (keyType, chain, token) => {
+        seedOperators()
+        const write = jest
+          .spyOn(SyndContractSteps, "runImportsynd")
+          .mockResolvedValue(undefined)
+        await RegistrySteps.runBatchOperatorSyndicationCredit(
           context,
-          { kind: "RegistrySteps.BatchOperatorCreditInput", label: "nobody" },
+          {
+            kind: "RegistrySteps.BatchOperatorCreditInput",
+            label: "batchop.b",
+            keyType
+          },
           signal
         )
-      ).rejects.toThrow()
-      expect(write).toHaveBeenCalledTimes(1)
-    })
+        expect(write).toHaveBeenCalledTimes(1)
+        expect(write.mock.calls[0][1].data).toEqual({
+          chain_code: chain,
+          token_code: token,
+          credits: [
+            {
+              pubkey: PublicKey.from(
+                (keyType === KeyType.ED
+                  ? context.keyStore.assertOperator("batchop.b").solana
+                  : context.keyStore.assertOperator("batchop.b").ethereum
+                ).publicKey
+              ).data.hexString,
+              amount: RegistrySteps.MockBatchOperatorUnderwritingPair.amount
+            }
+          ]
+        })
+        await expect(
+          RegistrySteps.runBatchOperatorSyndicationCredit(
+            context,
+            {
+              kind: "RegistrySteps.BatchOperatorCreditInput",
+              label: "nobody",
+              keyType
+            },
+            signal
+          )
+        ).rejects.toThrow()
+        expect(write).toHaveBeenCalledTimes(1)
+      }
+    )
 
     it.each([
       [
@@ -428,12 +453,27 @@ describe("RegistrySteps mock syndication import", () => {
           result = step.runner(context, step.input, signal)
         if (passes) {
           await result
-          expect(balance).toHaveBeenCalledTimes(labels.length)
+          expect(balance).toHaveBeenCalledTimes(
+            labels.length * RegistrySteps.MockSyndicationImportCredits.length
+          )
           expect(balance).toHaveBeenCalledWith(
             context,
             context.keyStore.assertOperator("batchop.a").account,
             "LIQSOL"
           )
+          expect(balance).toHaveBeenCalledWith(
+            context,
+            context.keyStore.assertOperator("batchop.a").account,
+            "LIQETH"
+          )
+          if (parked === 0n) {
+            balance.mockImplementation(async (_ctx, _account, token) =>
+              token === "LIQETH" ? liquid - 1n : liquid
+            )
+            await expect(
+              step.runner(context, step.input, signal)
+            ).rejects.toThrow(/LIQETH/)
+          }
         } else await expect(result).rejects.toThrow("mock syndication import")
       }
     )

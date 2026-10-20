@@ -1,3 +1,4 @@
+import { Constants as TestClusterConstants } from "@wireio/cluster-tool"
 import {
   BatchOperatorDisputeConstants as Constants,
   BatchOperatorDisputeScenario,
@@ -12,7 +13,6 @@ import {
   ClusterBuildPhase,
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
-import { Constants as TestClusterConstants } from "@wireio/cluster-tool/Constants"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 
