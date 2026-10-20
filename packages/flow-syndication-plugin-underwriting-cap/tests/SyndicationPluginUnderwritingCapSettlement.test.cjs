@@ -266,29 +266,55 @@ test("the held watch is budgeted at the window plus two plugin passes", () => {
   )
 })
 
-test("windows cover submission, a busy hop, governance finality and reads within the PR head", () => {
+test("the first window covers submission, a busy hop, governance finality and reads", () => {
+  Assert.equal(
+    Constants.ChallengeWindowFixedSec,
+    (ProtocolTiming.SingleHopBudgetMs +
+      ProtocolTiming.irreversibilityBudgetMs(Constants.ProducerCount) +
+      2 * OperatorDaemonTool.BatchEpochPollMs +
+      SyndicationScenario.PollMs) /
+      ProtocolTiming.MsPerSecond
+  )
   Assert.equal(
     Constants.ChallengeWindowSec,
-    SyndicationScenario.EpochDurationSec +
-      (ProtocolTiming.SingleHopBudgetMs +
-        ProtocolTiming.irreversibilityBudgetMs(Constants.ProducerCount) +
-        2 * OperatorDaemonTool.BatchEpochPollMs +
-        SyndicationScenario.PollMs) /
-        ProtocolTiming.MsPerSecond
+    Constants.EpochDurationSec + Constants.ChallengeWindowFixedSec
   )
-  Assert.equal(Constants.ChallengeWindowSec, 589)
+  Assert.equal(Constants.ChallengeWindowSec, 601)
   Assert.equal(Constants.Config.window_sec, Constants.ChallengeWindowSec)
   Assert.equal(
     Constants.LaterConfig.window_sec,
     ProtocolTiming.SyndicationChallengeWindowSec
   )
-  Assert.equal(
-    Constants.Config.window_sec + 2 * Constants.LaterConfig.window_sec,
-    709
+})
+
+/** Seconds by which the second request's statement outlives its payback at `epochSec`. */
+function retentionMarginSec(epochSec) {
+  const windowSec = epochSec + Constants.ChallengeWindowFixedSec,
+    paybackSec =
+      windowSec +
+      (Constants.PaybackPassCount * OperatorDaemonTool.BatchEpochPollMs) /
+        ProtocolTiming.MsPerSecond
+  return (
+    Constants.SolanaRetainedEnvelopeEpochs * epochSec -
+    paybackSec -
+    Constants.RetentionHeadroomEpochs * epochSec
   )
-  Assert.ok(
-    Constants.Config.window_sec + 2 * Constants.LaterConfig.window_sec <=
-      3 * 240
+}
+
+test("the second request's statement is still in the Solana log, with an epoch to spare, when the first bond is paid back", () => {
+  Assert.equal(Constants.EpochDurationSec, 72)
+  Assert.ok(retentionMarginSec(Constants.EpochDurationSec) >= 0)
+  // The shortest such epoch: one second less leaves no headroom.
+  Assert.ok(retentionMarginSec(Constants.EpochDurationSec - 1) < 0)
+  // At the shortest depot epoch the window alone spans the whole log.
+  Assert.ok(retentionMarginSec(SyndicationScenario.EpochDurationSec) < 0)
+  Assert.ok(Constants.EpochDurationSec > SyndicationScenario.EpochDurationSec)
+})
+
+test("the scenario runs on the flow's own epoch", () => {
+  Assert.equal(
+    new SyndicationPluginUnderwritingCapScenario().defaults.epochDurationSec,
+    Constants.EpochDurationSec
   )
 })
 
@@ -311,7 +337,7 @@ test("timeout scaling raises deadlines without lengthening on-chain windows", ()
             2 * OperatorDaemonTool.BatchEpochPollMs +
             ProtocolTiming.PollDeadlineBufferMs)
       )
-      Assert.equal(Constants.Config.window_sec, 589)
+      Assert.equal(Constants.Config.window_sec, 601)
       Assert.equal(Constants.LaterConfig.window_sec, 60)
     }
   } finally {
@@ -413,7 +439,7 @@ for (const paymentRead of ["discovery", "request", "bonds"]) {
     // Charge governance, submission, the full hop and two passes before discovery.
     mock.timers.tick(
       ProtocolTiming.irreversibilityBudgetMs(Constants.ProducerCount) +
-        SyndicationScenario.EpochDurationSec * ProtocolTiming.MsPerSecond +
+        Constants.EpochDurationSec * ProtocolTiming.MsPerSecond +
         ProtocolTiming.SingleHopBudgetMs +
         2 * OperatorDaemonTool.BatchEpochPollMs
     )
