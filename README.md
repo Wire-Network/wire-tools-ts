@@ -40,11 +40,6 @@ this README assumes the siblings already exist next to this repo.
 For a full, from-scratch host build of every dependency (Ubuntu 24.04 / WSL2),
 see [`docs/local-setup.md`](docs/local-setup.md).
 
-Cluster bootstrap includes `sysio.councl` alongside the other system contracts,
-using its SYSIO-built `.wasm`/`.abi` and the standard account/deploy
-phases. Council election initialization remains a separate governance operation;
-see [`docs/production-bootstrap.md`](docs/production-bootstrap.md#stage-8--opp-contracts--owner-sysiocode-grants).
-
 ## Prerequisites
 
 ### Toolchain
