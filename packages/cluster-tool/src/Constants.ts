@@ -132,6 +132,7 @@ export namespace Constants {
     "sysio.andon",
     "sysio.bond",
     "sysio.synd",
+    "sysio.councl",
     "sysio.gov",
     "sysio.ops",
     "dev.owner1"
@@ -362,15 +363,16 @@ export namespace Constants {
     "sysio.liq": "contracts/sysio.liq",
     "sysio.andon": "contracts/sysio.andon",
     "sysio.bond": "contracts/sysio.bond",
-    "sysio.synd": "contracts/sysio.synd"
+    "sysio.synd": "contracts/sysio.synd",
+    "sysio.councl": "contracts/sysio.councl"
   } as const
 
   export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
 
   /**
-   * OPP system accounts (need `sysio.code` on their active permission): every contract
-   * that sends inline actions under its own authority. `sysio.andon` is absent — it sends
-   * none.
+   * OPP system accounts granted `sysio.code` on their owner authority: every contract
+   * that sends inline actions under its own authority. `sysio.andon` and
+   * `sysio.councl` are absent — neither sends inline actions.
    */
   export const OPP_SYSTEM_ACCOUNTS = [
     "sysio.chains",
