@@ -1054,7 +1054,9 @@ export namespace WireOperatorProvisioningTool {
     // `account@active` auth must carry it, never the durable handle.
     const operator = ctx.keyStore.assertOperator(input.label)
     if (input.chainKind === ChainKind.EVM) {
-      const ethereumWallet = ethereumSigner(operator.ethereum, ctx.ethereum.provider)
+      // The link is signed offline: a provider-less wallet keeps this depot
+      // write from touching an outpost (none may be contacted when external).
+      const ethereumWallet = ethereumSigner(operator.ethereum)
       await AuthExLinkTool.createLink(ctx.wire, {
         chainKind: ChainKind.EVM,
         account: operator.account,

@@ -36,6 +36,7 @@ typed against these declarations.
 | `src/types/ChainTokenAmount.ts` | `ChainTokenAmount` — harness-local (chain, token) amount tuple |
 | `src/types/OperatorTypeCodec.ts` | `OperatorTypeCodec.create(members?)` — the codec carrying an `OperatorType` by member NAME in JSON (numeric enum in memory), over the admitted members |
 | `src/types/chainAddressPatterns.ts` | `EvmAddressPattern` / `SolanaAddressPattern` — the chain-native address shapes |
+| `src/types/SolanaMintRecord.ts` | `SolanaMintRecord` — one deployed SPL mint (`{ code, mint, decimals }`), the `sol-mock-mints.json` row an external-outpost config can also carry |
 
 ## Design rules
 

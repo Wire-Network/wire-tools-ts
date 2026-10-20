@@ -341,9 +341,9 @@ export namespace ClusterManager {
     ClusterState.rehydrate(ctx.keyStore, keys)
 
     // External-outpost mode (`config.externalOutposts`): the ETH + SOL outposts
-    // run on real chains, so `run` skips the local anvil/validator starts and
-    // publishes the daemon artifacts from the config; the head-advance gate
-    // (not the epoch-distribution gate) is the success condition.
+    // run on real chains, so `run` skips the local anvil/validator starts; the
+    // head-advance gate (not the epoch-distribution gate) is the success
+    // condition.
     const isExternalOutpost = config.externalOutposts != null
 
     Assert.ok(
@@ -422,9 +422,7 @@ export namespace ClusterManager {
     }
 
     log.info("[cluster] preparing operator daemon artifacts")
-    await (isExternalOutpost
-      ? Steps.externalOutpost.runPublishArtifacts(ctx, null, controller.signal)
-      : OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal))
+    await OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal)
 
     log.info(`[cluster] starting ${operatorNodes.length} operator node(s)`)
     await Promise.all(operatorNodes.map(node => startNode(ctx, node)))

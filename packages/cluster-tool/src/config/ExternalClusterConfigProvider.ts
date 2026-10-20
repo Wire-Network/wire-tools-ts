@@ -52,6 +52,8 @@ export namespace ExternalClusterConfigProvider {
   /**
    * Resolve every `*File`/`*Files` reference in `config` against `baseDir` — an
    * absolute reference passes through, a relative one is joined to `baseDir`.
+   * Every other field (the chain id, the `rpcUrl`s) is carried through
+   * unchanged, and an absent optional reference stays absent.
    *
    * @param config - The decoded config.
    * @param baseDir - The directory references resolve against.
@@ -75,11 +77,20 @@ export namespace ExternalClusterConfigProvider {
       ethereum: {
         ...config.ethereum,
         addressFile: resolveRef(config.ethereum.addressFile),
-        abiFiles: config.ethereum.abiFiles.map(resolveRef)
+        abiFiles: config.ethereum.abiFiles.map(resolveRef),
+        ...(config.ethereum.liqEthAddressFile != null
+          ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
+          : {})
       },
       solana:
         config.solana != null
-          ? { idlFile: resolveRef(config.solana.idlFile) }
+          ? {
+              ...config.solana,
+              idlFile: resolveRef(config.solana.idlFile),
+              ...(config.solana.mintsFile != null
+                ? { mintsFile: resolveRef(config.solana.mintsFile) }
+                : {})
+            }
           : config.solana
     }
   }

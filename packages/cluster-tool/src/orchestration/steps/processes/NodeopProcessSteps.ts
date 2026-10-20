@@ -64,7 +64,8 @@ export namespace NodeopProcessSteps {
    * {@link OperatorAccount} from `ctx.keyStore` by role (bios → the genesis
    * producer with dev keys; producer node → its node-shared signing set; batch /
    * underwriter → the provisioned operator, whose OPP daemon args ride
-   * `extraArgs`; api → none). One step per node.
+   * `extraArgs` — sync-only under an external-outpost config, see
+   * {@link resolveStartArgs}; api → none). One step per node.
    */
   export function planStart<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -105,14 +106,106 @@ export namespace NodeopProcessSteps {
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
       operators,
-      extraArgs: resolveOperatorDaemonArgs(ctx, node, operators[0])
+      extraArgs: resolveStartArgs(ctx, node, operators[0])
     })
   }
 
-  /** Deadline for the restart sync gate — the node's local head catching the depot head. */
+  /** Deadline for the sync gate — the node's local head catching the depot head. */
   export const SyncGateTimeoutMs = 120_000
-  /** Poll gap for the restart sync gate. */
+  /** Poll gap for the sync gate. */
   export const SyncGatePollIntervalMs = 1_000
+
+  /** Input for {@link planVerifySynced} — which running node must have synced (by its `NodeConfig.name`). */
+  export interface VerifySyncedInput extends StepInput {
+    readonly kind: "NodeopProcessSteps.VerifySyncedInput"
+    readonly nodeName: string
+  }
+
+  /**
+   * Verify a RUNNING nodeop has synced the depot chain: its local head reaches
+   * the depot head read at gate entry. An external-outpost `create` gates every
+   * batch-operator node on it before the nodes are stopped — the node started
+   * without its OPP daemon, and its `start.sh` adds the daemon to the chain it
+   * synced here.
+   *
+   * @param actor - The Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @param nodeName - The running node's `NodeConfig.name`.
+   * @returns The verify step.
+   */
+  export function planVerifySynced<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    nodeName: string
+  ): ClusterBuildStep<C, VerifySyncedInput> {
+    return ClusterBuildStep.create<C, VerifySyncedInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "NodeopProcessSteps.VerifySyncedInput", nodeName },
+      runVerifySynced
+    )
+  }
+
+  /**
+   * Named runner — the node's local head reaches the depot head.
+   *
+   * @param ctx - The build context (its process manager holds the node).
+   * @param input - Which node to check.
+   * @param signal - Abort signal.
+   * @throws When the node is not a running nodeop, or the poll times out.
+   */
+  export async function runVerifySynced<C extends ClusterBuildContext>(
+    ctx: C,
+    input: VerifySyncedInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const running = ctx.processManager.get(input.nodeName)
+    Assert.ok(
+      running instanceof NodeopProcess,
+      `nodeop sync: ${input.nodeName} is not a running nodeop`
+    )
+    await awaitSynced(ctx, input.nodeName, running)
+  }
+
+  /**
+   * Poll until `running`'s local head reaches the depot head read at entry —
+   * the bound on the bootstrap-written state the node must hold.
+   *
+   * @param ctx - The build context (its `wire` client reads the depot head).
+   * @param nodeName - The node's name, for the poll's label.
+   * @param running - The running nodeop.
+   */
+  async function awaitSynced(
+    ctx: ClusterBuildContext,
+    nodeName: string,
+    running: NodeopProcess
+  ): Promise<void> {
+    const depotHead = await ctx.wire.getHead()
+    await pollUntil(
+      `${nodeName} local head reaches depot head ${depotHead}`,
+      () =>
+        running.head().then(
+          localHead => localHead >= depotHead,
+          error => {
+            log.debug(
+              `${nodeName} head probe transient: ${error instanceof Error ? error.message : String(error)}`
+            )
+            return false
+          }
+        ),
+      SyncGateTimeoutMs,
+      SyncGatePollIntervalMs
+    )
+  }
 
   /** Input for {@link planRestart} — which running node to relaunch (by its `NodeConfig.name`). */
   export interface RestartInput extends StepInput {
@@ -170,22 +263,7 @@ export namespace NodeopProcessSteps {
 
     // Sync gate: the depot head at gate entry bounds the bootstrap-written
     // state (registrations, links) the second boot must be able to replay.
-    const depotHead = await ctx.wire.getHead()
-    await pollUntil(
-      `${node.name} local head reaches depot head ${depotHead}`,
-      () =>
-        running.head().then(
-          localHead => localHead >= depotHead,
-          error => {
-            log.debug(
-              `${node.name} head probe transient: ${error instanceof Error ? error.message : String(error)}`
-            )
-            return false
-          }
-        ),
-      SyncGateTimeoutMs,
-      SyncGatePollIntervalMs
-    )
+    await awaitSynced(ctx, node.name, running)
 
     signal.throwIfAborted()
     await running.stop()
@@ -273,6 +351,30 @@ export namespace NodeopProcessSteps {
       `nodeop start: operator node ${node.name} has no operator label`
     )
     return label
+  }
+
+  /**
+   * The extra args `create` (and every flow) starts `node` with. Under an
+   * external-outpost config a batch-operator node starts SYNC-ONLY
+   * ({@link OperatorDaemonTool.batchOperatorSyncArgs}): the harness never
+   * contacts the outposts, so the node's OPP daemon — `batch_operator_plugin`
+   * and its outpost clients — stays off. Its `start.sh` carries the full
+   * {@link resolveOperatorDaemonArgs}, so the relaunched node runs the daemon.
+   *
+   * @param ctx - The build context.
+   * @param node - The node being started.
+   * @param operator - The account the node acts for (`undefined` for a node that acts for none).
+   * @returns The node's extra args.
+   */
+  export function resolveStartArgs(
+    ctx: ClusterBuildContext,
+    node: NodeConfig,
+    operator: OperatorAccount
+  ): string[] {
+    return ctx.config.externalOutposts != null &&
+      node.role === NodeRole.batch_operator
+      ? OperatorDaemonTool.batchOperatorSyncArgs()
+      : resolveOperatorDaemonArgs(ctx, node, operator)
   }
 
   /**
