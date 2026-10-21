@@ -33,7 +33,10 @@ describe("Steps.processes.anvil", () => {
    * on afterward by `planEnableIntervalMining`.
    */
   describe("runStart", () => {
-    const signal = new AbortController().signal
+    /** A binary that exists, so `AnvilProcess.create` builds a real process; `start` is spied, so it never runs. */
+    const StandInBinary = "/bin/true"
+    const signal = new AbortController().signal,
+      createAnvil = AnvilProcess.create.bind(AnvilProcess)
     let dir: string
 
     // ProcessManager is a set-once singleton: one sandbox for the whole block.
@@ -41,17 +44,26 @@ describe("Steps.processes.anvil", () => {
       dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "anvilsteps-"))
       ProcessManager.setClusterPath(dir)
     })
-    afterEach(() => jest.restoreAllMocks())
+    afterEach(async () => {
+      jest.restoreAllMocks()
+      await ProcessManager.get().stopAll()
+    })
     afterAll(() => {
       Fs.rmSync(dir, { recursive: true, force: true })
     })
 
     it("spawns anvil with the finality window and without interval mining", async () => {
       const ctx = fixtureContext({ clusterPath: dir, dataPath: Path.join(dir, "data") }),
-        start = jest.fn(),
-        anvil = { start } as Partial<AnvilProcess> as AnvilProcess,
-        create = jest.spyOn(AnvilProcess, "create").mockResolvedValue(anvil)
-      start.mockResolvedValue(anvil)
+        create = jest
+          .spyOn(AnvilProcess, "create")
+          .mockImplementation((manager, options) =>
+            createAnvil(manager, { ...options, binary: StandInBinary })
+          ),
+        start = jest
+          .spyOn(AnvilProcess.prototype, "start")
+          .mockImplementation(function (this: AnvilProcess) {
+            return Promise.resolve(this)
+          })
 
       await Steps.processes.anvil.runStart(ctx, null, signal)
 
@@ -69,11 +81,9 @@ describe("Steps.processes.anvil", () => {
     })
 
     it("is a no-op when the anvil is already registered", async () => {
-      const ctx = fixtureContext({ clusterPath: dir, dataPath: Path.join(dir, "data") }),
-        create = jest.spyOn(AnvilProcess, "create")
-      jest
-        .spyOn(ctx.processManager, "get")
-        .mockReturnValue({} as Partial<AnvilProcess> as AnvilProcess)
+      const ctx = fixtureContext({ clusterPath: dir, dataPath: Path.join(dir, "data") })
+      await createAnvil(ctx.processManager, { binary: StandInBinary })
+      const create = jest.spyOn(AnvilProcess, "create")
 
       await Steps.processes.anvil.runStart(ctx, null, signal)
 
