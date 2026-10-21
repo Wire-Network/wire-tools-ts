@@ -1,4 +1,3 @@
-import Path from "node:path"
 import { AnvilProcess } from "../../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
@@ -37,17 +36,10 @@ export namespace AnvilProcessSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     if (ctx.processManager.get(AnvilProcess.ProcessLabel) != null) return
-    const anvil = await AnvilProcess.create(ctx.processManager, {
-      host: ctx.config.bind.anvil.address,
-      port: ctx.config.bind.anvil.port,
-      chainId: AnvilProcess.DefaultChainId,
-      stateFile: Path.join(
-        ctx.config.dataPath,
-        AnvilProcess.StateSubpath,
-        AnvilProcess.StateFilename
-      ),
-      slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch
-    })
+    const anvil = await AnvilProcess.create(
+      ctx.processManager,
+      AnvilProcess.optionsFor(ctx.config, AnvilProcess.Launch.deploy)
+    )
     await anvil.start()
   }
 

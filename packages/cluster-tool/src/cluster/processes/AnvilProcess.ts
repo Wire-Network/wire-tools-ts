@@ -1,5 +1,8 @@
 import Fs from "node:fs"
 import Assert from "node:assert"
+import Path from "node:path"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import { match } from "ts-pattern"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
@@ -103,6 +106,42 @@ export class AnvilProcess extends ManagedProcess {
 }
 
 export namespace AnvilProcess {
+  /** Which spawn of a cluster's anvil a set of options is for. Only interval mining differs. */
+  export enum Launch {
+    /**
+     * The create and flow spawn. The Hardhat outpost deploy runs against it and
+     * needs instamine, so interval mining is turned on over RPC after the deploy.
+     */
+    deploy = "deploy",
+    /** A restart of a deployed cluster (`run`, `start.sh`): no deploy runs, so it spawns interval-mining. */
+    relaunch = "relaunch"
+  }
+
+  /**
+   * The anvil options a cluster's config determines, for one kind of launch. Every
+   * path that spawns or renders a cluster's anvil takes them from here, so its
+   * launches differ only where {@link Launch} says. The binary is left to each path:
+   * a live spawn resolves it from PATH, a `start.sh` render uses the persisted one.
+   *
+   * @param config - The cluster's resolved config.
+   * @param launch - The spawn the options are for.
+   * @returns The options, without a binary.
+   */
+  export function optionsFor(config: ClusterConfig, launch: Launch): AnvilOptions {
+    const intervalMining = match<Launch, AnvilOptions>(launch)
+      .with(Launch.deploy, () => ({}))
+      .with(Launch.relaunch, () => ({ blockTimeSec: BlockTimeSec }))
+      .exhaustive()
+    return {
+      host: config.bind.anvil.address,
+      port: config.bind.anvil.port,
+      chainId: DefaultChainId,
+      stateFile: Path.join(config.dataPath, StateSubpath, StateFilename),
+      slotsInAnEpoch: SlotsInAnEpoch,
+      ...intervalMining
+    }
+  }
+
   /**
    * Resolve caller options into a complete {@link AnvilConfig}. PURE — every
    * impure input (the PATH-resolved binary, the registry-issued port) is

@@ -92,6 +92,7 @@ describe("Steps.processes.anvil", () => {
         slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch
       })
       expect(options.blockTimeSec).toBeUndefined()
+      expect(options).toEqual(AnvilProcess.optionsFor(ctx.config, AnvilProcess.Launch.deploy))
       expect(start).toHaveBeenCalledTimes(1)
     })
 
