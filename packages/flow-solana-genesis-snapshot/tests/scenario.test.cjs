@@ -186,7 +186,7 @@ function artifact(ctx) {
       ownerlessShares: "100",
       unreportedLiqsolYield: "100000000",
       backingAvailable: "3900000000",
-      maxInitialChainAmount: "1900000000",
+      maxInitialChainAmount: "1000000000",
       issues: [],
       units: {
         liqsolDecimals: 9,
@@ -480,6 +480,9 @@ test("immediate verification catches dropped exited users, wrong asset amounts, 
     },
     x => {
       x.accounting.poolBalance = "0"
+    },
+    x => {
+      x.accounting.maxInitialChainAmount = "1900000000"
     }
   ]) {
     const value = artifact(ctx)

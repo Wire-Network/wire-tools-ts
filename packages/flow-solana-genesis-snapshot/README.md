@@ -26,6 +26,8 @@ It verifies that:
   shares survive the full exit, and actual custody backs the reported
   allocations.
 - The allocation hash authenticates those exact wallet records.
+- The initial-chain allocation limit equals purchased principal. Extra custody
+  from converted yield or donations does not increase the settlement ledger.
 - A second export in a later finalized Solana epoch has identical balances and
   allocation hash. The later clock/evidence is permitted to change.
 
@@ -148,3 +150,9 @@ then completed in 361 seconds.
 The live evidence above was captured before integrating that CI fix and before
 unstacking onto `master`. The Solana flow source and its unit tests are unchanged
 by those integrations. Current-head validation is recorded in the PR description.
+
+The later bootstrap-limit assertion uses purchased principal, matching
+wire-solana #580 and capital-index #10's review update. The run above predates
+that assertion change. Capital-index checks in its raw finalized account capture
+and replays it against the same exact balances/hash and the revised bootstrap
+limit; that replay and unit checks do not constitute a new live flow run.

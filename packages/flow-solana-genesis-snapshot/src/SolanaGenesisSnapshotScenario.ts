@@ -608,7 +608,7 @@ export class SolanaGenesisSnapshotScenario extends FlowScenario {
     Assert.equal(snapshot.accounting.backingAvailable, backing.toString())
     Assert.equal(
       snapshot.accounting.maxInitialChainAmount,
-      (backing - Constants.ActiveStake).toString()
+      fixture.active.purchased.toString()
     )
     Assert.ok(
       BigInt(snapshot.accounting.ownerlessShares) > 0n,
