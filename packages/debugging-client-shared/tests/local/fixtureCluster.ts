@@ -158,6 +158,7 @@ export function makeFixtureCluster(): FixtureCluster {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
+    enableSolanaFixedPriceOracle: false,
     enableMockSyndicationImport: false,
     batchOperatorUnderwriting: null,
     deploymentKind: ClusterDeploymentKind.local,

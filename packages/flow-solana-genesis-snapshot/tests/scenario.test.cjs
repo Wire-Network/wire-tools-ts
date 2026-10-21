@@ -11,6 +11,7 @@ const {
   ClusterBuild,
   OutputStore,
   SolanaFundingTool,
+  SolanaFixedPriceOracleTool,
   SolanaLiqSyndicationTool,
   SolanaOutpostProgramTool,
   WireState
@@ -208,6 +209,7 @@ function artifact(ctx) {
 test("plans all real writes separately and exports immediately after transaction finality, before the epoch wait", () => {
   const ctx = context()
   const scenario = new Scenario()
+  Assert.equal(scenario.defaults.enableSolanaFixedPriceOracle, true)
   const build = ClusterBuild.forContext(ctx)
   scenario.plan(build)
   const steps = flattened(build)
@@ -238,6 +240,44 @@ test("plans all real writes separately and exports immediately after transaction
   Assert.deepEqual(
     exportSteps.map(step => step.input.expectRefusal),
     [true, false, false]
+  )
+})
+
+test("oracle evidence requires actual CPI queries and rejects the development bypass", async () => {
+  const ctx = context()
+  ctx.outputs.set(Steps.OraclePurchaseSignatureKey, "purchase-signature")
+  const oracle = SolanaFixedPriceOracleTool.ProgramId.toBase58()
+  let logs = [
+    `Program ${oracle} invoke [2]`,
+    `Program ${oracle} success`,
+    `Program ${oracle} invoke [2]`,
+    `Program ${oracle} success`
+  ]
+  let error = null
+  ctx.solana.connection.getTransaction = async (signature, options) => {
+    Assert.equal(signature, "purchase-signature")
+    Assert.equal(options.commitment, "confirmed")
+    return { meta: { err: error, logMessages: logs } }
+  }
+  await Steps.assertOracleCpi(ctx)
+  logs = []
+  await Assert.rejects(
+    () => Steps.assertOracleCpi(ctx),
+    /both round data and decimals/
+  )
+  logs = [
+    `Program ${oracle} invoke [2]`,
+    `Program ${oracle} invoke [2]`,
+    "Program log: Using mock SOL/USD price (feature: development)"
+  ]
+  await Assert.rejects(
+    () => Steps.assertOracleCpi(ctx),
+    /development oracle bypass/
+  )
+  error = { InstructionError: [0, "InvalidAccountData"] }
+  await Assert.rejects(
+    () => Steps.assertOracleCpi(ctx),
+    /purchase must succeed/
   )
 })
 
@@ -287,6 +327,18 @@ test("real prelaunch account maps bind the owner and history; every instruction 
       )
   }
   const synd = Steps.instructionAccounts(Steps.Instruction.synd, pdas)
+  for (const instruction of [
+    Steps.Instruction.initTrancheState,
+    Steps.Instruction.purchase,
+    Steps.Instruction.purchaseFromYield
+  ]) {
+    const accounts = Steps.instructionAccounts(instruction, pdas)
+    Assert.ok(
+      accounts.chainlinkProgram.equals(SolanaFixedPriceOracleTool.ProgramId)
+    )
+    Assert.ok(accounts.chainlinkFeed.equals(SolanaFixedPriceOracleTool.FeedId))
+    Assert.ok(!accounts.chainlinkProgram.equals(SystemProgram.programId))
+  }
   Assert.equal(synd.outpostAccount, pdas.outpostAccount)
   Assert.equal(synd.config, null)
   Assert.equal(synd.outboundMessageBuffer, null)

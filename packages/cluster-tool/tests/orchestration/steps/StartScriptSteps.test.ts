@@ -2,6 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { SolanaFixedPriceOracleTool } from "@wireio/cluster-tool/tools/solana"
 import { KeyType } from "@wireio/sdk-core"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import {
@@ -167,6 +168,18 @@ describe("StartScriptSteps", () => {
   })
 
   describe("resolveSolanaValidatorConfig", () => {
+    it("preserves the oracle feed preload in the rendered startup command", () => {
+      jest.spyOn(validatorSteps, "resolvePrograms").mockReturnValue([])
+      const config = { ...cluster(), enableSolanaFixedPriceOracle: true }
+      const resolved = startScript.resolveSolanaValidatorConfig(config)
+      expect(resolved.extraArgs).toEqual(
+        SolanaFixedPriceOracleTool.accountArgs(config)
+      )
+      expect(
+        startScript.resolveSolanaValidatorConfig(cluster()).extraArgs
+      ).toEqual([])
+    })
+
     it("threads the validator's BPF programs through — via the PRODUCTION resolver", () => {
       // The regression this pins: the renderer's config once passed NO
       // `programs`, so the rendered argv omitted --upgradeable-program entirely
@@ -183,9 +196,7 @@ describe("StartScriptSteps", () => {
           upgradeAuthority: "UPGKEY"
         }
       ]
-      jest
-        .spyOn(validatorSteps, "resolvePrograms")
-        .mockReturnValue(programs)
+      jest.spyOn(validatorSteps, "resolvePrograms").mockReturnValue(programs)
 
       const resolved = startScript.resolveSolanaValidatorConfig(cluster())
       expect(validatorSteps.resolvePrograms).toHaveBeenCalled()
@@ -240,7 +251,10 @@ describe("StartScriptSteps", () => {
         staleDir = Path.join(config.dataPath, "anvil"),
         stale = Path.join(staleDir, "start.sh")
       Fs.mkdirSync(staleDir, { recursive: true })
-      Fs.writeFileSync(stale, "#!/usr/bin/env bash\n# STALE local-port script\n")
+      Fs.writeFileSync(
+        stale,
+        "#!/usr/bin/env bash\n# STALE local-port script\n"
+      )
 
       startScript.writeAll(config, kiodOnlySources(config))
 
@@ -325,9 +339,7 @@ describe("StartScriptSteps", () => {
       // defeating the per-daemon validation this step exists to provide.
       const config = cluster(),
         ctx = { config } as Parameters<typeof startScript.runEmit>[0]
-      jest
-        .spyOn(startScript, "resolveSources")
-        .mockReturnValue({ nodeop: [] })
+      jest.spyOn(startScript, "resolveSources").mockReturnValue({ nodeop: [] })
       await expect(
         startScript.runEmit(
           ctx,

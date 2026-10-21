@@ -14,6 +14,8 @@ real pool purchase delta, independently floored per round.
 It verifies that:
 
 - The genesis command refuses PreLaunch and creates no artifact.
+- A direct purchase invokes the oracle for round data and decimals through the
+  production Chainlink client. A development-feature outpost fails this check.
 - After the Launching transaction is finalized, the first export runs
   immediately, with **no epoch wait** between the freeze and export.
 - The first export must still be in the terminal purchase's epoch. The local
@@ -44,8 +46,8 @@ stack uses whole-envelope delivery and needs the corresponding WIRE runtime; a
 runtime expecting `discardEnvelopeChunks` and `envelopeChunkState` needs the
 earlier chunked-envelope contracts instead. Install wire-ethereum's locked
 dependencies with `npm ci`. This Solana flow uses the fresh Ethereum deployment
-path and can run independently of the Ethereum ladder bootstrap. Build wire-tools-ts
-with Node >=24.9 and pnpm:
+path and can run independently of the Ethereum ladder bootstrap. Build
+wire-tools-ts with Node >=24.9 and pnpm:
 
 ```bash
 pnpm build
@@ -69,20 +71,37 @@ child process receives the cluster's registry-issued RPC endpoint and actual
 program/global-state addresses. An installed but unbuilt exporter fails the
 scenario's prerequisite check.
 
-Use wire-solana `next` with its **local development oracle** enabled:
+Build wire-solana `next` with its pinned toolchain and the normal program
+features:
 
 ```bash
 cd /path/to/wire-solana
-bash bash-scripts/reset-local-cluster.sh --build-only --features development --arch v3
+npm ci
+npm run build:programs
+node scripts/opp/patch-idl-errors.js
 ```
 
 Select the Solana/Anchor versions pinned by that checkout before
-building/running. The normal production build requires the real Chainlink
-accounts and cannot initialize a local tranche. The documented `development`
-build supplies the deterministic $100 oracle while executing the real accounting
-instructions. This flow does not validate the production Chainlink integration
-or use development reset instructions. It leaves the local outpost in Launching;
-it does not flip PostLaunch or submit a depot genesis import.
+building/running. The scenario opts into `enableSolanaFixedPriceOracle`: before
+starting any cluster clock, two Report Steps compile a local
+Chainlink-compatible oracle fixture and prepare its feed account. The validator
+loads both at the configured oracle addresses during genesis. The fixture
+returns $100 SOL with eight decimals and a fresh round timestamp from the
+validator clock, while the normal outpost executes its address checks, Chainlink
+CPI, price validation, and accounting.
+
+The test host needs Rust 1.90 and `cargo-build-sbf` from the pinned Solana
+toolchain. Fixture sources and a Cargo lockfile ship with
+`@wireio/cluster-tool`; compilation and feed output go under
+`<cluster>/data/solana-fixed-price-oracle`, independently for each cluster. No
+`development` feature is enabled on the outpost. Ordinary clusters leave the
+fixture disabled; external outposts reject it. The generated `start.sh`
+preserves the same program and feed preload as live startup.
+
+This flow validates the production oracle consumer with deterministic input. The
+actual Chainlink deployment/feed service needs separate integration coverage.
+The flow leaves the local outpost in Launching; it does not flip PostLaunch or
+submit a depot genesis import.
 
 ## Run
 
@@ -119,7 +138,37 @@ pnpm --filter @wireio/test-flow-solana-genesis-snapshot test:unit
 The root `pnpm test:ci` also discovers this package's `test:unit` script. The
 live flow is discovered automatically by the canonical runner/e2e gate.
 
-## Verified local run
+## Verified local run (normal outpost, fixed-price fixture)
+
+On 2026-10-21 the full flow passed in 741 seconds (223 Report Steps) against
+wire-solana `f36808e22286ea10a1ff990d0922f89bfc841622`, rebuilt without
+`development`; wire-ethereum `97f1fd8c70adea9c0d010714ad3a391cd8774036`;
+WIRE runtime reporting `02dfa26a25210aabbe3c6e84a8948ff3e2410812-dirty`;
+and a clean, built capital-index `0dd80ec3858fb50a9652e7969b196c0410ec61a2`.
+The tested tools tree is the fixture working tree based on `3ed23103`.
+The normal `liqsol_core.so` SHA-256 was
+`10041d01dce802f95bf0c2c6c7cfbd75ce54cc64ed7cd41d0cec08b798235e76`.
+
+The direct purchase passed the production-oracle CPI assertion. The immediate
+export passed the controlled principal, direct-purchase, materialized-yield,
+pending-tail, and fully-exited-wallet allocation checks; the later export
+matched its wallet allocations and hash. The canonical heartbeat monitor was
+armed throughout the run. Local evidence is under
+`/tmp/pr149-fixed-oracle-live-20261021-4/reports` and
+`/tmp/pr149-fixed-oracle-live-20261021-4/data/solana-genesis-snapshot`.
+
+Full local validation passed `pnpm build`, `pnpm lint`, and `pnpm test:ci`:
+460 Jest suites / 4,512 tests plus every package's unit lane, including six Rust
+fixture tests and 18 scenario tests. Rust formatting and an actual SBF v3
+fixture build also passed.
+
+The earlier hosted run
+[39633602628](https://github.com/Wire-Network/wire-platform-build-system/actions/runs/39633602628)
+used `3ed23103`, before this fixture: 14 of 15 flows passed, while this scenario
+stopped because `WIRE_CAPITAL_INDEX_PATH` was unset. Hosted verification of the
+fixture remains pending and requires a built exporter on the runner.
+
+## Earlier local run (development oracle)
 
 On 2026-10-20 the live flow passed against wire-solana `f36808e` (`next`,
 development oracle), wire-ethereum `97f1fd8` (chunked-envelope contracts), and

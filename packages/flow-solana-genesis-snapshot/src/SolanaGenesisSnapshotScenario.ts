@@ -26,6 +26,7 @@ export class SolanaGenesisSnapshotScenario extends FlowScenario {
   readonly description =
     "Real Solana principal, direct purchases, materialized yield, frozen tail and full exits reconcile with capital-index"
   override readonly defaults: ClusterBuildOptions = {
+    enableSolanaFixedPriceOracle: true,
     epochDurationSec: Constants.EpochDurationSec,
     solanaSlotsPerEpoch: Constants.SolanaSlotsPerEpoch,
     producerCount: Constants.ProducerCount,
@@ -94,6 +95,12 @@ export class SolanaGenesisSnapshotScenario extends FlowScenario {
         Steps.Instruction.purchase,
         Constants.ActiveUser,
         Constants.PurchaseAmount
+      ),
+      verifyStep(
+        Actor.SolanaOutpost,
+        "assert-production-oracle-cpi",
+        "the normal outpost queried the fixed-price fixture through the real Chainlink client",
+        Steps.assertOracleCpi
       ),
       verifyStep(
         Actor.SolanaOutpost,

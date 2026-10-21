@@ -22,6 +22,7 @@ import {
   LiqsolPdaSeed,
   Report,
   SolanaFundingTool,
+  SolanaFixedPriceOracleTool,
   SolanaLiqSyndicationTool,
   SolanaOutpostProgramTool,
   WireState,
@@ -65,6 +66,11 @@ export namespace SolanaGenesisSteps {
   export const LaterSnapshotKey = outputKey<SolanaGenesisSnapshot>(
     "solana-genesis:later-snapshot",
     "Capital-index export in a later finalized epoch"
+  )
+  /** The direct purchase proves that the outpost executed the production oracle CPI path. */
+  export const OraclePurchaseSignatureKey = outputKey<string>(
+    "solana-genesis:oracle-purchase-signature",
+    "Direct purchase whose logs must contain real oracle CPI queries"
   )
   /** Fixture observations are transported through ctx, never captured by planned closures. */
   export const FixtureKey = outputKey<Fixture>(
@@ -187,8 +193,8 @@ export namespace SolanaGenesisSteps {
       .with(Instruction.initTrancheState, () => ({
         authority: pdas.user,
         trancheState: pdas.trancheState,
-        chainlinkFeed: SystemProgram.programId,
-        chainlinkProgram: SystemProgram.programId,
+        chainlinkFeed: SolanaFixedPriceOracleTool.FeedId,
+        chainlinkProgram: SolanaFixedPriceOracleTool.ProgramId,
         systemProgram: SystemProgram.programId
       }))
       .with(Instruction.synd, () => ({
@@ -206,8 +212,8 @@ export namespace SolanaGenesisSteps {
         outpostAccount: pdas.outpostAccount,
         trancheState: pdas.trancheState,
         userPretokenRecord: pdas.userPretokenRecord,
-        chainlinkFeed: SystemProgram.programId,
-        chainlinkProgram: SystemProgram.programId,
+        chainlinkFeed: SolanaFixedPriceOracleTool.FeedId,
+        chainlinkProgram: SolanaFixedPriceOracleTool.ProgramId,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID
       }))
       .with(Instruction.purchaseFromYield, () => ({
@@ -215,8 +221,8 @@ export namespace SolanaGenesisSteps {
         liqsolPoolUserRecord: pdas.liqsolPoolUserRecord,
         trancheState: pdas.trancheState,
         poolPretokenRecord: pdas.poolPretokenRecord,
-        chainlinkFeed: SystemProgram.programId,
-        chainlinkProgram: SystemProgram.programId
+        chainlinkFeed: SolanaFixedPriceOracleTool.FeedId,
+        chainlinkProgram: SolanaFixedPriceOracleTool.ProgramId
       }))
       .with(Instruction.desynd, () => ({
         ...shared,
@@ -316,6 +322,55 @@ export namespace SolanaGenesisSteps {
       ctx.solana.connection,
       signature,
       `SolanaGenesisSteps.${input.instruction}`
+    )
+    if (input.instruction === Instruction.purchase)
+      ctx.outputs.set(OraclePurchaseSignatureKey, signature)
+  }
+
+  /** Reject a development-feature outpost that bypasses the oracle even though balances look valid. */
+  export async function assertOracleCpi(
+    ctx: ClusterBuildContext
+  ): Promise<void> {
+    const signature = ctx.outputs.assert(OraclePurchaseSignatureKey)
+    await pollUntil(
+      "confirmed purchase metadata with production oracle CPI",
+      async () => {
+        const transaction = await ctx.solana.connection.getTransaction(
+          signature,
+          {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0
+          }
+        )
+        if (transaction == null) return false
+        Assert.ok(
+          transaction.meta,
+          "the purchase must have transaction metadata"
+        )
+        Assert.equal(
+          transaction.meta.err,
+          null,
+          "the oracle-backed purchase must succeed"
+        )
+        const { logMessages: logs } = transaction.meta
+        Assert.ok(logs, "the purchase must expose program execution logs")
+        const invocations = logs.filter(line =>
+          line.startsWith(
+            `Program ${SolanaFixedPriceOracleTool.ProgramId.toBase58()} invoke [`
+          )
+        )
+        Assert.ok(
+          invocations.length >= 2,
+          "the normal outpost must query the oracle for both round data and decimals"
+        )
+        Assert.ok(
+          !logs.some(line => line.includes("Using mock SOL/USD price")),
+          "the outpost must be compiled without the development oracle bypass"
+        )
+        return true
+      },
+      Constants.WriteTimeoutMs,
+      Constants.PollIntervalMs
     )
   }
 

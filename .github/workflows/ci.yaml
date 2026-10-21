@@ -51,6 +51,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Setup Rust for oracle fixture unit tests
+        run: rustup toolchain install 1.90.0 --profile minimal
+
       # Gate on the ROOT jest run (8 projects). NEVER `pnpm -r test` here —
       # flow-* package test scripts launch live clusters.
       - name: Test
