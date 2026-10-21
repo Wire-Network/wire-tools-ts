@@ -28,8 +28,10 @@ It verifies that:
   shares survive the full exit, and actual custody backs the reported
   allocations.
 - The allocation hash authenticates those exact wallet records.
-- The initial-chain allocation limit equals purchased principal. Extra custody
+- `accounting.initialChainAmount` equals the exact purchased principal. Extra custody
   from converted yield or donations does not increase the settlement ledger.
+- The artifact retains `unallocatedPoolPretokens` and non-blocking accounting
+  warnings, so unallocated purchases are visible rather than assumed to be dust.
 - A second export in a later finalized Solana epoch has identical balances and
   allocation hash. The later clock/evidence is permitted to change.
 

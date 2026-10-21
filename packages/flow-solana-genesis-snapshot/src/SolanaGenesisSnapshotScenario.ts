@@ -614,7 +614,7 @@ export class SolanaGenesisSnapshotScenario extends FlowScenario {
       yieldState.yieldAccumulatedLiqsol
     Assert.equal(snapshot.accounting.backingAvailable, backing.toString())
     Assert.equal(
-      snapshot.accounting.maxInitialChainAmount,
+      snapshot.accounting.initialChainAmount,
       fixture.active.purchased.toString()
     )
     Assert.ok(

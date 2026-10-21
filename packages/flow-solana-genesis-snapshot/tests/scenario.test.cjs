@@ -187,8 +187,9 @@ function artifact(ctx) {
       ownerlessShares: "100",
       unreportedLiqsolYield: "100000000",
       backingAvailable: "3900000000",
-      maxInitialChainAmount: "1000000000",
+      initialChainAmount: "1000000000",
       issues: [],
+      warnings: ["2 pool pretokens remain unallocated"],
       units: {
         liqsolDecimals: 9,
         pretokenDecimals: 8,
@@ -381,6 +382,13 @@ test("external snapshot schema rejects wrong units, phase, precision and incompl
     },
     x => {
       x.evidence = []
+    },
+    x => {
+      x.accounting.maxInitialChainAmount = x.accounting.initialChainAmount
+      delete x.accounting.initialChainAmount
+    },
+    x => {
+      delete x.accounting.warnings
     }
   ]) {
     const value = artifact(ctx)
@@ -534,7 +542,7 @@ test("immediate verification catches dropped exited users, wrong asset amounts, 
       x.accounting.poolBalance = "0"
     },
     x => {
-      x.accounting.maxInitialChainAmount = "1900000000"
+      x.accounting.initialChainAmount = "1900000000"
     }
   ]) {
     const value = artifact(ctx)

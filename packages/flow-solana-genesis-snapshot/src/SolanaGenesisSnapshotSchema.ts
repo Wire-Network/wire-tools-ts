@@ -37,8 +37,9 @@ export const SolanaGenesisSnapshotSchema = z.object({
       ownerlessShares: amount,
       unreportedLiqsolYield: amount,
       backingAvailable: amount,
-      maxInitialChainAmount: amount,
+      initialChainAmount: amount,
       issues: z.array(z.string()),
+      warnings: z.array(z.string()),
       units: z.object({
         liqsolDecimals: z.literal(9),
         pretokenDecimals: z.literal(8),
