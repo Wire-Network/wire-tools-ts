@@ -392,21 +392,10 @@ export namespace ClusterManager {
     } else {
       log.info("[cluster] starting anvil")
       if (ctx.processManager.get(AnvilProcess.ProcessLabel) == null) {
-        // Interval mining from the FIRST boot (constructor option, not the
-        // create-path's post-deploy `evm_setIntervalMining` RPC toggle) — a
-        // relaunch never runs the outpost deploy that needs instamine.
-        const anvil = await AnvilProcess.create(ctx.processManager, {
-          host: config.bind.anvil.address,
-          port: config.bind.anvil.port,
-          chainId: AnvilProcess.DefaultChainId,
-          stateFile: Path.join(
-            config.dataPath,
-            AnvilProcess.StateSubpath,
-            AnvilProcess.StateFilename
-          ),
-          slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
-          blockTimeSec: AnvilProcess.BlockTimeSec
-        })
+        const anvil = await AnvilProcess.create(
+          ctx.processManager,
+          AnvilProcess.optionsFor(config, AnvilProcess.Launch.relaunch)
+        )
         await anvil.start()
       }
 

@@ -28,26 +28,42 @@ export namespace SyndicationPluginUnderwritingCapScenarioConstants {
     tokenCode: SyndicationScenario.TokenCode,
     amount: FirstCovered
   })
+  /** Underwriter passes from the end of the first bond's window to the second bond: approve, claim, bond. */
+  export const PaybackPassCount = 3
+  /** Whole epochs the second request's statement still has in the Solana log when it is bonded. */
+  export const RetentionHeadroomEpochs = 1
   /**
-   * The challenge window this flow configures, in seconds: the first bond stays unpaid at
-   * least this long, and inside it the flow must see the second request issued yet unbonded.
-   * The post-bond envelope includes one scenario epoch for submission, a complete single
-   * hop, governance irreversibility for the scenario's finalizers, two active plugin
-   * passes (request issuance and reads), and one observer poll gap. A BONDED envelope
-   * request keeps synd_has_work true, so the daemon cranks every active pass rather than
-   * every 300 seconds; the generic 720-second issuance budget includes that idle fallback.
-   * This is 589 seconds, leaving the three windows at 709 seconds, below the PR head's
-   * 720 seconds. Step ceilings and timeout scaling never lengthen the on-chain window.
-   * Only the first request uses this window; later requests use the ordinary pair rules.
+   * The first challenge window less its submission epoch, in seconds: a complete single
+   * hop, governance irreversibility for the scenario's finalizers, two active plugin passes
+   * (request issuance and reads) and one observer poll gap. A BONDED envelope request keeps
+   * synd_has_work true, so the daemon cranks every active pass, not every 300 seconds.
    */
-  export const ChallengeWindowSec = Math.ceil(
-    SyndicationScenario.EpochDurationSec +
-      (ProtocolTiming.SingleHopBudgetMs +
-        ProtocolTiming.irreversibilityBudgetMs(ProducerCount) +
-        2 * OperatorDaemonTool.BatchEpochPollMs +
-        SyndicationScenario.PollMs) /
-        ProtocolTiming.MsPerSecond
+  export const ChallengeWindowFixedSec = Math.ceil(
+    (ProtocolTiming.SingleHopBudgetMs +
+      ProtocolTiming.irreversibilityBudgetMs(ProducerCount) +
+      2 * OperatorDaemonTool.BatchEpochPollMs +
+      SyndicationScenario.PollMs) /
+      ProtocolTiming.MsPerSecond
   )
+  /**
+   * The flow's epoch, in seconds: the shortest at which the second request is still
+   * verifiable when the first bond is paid back
+   * (`BatchOperatorUnderwritingSteps.shortestRetainingEpochSec`). At the 60-second shortest
+   * depot epoch it is not, since the challenge window is itself about ten epochs long.
+   */
+  export const EpochDurationSec = BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(
+    ChallengeWindowFixedSec,
+    (PaybackPassCount * OperatorDaemonTool.BatchEpochPollMs) / ProtocolTiming.MsPerSecond,
+    RetentionHeadroomEpochs
+  )
+  /**
+   * The challenge window this flow configures, in seconds: one scenario epoch for
+   * submission plus {@link ChallengeWindowFixedSec}. The first bond stays unpaid at least
+   * this long, and inside it the flow must see the second request issued yet unbonded.
+   * Step ceilings and timeout scaling never lengthen the on-chain window. Only the first
+   * request uses it; later requests use the ordinary pair rules.
+   */
+  export const ChallengeWindowSec = EpochDurationSec + ChallengeWindowFixedSec
   /** Pair-specific governance rules with {@link ChallengeWindowSec}, set in setup and restored at the end. */
   export const Config = BatchOperatorUnderwritingSteps.configOf(
     Plan,
