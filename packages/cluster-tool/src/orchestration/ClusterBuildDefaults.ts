@@ -123,24 +123,113 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  * provisioned through the ONE
  * {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism
  * into per-account {@link OperatorAccount}s. Composed entirely from the
- * {@link Steps} palette. The CLI `create` command runs `create(options).build()`.
+ * {@link Steps} palette. The CLI `create` command and every flow compose it
+ * through {@link create}.
  */
 export namespace ClusterBuildDefaults {
-  /** Resolve config + context, compose the bootstrap phases, return the build. */
+  /**
+   * How a caller composes the bootstrap: the run's context, which create-only
+   * phases join it, and which create-only options are merged into the caller's
+   * before the config resolves.
+   *
+   * @typeParam C - The build's context type.
+   */
+  export interface CreateOptions<
+    C extends ClusterBuildContext = ClusterBuildContext
+  > {
+    /** Build the run's context from the resolved config (a flow's own context). */
+    createContext?: (config: ClusterConfig, log: Logger) => C
+    /**
+     * Take a LOCAL Solana outpost out of pre-launch (Launching, then
+     * PostLaunch) right after its deploy, before any operator daemon starts the
+     * OPP exchange. Set by the `wire-cluster-tool create` command only: flows
+     * start from a PreLaunch outpost and drive that transition in their own
+     * phases. External outposts are never flipped.
+     */
+    launchSolanaOutpost?: boolean
+    /**
+     * Bootstrap backed automatic underwriting against LOCAL outposts: merge
+     * {@link AutomaticUnderwritingOverrides} over the caller's options before the
+     * config resolves. Every batch operator then runs the underwriter role, the
+     * funded operators get their epoch-zero LIQ credit, the mock LIQ yield pools
+     * are seeded, and the bootstrap backs all of that shadow with verified
+     * custody on the outposts it just deployed. Set by the `wire-cluster-tool
+     * create` command only, with no opt-out. An `externalOutpostConfig` build
+     * keeps the caller's options. Flows declare these options in their
+     * scenario defaults.
+     */
+    enableAutomaticUnderwriting?: boolean
+  }
+
+  /**
+   * The {@link ClusterBuildOptions} members
+   * {@link CreateOptions.enableAutomaticUnderwriting} forces on. Changing this set
+   * changes what every local `wire-cluster-tool create` bootstraps.
+   */
+  export const AutomaticUnderwritingOverrides = {
+    enableBatchOperatorUnderwriting: true,
+    enableMockSyndicationImport: true,
+    enableMockLiqPools: true
+  } as const satisfies ClusterBuildOptions
+
+  /**
+   * Resolve config + context, compose the bootstrap phases, return the build.
+   *
+   * @param options - The cluster build options.
+   * @param createOptions - How the caller composes the bootstrap.
+   * @returns The composed build, not yet run.
+   */
   export async function create<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     options: ClusterBuildOptions = {},
-    createContext?: (config: ClusterConfig, log: Logger) => C
+    createOptions: CreateOptions<C> = {}
   ): Promise<ClusterBuild<C>> {
-    const cluster = await ClusterBuild.create<C>(options, [], createContext)
-    compose(cluster)
+    const {
+        createContext,
+        launchSolanaOutpost = false,
+        enableAutomaticUnderwriting = false
+      } = createOptions,
+      cluster = await ClusterBuild.create<C>(
+        mergeAutomaticUnderwriting(options, enableAutomaticUnderwriting),
+        [],
+        createContext
+      )
+    compose(cluster, launchSolanaOutpost)
     return cluster
   }
 
-  /** Compose every bootstrap phase onto `cluster` (order = the top-level sequence). */
+  /**
+   * Merge {@link AutomaticUnderwritingOverrides} over `options` when automatic
+   * underwriting is requested and the outposts are local (no
+   * `externalOutpostConfig`, whether passed as a flag or in an options file).
+   *
+   * @param options - The caller's cluster build options.
+   * @param enableAutomaticUnderwriting - {@link CreateOptions.enableAutomaticUnderwriting}.
+   * @return The merged options, or `options` itself when nothing applies.
+   */
+  export function mergeAutomaticUnderwriting(
+    options: ClusterBuildOptions,
+    enableAutomaticUnderwriting: CreateOptions["enableAutomaticUnderwriting"]
+  ): ClusterBuildOptions {
+    if (!enableAutomaticUnderwriting || options.externalOutpostConfig != null)
+      return options
+    log.info(
+      `local outposts: automatic underwriting on (${Object.keys(AutomaticUnderwritingOverrides).join(", ")})`
+    )
+    return { ...options, ...AutomaticUnderwritingOverrides }
+  }
+
+  /**
+   * Compose every bootstrap phase onto `cluster` (order = the top-level sequence).
+   *
+   * @param cluster - The build to compose onto.
+   * @param launchSolanaOutpost - Whether a local Solana outpost leaves pre-launch
+   *   at bootstrap ({@link CreateOptions.launchSolanaOutpost}).
+   */
   function compose<C extends ClusterBuildContext>(
-    cluster: ClusterBuild<C>
+    cluster: ClusterBuild<C>,
+    launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
       // Seeded by `ClusterBuild.create` from
@@ -157,10 +246,13 @@ export namespace ClusterBuildDefaults {
         node => node.role === NodeRole.producer
       ),
       apiNodes = plannedNodes.filter(node => node.role === NodeRole.api),
+      operatorNodes = plannedNodes.filter(node =>
+        NodeConfig.isOperatorRole(node.role)
+      ),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
-      // (`config.externalOutposts`), so skip the local anvil/validator starts +
-      // outpost deploys and publish the operator-daemon artifacts from the
-      // external config instead (verifying the endpoints are reachable).
+      // (`config.externalOutposts`, trusted), so skip the local anvil/validator
+      // starts + outpost deploys, record the config's deployed values instead,
+      // and never contact either outpost.
       isExternalOutpost = config.externalOutposts != null
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
@@ -529,7 +621,8 @@ export namespace ClusterBuildDefaults {
       SysioContractName.swap,
       SysioContractName.liq,
       SysioContractName.bond,
-      SysioContractName.synd
+      SysioContractName.synd,
+      SysioContractName.councl
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -854,31 +947,19 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
-    //    verify the already-running remote outpost endpoints instead ──
+    //    record the trusted deployed values; the outposts are never contacted ──
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         prerequisites,
         "MaterializeExternalOutposts",
-        "Materialize the external outpost artifacts + verify the endpoints"
+        "Record the external outposts' deployed addresses (trusted, never contacted)"
       ).push(
-        // REPLACES the omitted ETH/SOL deploy phases: copy the config-referenced
-        // files into the canonical data dir so every downstream reader is unchanged.
+        // REPLACES the omitted ETH/SOL deploy phases: write the config's deployed
+        // values into the canonical deploy records so every downstream reader is unchanged.
         Steps.externalOutpost.planMaterialize<C>(
           Actor.Sysio,
-          "materialize-external-artifacts",
-          "copy the external-outpost config files into the canonical data dir",
-          {}
-        ),
-        Steps.externalOutpost.planVerifyEthereumEndpoint<C>(
-          Actor.EthereumOutpost,
-          "verify-ethereum-endpoint",
-          "the external Ethereum RPC reports the configured chain id",
-          {}
-        ),
-        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
-          Actor.SolanaOutpost,
-          "verify-solana-endpoint",
-          "the external Solana RPC responds to getVersion",
+          "materialize-external-outposts",
+          "write the external-outpost config's deployed addresses into the canonical deploy records",
           {}
         )
       )
@@ -949,6 +1030,15 @@ export namespace ClusterBuildDefaults {
           { timeoutMs: 900_000 }
         )
       )
+      // `create` only: the fresh outpost holds no pre-launch positions, so it
+      // goes PostLaunch here, before the operator daemons start OPP.
+      if (launchSolanaOutpost)
+        Steps.solanaOutpost.planLaunch<C>(
+          prerequisites,
+          "SolanaOutpostLaunch",
+          "Take the Solana outpost out of pre-launch (Launching, then PostLaunch)",
+          { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs }
+        )
     }
 
     // ── registry + syndication configuration ──
@@ -1002,10 +1092,10 @@ export namespace ClusterBuildDefaults {
       "Configure sysio.bond + each shadow pair on sysio.synd",
       {}
     )
-    // Mock shadow-liq yield pools — opt-in via `--enable-mock-liq-pools` (default
-    // off, so a real / external depot never mints unbacked shadow). Seeded HERE,
-    // pre-EpochBootstrap, because the contract gates `regliqpool` to the epoch-0
-    // bootstrap window, exactly like `regreserve`.
+    // Mock shadow-liq yield pools — on for a local `create` (automatic underwriting)
+    // or a flow that opts in; refused for external outposts, so a real depot never
+    // mints unbacked shadow. Seeded HERE, pre-EpochBootstrap, because the contract
+    // gates `regliqpool` to the epoch-0 bootstrap window, exactly like `regreserve`.
     if (config.enableMockLiqPools) {
       Steps.registry.planMockLiqPools<C>(
         prerequisites,
@@ -1031,7 +1121,8 @@ export namespace ClusterBuildDefaults {
 
     // The operator daemons' shared prerequisites: the in-process OPP debugging
     // sink (external_debugging_plugin posts every envelope there) + the deploy
-    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args reference.
+    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args
+    // reference — built from source in both modes, over the deployed values.
     ClusterBuildPhase.create<C>(
       postContractDeployment,
       "OperatorDaemonPrerequisites",
@@ -1043,19 +1134,12 @@ export namespace ClusterBuildDefaults {
         "start the in-process OPP debugging server",
         {}
       ),
-      isExternalOutpost
-        ? Steps.externalOutpost.planPublishArtifacts<C>(
-            Actor.Sysio,
-            "publish-external-artifacts",
-            "publish ETH ABI + SOL IDL daemon artifacts from the external-outpost config",
-            {}
-          )
-        : OperatorDaemonTool.planArtifactPreparation<C>(
-            Actor.Sysio,
-            "prepare-daemon-artifacts",
-            "write ETH ABI + SOL IDL artifacts for operator daemons",
-            {}
-          ),
+      OperatorDaemonTool.planArtifactPreparation<C>(
+        Actor.Sysio,
+        "prepare-daemon-artifacts",
+        "write ETH ABI + SOL IDL artifacts for operator daemons",
+        {}
+      ),
       // Must follow the artifact step (it reads the published SOL program id)
       // and precede any daemon start: an operator skips a chain whose remote
       // addresses are still unset.
@@ -1135,11 +1219,13 @@ export namespace ClusterBuildDefaults {
         () => Actor.Sysio
       )
     }
+    // Under an external-outpost config these start SYNC-ONLY — no
+    // batch_operator_plugin, no outpost client (NodeopProcessSteps.resolveStartArgs).
     planNodeStartGroup<C>(
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      plannedNodes.filter(node => NodeConfig.isOperatorRole(node.role)),
+      operatorNodes,
       () => Actor.BatchOperator
     )
 
@@ -1150,12 +1236,27 @@ export namespace ClusterBuildDefaults {
     const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
-      "Schedule groups + bootstrap epoch 0 → 1"
+      "Schedule groups, emit the opreg bootstrap roster, bootstrap epoch 0 → 1"
     ).push(
       Steps.contracts.sysio.epoch.planSchbatchgps<C>(
         Actor.Sysio,
         "schedule-batch-groups",
         "build the initial batch-operator schedule",
+        {}
+      ),
+      // Every mode: wire-opreg-bootstrap.json — the bootstrapped roster + the
+      // window schbatchgps just built (groups[k] serves epoch k + 1), emitted
+      // at the earliest point the schedule exists.
+      Steps.wireOpregBootstrap.planEmit<C>(
+        Actor.Sysio,
+        "emit-wire-opreg-bootstrap",
+        "write wire-opreg-bootstrap.json (bootstrapped operator roster + initial batch-operator schedule)",
+        {}
+      ),
+      Steps.wireOpregBootstrap.planVerify<C>(
+        Actor.Sysio,
+        "verify-wire-opreg-bootstrap",
+        "wire-opreg-bootstrap.json names exactly the depot's bootstrapped operators",
         {}
       )
     )
@@ -1226,6 +1327,24 @@ export namespace ClusterBuildDefaults {
           "verify-outbound-envelopes",
           "every registered outpost has a queued outbound envelope",
           { timeoutMs: Steps.externalOutpost.OutboundEnvelopesTimeoutMs }
+        )
+      )
+      // The batch-operator nodes ran sync-only. Each must hold the whole
+      // bootstrap chain before create stops it: its start.sh is the relaunch
+      // form, which adds the OPP daemon to the chain synced here.
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "OperatorNodesSynced",
+        "Verify every batch-operator node synced the depot chain (started without its OPP daemon)"
+      ).push(
+        ...operatorNodes.map(node =>
+          Steps.processes.nodeop.planVerifySynced<C>(
+            Actor.BatchOperator,
+            `verify-${node.name}-synced`,
+            `${node.name} synced to the depot head`,
+            {},
+            node.name
+          )
         )
       )
     } else {

@@ -149,7 +149,10 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
     expect(cluster.config.batchOperatorUnderwriting.fundedOperatorCount).toBe(1)
     expect(
       steps.filter(name => name.startsWith("import-underwriting-"))
-    ).toEqual(["import-underwriting-batchop.a"])
+    ).toEqual([
+      "import-underwriting-batchop.a-liqsol",
+      "import-underwriting-batchop.a-liqeth"
+    ])
     expect(steps.filter(name => name.startsWith("underwriting-ram-"))).toEqual([
       "underwriting-ram-batchop.a",
       "underwriting-ram-batchop.b",

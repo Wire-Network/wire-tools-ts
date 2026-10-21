@@ -5,6 +5,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  ExternalOutpostConfigSchemaCodec,
   NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
@@ -17,10 +18,14 @@ import {
   ClusterConfigProvider,
   NodeConfig,
   NodeRole,
-  QueryEngineConfigProvider
+  QueryEngineConfigProvider,
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
+  ExternalOutpostChainId,
+  fixtureExternalOutpostConfig,
+  fixtureExternalOutposts,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
@@ -74,18 +79,27 @@ describe("ClusterConfigProvider", () => {
       ).toBeNull()
     })
 
-    it("defaults to every operator funded with the 10 LIQSOL cap", () => {
+    it("defaults to every operator funded with 10-token caps for both shadows", () => {
       const resolved = ClusterConfigProvider.resolveBatchOperatorUnderwriting(
         { enableBatchOperatorUnderwriting: true },
         3
       )
       expect(resolved).toEqual({
         fundedOperatorCount: 3,
-        maxExposure: [ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure]
+        maxExposure: ClusterConfigProvider.DefaultBatchUnderwriterMaxExposures
       })
       expect(
         ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure.amount
       ).toBe(10_000_000_000n)
+      expect(
+        resolved.maxExposure.map(cap => [
+          SlugName.toString(Number(cap.tokenCode)),
+          cap.amount
+        ])
+      ).toEqual([
+        ["LIQSOL", 10_000_000_000n],
+        ["LIQETH", 10_000_000_000n]
+      ])
     })
 
     it("carries a funded-operator count and caps", () => {
@@ -295,14 +309,7 @@ describe("ClusterConfigProvider", () => {
           regions: ["us-east-1", "eu-west-1"],
           ssm: null
         },
-        externalOutposts: {
-          ethereum: {
-            addressFile: "/x/outpost-addrs.json",
-            abiFiles: ["/x/eth-abis/OPP.json"],
-            chainId: 1
-          },
-          solana: { idlFile: "/x/idl.json" }
-        }
+        externalOutposts: fixtureExternalOutposts()
       })
       const round = ClusterConfigProvider.deserialize(
         ClusterConfigProvider.serialize(cfg)
@@ -317,7 +324,10 @@ describe("ClusterConfigProvider", () => {
         "us-east-1",
         "eu-west-1"
       ])
-      expect(round.externalOutposts?.ethereum.chainId).toBe(1)
+      expect(round.externalOutposts).toEqual(fixtureExternalOutposts())
+      expect(round.externalOutposts?.ethereum.chainId).toBe(
+        ExternalOutpostChainId
+      )
     })
   })
 
@@ -847,18 +857,7 @@ describe("ClusterConfigProvider", () => {
 
     beforeEach(() => {
       environment = fixtureResolveEnvironment("external-underwriters-")
-      externalConfigFile = Path.join(environment.rootPath, "external.json")
-      Fs.writeFileSync(
-        externalConfigFile,
-        JSON.stringify({
-          ethereum: {
-            addressFile: "outpost-addrs.json",
-            abiFiles: ["eth-abis/OPP.json"],
-            chainId: 11_155_111
-          },
-          solana: { idlFile: "solana-idls/liqsol_core.json" }
-        })
-      )
+      externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
     })
 
     afterEach(() => {
@@ -907,6 +906,140 @@ describe("ClusterConfigProvider", () => {
       expect(config.underwriterCount).toBe(
         ClusterConfigProvider.DefaultUnderwriterCount
       )
+    })
+  })
+
+  describe("external-outpost config loading", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-outpost-load-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    it("carries the trusted config verbatim — every value, rpcUrl included", async () => {
+      const outposts = fixtureExternalOutposts()
+      outposts.ethereum.rpcUrl = "https://ethereum-rpc.external.example/"
+      outposts.solana.rpcUrl = "https://solana-rpc.external.example/"
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        ExternalOutpostConfigSchemaCodec.serialize(outposts)
+      )
+      const config = await ClusterConfigProvider.resolve({
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        externalOutpostConfig: configFile
+      })
+      expect(config.externalOutposts).toEqual(outposts)
+    })
+
+    it("refuses a config that fails the schema", async () => {
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        JSON.stringify({ ethereum: { chainId: 1 }, solana: {} })
+      )
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          buildPath: environment.buildPath,
+          ethereumPath: "/fake/eth",
+          solanaPath: "/fake/sol",
+          externalOutpostConfig: configFile
+        })
+      ).rejects.toThrow()
+    })
+  })
+
+  describe("external outposts vs mock data", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-mock-data-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base options for a LOCAL-outpost resolve over the sandbox. */
+    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...extra
+      }
+    }
+
+    /** Base options for an EXTERNAL-outpost resolve. */
+    function externalOptions(
+      extra: ClusterBuildOptions = {}
+    ): ClusterBuildOptions {
+      return localOptions({
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        ...extra
+      })
+    }
+
+    it("refuses exactly the two mock-data options", () => {
+      expect(ClusterConfigProvider.MockDataOptionKeys).toEqual([
+        "enableMockLiqPools",
+        "enableMockSyndicationImport"
+      ])
+    })
+
+    it("refuses before resolving anything else, so no port is claimed", async () => {
+      // `buildPath` is asserted before `resolveBind`; omitting it fails there
+      // unless the mock-data refusal runs first.
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          externalOutpostConfig: fixtureExternalOutpostConfig(
+            environment.rootPath
+          ),
+          enableMockLiqPools: true
+        })
+      ).rejects.toThrow(/Mock data cannot be seeded against external outposts/)
+    })
+
+    it.each(ClusterConfigProvider.MockDataOptionKeys)(
+      "refuses %s, naming it",
+      async key => {
+        await expect(
+          ClusterConfigProvider.resolve(externalOptions({ [key]: true }))
+        ).rejects.toThrow(
+          new RegExp(
+            `Mock data cannot be seeded against external outposts \\(${key} `
+          )
+        )
+      }
+    )
+
+    it("keeps batch-operator underwriting the caller's choice", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        externalOptions({ enableBatchOperatorUnderwriting: true })
+      )
+      expect(config.batchOperatorUnderwriting).not.toBeNull()
+      expect(config.enableMockLiqPools).toBe(false)
+    })
+
+    it("allows both mock flags against LOCAL outposts", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({
+          enableMockLiqPools: true,
+          enableMockSyndicationImport: true
+        })
+      )
+      expect(config.enableMockLiqPools).toBe(true)
+      expect(config.enableMockSyndicationImport).toBe(true)
     })
   })
 

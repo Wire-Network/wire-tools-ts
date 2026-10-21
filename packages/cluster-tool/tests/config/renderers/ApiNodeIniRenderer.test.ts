@@ -35,6 +35,7 @@ describe("ApiNodeIniRenderer", () => {
         "enable-account-queries = true",
         "http-max-in-flight-requests = 100",
         "http-threads = 4",
+        "vote-threads = 4",
         "agent-name = wire-api-node",
         `http-server-address = ${HttpServerAddress}`,
         `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`,
@@ -84,6 +85,7 @@ describe("ApiNodeIniRenderer", () => {
         enableAccountQueries: false,
         httpMaxInFlightRequests: 500,
         httpThreads: 16,
+        voteThreads: 8,
         agentName: "custom-api"
       }
     })
@@ -93,6 +95,7 @@ describe("ApiNodeIniRenderer", () => {
     expect(ini).toContain("enable-account-queries = false")
     expect(ini).toContain("http-max-in-flight-requests = 500")
     expect(ini).toContain("http-threads = 16")
+    expect(ini).toContain("vote-threads = 8")
     expect(ini).toContain("agent-name = custom-api")
   })
 
@@ -171,6 +174,9 @@ describe("ApiNodeIniRenderer", () => {
     const ini = render()
     expect(ini).toContain(
       `${ApiNodeIniRenderer.HttpThreadsOption} = ${ApiNodeConfig.DefaultHttpThreads}`
+    )
+    expect(ini).toContain(
+      `${ApiNodeIniRenderer.VoteThreadsOption} = ${ApiNodeConfig.DefaultVoteThreads}`
     )
     expect(ini).toContain(
       `${ApiNodeIniRenderer.AgentNameOption} = ${ApiNodeConfig.DefaultAgentName}`

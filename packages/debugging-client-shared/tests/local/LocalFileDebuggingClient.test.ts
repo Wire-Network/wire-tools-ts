@@ -230,14 +230,11 @@ describe("LocalFileDebuggingClient", () => {
             deferred.resolve()
         })
       )
-      try {
-        fixture.writePid("data/node_bios", DiscoveredLabel, process.pid)
-        await sourceSeen.promise
-        const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
-        expect(allLabels).toContain(DiscoveredLabel)
-      } finally {
-        sub.close(ClosedReason.ClientRequested)
-      }
+      fixture.writePid("data/node_bios", DiscoveredLabel, process.pid)
+      await sourceSeen.promise
+      sub.close(ClosedReason.ClientRequested)
+      const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
+      expect(allLabels).toContain(DiscoveredLabel)
     }, LiveSubscriptionTimeoutMs)
   })
 

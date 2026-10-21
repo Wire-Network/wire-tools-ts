@@ -1,8 +1,17 @@
+import Assert from "node:assert"
+
 import {
   ClusterBuildPhase,
   Report,
   BatchOperatorUnderwritingSteps as UnderwritingSteps,
   SolanaLiqSyndicationTool,
+  EthereumSyndicationTool,
+  Constants as HarnessConstants,
+  WireSyndicationTool,
+  Steps,
+  SyndicationUserSteps,
+  pollUntil,
+  verifyStep,
   SyndicationScenario,
   type ClusterBuild,
   type ClusterBuildOptions
@@ -14,7 +23,7 @@ const { Actor } = Report
 /**
  * Prove the batch_operator_plugin's underwriter role, configured properly, underwrites
  * syndication with no intervention: the cluster's batch operators run the role and hold an
- * imported LIQSOL credit from bootstrap, the pair is configured in setup, and from then on the
+ * imported LIQSOL and LIQETH credits from bootstrap, the pair is configured in setup, and from then on the
  * flow only acts as users — two syndications, an unlinked recipient's syndication and its
  * `createlink`. Every bond, crank, approval and claim is the operators'; the flow only waits
  * for each and checks the exact accounting.
@@ -22,7 +31,7 @@ const { Actor } = Report
 export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
   readonly name = "flow-syndication-plugin-underwriting"
   readonly description =
-    "Batch operators underwrite held syndications on their own: bonded, released with fees, approved and claimed; parked credit is linked"
+    "Batch operators underwrite LIQSOL and LIQETH: bonded, released, approved and claimed; parked Solana credit is linked"
   override readonly defaults: ClusterBuildOptions = {
     enableMockSyndicationImport: true,
     enableMockLiqPools: true,
@@ -173,6 +182,217 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
     UnderwritingSteps.planUnlinkedIntake(cluster, plan)
     UnderwritingSteps.planParkAndLink(cluster, plan)
     UnderwritingSteps.planSettle(cluster, plan)
+    this.planEthereum(cluster)
     this.planFinish(cluster)
+  }
+
+  /** Prove LIQETH is backed, automatically bonded, released to a linked wallet, and repaid. */
+  private planEthereum(cluster: ClusterBuild): void {
+    const plan = Constants.EthereumPlan,
+      chain = "ETHEREUM",
+      token = "LIQETH",
+      options = SyndicationScenario.OutpostOptions,
+      phase = ClusterBuildPhase.create(
+        cluster,
+        "EthereumUnderwriting",
+        "The same operators underwrite and settle a real liqETH syndication"
+      )
+    phase.push(
+      Steps.account.planCreateKeyed(
+        Actor.User,
+        "create-ethereum-user",
+        "create the independent Ethereum recipient",
+        SyndicationScenario.WriteOptions,
+        Constants.EthereumUser,
+        HarnessConstants.DEV_K1_PUBLIC_KEY
+      ),
+      SyndicationUserSteps.planResourcePolicy(
+        Actor.User,
+        "resources-ethereum-user",
+        "allocate recipient resources",
+        SyndicationScenario.WriteOptions,
+        SyndicationScenario.resourcePolicy(Constants.EthereumUser)
+      ),
+      SyndicationUserSteps.planLinkEthereumKey(
+        Actor.User,
+        "link-ethereum-user",
+        "link the independent Ethereum wallet",
+        SyndicationScenario.WriteOptions,
+        Constants.EthereumUser,
+        Constants.EthereumHdIndex
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "ethereum-underwriting-funded",
+        "both shadows have funded operators and verified custody",
+        async ctx => {
+          const accounts = UnderwritingSteps.fundedOperatorAccounts(ctx)
+          Assert.ok(accounts.length > 0)
+          for (const account of accounts) {
+            Assert.equal(
+              await WireSyndicationTool.readLiqBalance(ctx, account, token),
+              BigInt(Steps.registry.MockSyndicationImportAmount)
+            )
+          }
+          Assert.ok(UnderwritingSteps.maxExposure(ctx, token) >= plan.amount)
+          const outstanding = await WireSyndicationTool.readOutstanding(
+            ctx,
+            token
+          )
+          Assert.ok(
+            (await EthereumSyndicationTool.readPoolBalanceDepot(ctx)) >=
+              outstanding
+          )
+          Assert.equal(
+            await EthereumSyndicationTool.readSyndicatedPrincipal(ctx),
+            outstanding
+          )
+          Assert.equal(
+            (await WireSyndicationTool.readSyndicationConfig(ctx, chain, token))
+              .synd_fee_bps,
+            0
+          )
+          ctx.outputs.set(Constants.EthereumBefore, {
+            holder: await WireSyndicationTool.readLiqBalance(
+              ctx,
+              Constants.EthereumUser,
+              token
+            ),
+            operators: (
+              await Promise.all(
+                accounts.map(account =>
+                  WireSyndicationTool.readLiqBalance(ctx, account, token)
+                )
+              )
+            ).reduce((sum, balance) => sum + balance, 0n)
+          })
+        }
+      ),
+      EthereumSyndicationTool.planDepositLiqEth(
+        Actor.User,
+        "ethereum-deposit",
+        "deposit ETH for liqETH",
+        options,
+        Constants.EthereumHdIndex,
+        Constants.EthereumDepositAmount
+      ),
+      EthereumSyndicationTool.planApproveLiqEth(
+        Actor.User,
+        "ethereum-approve",
+        "approve the syndication pool",
+        options,
+        Constants.EthereumHdIndex,
+        Constants.EthereumNativeAmount
+      ),
+      EthereumSyndicationTool.planSyndicate(
+        Actor.User,
+        "ethereum-syndicate",
+        "syndicate to the holder's linked WIRE account",
+        options,
+        Constants.EthereumHdIndex,
+        Constants.EthereumNativeAmount,
+        EthereumSyndicationTool.compressedPubkey(Constants.EthereumHdIndex)
+      ),
+      UnderwritingSteps.planVerifyRecorded(
+        Actor.Sysio,
+        "ethereum-requested",
+        "the Ethereum envelope gets its request without a flow crank",
+        UnderwritingSteps.UnderwriterRequestIssuedOptions,
+        plan.amount,
+        null,
+        plan.firstEpoch,
+        plan.firstRequest,
+        chain,
+        token
+      ),
+      UnderwritingSteps.planVerifyBonded(
+        Actor.Underwriter,
+        "ethereum-bonded",
+        "only funded operators bond the LIQETH request within its cap",
+        SyndicationScenario.VerifyOptions,
+        plan,
+        plan.firstRequest,
+        token
+      ),
+      UnderwritingSteps.planVerifyApprovedAndClaimed(
+        Actor.Underwriter,
+        "ethereum-approved-and-claimed",
+        "the operators approve after the window and claim their capital",
+        SyndicationScenario.VerifyOptions,
+        plan.firstRequest
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "ethereum-settled",
+        "the full principal reaches the linked holder and underwriting capital is returned",
+        async ctx => {
+          const accounts = UnderwritingSteps.fundedOperatorAccounts(ctx),
+            before = ctx.outputs.assert(Constants.EthereumBefore)
+          await pollUntil(
+            "Ethereum envelope fully released",
+            async () => {
+              const row = await WireSyndicationTool.readEnvelope(
+                ctx,
+                chain,
+                token,
+                ctx.outputs.assert(plan.firstEpoch)
+              )
+              return (
+                row != null &&
+                BigInt(row.released) ===
+                  BigInt(row.synd_total) + BigInt(row.yield_total)
+              )
+            },
+            UnderwritingSteps.DaemonEffectBudgetMs,
+            SyndicationScenario.PollMs
+          )
+          const balances = await Promise.all(
+            accounts.map(account =>
+              WireSyndicationTool.readLiqBalance(ctx, account, token)
+            )
+          )
+          Assert.equal(
+            await WireSyndicationTool.readLiqBalance(
+              ctx,
+              Constants.EthereumUser,
+              token
+            ),
+            before.holder + plan.amount,
+            "the holder must receive its entire LIQETH principal"
+          )
+          Assert.equal(
+            balances.reduce((sum, balance) => sum + balance, 0n),
+            before.operators,
+            "all operator LIQETH underwriting capital must be returned"
+          )
+          const envelope = await WireSyndicationTool.readEnvelope(
+            ctx,
+            chain,
+            token,
+            ctx.outputs.assert(plan.firstEpoch)
+          )
+          Assert.equal(BigInt(envelope.synd_total), plan.amount)
+          Assert.equal(
+            BigInt(envelope.released),
+            BigInt(envelope.synd_total) + BigInt(envelope.yield_total)
+          )
+          const outstanding = await WireSyndicationTool.readOutstanding(
+            ctx,
+            token
+          )
+          Assert.ok(
+            (await EthereumSyndicationTool.readPoolBalanceDepot(ctx)) >=
+              outstanding
+          )
+          Assert.equal(
+            await EthereumSyndicationTool.readSyndicatedPrincipal(ctx),
+            outstanding
+          )
+          Assert.deepEqual(await WireSyndicationTool.readMismatches(ctx), [])
+          Assert.ok(!(await WireSyndicationTool.readCord(ctx))?.pulled)
+        },
+        SyndicationScenario.VerifyOptions
+      )
+    )
   }
 }

@@ -304,9 +304,11 @@ options, is the `create` table in the repo root `README.md`):
 | `--producer-count` / `-p` | Producer accounts to register (default 1) |
 | `--batch-operator-count` / `-b` | Batch operators (default 3) |
 | `--epoch-duration-sec` | Minimum epoch duration in seconds (default 60) |
-| `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero |
-| `--enable-mock-syndication-import` | Import the mock bonder's LIQ positions during epoch zero |
-| `--enable-batch-operator-underwriting` | Run the underwriter role on every batch operator; with the mock import, fund each operator with 100 LIQSOL |
+| `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero — forced on by a local `create` |
+| `--enable-mock-syndication-import` | Import the mock bonder's LIQ positions during epoch zero — forced on by a local `create` |
+| `--enable-batch-operator-underwriting` | Run the underwriter role on every batch operator; with the mock import, fund each operator with 100 LIQSOL and 100 LIQETH — forced on by a local `create` |
+
+A local `create` therefore needs a nodeop built with the underwriter role.
 
 Swap-underwriter daemons have been removed: `--underwriter-count` still parses,
 but any nonzero value is rejected.

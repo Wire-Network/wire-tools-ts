@@ -8,6 +8,7 @@ import {
   fixtureConfig,
   PersistedFixture
 } from "../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../config/resolveEnvironmentFixture.js"
 
 function newContext(): ClusterBuildContext {
   return new ClusterBuildContext(fixtureConfig(), getLogger("ctx-test"))
@@ -27,6 +28,21 @@ describe("ClusterBuildContext", () => {
     expect(ctx.wire).toBe(wire) // cached, not rebuilt
     expect(ctx.ethereum).toBe(ctx.ethereum)
     expect(ctx.solana).toBe(ctx.solana)
+  })
+
+  it("refuses BOTH outpost clients under an external-outpost config — the harness never contacts one", () => {
+    const ctx = new ClusterBuildContext(
+      fixtureConfig({ externalOutposts: fixtureExternalOutposts() }),
+      getLogger("ctx-test")
+    )
+    expect(() => ctx.ethereum).toThrow(
+      /never contacts an external Ethereum outpost/
+    )
+    expect(() => ctx.solana).toThrow(
+      /never contacts an external Solana outpost/
+    )
+    // The depot client is unaffected.
+    expect(ctx.wire).toBeDefined()
   })
 
   it("is a typed event emitter", () => {

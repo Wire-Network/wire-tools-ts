@@ -61,7 +61,12 @@ export namespace ClusterManager {
     // `PublishOperatorSignatureProviderKeys` after operator provisioning) —
     // each source's keys must be in SSM BEFORE their consumer nodeops start
     // and fetch them. Absent entirely under KEY.
-    const build = await ClusterBuildDefaults.create(options)
+    // `create` also takes a local Solana outpost PostLaunch and bootstraps backed
+    // automatic underwriting against local outposts; flows do neither.
+    const build = await ClusterBuildDefaults.create(options, {
+      launchSolanaOutpost: true,
+      enableAutomaticUnderwriting: true
+    })
     ClusterBuildPhase.create(
       build,
       "PersistClusterState",
@@ -336,9 +341,9 @@ export namespace ClusterManager {
     ClusterState.rehydrate(ctx.keyStore, keys)
 
     // External-outpost mode (`config.externalOutposts`): the ETH + SOL outposts
-    // run on real chains, so `run` skips the local anvil/validator starts and
-    // publishes the daemon artifacts from the config; the head-advance gate
-    // (not the epoch-distribution gate) is the success condition.
+    // run on real chains, so `run` skips the local anvil/validator starts; the
+    // head-advance gate (not the epoch-distribution gate) is the success
+    // condition.
     const isExternalOutpost = config.externalOutposts != null
 
     Assert.ok(
@@ -417,9 +422,7 @@ export namespace ClusterManager {
     }
 
     log.info("[cluster] preparing operator daemon artifacts")
-    await (isExternalOutpost
-      ? Steps.externalOutpost.runPublishArtifacts(ctx, null, controller.signal)
-      : OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal))
+    await OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal)
 
     log.info(`[cluster] starting ${operatorNodes.length} operator node(s)`)
     await Promise.all(operatorNodes.map(node => startNode(ctx, node)))

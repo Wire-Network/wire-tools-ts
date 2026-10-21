@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
@@ -214,5 +215,35 @@ export namespace OpregContractSteps {
       .actions.claimremit.invoke(input.data, {
         authorization: WireClient.activeAuthorization(input.data.account)
       })
+  }
+
+  // ── Reads (execute freely inside runners / verify steps) ─────────────────
+
+  /**
+   * Row limit of {@link readOperators}. A read that comes back with `more` set is
+   * refused rather than trusted, so an operator past the limit can never read as
+   * absent; raising it only widens that one read.
+   */
+  export const OperatorTableReadLimit = 100
+
+  /**
+   * Every `sysio.opreg::operators` row, from ONE complete read through the typed
+   * table accessor.
+   *
+   * @param ctx - The build context.
+   * @returns Every operator row, in table order.
+   * @throws When the table holds more than {@link OperatorTableReadLimit} rows.
+   */
+  export async function readOperators<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioOpregOperatorEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.operators.query({ limit: OperatorTableReadLimit })
+    Assert.ok(
+      !more,
+      `OpregContractSteps: sysio.opreg::operators has more than ${OperatorTableReadLimit} rows; the read is truncated`
+    )
+    return rows
   }
 }

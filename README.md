@@ -428,6 +428,12 @@ wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 
 ### Underwriting, syndication and the emergency stop
 
+Automatic underwriting requires `--enable-batch-operator-underwriting`, matching
+per-token exposure caps, and liquid shadow LIQ in the operator accounts. The role
+defaults to off even when OPP delivery works, except in a local `create`, which forces
+it on together with both mock inventories. See the
+[setup and existing-testnet recovery procedure](docs/syndication-underwriting-operations.md).
+
 Every `create` sets these up on the depot; no flag gates them, because a real
 depot needs them too:
 
@@ -479,16 +485,16 @@ command comes first).
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false` | run the `batch_operator_plugin` underwriter role on every batch operator from its own account (`10.000000000 LIQSOL` cap) and grant it RAM for bond rows; with `--enable-mock-syndication-import`, also import 100 LIQSOL to each funded operator's ED key and move the epoch-zero import after operator provisioning. The flag-less `batchOperatorUnderwriting` default sets `fundedOperatorCount` (default all) and `maxExposure` (default `10.000000000 LIQSOL`). Needs a nodeop with the underwriter role |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
-| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
+| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
@@ -540,35 +546,75 @@ specs, so archives are sensitive; `cluster-keys.json` is NEVER included.
 
 ### External outpost clusters
 
-Point a cluster at Ethereum + Solana outposts that already run on real chains
-instead of the local anvil / solana-test-validator: pass
-`--external-outpost-config <file>` at `create` (the depot bootstraps normally but
-no local outpost is started or deployed), together with a `--bind-config` whose
-`anvil` / `solana` addresses are the REMOTE RPC endpoints. The
-`ExternalOutpostConfig` is fully self-described (RPC endpoints come from the bind
-config; the Solana program id is parsed from the IDL):
+Bootstrap a depot against Ethereum + Solana outposts that already run on their
+own chains, instead of the local anvil / solana-test-validator: pass
+`--external-outpost-config <file>` at `create`. The file is TRUSTED and holds
+values only — the outposts' real-world deployed addresses and public keys:
 
 ```json
 {
   "ethereum": {
-    "addressFile": "/opt/wire/eth/outpost-addrs.json",
-    "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
-    "chainId": 11155111
+    "chainId": 560048,
+    "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
+    "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
+    "liqEthAddresses": { "LiqEthToken": "0x…" }
   },
-  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+  "solana": {
+    "rpcUrl": "https://api.testnet.solana.com",
+    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+  }
 }
 ```
 
-Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
-values are rejected; syndication bond providers do not need a daemon.
+- `outpostAddresses` is the outpost deploy record (`outpost-addrs-<network>.json`)
+  and must carry `OPP`, `OPPInbound` and `BAR`. `liqEthAddresses` (the liqEth
+  deploy record) and `solana.mints` (`[{ code, mint, decimals }]`) are optional.
+- `rpcUrl` is the endpoint the operator daemons dial. Without it they dial the
+  bind config's `anvil` / `solana` address.
+- The platform's `docs/ops/cluster-inputs/external-outpost-config.json` is a
+  complete example (Hoodi + Solana testnet).
 
-At `create` the harness verifies the external endpoints are reachable
-(`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
-and gates bootstrap success on the depot's head block advancing AND on an
-outbound envelope being queued for every registered outpost — NOT on epoch
-distribution (there is no local chain to advance). A LOCAL cluster instead gates
-on `sysio.epoch::current_epoch_index` passing the bootstrap epoch. A remote
-`anvil`/`solana` bind address WITHOUT `--external-outpost-config` fails fast.
+What `create` does with it:
+
+- **Never contacts an outpost.** No anvil or solana-test-validator starts,
+  nothing is deployed and no endpoint is probed. The harness's own outpost
+  clients refuse to run in this mode.
+- **Builds the daemon artifacts from source.** The ABI files come from the
+  wire-ethereum build and the `liqsol_core` IDL from the wire-solana build, with
+  the config's addresses and program id overlaid — the same step a local cluster
+  runs.
+- **Syncs the batch operators without their daemon.** Each batch-operator node
+  starts without `batch_operator_plugin` (so without an outpost client), syncs
+  the depot chain and is stopped with the rest of the cluster. Its `start.sh`
+  carries the full daemon args, so the deployed node runs the plugin.
+- **Gates** success on the depot's head block advancing, an outbound envelope
+  being queued for every registered outpost, and every batch-operator node having
+  synced — not on epoch distribution (there is no local chain to advance). A LOCAL
+  cluster instead gates on `sysio.epoch::current_epoch_index` passing the
+  bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
+  `--external-outpost-config` fails fast.
+
+Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
+values are rejected. Manual syndication bond providers can submit actions directly;
+automatic underwriting runs in the batch operators only when explicitly enabled
+and funded, as described in the [underwriting setup](docs/syndication-underwriting-operations.md).
+
+### Bootstrapped operator roster (`wire-opreg-bootstrap.json`)
+
+Every bootstrap — `create` and every flow, local or `--external-outpost-config` —
+writes `<cluster-path>/wire-opreg-bootstrap.json` right after
+`sysio.epoch::schbatchgps`: the cluster's build `label` and `awsAccount`, each
+bootstrapped operator's WIRE account, operator type (`PRODUCER` / `BATCH` /
+`UNDERWRITER`) and public keys with their key types (`K1` / `BLS` / `EM` /
+`ED`), the initial batch-operator groups with the first active group, and the
+depot's epoch duration. `awsAccount` is `awsClusterNodeConfig.account` (or
+`null`); the cluster-tool writes `label: null` and the
+`create-wire-platform-cluster` workflow sets it after a successful create. It
+holds public data only. The
+`verify-wire-opreg-bootstrap` step checks it against `sysio.opreg` in the same
+bootstrap. Its JSON Schema, an example and the field reference are in
+[`docs/outpost/`](docs/outpost/README.md); the TypeScript codec is
+`WireOpregBootstrapSchemaCodec` (`@wireio/cluster-tool-shared`).
 
 ### Exporting a deployable external config
 
@@ -652,7 +698,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP / vote-thread tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -661,7 +707,8 @@ programmatic caller agree: `--chain-state-db-size-mb` (1024),
 `--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
 ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
-`--http-threads` (4), `--agent-name` (`wire-api-node`), and
+`--http-threads` (4), `--vote-threads` (4 — without it a non-producing node
+neither processes nor relays finalizer votes), `--agent-name` (`wire-api-node`), and
 `[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
 (`--query-engine-timeout-ms` 30000; every other one unset — an omitted one
 renders no line, leaving nodeop's `head` read mode and the plugin's own limit

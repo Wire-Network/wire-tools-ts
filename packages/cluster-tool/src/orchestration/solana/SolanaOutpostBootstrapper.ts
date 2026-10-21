@@ -19,6 +19,7 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 
+import { LiqsolPdaSeed } from "../../tools/solana/LiqsolPdaSeed.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 
@@ -318,42 +319,55 @@ export class SolanaOutpostBootstrapper {
     )
     log.info("PDAs initialized successfully")
 
-    // Register the native-SOL binding (mint = all-zeroes `PublicKey.default`)
-    // so `deposit(SOL_CODE, ...)` doesn't revert with `TokenCodeNotConfigured`.
-    const solTokenCode = new anchor.BN(
-      SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename)
+    // Resolve the real mint under the deployed liqsol_token program, not
+    // the outpost program or a mock SPL token.
+    const liqsolTokenProgram = SolanaOutpostProgramTool.assertProgramId(
+      this.config.solanaPath,
+      SolanaOutpostProgramTool.AnchorProgram.liqsolToken
     )
-    const setTokenAddressTransaction = await program.methods
-      .setTokenAddress(solTokenCode, anchor.web3.PublicKey.default)
-      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
-      .signers([deployer])
-      .transaction()
-    await this.runSimpleAuthorityInstruction(
-      deployer,
-      setTokenAddressTransaction,
-      "set_token_address"
+    const liqsolMint = SolanaOutpostProgramTool.derivePda(
+      liqsolTokenProgram,
+      Buffer.from(LiqsolPdaSeed.LiqsolMint)
     )
-    log.info("SOL native-token binding registered")
-
-    // Precision is REQUIRED for every registered token — the program's
-    // `PrecisionUnconfigured` gate and wire-ethereum's
-    // `WIRE_TokenPrecisionUnset` are the same contract (no silent defaults).
-    // Bind native SOL's 9 (lamports) right after its address binding so
-    // `create_reserve_native` and every SOL swap path can frame-convert.
-    const setSolPrecisionTransaction = await program.methods
-      .setTokenPrecision(
-        solTokenCode,
-        SolanaOutpostBootstrapper.SolTokenDecimals
+    const tokens = [
+      {
+        codename: SolanaOutpostBootstrapper.SolTokenCodename,
+        mint: PublicKey.default,
+        decimals: SolanaOutpostBootstrapper.SolTokenDecimals
+      },
+      {
+        codename: SolanaOutpostBootstrapper.LiqsolTokenCodename,
+        mint: liqsolMint,
+        decimals: SolanaOutpostBootstrapper.LiqsolTokenDecimals
+      }
+    ]
+    for (const { codename, mint, decimals } of tokens) {
+      const tokenCode = new anchor.BN(SlugName.from(codename))
+      const addressTransaction = await program.methods
+        .setTokenAddress(tokenCode, mint)
+        .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
+        .signers([deployer])
+        .transaction()
+      await this.runSimpleAuthorityInstruction(
+        deployer,
+        addressTransaction,
+        `set_token_address(${codename})`
       )
-      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
-      .signers([deployer])
-      .transaction()
-    await this.runSimpleAuthorityInstruction(
-      deployer,
-      setSolPrecisionTransaction,
-      "set_token_precision(SOL)"
-    )
-    log.info("SOL native-token precision registered")
+      log.info(`${codename} token binding registered: ${mint.toBase58()}`)
+
+      // Precision is required for every binding: no silent defaults.
+      const precisionTransaction = await program.methods
+        .setTokenPrecision(tokenCode, decimals)
+        .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
+        .signers([deployer])
+        .transaction()
+      await this.runSimpleAuthorityInstruction(
+        deployer,
+        precisionTransaction,
+        `set_token_precision(${codename})`
+      )
+      log.info(`${codename} token precision registered`)
+    }
   }
 
   /**
@@ -564,6 +578,10 @@ export namespace SolanaOutpostBootstrapper {
   export const SolTokenCodename = "SOL"
   /** Native SOL chain decimals (lamports) — bound via `set_token_precision`. */
   export const SolTokenDecimals = 9
+  /** LIQSOL token codename registered against the deployed liqSOL mint. */
+  export const LiqsolTokenCodename = "LIQSOL"
+  /** liqsol-token mint decimals, matching its initialize_mint instruction. */
+  export const LiqsolTokenDecimals = 9
 
   /** Program-derived-address seeds — MUST match `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
   export namespace PdaSeed {
@@ -698,19 +716,6 @@ export namespace SolanaOutpostBootstrapper {
       OppBootstrapRosterEntryBytes * operatorCount +
       OppBootstrapGroupMemberBytes * groupMemberCount
     )
-  }
-
-  /**
-   * Persisted mock-SPL-mint metadata (consumed by depot-side token
-   * registration): a `(slug_name code, base58 mint, decimals)` triple.
-   */
-  export interface PersistedSplMint {
-    /** Slug-name codename packed into its `u64`-equivalent number. */
-    code: number
-    /** Base58 mint pubkey. */
-    mint: string
-    /** Chain-native decimals (6 for USDC/USDT, 9 for LIQSOL). */
-    decimals: number
   }
 
   /** Default deployer keypair file (`~/.config/solana/id.json`). */

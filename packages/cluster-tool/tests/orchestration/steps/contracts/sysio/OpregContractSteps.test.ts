@@ -2,6 +2,7 @@ import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
+import { fixtureOperatorRow } from "./opregOperatorRowFixture.js"
 
 describe("Steps.contracts.sysio.opreg", () => {
   it("setconfig carries the opreg::setconfig data", () => {
@@ -217,6 +218,36 @@ describe("Steps.contracts.sysio.opreg", () => {
         )
       ).rejects.toThrow()
       expect(invoke).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("operators read", () => {
+    /** A fixture context whose `sysio.opreg::operators` query is stubbable. */
+    function operatorsContext() {
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.opreg)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      return { ctx, query: jest.spyOn(contract.tables.operators, "query") }
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("readOperators returns every row of one complete read at OperatorTableReadLimit", async () => {
+      const { ctx, query } = operatorsContext(),
+        rows = [fixtureOperatorRow("wireno.a1b2c"), fixtureOperatorRow("wireno.d3e4f")]
+      query.mockResolvedValue({ rows, more: false })
+      await expect(Steps.contracts.sysio.opreg.readOperators(ctx)).resolves.toEqual(rows)
+      expect(query).toHaveBeenCalledWith({
+        limit: Steps.contracts.sysio.opreg.OperatorTableReadLimit
+      })
+    })
+
+    it("readOperators refuses a truncated read", async () => {
+      const { ctx, query } = operatorsContext()
+      query.mockResolvedValue({ rows: [fixtureOperatorRow("wireno.a1b2c")], more: true })
+      await expect(Steps.contracts.sysio.opreg.readOperators(ctx)).rejects.toThrow(
+        `sysio.opreg::operators has more than ${Steps.contracts.sysio.opreg.OperatorTableReadLimit} rows; the read is truncated`
+      )
     })
   })
 })

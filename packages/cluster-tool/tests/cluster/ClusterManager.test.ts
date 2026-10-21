@@ -7,8 +7,7 @@ import {
   ClusterFiles,
   SignatureProviderType,
   ProcessSignalName,
-  type ClusterConfig,
-  type ExternalOutpostConfig
+  type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
@@ -22,8 +21,10 @@ import {
   NodeRole,
   SSMClientProvider
 } from "@wireio/cluster-tool/config"
-import { Steps } from "@wireio/cluster-tool/orchestration"
+import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
+import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../config/resolveEnvironmentFixture.js"
 
 const mockSend = jest.fn()
 // A DeleteParameterCommand that EXPLODES if anything ever constructs one — the
@@ -211,6 +212,34 @@ const pinnedClusterRoot = Fs.mkdtempSync(
   Path.join(Os.tmpdir(), "cluster-manager-pinned-")
 )
 
+describe("ClusterManager.create", () => {
+  let root: string
+
+  beforeEach(() => {
+    root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cluster-create-"))
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    Fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it("composes the bootstrap with the Solana outpost launch and automatic underwriting", async () => {
+    // Rejecting stops `create` at the composition seam, before any launch.
+    const composed = new Error("composed"),
+      compose = jest
+        .spyOn(ClusterBuildDefaults, "create")
+        .mockRejectedValue(composed),
+      options = { clusterPath: Path.join(root, "cluster") }
+    await expect(ClusterManager.create(options)).rejects.toBe(composed)
+    expect(compose).toHaveBeenCalledTimes(1)
+    expect(compose).toHaveBeenCalledWith(options, {
+      launchSolanaOutpost: true,
+      enableAutomaticUnderwriting: true
+    })
+  })
+})
+
 describe("ClusterManager.destroy", () => {
   /** The shared-root `ClusterConfig`, its dataPath laid out like a real cluster. */
   function destroyConfig() {
@@ -316,20 +345,6 @@ describe("ClusterManager.run", () => {
    */
   const ResumeProductionEvent = "resume-production"
 
-  /**
-   * An already-deployed outpost description. Only its presence matters: it
-   * selects external-outpost mode, and every reader of the files it names is
-   * stubbed below.
-   */
-  const ExternalOutposts: ExternalOutpostConfig = {
-    ethereum: {
-      addressFile: "/ext/outpost-addrs.json",
-      abiFiles: ["/ext/eth-abis/OPP.json"],
-      chainId: 11_155_111
-    },
-    solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
-  }
-
   afterEach(() => {
     jest.restoreAllMocks()
   })
@@ -344,7 +359,9 @@ describe("ClusterManager.run", () => {
     const config = fixtureConfig({
         clusterPath: pinnedClusterRoot,
         dataPath: Path.join(pinnedClusterRoot, "data"),
-        externalOutposts: ExternalOutposts,
+        // Only its presence matters: it selects external-outpost mode, and the
+        // artifact preparation that reads its values is stubbed below.
+        externalOutposts: fixtureExternalOutposts(),
         debuggingServerEnabled: false
       }),
       order: string[] = []
@@ -380,7 +397,7 @@ describe("ClusterManager.run", () => {
       .spyOn(Steps.externalOutpost, "runHeadBlockAdvance")
       .mockResolvedValue(undefined)
     jest
-      .spyOn(Steps.externalOutpost, "runPublishArtifacts")
+      .spyOn(OperatorDaemonTool, "runArtifactPreparation")
       .mockResolvedValue(undefined)
 
     await ClusterManager.run(config)

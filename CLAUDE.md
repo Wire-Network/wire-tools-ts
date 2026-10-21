@@ -96,7 +96,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
 | `flow-*` (15 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -122,11 +122,13 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
 - **Persisted shapes are zod schema-first.** The complex types in
   `@wireio/cluster-tool-shared` (`ClusterConfig`, `BindConfig`, `ClusterState`,
   `ChainTokenAmount`, `SignatureProviderConfig`, `ExternalOutpostConfig`,
-  `ExternalClusterConfig`, `QueryEngineConfig`) are `z.infer` of a zod schema, and
+  `ExternalClusterConfig`, `QueryEngineConfig`, `WireOpregBootstrap`) are `z.infer` of a zod schema, and
   every serialize/deserialize path goes through the generic `SchemaCodec` factory
-  (`SchemaCodec.create<T>(schema)` → `{ serialize, serializeCompact, deserialize, check, validate }`) — which
+  (`SchemaCodec.create<T>(schema)` → `{ serialize, serializeCompact, deserialize, check, validate, toJSONSchema }`) — which
   validates on both ends (safeParse results ride `Either`, never `if`) and
-  bridges the `TokenAmount` bigint round-trip via a `z.codec`.
+  bridges the `TokenAmount` bigint round-trip via a `z.codec`. A shape published
+  to other teams commits its generated JSON Schema (`scripts/generate-json-schemas.mjs`;
+  `docs/outpost/wire-opreg-bootstrap.schema.json`), gated against drift by jest.
 
 ## The Orchestration Model (read STYLE.md "Orchestration Model" first)
 
@@ -308,17 +310,20 @@ wire-cluster-tool create-api-node \                    # standalone (non-cluster
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
 secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
-against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
+against already-deployed REMOTE ETH+SOL outposts — see "`create` against external
+outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off — seed the
+requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off, forced
+on by a local `create`, refused with `--external-outpost-config` — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
-custody), `--enable-mock-syndication-import` (default off — import the mock
-bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off — every batch-operator
+custody), `--enable-mock-syndication-import` (default off, forced on by a local
+`create`, refused with `--external-outpost-config` — import the mock
+bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off, forced on by a local `create` — every batch-operator
 daemon also runs the `batch_operator_plugin` underwriter role from its own account
 and gets a node-owner RAM grant for its `sysio.bond` rows; with the import on, each
-operator's ED key also gets an epoch-zero LIQSOL credit, and the import moves after
-operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
+funded operator's ED and EM keys also get an epoch-zero LIQSOL and LIQETH credit, and the
+import moves after operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
 loading `sysio::query_engine_plugin`, `trace_api_plugin` in every deployment
 kind, and never `producer_api_plugin`), and
@@ -368,6 +373,46 @@ inline signing key (the GHA workflow is SSM-only, so published archives do not).
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
+**`create` takes a local Solana outpost PostLaunch; flows do not.** `create`
+composes the bootstrap with `ClusterBuildDefaults.create(options,
+{ launchSolanaOutpost: true })`, which adds the `SolanaOutpostLaunch` phase right
+after the local `SolanaOutpost` deploy: `set_wire_state` Launching, then
+PostLaunch (signed by the deployer, the liqsol `global_config.admin`), then a
+read-back of `GlobalState.wire_state`. It precedes every operator daemon, so OPP
+runs against a PostLaunch outpost from the first epoch. The PostLaunch paths
+(`synd`, `report_liq_yield`, `DESYNDICATE_LIQ` payouts) also need the liqSOL mint
+mapped to its depot token code (`set_token_address`), which this phase does not
+write. External outposts are never flipped. `FlowCLI` never sets the option: a
+flow's outpost starts PreLaunch and the scenario drives the transition
+(`SyndicationScenario`'s `LaunchOutpost`, `flow-liq-syndication`,
+`flow-liq-yield`).
+
+**`create` bootstraps backed automatic underwriting against local outposts; flows do
+not.** `create` also passes `enableAutomaticUnderwriting: true`.
+`ClusterBuildDefaults.mergeAutomaticUnderwriting` then merges
+`ClusterBuildDefaults.AutomaticUnderwritingOverrides` over the options before the
+config resolves: batch-operator underwriting, the mock syndication import, and the
+mock LIQ pools. The existing gated phases then compose with their custody backing.
+There is no opt-out on a local `create`. An `externalOutpostConfig` build keeps the
+caller's options, and `ClusterConfigProvider.resolve` refuses either mock flag there.
+`FlowCLI` never sets the option: a flow declares these options in its
+`Scenario.defaults`.
+
+**`create` against external outposts never contacts them.** The
+`--external-outpost-config` file is TRUSTED and value-only (`ExternalOutpostConfig`:
+chain id, outpost + liqEth address maps, Solana program id + mints, optional
+`rpcUrl`s — no file references). `ExternalOutpostSteps.planMaterialize` writes the
+values into the canonical deploy records, and `OperatorDaemonTool.planArtifactPreparation`
+— the same step local mode runs — builds the ABI / IDL files from the wire-ethereum
+/ wire-solana builds over them (the IDL's `address` is the config's `programId`).
+No endpoint is probed: `ClusterBuildContext.ethereum` / `.solana` throw in this
+mode, so any step reaching for an outpost client fails the build. Batch-operator
+nodes start SYNC-ONLY (`NodeopProcessSteps.resolveStartArgs` →
+`OperatorDaemonTool.batchOperatorSyncArgs`: read mode only, no `batch_operator_plugin`,
+no outpost client), the `OperatorNodesSynced` phase gates each on the depot head,
+and `create` stops them with every other daemon. Their `start.sh` carries the full
+daemon args (`resolveOperatorDaemonArgs`).
+
 **Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
@@ -383,13 +428,13 @@ Ethereum then seeds principal through `OutpostManager.execute` in a separate
 Step, preserving the pool configuration. Verification requires principal to equal
 the backing and custody to cover it before the epoch relay can realize yield. A flow
 whose batch operators underwrite sets `enableBatchOperatorUnderwriting: true` in
-`Scenario.defaults` too, never `plan()`: with the import on, each operator's ED key
-gets an epoch-zero LIQSOL credit, which reorders the bootstrap — the import, its
+`Scenario.defaults` too, never `plan()`: with the import on, each funded operator's ED
+and EM keys get an epoch-zero LIQSOL and LIQETH credit, which reorders the bootstrap — the import, its
 verify and the custody backing run after operator provisioning rather than in the
 prerequisites group. The flag-less `batchOperatorUnderwriting` default tunes it:
 `fundedOperatorCount` (the first N operators get the credit; the rest run the role
 unfunded) and `maxExposure` (the caps, `TokenAmount[]`); both default to every operator
-funded at a 10 LIQSOL cap.
+funded, with caps of 10 LIQSOL and 10 LIQETH.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them

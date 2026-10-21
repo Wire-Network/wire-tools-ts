@@ -181,10 +181,19 @@ export namespace ClusterConfigProvider {
       amount: DefaultBatchUnderwriterMaxExposureUnits
     })
 
+  /** Default outstanding coverage caps for both supported syndication shadows, at depot precision. */
+  export const DefaultBatchUnderwriterMaxExposures: readonly TokenAmount[] = [
+    DefaultBatchUnderwriterMaxExposure,
+    TokenAmount.create({
+      tokenCode: BigInt(SlugName.from("LIQETH")),
+      amount: DefaultBatchUnderwriterMaxExposureUnits
+    })
+  ]
+
   /**
    * Resolve the underwriter role's configuration: `null` when
    * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
-   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposure} as the one cap.
+   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps.
    *
    * @param options - The caller's options.
    * @param batchOperatorCount - The resolved batch-operator roster size.
@@ -213,7 +222,7 @@ export namespace ClusterConfigProvider {
       `ClusterConfigProvider: batchOperatorUnderwriting.fundedOperatorCount ${fundedOperatorCount} must be 0..${batchOperatorCount}`
     )
     const maxExposure = options.batchOperatorUnderwriting?.maxExposure ?? [
-      DefaultBatchUnderwriterMaxExposure
+      ...DefaultBatchUnderwriterMaxExposures
     ]
     Assert.ok(
       maxExposure.length > 0,
@@ -239,6 +248,7 @@ export namespace ClusterConfigProvider {
     // query-engine settings are arithmetic over the options, and rejecting here
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
+    assertExternalOutpostMockData(options)
     const batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       queryEngine = QueryEngineConfigProvider.resolve(
@@ -527,6 +537,33 @@ export namespace ClusterConfigProvider {
   }
 
   /**
+   * The {@link ClusterBuildOptions} members that seed mock shadow — refused
+   * against external outposts by {@link assertExternalOutpostMockData}.
+   */
+  export const MockDataOptionKeys = [
+    "enableMockLiqPools",
+    "enableMockSyndicationImport"
+  ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
+
+  /**
+   * Refuse mock data against EXTERNAL outposts. The mock LIQ pools and the mock
+   * syndication import mint shadow that the bootstrap backs with custody on the
+   * outposts, and the harness cannot fund or verify custody on outposts it did
+   * not deploy. Batch-operator underwriting stays the caller's choice: it is the
+   * real role, not mock data.
+   *
+   * @param options - The caller's options (its `externalOutpostConfig` and mock flags).
+   * @throws When external mode is combined with any {@link MockDataOptionKeys} member.
+   */
+  function assertExternalOutpostMockData(options: ClusterBuildOptions): void {
+    const requested = MockDataOptionKeys.filter(key => options[key] === true)
+    Assert.ok(
+      options.externalOutpostConfig == null || requested.length === 0,
+      `Mock data cannot be seeded against external outposts (${requested.join(", ")} set with externalOutpostConfig): the harness cannot back its shadow there.`
+    )
+  }
+
+  /**
    * Normalize + validate the caller's AWS placement: `null` when unset,
    * otherwise a config whose `regions` names at least one region (every secret
    * is replicated to EVERY region — there is no primary).
@@ -710,12 +747,13 @@ export namespace ClusterConfigProvider {
   }
 
   /**
-   * Load + validate an `--external-outpost-config` file (external-outpost mode),
-   * resolving its `*File`/`*Files` references to absolute paths relative to the
-   * config file's directory. Returns `null` for the standard local bootstrap.
+   * Load + validate an `--external-outpost-config` file (external-outpost mode).
+   * The file is trusted and carries values only, so the decoded config is
+   * returned as-is — every field, `rpcUrl` included. Returns `null` for the
+   * standard local bootstrap.
    *
    * @param file - Path to the `ExternalOutpostConfig` JSON (may be omitted).
-   * @returns The resolved config, or `null`.
+   * @returns The decoded config, or `null`.
    */
   async function loadExternalOutposts(
     file: string
@@ -723,29 +761,9 @@ export namespace ClusterConfigProvider {
     if (file == null) {
       return null
     }
-    const configFile = Path.resolve(file),
-      baseDir = Path.dirname(configFile),
-      config = ExternalOutpostConfigSchemaCodec.deserialize(
-        await Fsp.readFile(configFile, "utf-8")
-      ),
-      resolveRef = (ref: string): string =>
-        Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
-    return {
-      ethereum: {
-        addressFile: resolveRef(config.ethereum.addressFile),
-        abiFiles: config.ethereum.abiFiles.map(resolveRef),
-        chainId: config.ethereum.chainId,
-        ...(config.ethereum.liqEthAddressFile != null
-          ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
-          : {})
-      },
-      solana: {
-        idlFile: resolveRef(config.solana.idlFile),
-        ...(config.solana.mintsFile != null
-          ? { mintsFile: resolveRef(config.solana.mintsFile) }
-          : {})
-      }
-    }
+    return ExternalOutpostConfigSchemaCodec.deserialize(
+      await Fsp.readFile(Path.resolve(file), "utf-8")
+    )
   }
 
   /** Resolve + validate every binary path (the build-dir bins + PATH lookups). */

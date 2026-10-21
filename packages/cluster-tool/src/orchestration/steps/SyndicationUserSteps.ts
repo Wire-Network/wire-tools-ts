@@ -5,6 +5,7 @@ import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
 import { WireClient } from "../../clients/wire/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
+import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { Constants } from "../../Constants.js"
 import { privateKeyFromNativeString } from "../../utils/keyPairUtils.js"
@@ -157,6 +158,69 @@ export namespace SyndicationUserSteps {
       privateKey: privateKeyFromNativeString(
         KeyType.ED,
         Base58.encode(keypair.secretKey)
+      )
+    })
+  }
+
+  /** Input of one Ethereum user link, using the same wallet that syndicates. */
+  export interface LinkEthereumKeyInput extends StepInput {
+    readonly kind: "SyndicationUserSteps.LinkEthereumKeyInput"
+    readonly account: string
+    readonly ethereumHdIndex: number
+  }
+
+  /**
+   * Link the local Ethereum user's wallet to its WIRE destination account.
+   * @param actor - The narrative actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step execution options.
+   * @param account - WIRE destination account.
+   * @param ethereumHdIndex - The prefunded local wallet's index.
+   * @returns One createlink Step.
+   */
+  export function planLinkEthereumKey<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    ethereumHdIndex: number
+  ): ClusterBuildStep<C, LinkEthereumKeyInput> {
+    return ClusterBuildStep.create<C, LinkEthereumKeyInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SyndicationUserSteps.LinkEthereumKeyInput",
+        account,
+        ethereumHdIndex
+      },
+      runLinkEthereumKey
+    )
+  }
+
+  /** Sign one user createlink with the exact Ethereum wallet used by the syndication. */
+  export async function runLinkEthereumKey<C extends ClusterBuildContext>(
+    ctx: C,
+    input: LinkEthereumKeyInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const ethereumWallet = EthereumSyndicationTool.hdWallet(
+      ctx,
+      input.ethereumHdIndex
+    )
+    await AuthExLinkTool.createLink(ctx.wire, {
+      chainKind: ChainKind.EVM,
+      account: input.account,
+      ethereumWallet,
+      privateKey: privateKeyFromNativeString(
+        KeyType.EM,
+        ethereumWallet.privateKey
       )
     })
   }

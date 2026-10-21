@@ -125,6 +125,20 @@ export namespace EpochContractSteps {
   }
 
   /**
+   * The `sysio.epoch::epochcfg` singleton row — the depot's global epoch
+   * duration and batch-operator schedule sizing.
+   *
+   * @param ctx - The build context.
+   * @returns The epoch-config row (absent before `setconfig` has run).
+   */
+  export async function readEpochConfig<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioEpochEpochConfigType> {
+    const { rows } = await ctx.wire.getEpochConfig()
+    return rows[0]
+  }
+
+  /**
    * The depot's whole sliding-window batch-operator schedule — every group,
    * `[current, next, next+1]` at the default `batch_op_groups` of 3.
    *
