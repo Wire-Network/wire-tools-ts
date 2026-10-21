@@ -28,13 +28,6 @@ export namespace SyndicationPluginUnderwritingCapScenarioConstants {
     tokenCode: SyndicationScenario.TokenCode,
     amount: FirstCovered
   })
-  /**
-   * Epochs of emitted outbound envelopes the Solana outpost keeps on chain, mirroring
-   * `MAX_TRACKED_ENVELOPES` in wire-solana's `liqsol-core/src/states/opp_states.rs`. The
-   * underwriter verifies a request's statement against that log, so a request whose epoch
-   * has left it can never be bonded.
-   */
-  export const SolanaRetainedEnvelopeEpochs = 10
   /** Underwriter passes from the end of the first bond's window to the second bond: approve, claim, bond. */
   export const PaybackPassCount = 3
   /** Whole epochs the second request's statement still has in the Solana log when it is bonded. */
@@ -54,19 +47,14 @@ export namespace SyndicationPluginUnderwritingCapScenarioConstants {
   )
   /**
    * The flow's epoch, in seconds: the shortest at which the second request is still
-   * verifiable when the first bond is paid back. The payback lands a challenge window plus
-   * {@link PaybackPassCount} passes after the first bond, and the second request's statement
-   * is no older than that bond, so the window, the passes and
-   * {@link RetentionHeadroomEpochs} must fit inside {@link SolanaRetainedEnvelopeEpochs}
-   * epochs. At the 60-second shortest depot epoch they do not, since the window is itself
-   * about ten epochs long. An epoch that runs longer than this only widens the margin: the
-   * log keeps a count of epochs, not a span of time.
+   * verifiable when the first bond is paid back
+   * (`BatchOperatorUnderwritingSteps.shortestRetainingEpochSec`). At the 60-second shortest
+   * depot epoch it is not, since the challenge window is itself about ten epochs long.
    */
-  export const EpochDurationSec = Math.ceil(
-    (ChallengeWindowFixedSec +
-      (PaybackPassCount * OperatorDaemonTool.BatchEpochPollMs) /
-        ProtocolTiming.MsPerSecond) /
-      (SolanaRetainedEnvelopeEpochs - 1 - RetentionHeadroomEpochs)
+  export const EpochDurationSec = BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(
+    ChallengeWindowFixedSec,
+    (PaybackPassCount * OperatorDaemonTool.BatchEpochPollMs) / ProtocolTiming.MsPerSecond,
+    RetentionHeadroomEpochs
   )
   /**
    * The challenge window this flow configures, in seconds: one scenario epoch for

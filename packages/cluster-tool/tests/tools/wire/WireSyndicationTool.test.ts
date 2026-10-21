@@ -14,6 +14,12 @@ import { Report } from "@wireio/cluster-tool/report"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import {
+  bondRequestRow as request,
+  FixtureRequestId,
+  FixtureTokenCode,
+  syndEnvelopeRow as envelope
+} from "./syndicationRowFixture.js"
 
 const {
   SysioContractName,
@@ -29,10 +35,10 @@ const {
 
 const Solana = "SOLANA",
   Ethereum = "ETHEREUM",
-  Liqsol = "LIQSOL",
+  Liqsol = FixtureTokenCode,
   Liqeth = "LIQETH",
   Bonder = "bonder.a",
-  RequestId = 7,
+  RequestId = FixtureRequestId,
   signal = new AbortController().signal
 
 /**
@@ -64,67 +70,6 @@ function serve<
   more = false
 ): void {
   jest.spyOn(table, "query").mockResolvedValue({ rows, more })
-}
-
-/** One `sysio.synd::envelopes` row. */
-function envelope(
-  chainCode: string,
-  tokenCode: string,
-  epochIndex: number,
-  state: SysioContracts.SysioSyndEnvelopeState,
-  requestId = RequestId,
-  outcome = SysioSyndRequestOutcome.PENDING
-): SysioContracts.SysioSyndEnvelopeRowType {
-  return {
-    chain_code: chainCode,
-    token_code: tokenCode,
-    epoch_index: epochIndex,
-    digest: "00".repeat(32),
-    synd_total: 5_000_000_000,
-    yield_total: 0,
-    item_count: 1,
-    state,
-    request_id: requestId,
-    released: 0,
-    burned: 0,
-    outcome,
-    forfeit: 0,
-    bounty_returned: 0,
-    hold_share: 0,
-    hold_beneficiary: "",
-    share_pending: false
-  }
-}
-
-/** One `sysio.bond::requests` row. */
-function request(
-  covered: number,
-  bonded: number,
-  state:
-    SysioContracts.SysioBondRequestState | keyof typeof SysioBondRequestState
-): SysioContracts.SysioBondRequestRowType {
-  return {
-    id: String(RequestId),
-    issuer: "sysio.synd",
-    schema: "oppenvelope",
-    statement: "",
-    statement_digest: "00".repeat(32),
-    token_code: Liqsol,
-    covered,
-    bonded,
-    bounty: 0,
-    window_sec: 60,
-    state,
-    created_at: "2026-09-30T00:00:00.000",
-    bonded_at: "2026-09-30T00:00:00.000",
-    hold_bond: 0,
-    hold_beneficiary: "",
-    held_at: "1970-01-01T00:00:00.000",
-    resolved_at: "1970-01-01T00:00:00.000",
-    resolved_index: "0",
-    forfeit_pending: 0,
-    outcome_acknowledged: false
-  }
 }
 
 /** A `sysio.liq::stat` row of a shadow at `precision`. */

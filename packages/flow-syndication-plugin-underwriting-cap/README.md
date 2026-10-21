@@ -97,8 +97,7 @@ Run the runner in the background with a log and the monitor alongside it, withou
 The Report under `<cluster>/reports/` is the assertion record. The
 `second-held-by-cap` row records its held-reading count and span. The
 `second-bonded-after-recovery` row records the approval and bond times and the
-balance it compared. This package has no Jest suite; `test:unit` checks the verify Steps and that
-the flow plans no underwriter write.
+balance it compared.
 
 All protocol polls run at one-second intervals and return early. Request intake
 (first, second and unlinked) has a 720-second poll budget and a 750-second Step
