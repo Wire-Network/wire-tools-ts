@@ -5,6 +5,7 @@ const {
   BatchOperatorDisputeConstants: Constants
 } = require("@wireio/batch-operator-dispute-scenario")
 const { ClusterBuild } = require("@wireio/cluster-tool")
+
 const {
   BatchOperatorSlashingScenario
 } = require("../lib/BatchOperatorSlashingScenario.js")

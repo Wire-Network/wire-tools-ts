@@ -2,6 +2,7 @@ import Assert from "node:assert"
 
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import {
   AuthExLinkTool,
   ClusterBuildContext,

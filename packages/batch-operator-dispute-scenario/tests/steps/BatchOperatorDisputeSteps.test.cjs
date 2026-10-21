@@ -1,8 +1,10 @@
 const Assert = require("node:assert/strict")
 const { test } = require("node:test")
 
-const { OutputStore } = require("@wireio/cluster-tool")
 const { SysioContracts } = require("@wireio/sdk-core")
+
+const { OutputStore } = require("@wireio/cluster-tool")
+
 const {
   BatchOperatorDisputeConstants: Constants,
   BatchOperatorDisputeSteps: DisputeSteps

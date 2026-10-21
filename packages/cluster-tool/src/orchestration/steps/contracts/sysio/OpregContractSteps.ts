@@ -1,5 +1,7 @@
 import Assert from "node:assert"
+
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -160,7 +162,17 @@ export namespace OpregContractSteps {
     readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
   }
 
-  /** Plan `sysio.opreg::processbatch` for an operator resolved by harness label. */
+  /**
+   * Plan `sysio.opreg::processbatch` for an operator resolved by harness label.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @param label - Harness operator label resolved at execution time.
+   * @param data - Generated action data except the resolved operator account.
+   * @returns The definition step.
+   */
   export function planProcessbatch<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
@@ -181,7 +193,14 @@ export namespace OpregContractSteps {
     )
   }
 
-  /** Resolve the harness operator label and invoke `sysio.opreg::processbatch`. */
+  /**
+   * Resolve the harness operator label and invoke `sysio.opreg::processbatch`.
+   *
+   * @param ctx - The build context.
+   * @param input - Operator label and generated action data from the definition step.
+   * @param signal - Abort signal checked before resolving or invoking.
+   * @returns A promise that resolves after the action reaches finality.
+   */
   export async function runProcessbatch<C extends ClusterBuildContext>(
     ctx: C,
     input: ProcessbatchInput,

@@ -1,7 +1,9 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { SysioContracts } from "@wireio/sdk-core"
+
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SysioContracts } from "@wireio/sdk-core"
+
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../../../outputs/operatorAccountFixture.js"
 import { fixtureOperatorRow } from "./opregOperatorRowFixture.js"

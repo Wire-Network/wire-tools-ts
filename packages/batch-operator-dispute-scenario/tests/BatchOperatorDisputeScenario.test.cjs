@@ -1,11 +1,13 @@
 const Assert = require("node:assert/strict")
 const { test } = require("node:test")
 
+const { NodeOwnerTier } = require("@wireio/opp-typescript-models")
+
 const {
   ClusterBuild,
   Constants: TestClusterConstants
 } = require("@wireio/cluster-tool")
-const { NodeOwnerTier } = require("@wireio/opp-typescript-models")
+
 const {
   BatchOperatorDisputeConstants: Constants,
   BatchOperatorDisputeScenario

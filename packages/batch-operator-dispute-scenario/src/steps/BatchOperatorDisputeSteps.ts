@@ -266,6 +266,7 @@ export namespace BatchOperatorDisputeSteps {
    * delivery while the chain is still a block or two before the boundary.
    *
    * @param ctx - The build context.
+   * @returns A promise that resolves once the chain clock passes the boundary.
    */
   export async function waitPastEpochBoundary(
     ctx: ClusterBuildContext
@@ -391,7 +392,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — encode the tagged envelope for the contested epoch, deliver it. */
+  /**
+   * Encode the tagged envelope for the contested epoch and deliver it.
+   *
+   * @param ctx - The build context.
+   * @param input - Operator, outpost, and envelope tag from the definition step.
+   * @param signal - Abort signal checked before reading tips or delivering.
+   * @returns A promise that resolves after the delivery reaches finality.
+   */
   export async function runDeliverTaggedEnvelope<C extends ClusterBuildContext>(
     ctx: C,
     input: DeliverTaggedEnvelopeInput,
@@ -471,7 +479,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — ONE `votedispute` for the stored dispute + canonical checksum. */
+  /**
+   * Cast one `votedispute` vote for the stored dispute and canonical checksum.
+   *
+   * @param ctx - The build context.
+   * @param input - Voting owner from the definition step.
+   * @param signal - Abort signal checked before reading or voting.
+   * @returns A promise that resolves after the vote reaches finality.
+   */
   export async function runVoteCanonicalDispute<C extends ClusterBuildContext>(
     ctx: C,
     input: VoteCanonicalDisputeInput,
@@ -524,7 +539,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — boundary wait, then store the contested epoch index. */
+  /**
+   * Wait past the boundary, then store the contested epoch index.
+   *
+   * @param ctx - The build context.
+   * @param _input - Empty step input.
+   * @param signal - Abort signal checked before waiting.
+   * @returns A promise that resolves after the contested epoch is stored.
+   */
   export async function runStageContestedEpoch<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -581,7 +603,14 @@ export namespace BatchOperatorDisputeSteps {
     readonly expectedCandidateCount: number
   }
 
-  /** Named runner — poll for the OPEN dispute, assert candidates, store the target. */
+  /**
+   * Poll for the open dispute, assert its candidates, and store the vote target.
+   *
+   * @param ctx - The build context.
+   * @param input - Expected live candidate count from the definition step.
+   * @param signal - Abort signal checked before polling.
+   * @returns A promise that resolves after the open dispute target is stored.
+   */
   export async function runAwaitDisputeOpened<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitDisputeOpenedInput,
@@ -653,7 +682,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — poll until RESOLVED with the canonical winning checksum. */
+  /**
+   * Poll until the dispute resolves with the canonical winning checksum.
+   *
+   * @param ctx - The build context.
+   * @param _input - Empty step input.
+   * @param signal - Abort signal checked before polling.
+   * @returns A promise that resolves after canonical resolution is observed.
+   */
   export async function runAwaitDisputeResolved<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -723,7 +759,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — poll until the operator row shows SLASHED. */
+  /**
+   * Poll until the operator row shows `SLASHED`.
+   *
+   * @param ctx - The build context.
+   * @param input - Operator label from the definition step.
+   * @param signal - Abort signal checked before polling.
+   * @returns A promise that resolves after the slash is observed.
+   */
   export async function runAwaitOperatorSlashed<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitOperatorSlashedInput,
@@ -789,7 +832,14 @@ export namespace BatchOperatorDisputeSteps {
     )
   }
 
-  /** Named runner — poll until the operator row shows ACTIVE. */
+  /**
+   * Poll until the operator row shows `ACTIVE`.
+   *
+   * @param ctx - The build context.
+   * @param input - Operator label from the definition step.
+   * @param signal - Abort signal checked before polling.
+   * @returns A promise that resolves after activation is observed.
+   */
   export async function runAwaitOperatorActive<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitOperatorActiveInput,

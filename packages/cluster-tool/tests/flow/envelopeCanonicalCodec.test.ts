@@ -1,6 +1,6 @@
 import { ethers } from "ethers"
-
 import { AttestationType, Envelope } from "@wireio/opp-typescript-models"
+
 import {
   bytesToHex,
   deriveSemanticHeader,

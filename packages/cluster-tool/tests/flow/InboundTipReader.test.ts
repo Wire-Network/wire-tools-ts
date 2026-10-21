@@ -1,5 +1,6 @@
-import { InboundTipReader } from "@wireio/cluster-tool/flow"
 import type { SysioContracts } from "@wireio/sdk-core"
+
+import { InboundTipReader } from "@wireio/cluster-tool/flow"
 
 type OutpostConsensusRow = SysioContracts.SysioMsgchOutpostConsensusEntryType
 

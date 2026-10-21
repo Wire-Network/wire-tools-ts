@@ -1,4 +1,5 @@
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -18,7 +19,16 @@ export namespace MsgchContractSteps {
     readonly data: SysioContracts.SysioMsgchDeliverAction
   }
 
-  /** `sysio.msgch::deliver` — submit one batch-operator envelope. */
+  /**
+   * `sysio.msgch::deliver` — submit one batch-operator envelope.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @param data - Generated delivery action data.
+   * @returns The definition step.
+   */
   export function planDeliver<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
@@ -38,7 +48,14 @@ export namespace MsgchContractSteps {
     )
   }
 
-  /** Named runner — `sysio.msgch::deliver`, signed by the delivering operator. */
+  /**
+   * Run `sysio.msgch::deliver`, signed by the delivering operator.
+   *
+   * @param ctx - The build context.
+   * @param input - Generated delivery action data from the definition step.
+   * @param signal - Abort signal checked before invoking the action.
+   * @returns A promise that resolves after the action reaches finality.
+   */
   export async function runDeliver<C extends ClusterBuildContext>(
     ctx: C,
     input: DeliverInput,

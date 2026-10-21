@@ -171,7 +171,11 @@ export namespace BatchOperatorDisputeConstants {
   /** Epochs budgeted for the post-resolution advance to slash a non-canonical deliverer. */
   export const SlashPropagationEpochs = 8
 
-  /** Deadline for a dispute operator's ACTIVE flip (ms). */
+  /**
+   * Deadline for a dispute operator's ACTIVE flip (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function activeDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -180,7 +184,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the sole-active-group rebuild (ms). */
+  /**
+   * Deadline for the sole-active-group rebuild (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function groupDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -189,7 +197,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the frozen-epoch settle (ms). */
+  /**
+   * Deadline for the frozen-epoch settle (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function settleDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -198,7 +210,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Interval between frozen-epoch settle polls (ms). */
+  /**
+   * Interval between frozen-epoch settle polls (ms).
+   *
+   * @returns The interval in milliseconds.
+   */
   export function settlePollIntervalMs(): number {
     return (
       Math.floor(EpochDurationSec * SettlePollIntervalEpochRatio) *
@@ -206,7 +222,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the chain clock to pass the epoch boundary (ms). */
+  /**
+   * Deadline for the chain clock to pass the epoch boundary (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function boundaryDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -215,7 +235,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the OPEN dispute row to appear (ms). */
+  /**
+   * Deadline for the OPEN dispute row to appear (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function disputeOpenDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -224,7 +248,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the dispute to resolve to the canonical winner (ms). */
+  /**
+   * Deadline for the dispute to resolve to the canonical winner (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function resolveDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -233,7 +261,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for the epoch to unpause after resolution (ms). */
+  /**
+   * Deadline for the epoch to unpause after resolution (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function unpauseDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -242,7 +274,11 @@ export namespace BatchOperatorDisputeConstants {
     )
   }
 
-  /** Deadline for a non-canonical deliverer to flip SLASHED (ms). */
+  /**
+   * Deadline for a non-canonical deliverer to flip SLASHED (ms).
+   *
+   * @returns The deadline in milliseconds.
+   */
   export function slashDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *

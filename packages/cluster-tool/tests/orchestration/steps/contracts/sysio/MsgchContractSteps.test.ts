@@ -1,6 +1,8 @@
+import { SysioContracts } from "@wireio/sdk-core"
+
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SysioContracts } from "@wireio/sdk-core"
+
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 
 const DeliverData: SysioContracts.SysioMsgchDeliverAction = {

@@ -1,4 +1,5 @@
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -18,7 +19,16 @@ export namespace ChalgContractSteps {
     readonly data: SysioContracts.SysioChalgVotedisputeAction
   }
 
-  /** `sysio.chalg::votedispute` — vote for a candidate in an open dispute. */
+  /**
+   * `sysio.chalg::votedispute` — vote for a candidate in an open dispute.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @param data - Generated vote action data.
+   * @returns The definition step.
+   */
   export function planVotedispute<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
@@ -38,7 +48,14 @@ export namespace ChalgContractSteps {
     )
   }
 
-  /** Named runner — `sysio.chalg::votedispute`, signed by the Tier-1 owner. */
+  /**
+   * Run `sysio.chalg::votedispute`, signed by the Tier-1 owner.
+   *
+   * @param ctx - The build context.
+   * @param input - Generated vote action data from the definition step.
+   * @param signal - Abort signal checked before invoking the action.
+   * @returns A promise that resolves after the action reaches finality.
+   */
   export async function runVotedispute<C extends ClusterBuildContext>(
     ctx: C,
     input: VotedisputeInput,
