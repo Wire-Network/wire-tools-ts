@@ -7,8 +7,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib",
-    "test:unit": "node --test tests/*.test.cjs"
+    "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
