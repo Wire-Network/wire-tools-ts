@@ -275,18 +275,12 @@ export namespace DaemonConfig {
   }
 
   /**
-   * The local anvil. Rendered from its RUN config (interval mining on): the
-   * create path deliberately runs it instamine because the hardhat outpost
-   * deploy depends on that, but a relaunch never re-runs the deploy and must
-   * emulate finality.
+   * The local anvil, rendered from the config its source resolved: the relaunch
+   * form (`AnvilProcess.Launch.relaunch`), since a `start.sh` restarts a deployed
+   * cluster and never re-runs the Hardhat deploy that needs instamine.
    */
   function planAnvil(config: ClusterConfig, anvil: AnvilConfig): DaemonConfig {
-    const runConfig: AnvilConfig = {
-        ...anvil,
-        slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
-        blockTimeSec: AnvilProcess.BlockTimeSec
-      },
-      daemonPath = DaemonConfig.daemonPath(
+    const daemonPath = DaemonConfig.daemonPath(
         config.dataPath,
         AnvilProcess.ProcessLabel
       )
@@ -297,9 +291,9 @@ export namespace DaemonConfig {
       exe: anvil.binary,
       exeCommandName: AnvilProcess.ProcessLabel,
       exeEnvironmentVariable: AnvilBinEnvironmentVariable,
-      argv: AnvilProcess.buildArgs(runConfig),
+      argv: AnvilProcess.buildArgs(anvil),
       conditions:
-        runConfig.stateFile == null
+        anvil.stateFile == null
           ? []
           : [
               {
@@ -307,8 +301,8 @@ export namespace DaemonConfig {
                 // would omit --load-state PERMANENTLY and restart anvil with no
                 // deployed outpost contracts — surfacing as an OPP circulation
                 // stall, never as a startup error.
-                test: `[ -f "${quoteForTest(runConfig.stateFile, StartScriptVariable.CLUSTER_DIR, config.clusterPath)}" ]`,
-                tokens: ["--load-state", runConfig.stateFile]
+                test: `[ -f "${quoteForTest(anvil.stateFile, StartScriptVariable.CLUSTER_DIR, config.clusterPath)}" ]`,
+                tokens: ["--load-state", anvil.stateFile]
               }
             ],
       relocations: [
