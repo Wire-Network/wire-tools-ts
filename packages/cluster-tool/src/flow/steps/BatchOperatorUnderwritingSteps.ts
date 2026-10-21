@@ -218,6 +218,35 @@ export namespace BatchOperatorUnderwritingSteps {
   export const UnderwriterRequestIssuedBudgetMs =
     ProtocolTiming.SingleHopBudgetMs +
     OperatorDaemonTool.UnderwriterIdleCrankIntervalMs
+  /**
+   * Epochs of emitted outbound envelopes the Solana outpost keeps on chain, mirroring
+   * `MAX_TRACKED_ENVELOPES` in wire-solana's `liqsol-core/src/states/opp_states.rs`. The
+   * underwriter role verifies a request's statement against that log, so a request whose
+   * epoch has left it can never be bonded.
+   */
+  export const SolanaRetainedEnvelopeEpochs = 10
+  /**
+   * The shortest whole-second epoch at which a request is still verifiable when it can only
+   * be bonded once an earlier bond is paid back. The payback lands a challenge window
+   * (one epoch plus `windowFixedSec`) plus `trailingSec` of plugin passes after that bond,
+   * and the later request's statement is no older than it, so the window, the passes and
+   * `headroomEpochs` must fit inside {@link SolanaRetainedEnvelopeEpochs} epochs. A longer
+   * epoch only widens the margin: the log keeps a count of epochs, not a span of time.
+   *
+   * @param windowFixedSec - The challenge window less its one submission epoch (s).
+   * @param trailingSec - Plugin passes between the window's end and the later bond (s).
+   * @param headroomEpochs - Whole epochs the statement must still have in the log.
+   * @return The epoch duration (s).
+   */
+  export function shortestRetainingEpochSec(
+    windowFixedSec: number,
+    trailingSec: number,
+    headroomEpochs: number
+  ): number {
+    return Math.ceil(
+      (windowFixedSec + trailingSec) / (SolanaRetainedEnvelopeEpochs - 1 - headroomEpochs)
+    )
+  }
   /** Step ceiling above {@link UnderwriterRequestIssuedBudgetMs}, by the poll deadline margin. */
   export const UnderwriterRequestIssuedOptions = {
     timeoutMs:
