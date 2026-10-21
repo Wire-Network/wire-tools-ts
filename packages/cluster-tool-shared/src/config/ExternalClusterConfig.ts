@@ -56,12 +56,52 @@ export type ExternalClusterConfigWire = z.infer<
 >
 
 /**
+ * The Ethereum outpost artifacts inside a published cluster tree — the files
+ * the operator daemons read, plus the chain the outpost runs on.
+ */
+export const ExternalClusterConfigEthereumSchema = z.object({
+  /** Preserve the source deployment's declared OPP capabilities. */
+  oppProtocol: ExternalOutpostConfigEthereumSchema.shape.oppProtocol,
+  /** The tree's `outpost-addrs.json` (deployed contract addresses). */
+  addressFile: z.string(),
+  /** The tree's `{contractName, address, abi}` files the daemons load. */
+  abiFiles: z.array(z.string()),
+  /** The outpost chain's id. */
+  chainId: ExternalOutpostConfigEthereumSchema.shape.chainId,
+  /** The outpost RPC endpoint, when the source cluster's external-outpost config set one. */
+  rpcUrl: ExternalOutpostConfigEthereumSchema.shape.rpcUrl,
+  /** The tree's `liqeth-addrs.json`, when the outpost has a liqEth token. */
+  liqEthAddressFile: z.string().optional()
+})
+/** The Ethereum outpost artifacts of a published tree — the shape of {@link ExternalClusterConfigEthereumSchema}. */
+export type ExternalClusterConfigEthereum = z.infer<
+  typeof ExternalClusterConfigEthereumSchema
+>
+
+/**
+ * The Solana outpost artifacts inside a published cluster tree — the IDL the
+ * operator daemons load (its top-level `address` is the program id).
+ */
+export const ExternalClusterConfigSolanaSchema = z.object({
+  /** Preserve the source deployment's declared OPP capabilities. */
+  oppProtocol: ExternalOutpostConfigSolanaSchema.shape.oppProtocol,
+  /** The tree's `liqsol_core` IDL. */
+  idlFile: z.string(),
+  /** The outpost RPC endpoint, when the source cluster's external-outpost config set one. */
+  rpcUrl: ExternalOutpostConfigSolanaSchema.shape.rpcUrl,
+  /** The tree's `sol-mock-mints.json`, when the outpost has SPL mints. */
+  mintsFile: z.string().optional()
+})
+/** The Solana outpost artifacts of a published tree — the shape of {@link ExternalClusterConfigSolanaSchema}. */
+export type ExternalClusterConfigSolana = z.infer<
+  typeof ExternalClusterConfigSolanaSchema
+>
+
+/**
  * The fully self-described external-cluster deployment payload — emitted by
  * `create-external-config`, consumed by `package` (and, later, external flow
  * runs). Every `*File`/`*Files` field resolves relative to the containing
- * config file's directory when not absolute; the per-chain sections COMPOSE the
- * {@link ExternalOutpostConfigEthereumSchema} / {@link ExternalOutpostConfigSolanaSchema}
- * shapes rather than re-declaring them.
+ * config file's directory when not absolute.
  */
 export const ExternalClusterConfigSchema = z.object({
   /** The external cluster's network binding (the Phase-1 `BindConfig`, reused). */
@@ -70,10 +110,10 @@ export const ExternalClusterConfigSchema = z.object({
   accounts: ExternalClusterConfigAccountsSchema,
   /** The WIRE-depot section. */
   wire: ExternalClusterConfigWireSchema,
-  /** Already-deployed Ethereum outpost references (composed). */
-  ethereum: ExternalOutpostConfigEthereumSchema,
-  /** Already-deployed Solana outpost references (composed), when present. */
-  solana: ExternalOutpostConfigSolanaSchema.optional()
+  /** The tree's Ethereum outpost artifacts. */
+  ethereum: ExternalClusterConfigEthereumSchema,
+  /** The tree's Solana outpost artifacts, when present. */
+  solana: ExternalClusterConfigSolanaSchema.optional()
 })
 /** THE fully self-described external-cluster payload — the shape of {@link ExternalClusterConfigSchema}. */
 export type ExternalClusterConfig = z.infer<typeof ExternalClusterConfigSchema>

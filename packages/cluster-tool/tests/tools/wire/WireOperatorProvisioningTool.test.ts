@@ -1,5 +1,6 @@
-import { OperatorType } from "@wireio/opp-typescript-models"
+import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
+import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report } from "@wireio/cluster-tool/report"
 import { Constants } from "@wireio/cluster-tool/Constants"
@@ -21,6 +22,8 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { fixtureProducerTopologyOverrides } from "../../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../../config/resolveEnvironmentFixture.js"
+import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
 function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
@@ -334,10 +337,7 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   })
 
   it("GATES OUT fund + airdrop in external-outpost mode (depot-side steps stay)", () => {
-    const kinds = fundedKinds({
-      ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
-      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json" }
-    })
+    const kinds = fundedKinds(fixtureExternalOutposts())
     expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
     // every depot-side step still runs.
@@ -897,5 +897,38 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
     expect(publicationInputs(phaseSteps(fixtureContext(), FlowBatchSpec))).toEqual(
       []
     )
+  })
+})
+
+describe("WireOperatorProvisioningTool.runAuthexLink", () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it("signs the EVM link with a provider-less wallet, so it runs under an external-outpost config", async () => {
+    // The context REFUSES its outpost clients in external-outpost mode — the
+    // link must never reach for one.
+    const ctx = fixtureContext({ externalOutposts: fixtureExternalOutposts() }),
+      operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+      createLink = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator(operator)
+
+    await WireOperatorProvisioningTool.runAuthexLink(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.AuthexLinkInput",
+        label: operator.label,
+        chainKind: ChainKind.EVM
+      },
+      new AbortController().signal
+    )
+
+    expect(createLink).toHaveBeenCalledTimes(1)
+    const [, params] = createLink.mock.calls[0]
+    expect(params.account).toBe(operator.account)
+    expect(params.ethereumWallet.provider).toBeNull()
+    expect(params.ethereumWallet.address).toBe(operator.ethereum.address)
   })
 })

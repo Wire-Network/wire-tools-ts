@@ -615,6 +615,15 @@ describe("NodeConfig", () => {
       expect(ini).not.toContain(Constants.TRACE_API_PLUGIN)
     })
 
+    it("renders vote-threads = 4 exactly once on the api node, so it processes and relays finalizer votes", () => {
+      // An api node has no producer-name, so this line is what turns voting on.
+      const lines = nodeOfRole(nodes, NodeRole.api).ini.render().split("\n")
+      expect(Constants.NODEOP_EXTRA_ARGS.voteThreads).toBe(4)
+      expect(lines.filter(line => line.startsWith("vote-threads ="))).toEqual([
+        `vote-threads = ${Constants.NODEOP_EXTRA_ARGS.voteThreads}`
+      ])
+    })
+
     it.each(Object.values(ClusterDeploymentKind))(
       "renders the query engine plugin line on the api node of a %s cluster",
       deploymentKind => {

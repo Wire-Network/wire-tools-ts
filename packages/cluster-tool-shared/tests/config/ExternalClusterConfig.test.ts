@@ -107,4 +107,66 @@ describe("ExternalClusterConfig", () => {
     delete parsed.solana
     expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(true)
   })
+
+  describe("outpost artifact sections", () => {
+    it.each(["ethereum", "solana"] as const)(
+      "requires the exported %s protocol declaration",
+      chain => {
+        const missing = JSON.parse(ExternalClusterConfigSchemaCodec.serialize({
+          ...config,
+          solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
+        }))
+        delete missing[chain].oppProtocol
+        expect(() => ExternalClusterConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
+      }
+    )
+
+    it("round-trips every optional field: rpcUrls, liqEth record, SPL mints", () => {
+      const full: ExternalClusterConfig = {
+        ...config,
+        ethereum: {
+          ...config.ethereum,
+          rpcUrl: "https://ethereum-rpc.external.example/",
+          liqEthAddressFile: "liqeth-addrs.json"
+        },
+        solana: {
+          oppProtocol: { emit: [1], receive: [1, 2] },
+          idlFile: "solana-idls/liqsol_core.json",
+          rpcUrl: "https://solana-rpc.external.example/",
+          mintsFile: "sol-mock-mints.json"
+        }
+      }
+      expect(
+        ExternalClusterConfigSchemaCodec.deserialize(
+          ExternalClusterConfigSchemaCodec.serialize(full)
+        )
+      ).toEqual(full)
+    })
+
+    it("requires the ethereum addressFile and the solana idlFile", () => {
+      const withoutAddressFile = JSON.parse(
+          ExternalClusterConfigSchemaCodec.serialize(config)
+        ),
+        withoutIdlFile = JSON.parse(
+          ExternalClusterConfigSchemaCodec.serialize({
+            ...config,
+            solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
+          })
+        )
+      delete withoutAddressFile.ethereum.addressFile
+      delete withoutIdlFile.solana.idlFile
+      expect(
+        ExternalClusterConfigSchema.safeParse(withoutAddressFile).success
+      ).toBe(false)
+      expect(ExternalClusterConfigSchema.safeParse(withoutIdlFile).success).toBe(
+        false
+      )
+    })
+
+    it("validates the chain id like the external-outpost config does", () => {
+      const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+      parsed.ethereum.chainId = 0
+      expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
+    })
+  })
 })

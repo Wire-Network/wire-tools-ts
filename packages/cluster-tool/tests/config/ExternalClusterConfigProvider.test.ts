@@ -87,6 +87,37 @@ describe("ExternalClusterConfigProvider", () => {
     expect(loaded.solana.oppProtocol).toEqual(config.solana.oppProtocol)
   })
 
+  it("load carries the rpcUrls through and resolves the optional liqEth + mints references", () => {
+    const loaded = ExternalClusterConfigProvider.load(
+      writeConfig({
+        ...config,
+        ethereum: {
+          ...config.ethereum,
+          rpcUrl: "https://ethereum-rpc.external.example/",
+          liqEthAddressFile: "liqeth-addrs.json"
+        },
+        solana: {
+          ...config.solana,
+          idlFile: "solana-idls/opp.json",
+          rpcUrl: "https://solana-rpc.external.example/",
+          mintsFile: "sol-mock-mints.json"
+        }
+      })
+    )
+    expect(loaded.ethereum.rpcUrl).toBe("https://ethereum-rpc.external.example/")
+    expect(loaded.ethereum.liqEthAddressFile).toBe(
+      Path.join(dir, "liqeth-addrs.json")
+    )
+    expect(loaded.solana?.rpcUrl).toBe("https://solana-rpc.external.example/")
+    expect(loaded.solana?.mintsFile).toBe(Path.join(dir, "sol-mock-mints.json"))
+  })
+
+  it("load leaves an absent optional reference absent", () => {
+    const loaded = ExternalClusterConfigProvider.load(writeConfig(config))
+    expect(loaded.ethereum).not.toHaveProperty("liqEthAddressFile")
+    expect(loaded.solana).not.toHaveProperty("mintsFile")
+  })
+
   it("load leaves absolute references untouched", () => {
     const file = writeConfig({
       ...config,

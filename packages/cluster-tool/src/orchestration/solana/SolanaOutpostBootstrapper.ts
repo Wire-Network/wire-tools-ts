@@ -718,19 +718,6 @@ export namespace SolanaOutpostBootstrapper {
     )
   }
 
-  /**
-   * Persisted mock-SPL-mint metadata (consumed by depot-side token
-   * registration): a `(slug_name code, base58 mint, decimals)` triple.
-   */
-  export interface PersistedSplMint {
-    /** Slug-name codename packed into its `u64`-equivalent number. */
-    code: number
-    /** Base58 mint pubkey. */
-    mint: string
-    /** Chain-native decimals (6 for USDC/USDT, 9 for LIQSOL). */
-    decimals: number
-  }
-
   /** Default deployer keypair file (`~/.config/solana/id.json`). */
   export function defaultDeployerKeypairFile(): string {
     return Path.join(process.env.HOME || "~", ".config", "solana", "id.json")

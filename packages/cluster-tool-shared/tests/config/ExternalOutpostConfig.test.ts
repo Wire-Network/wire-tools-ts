@@ -1,26 +1,44 @@
 import {
+  ExternalOutpostConfig,
   ExternalOutpostConfigSchema,
-  ExternalOutpostConfigSchemaCodec,
-  type ExternalOutpostConfig
+  ExternalOutpostConfigSchemaCodec
 } from "@wireio/cluster-tool-shared"
 
 /** An authoritative ETH outpost endpoint no local binding could describe. */
 const EthereumRpcUrl = "https://ethereum-rpc.external.example/"
 /** An authoritative SOL outpost endpoint no local binding could describe. */
 const SolanaRpcUrl = "https://solana-rpc.external.example/"
+/** The Ethereum outpost's chain id (Hoodi). */
+const ChainId = 560_048
+/** A deployed `liqsol_core` program id. */
+const ProgramId = "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+/** The outpost contract addresses every config must carry. */
+const OutpostAddresses = {
+  OPP: "0x87CE3Fe2CDca39C04aa2c14bbF1E1d9DB6358C4A",
+  OPPInbound: "0x0B1f7FB1c7f01A9cf490a1387E1E100F2bEA6C6d",
+  BAR: "0xbAFac13ffd3Aa9aEabaaeb6e4C2cF3dFf3479DC0"
+}
+
+/** The minimal valid config: chain id, the required addresses, the program id. */
+function minimalConfig(): ExternalOutpostConfig {
+  return {
+    ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, chainId: ChainId, outpostAddresses: { ...OutpostAddresses } },
+    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, programId: ProgramId }
+  }
+}
 
 describe("ExternalOutpostConfig", () => {
-  const config: ExternalOutpostConfig = {
-    ethereum: {
-      oppProtocol: { emit: [1], receive: [1, 2] },
-      addressFile: "outpost-addrs.json",
-      abiFiles: ["eth-abis/OPP.json", "eth-abis/OPPInbound.json"],
-      chainId: 1
-    },
-    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/opp_outpost.json" }
-  }
+  it.each(["ethereum", "solana"] as const)(
+    "requires explicit protocol capabilities for %s",
+    chain => {
+      const missing = JSON.parse(JSON.stringify(minimalConfig()))
+      delete missing[chain].oppProtocol
+      expect(() => ExternalOutpostConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
+    }
+  )
 
-  it("round-trips through the codec", () => {
+  it("round-trips the minimal value-only config through the codec", () => {
+    const config = minimalConfig()
     expect(
       ExternalOutpostConfigSchemaCodec.deserialize(
         ExternalOutpostConfigSchemaCodec.serialize(config)
@@ -28,88 +46,86 @@ describe("ExternalOutpostConfig", () => {
     ).toEqual(config)
   })
 
-  it("requires explicit protocol capabilities on both remote outposts", () => {
-    for (const chain of ["ethereum", "solana"] as const) {
-      const missing = JSON.parse(JSON.stringify(config))
-      delete missing[chain].oppProtocol
-      expect(() => ExternalOutpostConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
-    }
-  })
-
-  it("round-trips the optional liqEth + SPL-mints FILE references", () => {
+  it("round-trips every optional value: rpcUrl, liqEth addresses and SPL mints", () => {
     const full: ExternalOutpostConfig = {
       ethereum: {
         oppProtocol: { emit: [1], receive: [1, 2] },
-        addressFile: "outpost-addrs.json",
-        abiFiles: ["eth-abis/OPP.json"],
-        chainId: 1,
-        liqEthAddressFile: "liqeth-addrs.json"
+        chainId: ChainId,
+        rpcUrl: EthereumRpcUrl,
+        outpostAddresses: { ...OutpostAddresses, Pool: OutpostAddresses.OPP },
+        liqEthAddresses: {
+          LiqEthToken: "0x8C974517D038e2e3b8a1da7b1A026bC8132A4b2e"
+        }
       },
-      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json", mintsFile: "sol-mock-mints.json" }
-    }
-    expect(
-      ExternalOutpostConfigSchemaCodec.deserialize(
-        ExternalOutpostConfigSchemaCodec.serialize(full)
-      )
-    ).toEqual(full)
-  })
-
-  it("round-trips an authoritative per-chain rpcUrl on BOTH outposts", () => {
-    // D6: a mainnet / integrated-testnet outpost's endpoint cannot be described
-    // by any local binding, so it travels on the outpost config itself.
-    const remote: ExternalOutpostConfig = {
-      ethereum: {
+      solana: {
         oppProtocol: { emit: [1], receive: [1, 2] },
-        addressFile: "outpost-addrs.json",
-        abiFiles: ["eth-abis/OPP.json"],
-        chainId: 1,
-        rpcUrl: EthereumRpcUrl
-      },
-      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "idl.json", rpcUrl: SolanaRpcUrl }
+        rpcUrl: SolanaRpcUrl,
+        programId: ProgramId,
+        mints: [{ code: 1_234, mint: ProgramId, decimals: 9 }]
+      }
     }
     const decoded = ExternalOutpostConfigSchemaCodec.deserialize(
-      ExternalOutpostConfigSchemaCodec.serialize(remote)
+      ExternalOutpostConfigSchemaCodec.serialize(full)
     )
-    expect(decoded).toEqual(remote)
+    expect(decoded).toEqual(full)
     expect(decoded.ethereum.rpcUrl).toBe(EthereumRpcUrl)
     expect(decoded.solana.rpcUrl).toBe(SolanaRpcUrl)
   })
 
-  it("leaves rpcUrl genuinely OPTIONAL on both chains (bind-governed dev externals)", () => {
-    // The field must never become required or defaulted: every hand-built
-    // config literal in the tree omits it and must keep parsing unchanged.
-    expect(ExternalOutpostConfigSchema.safeParse(config).success).toBe(true)
+  it("leaves rpcUrl, liqEthAddresses and mints optional", () => {
     const decoded = ExternalOutpostConfigSchemaCodec.deserialize(
-      ExternalOutpostConfigSchemaCodec.serialize(config)
+      ExternalOutpostConfigSchemaCodec.serialize(minimalConfig())
     )
     expect(decoded.ethereum.rpcUrl).toBeUndefined()
+    expect(decoded.ethereum.liqEthAddresses).toBeUndefined()
     expect(decoded.solana.rpcUrl).toBeUndefined()
+    expect(decoded.solana.mints).toBeUndefined()
   })
 
-  it("requires ethereum.addressFile", () => {
-    expect(
-      ExternalOutpostConfigSchema.safeParse({
-        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] },
-      abiFiles: [], chainId: 1 },
-        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "x" }
-      }).success
-    ).toBe(false)
+  it("requires the addresses of OPP, OPPInbound and BAR", () => {
+    expect(ExternalOutpostConfig.RequiredOutpostContractNames).toEqual([
+      "OPP",
+      "OPPInbound",
+      "BAR"
+    ])
+  })
+
+  it.each(ExternalOutpostConfig.RequiredOutpostContractNames)(
+    "rejects outpostAddresses without %s, naming it",
+    name => {
+      const config = minimalConfig()
+      delete config.ethereum.outpostAddresses[name]
+      const result = ExternalOutpostConfigSchema.safeParse(config)
+      expect(result.success).toBe(false)
+      expect(result.error.issues.map(issue => issue.message)).toContain(
+        `outpostAddresses is missing the ${name} address`
+      )
+    }
+  )
+
+  it("rejects an address that is not an EVM address", () => {
+    const config = minimalConfig()
+    config.ethereum.outpostAddresses.OPP = "0x1234"
+    expect(ExternalOutpostConfigSchema.safeParse(config).success).toBe(false)
+  })
+
+  it("rejects a program id that is not a base58 public key", () => {
+    const config = minimalConfig()
+    config.solana.programId = "0OIl-not-base58"
+    expect(ExternalOutpostConfigSchema.safeParse(config).success).toBe(false)
   })
 
   it("rejects a non-positive chainId", () => {
-    expect(
-      ExternalOutpostConfigSchema.safeParse({
-        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "a", abiFiles: [], chainId: 0 },
-        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "x" }
-      }).success
-    ).toBe(false)
+    const config = minimalConfig()
+    config.ethereum.chainId = 0
+    expect(ExternalOutpostConfigSchema.safeParse(config).success).toBe(false)
   })
 
-  it("requires the solana idlFile", () => {
+  it("rejects keys it does not declare — the config carries values, never file references", () => {
     expect(
       ExternalOutpostConfigSchema.safeParse({
-        ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, addressFile: "a", abiFiles: [], chainId: 1 },
-        solana: {}
+        ...minimalConfig(),
+        solana: { programId: ProgramId, idlFile: "liqsol_core.json" }
       }).success
     ).toBe(false)
   })

@@ -1,9 +1,10 @@
-import { OppProtocolCapabilities, type ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
+import { OppProtocolCapabilities } from "@wireio/cluster-tool-shared"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { OperatorDaemonArtifactsKey } from "@wireio/cluster-tool/orchestration/outputs/OperatorDaemonArtifacts"
 
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureExternalOutposts } from "../../config/resolveEnvironmentFixture.js"
 
 describe("outpost activation protocol compatibility", () => {
   let invoke: jest.SpyInstance
@@ -15,13 +16,8 @@ describe("outpost activation protocol compatibility", () => {
 
   /** Drive the actual activation runner with operator-declared capabilities and no RPC writes. */
   async function activate(solana: OppProtocolCapabilities): Promise<void> {
-    const externalOutposts: ExternalOutpostConfig = {
-      ethereum: {
-        addressFile: "/external/addresses.json", abiFiles: [], chainId: 1,
-        oppProtocol: { emit: [1], receive: [1, 2] }
-      },
-      solana: { idlFile: "/external/idl.json", oppProtocol: OppProtocolCapabilities.Current }
-    }, ctx = fixtureContext({ externalOutposts })
+    const externalOutposts = fixtureExternalOutposts(),
+      ctx = fixtureContext({ externalOutposts })
     // Exercise the activation boundary even if a previously resolved config was altered.
     ctx.config.externalOutposts.solana.oppProtocol = solana
     ctx.outputs.set(OperatorDaemonArtifactsKey, {

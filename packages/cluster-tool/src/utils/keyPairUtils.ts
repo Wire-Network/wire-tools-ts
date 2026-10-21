@@ -134,10 +134,14 @@ function ethereumPrivateKeyHex(ethereum: EthereumKeyPair): string {
   return ethers.hexlify(PrivateKey.from(ethereum.privateKey).data.array)
 }
 
-/** An ethers signer (connected to `provider`) reconstructed from an EM key pair. */
+/**
+ * An ethers signer reconstructed from an EM key pair — connected to `provider`
+ * when one is given; without one it can only sign offline (messages, typed
+ * data), never send.
+ */
 export function ethereumSigner(
   ethereum: EthereumKeyPair,
-  provider: ethers.Provider
+  provider?: ethers.Provider
 ): ethers.Wallet {
   return new ethers.Wallet(ethereumPrivateKeyHex(ethereum), provider)
 }

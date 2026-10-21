@@ -7,8 +7,7 @@ import {
   ClusterFiles,
   SignatureProviderType,
   ProcessSignalName,
-  type ClusterConfig,
-  type ExternalOutpostConfig
+  type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
@@ -23,7 +22,9 @@ import {
   SSMClientProvider
 } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
+import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../config/resolveEnvironmentFixture.js"
 
 const mockSend = jest.fn()
 // A DeleteParameterCommand that EXPLODES if anything ever constructs one — the
@@ -344,21 +345,6 @@ describe("ClusterManager.run", () => {
    */
   const ResumeProductionEvent = "resume-production"
 
-  /**
-   * An already-deployed outpost description. Only its presence matters: it
-   * selects external-outpost mode, and every reader of the files it names is
-   * stubbed below.
-   */
-  const ExternalOutposts: ExternalOutpostConfig = {
-    ethereum: {
-      oppProtocol: { emit: [1], receive: [1, 2] },
-      addressFile: "/ext/outpost-addrs.json",
-      abiFiles: ["/ext/eth-abis/OPP.json"],
-      chainId: 11_155_111
-    },
-    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "/ext/solana-idls/liqsol_core.json" }
-  }
-
   afterEach(() => {
     jest.restoreAllMocks()
   })
@@ -373,7 +359,9 @@ describe("ClusterManager.run", () => {
     const config = fixtureConfig({
         clusterPath: pinnedClusterRoot,
         dataPath: Path.join(pinnedClusterRoot, "data"),
-        externalOutposts: ExternalOutposts,
+        // Only its presence matters: it selects external-outpost mode, and the
+        // artifact preparation that reads its values is stubbed below.
+        externalOutposts: fixtureExternalOutposts(),
         debuggingServerEnabled: false
       }),
       order: string[] = []
@@ -409,7 +397,7 @@ describe("ClusterManager.run", () => {
       .spyOn(Steps.externalOutpost, "runHeadBlockAdvance")
       .mockResolvedValue(undefined)
     jest
-      .spyOn(Steps.externalOutpost, "runPublishArtifacts")
+      .spyOn(OperatorDaemonTool, "runArtifactPreparation")
       .mockResolvedValue(undefined)
 
     await ClusterManager.run(config)

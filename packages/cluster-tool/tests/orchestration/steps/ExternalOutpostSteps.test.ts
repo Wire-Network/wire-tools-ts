@@ -3,146 +3,90 @@ import Os from "node:os"
 import Path from "node:path"
 import { SlugName } from "@wireio/sdk-core"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
-import { Steps } from "@wireio/cluster-tool/orchestration"
-import { OperatorDaemonArtifactsKey } from "@wireio/cluster-tool/orchestration/outputs"
+import {
+  EthereumOutpostBootstrapper,
+  Steps
+} from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
+import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureExternalOutposts } from "../../config/resolveEnvironmentFixture.js"
 
-describe("Steps.externalOutpost (materialize + publish)", () => {
-  const ProgramId = "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
-    OppAddress = "0x1111111111111111111111111111111111111111",
-    RequiredInstructions = [
-      { name: "epoch_in" },
-      { name: "commit_underwrite" },
-      { name: "request_swap" }
-    ],
+describe("Steps.externalOutpost (materialize + gates)", () => {
+  /** A liqEth deploy record the config may carry. */
+  const LiqEthAddresses = {
+      LiqEthToken: "0x4444444444444444444444444444444444444444"
+    },
     signal = new AbortController().signal
-  let dir: string,
-    sourceDir: string,
-    dataPath: string,
-    addressFile: string,
-    abiFile: string,
-    idlFile: string
+  let dir: string, dataPath: string
 
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "external-outpost-"))
-    sourceDir = Path.join(dir, "src")
     dataPath = Path.join(dir, "cluster", "data")
-    Fs.mkdirSync(sourceDir, { recursive: true })
-    addressFile = Path.join(sourceDir, "outpost-addrs.json")
-    abiFile = Path.join(sourceDir, "OPP.json")
-    idlFile = Path.join(sourceDir, "liqsol_core.json")
-    Fs.writeFileSync(
-      addressFile,
-      JSON.stringify({
-        OPP: OppAddress,
-        OPPInbound: "0x2222222222222222222222222222222222222222"
-      })
-    )
-    Fs.writeFileSync(
-      abiFile,
-      JSON.stringify({ contractName: "OPP", address: OppAddress, abi: [] })
-    )
-    Fs.writeFileSync(
-      idlFile,
-      JSON.stringify({ address: ProgramId, instructions: RequiredInstructions })
-    )
   })
 
   afterEach(() => Fs.rmSync(dir, { recursive: true, force: true }))
 
-  /** A context whose config references the temp source files + a real data dir. */
-  function externalContext() {
+  /** A context over a real data dir whose config carries `outposts`. */
+  function externalContext(outposts = fixtureExternalOutposts()) {
     return fixtureContext({
       clusterPath: Path.join(dir, "cluster"),
       dataPath,
-      externalOutposts: {
-        ethereum: { addressFile, abiFiles: [abiFile], chainId: 11_155_111,
-          oppProtocol: { emit: [1], receive: [1, 2] } },
-        solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile }
-      }
+      externalOutposts: outposts
     })
   }
 
-  it("materializes the config-referenced files into the canonical data dir", async () => {
+  /** Parse a JSON record the materialize step wrote. */
+  function readRecord(file: string): unknown {
+    return JSON.parse(Fs.readFileSync(file, "utf-8"))
+  }
+
+  it("writes the trusted outpost addresses to the canonical deploy record — and no optional record", async () => {
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
     const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
       ctx.config
     )
-    expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(
-      true
-    )
     expect(
-      Fs.existsSync(
-        Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json")
+      readRecord(
+        Path.join(deploymentsDir, EthereumOutpostBootstrapper.OutpostAddressesFile)
       )
-    ).toBe(true)
+    ).toEqual(ctx.config.externalOutposts.ethereum.outpostAddresses)
     expect(
       Fs.existsSync(
+        Path.join(deploymentsDir, EthereumOutpostBootstrapper.LiqEthAddressesFile)
+      )
+    ).toBe(false)
+    expect(
+      Fs.existsSync(Path.join(dataPath, SolanaFundingTool.SolMockMintsFilename))
+    ).toBe(false)
+  })
+
+  it("writes the liqEth addresses and SPL mints when the config carries them", async () => {
+    const outposts = fixtureExternalOutposts()
+    outposts.ethereum.liqEthAddresses = LiqEthAddresses
+    outposts.solana.mints = [
+      { code: 1_234, mint: outposts.solana.programId, decimals: 9 }
+    ]
+    const ctx = externalContext(outposts)
+    await Steps.externalOutpost.runMaterialize(ctx, null, signal)
+    expect(
+      readRecord(
         Path.join(
-          dataPath,
-          OperatorDaemonTool.SolanaIdlSubpath,
-          OperatorDaemonTool.SolanaIdlFilename
+          ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+          EthereumOutpostBootstrapper.LiqEthAddressesFile
         )
       )
-    ).toBe(true)
-  })
-
-  it("publishes OperatorDaemonArtifacts from the MATERIALIZED data dir (not config)", async () => {
-    const ctx = externalContext()
-    await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    await Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    const artifacts = ctx.outputs.get(OperatorDaemonArtifactsKey)
-    expect(artifacts?.ethereumAddresses.OPP).toBe(OppAddress)
+    ).toEqual(LiqEthAddresses)
     expect(
-      artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))
-    ).toBe(true)
-    expect(artifacts?.solanaProgramId).toBe(ProgramId)
-    expect(artifacts?.solanaIdlFile).toContain(
-      OperatorDaemonTool.SolanaIdlFilename
-    )
-  })
-
-  it("materialize fails fast when a referenced source file is absent", async () => {
-    Fs.rmSync(idlFile)
-    await expect(
-      Steps.externalOutpost.runMaterialize(externalContext(), null, signal)
-    ).rejects.toThrow(/source file not found/)
+      readRecord(Path.join(dataPath, SolanaFundingTool.SolMockMintsFilename))
+    ).toEqual(outposts.solana.mints)
   })
 
   it("materialize requires config.externalOutposts (local mode)", async () => {
     await expect(
       Steps.externalOutpost.runMaterialize(fixtureContext(), null, signal)
     ).rejects.toThrow(/external-outpost mode only/)
-  })
-
-  it("publish fails before materialize (data dir empty)", async () => {
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(externalContext(), null, signal)
-    ).rejects.toThrow(/materialize must run first/)
-  })
-
-  it("publish fails when a required ETH contract address is missing", async () => {
-    Fs.writeFileSync(addressFile, JSON.stringify({ OPP: OppAddress }))
-    const ctx = externalContext()
-    await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    ).rejects.toThrow(/missing the OPPInbound address/)
-  })
-
-  it("publish fails when a required SOL IDL instruction is missing", async () => {
-    Fs.writeFileSync(
-      idlFile,
-      JSON.stringify({ address: ProgramId, instructions: [] })
-    )
-    const ctx = externalContext()
-    await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    ).rejects.toThrow(/missing the 'epoch_in' instruction/)
   })
 
   describe("outbound-envelope bootstrap gate", () => {

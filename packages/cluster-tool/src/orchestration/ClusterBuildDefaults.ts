@@ -246,10 +246,13 @@ export namespace ClusterBuildDefaults {
         node => node.role === NodeRole.producer
       ),
       apiNodes = plannedNodes.filter(node => node.role === NodeRole.api),
+      operatorNodes = plannedNodes.filter(node =>
+        NodeConfig.isOperatorRole(node.role)
+      ),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
-      // (`config.externalOutposts`), so skip the local anvil/validator starts +
-      // outpost deploys and publish the operator-daemon artifacts from the
-      // external config instead (verifying the endpoints are reachable).
+      // (`config.externalOutposts`, trusted), so skip the local anvil/validator
+      // starts + outpost deploys, record the config's deployed values instead,
+      // and never contact either outpost.
       isExternalOutpost = config.externalOutposts != null
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
@@ -618,7 +621,8 @@ export namespace ClusterBuildDefaults {
       SysioContractName.swap,
       SysioContractName.liq,
       SysioContractName.bond,
-      SysioContractName.synd
+      SysioContractName.synd,
+      SysioContractName.councl
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -943,31 +947,19 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
-    //    verify the already-running remote outpost endpoints instead ──
+    //    record the trusted deployed values; the outposts are never contacted ──
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         prerequisites,
         "MaterializeExternalOutposts",
-        "Materialize the external outpost artifacts + verify the endpoints"
+        "Record the external outposts' deployed addresses (trusted, never contacted)"
       ).push(
-        // REPLACES the omitted ETH/SOL deploy phases: copy the config-referenced
-        // files into the canonical data dir so every downstream reader is unchanged.
+        // REPLACES the omitted ETH/SOL deploy phases: write the config's deployed
+        // values into the canonical deploy records so every downstream reader is unchanged.
         Steps.externalOutpost.planMaterialize<C>(
           Actor.Sysio,
-          "materialize-external-artifacts",
-          "copy the external-outpost config files into the canonical data dir",
-          {}
-        ),
-        Steps.externalOutpost.planVerifyEthereumEndpoint<C>(
-          Actor.EthereumOutpost,
-          "verify-ethereum-endpoint",
-          "the external Ethereum RPC reports the configured chain id",
-          {}
-        ),
-        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
-          Actor.SolanaOutpost,
-          "verify-solana-endpoint",
-          "the external Solana RPC responds to getVersion",
+          "materialize-external-outposts",
+          "write the external-outpost config's deployed addresses into the canonical deploy records",
           {}
         )
       )
@@ -1129,7 +1121,8 @@ export namespace ClusterBuildDefaults {
 
     // The operator daemons' shared prerequisites: the in-process OPP debugging
     // sink (external_debugging_plugin posts every envelope there) + the deploy
-    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args reference.
+    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args
+    // reference — built from source in both modes, over the deployed values.
     ClusterBuildPhase.create<C>(
       postContractDeployment,
       "OperatorDaemonPrerequisites",
@@ -1141,19 +1134,12 @@ export namespace ClusterBuildDefaults {
         "start the in-process OPP debugging server",
         {}
       ),
-      isExternalOutpost
-        ? Steps.externalOutpost.planPublishArtifacts<C>(
-            Actor.Sysio,
-            "publish-external-artifacts",
-            "publish ETH ABI + SOL IDL daemon artifacts from the external-outpost config",
-            {}
-          )
-        : OperatorDaemonTool.planArtifactPreparation<C>(
-            Actor.Sysio,
-            "prepare-daemon-artifacts",
-            "write ETH ABI + SOL IDL artifacts for operator daemons",
-            {}
-          ),
+      OperatorDaemonTool.planArtifactPreparation<C>(
+        Actor.Sysio,
+        "prepare-daemon-artifacts",
+        "write ETH ABI + SOL IDL artifacts for operator daemons",
+        {}
+      ),
       // Must follow the artifact step (it reads the published SOL program id)
       // and precede any daemon start: an operator skips a chain whose remote
       // addresses are still unset.
@@ -1233,11 +1219,13 @@ export namespace ClusterBuildDefaults {
         () => Actor.Sysio
       )
     }
+    // Under an external-outpost config these start SYNC-ONLY — no
+    // batch_operator_plugin, no outpost client (NodeopProcessSteps.resolveStartArgs).
     planNodeStartGroup<C>(
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      plannedNodes.filter(node => NodeConfig.isOperatorRole(node.role)),
+      operatorNodes,
       () => Actor.BatchOperator
     )
 
@@ -1339,6 +1327,24 @@ export namespace ClusterBuildDefaults {
           "verify-outbound-envelopes",
           "every registered outpost has a queued outbound envelope",
           { timeoutMs: Steps.externalOutpost.OutboundEnvelopesTimeoutMs }
+        )
+      )
+      // The batch-operator nodes ran sync-only. Each must hold the whole
+      // bootstrap chain before create stops it: its start.sh is the relaunch
+      // form, which adds the OPP daemon to the chain synced here.
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "OperatorNodesSynced",
+        "Verify every batch-operator node synced the depot chain (started without its OPP daemon)"
+      ).push(
+        ...operatorNodes.map(node =>
+          Steps.processes.nodeop.planVerifySynced<C>(
+            Actor.BatchOperator,
+            `verify-${node.name}-synced`,
+            `${node.name} synced to the depot head`,
+            {},
+            node.name
+          )
         )
       )
     } else {

@@ -2,7 +2,10 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
-import { ExternalOutpostConfigSchemaCodec } from "@wireio/cluster-tool-shared"
+import {
+  type ExternalOutpostConfig,
+  ExternalOutpostConfigSchemaCodec
+} from "@wireio/cluster-tool-shared"
 
 /**
  * A disposable on-disk environment for tests that drive the REAL
@@ -85,12 +88,40 @@ export function fixtureResolveEnvironment(prefix: string): ResolveEnvironment {
 const ExternalOutpostConfigFilename = "external-outpost.json"
 
 /** The Ethereum chain id (Sepolia) the external-outpost fixture declares. */
-const ExternalOutpostChainId = 11_155_111
+export const ExternalOutpostChainId = 11_155_111
+
+/** The deployed outpost addresses the external-outpost fixture declares. */
+const ExternalOutpostAddresses = {
+  OPP: "0x1111111111111111111111111111111111111111",
+  OPPInbound: "0x2222222222222222222222222222222222222222",
+  BAR: "0x3333333333333333333333333333333333333333"
+}
+
+/** The `liqsol_core` program id the external-outpost fixture declares. */
+export const ExternalOutpostProgramId =
+  "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
 
 /**
- * Write a minimal `ExternalOutpostConfig` under `rootPath`: enough for
- * `ClusterConfigProvider.resolve` to take the external-outpost path. The files it
- * references are never read during resolve or composition.
+ * A minimal valid {@link ExternalOutpostConfig}: the chain id, the required
+ * outpost addresses and the Solana program id.
+ *
+ * @returns A fresh config value.
+ */
+export function fixtureExternalOutposts(): ExternalOutpostConfig {
+  return {
+    ethereum: {
+      oppProtocol: { emit: [1], receive: [1, 2] },
+      chainId: ExternalOutpostChainId,
+      outpostAddresses: { ...ExternalOutpostAddresses }
+    },
+    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, programId: ExternalOutpostProgramId }
+  }
+}
+
+/**
+ * Write {@link fixtureExternalOutposts} under `rootPath` as an
+ * `--external-outpost-config` file: enough for `ClusterConfigProvider.resolve`
+ * to take the external-outpost path.
  *
  * @param rootPath - The environment root ({@link ResolveEnvironment.rootPath}).
  * @returns The written config file's path.
@@ -99,18 +130,7 @@ export function fixtureExternalOutpostConfig(rootPath: string): string {
   const configFile = Path.join(rootPath, ExternalOutpostConfigFilename)
   Fs.writeFileSync(
     configFile,
-    ExternalOutpostConfigSchemaCodec.serialize({
-      ethereum: {
-        oppProtocol: { emit: [1], receive: [1, 2] },
-        addressFile: "outpost-addrs.json",
-        abiFiles: ["eth-abis/OPP.json"],
-        chainId: ExternalOutpostChainId
-      },
-      solana: {
-        oppProtocol: { emit: [1], receive: [1, 2] },
-        idlFile: "solana-idls/liqsol_core.json"
-      }
-    })
+    ExternalOutpostConfigSchemaCodec.serialize(fixtureExternalOutposts())
   )
   return configFile
 }

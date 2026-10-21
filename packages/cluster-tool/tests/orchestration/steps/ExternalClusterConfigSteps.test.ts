@@ -106,15 +106,22 @@ const ExternalSolanaRpcUrl = "https://solana-rpc.external.example/"
 
 /**
  * The deployed ETH outpost addresses the batch-operator daemon's argv resolves
- * through (OPP + OPPInbound).
+ * through (OPP + OPPInbound), plus BAR — every address an external-outpost
+ * config must carry.
  */
 const OutpostAddresses = {
   OPP: "0x1111111111111111111111111111111111111111",
-  OPPInbound: "0x2222222222222222222222222222222222222222"
+  OPPInbound: "0x2222222222222222222222222222222222222222",
+  BAR: "0x3333333333333333333333333333333333333333"
 }
 
-/** The one hardhat artifact the ABI generation needs (`ethereumAbiFiles.length > 0`). */
-const AbiContractName = OperatorDaemonTool.EthereumAbiContractNames[0]
+/**
+ * The hardhat artifact file each daemon ABI is generated from — the contract's
+ * own name, except BAR, whose deployment keeps its name over the compiled BARV2.
+ */
+function abiArtifactName(contractName: string): string {
+  return contractName === "BAR" ? "BARV2" : contractName
+}
 
 /** Filename of the deployed ETH outpost address map, in its canonical dataPath home. */
 const OutpostAddressFilename = "outpost-addrs.json"
@@ -301,7 +308,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
    * so the Rebind EMITS the daemon start scripts instead of warn-skipping them:
    *
    * 1. the deployed ETH outpost address map, in the per-cluster deployments dir;
-   * 2. one hardhat artifact in the wire-ethereum checkout (the ABI source);
+   * 2. every daemon ABI's hardhat artifact in the wire-ethereum checkout;
    * 3. the committed `liqsol_core` program keypair (the program id source);
    * 4. the generated IDL, carrying every daemon-invoked instruction.
    *
@@ -317,16 +324,18 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       ),
       OutpostAddresses
     )
-    writeJsonFile(
-      Path.join(
-        ethereumPath,
-        "artifacts",
-        "contracts",
-        "outpost",
-        `${AbiContractName}.sol`,
-        `${AbiContractName}.json`
-      ),
-      { abi: [] }
+    OperatorDaemonTool.EthereumAbiContractNames.forEach(contractName =>
+      writeJsonFile(
+        Path.join(
+          ethereumPath,
+          "artifacts",
+          "contracts",
+          "outpost",
+          `${contractName}.sol`,
+          `${abiArtifactName(contractName)}.json`
+        ),
+        { abi: [] }
+      )
     )
     // The validator loads EVERY wire-solana program at genesis, so the rendered
     // `start.sh` resolves a keypair per program — stage all of them, not just
@@ -345,57 +354,26 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
 
   /**
    * An ALREADY-DEPLOYED (remote) outpost description whose per-chain `rpcUrl` is
-   * AUTHORITATIVE — the D6 case no bind config can express. Seeds both halves a
-   * real external cluster carries by the time it is cloned:
-   *
-   *  - the SOURCE files the config references, OUTSIDE the cluster tree (Clone
-   *    copies them in, Rebind re-points the refs at the in-tree copies), and
-   *  - the MATERIALIZED `dataPath` layout `ExternalOutpostSteps.runMaterialize`
-   *    wrote at create time, which the Rebind's `runPublishArtifacts` arm reads
-   *    to build the operator daemon args.
+   * AUTHORITATIVE — an endpoint no bind config can express. Its addresses are
+   * the deploy record {@link seedOutpostArtifacts} wrote (what
+   * `ExternalOutpostSteps.runMaterialize` writes at create time), and its
+   * program id is the fixed `liqsol_core` keypair's.
    *
    * @returns The external-outpost config to seed onto the source cluster.
    */
-  function seedExternalOutposts(): ExternalOutpostConfig {
-    const sourcePath = Path.join(root, "external-outpost"),
-      addressFile = Path.join(sourcePath, OutpostAddressFilename),
-      abiFile = Path.join(sourcePath, `${AbiContractName}.json`),
-      idlFile = Path.join(sourcePath, OperatorDaemonTool.SolanaIdlFilename),
-      idl = outpostIdl(programKeypair().publicKey.toBase58()),
-      abi = {
-        contractName: AbiContractName,
-        address: OutpostAddresses.OPP,
-        abi: []
-      },
-      dataPath = Path.join(localDir, "data")
-    writeJsonFile(addressFile, OutpostAddresses)
-    writeJsonFile(abiFile, abi)
-    writeJsonFile(idlFile, idl)
-    writeJsonFile(
-      Path.join(
-        dataPath,
-        OperatorDaemonTool.EthereumAbiSubpath,
-        `${AbiContractName}.json`
-      ),
-      abi
-    )
-    writeJsonFile(
-      Path.join(
-        dataPath,
-        OperatorDaemonTool.SolanaIdlSubpath,
-        OperatorDaemonTool.SolanaIdlFilename
-      ),
-      idl
-    )
+  function authoritativeExternalOutposts(): ExternalOutpostConfig {
     return {
       ethereum: {
-        addressFile,
         oppProtocol: { emit: [1], receive: [1, 2] },
-        abiFiles: [abiFile],
         chainId: ExternalChainId,
-        rpcUrl: ExternalEthereumRpcUrl
+        rpcUrl: ExternalEthereumRpcUrl,
+        outpostAddresses: { ...OutpostAddresses }
       },
-      solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile, rpcUrl: ExternalSolanaRpcUrl }
+      solana: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
+        rpcUrl: ExternalSolanaRpcUrl,
+        programId: programKeypair().publicKey.toBase58()
+      }
     }
   }
 
@@ -1122,7 +1100,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       externalBindFile,
       PersistedFixture.signatureProvider,
       undefined,
-      seedExternalOutposts()
+      authoritativeExternalOutposts()
     )
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
@@ -1136,25 +1114,14 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       argv = startScriptArgv(scriptFile),
       account = assertOperatorAccount(merged, node.batchOperatorLabel)
 
-    // The Rebind carries the non-file fields through UNTOUCHED while moving
-    // every FILE ref in-tree — a re-stated field list dropped `rpcUrl` here and
-    // the daemons silently fell back to the bind.
-    expect(merged.externalOutposts.ethereum.rpcUrl).toBe(ExternalEthereumRpcUrl)
-    expect(merged.externalOutposts.solana.rpcUrl).toBe(ExternalSolanaRpcUrl)
-    expect(merged.externalOutposts.ethereum.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
-    expect(merged.externalOutposts.solana.oppProtocol).toEqual({ emit: [1], receive: [1, 2] })
+    // The Rebind carries the trusted, value-only config through UNCHANGED —
+    // `rpcUrl` included; nothing in it points at a file.
+    expect(merged.externalOutposts).toEqual(authoritativeExternalOutposts())
     const emittedProtocolConfig = ExternalClusterConfigSchemaCodec.deserialize(
       Fs.readFileSync(externalConfigFile(), "utf-8")
     )
     expect(emittedProtocolConfig.ethereum.oppProtocol).toEqual(merged.externalOutposts.ethereum.oppProtocol)
     expect(emittedProtocolConfig.solana.oppProtocol).toEqual(merged.externalOutposts.solana.oppProtocol)
-    expect(merged.externalOutposts.ethereum.chainId).toBe(ExternalChainId)
-    expect(
-      merged.externalOutposts.ethereum.addressFile.startsWith(externalDir)
-    ).toBe(true)
-    expect(merged.externalOutposts.solana.idlFile.startsWith(externalDir)).toBe(
-      true
-    )
 
     // The 4-field ETH client spec: id, provider, the AUTHORITATIVE endpoint,
     // and the config's REAL chain id (never the anvil default).
@@ -1198,6 +1165,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(emitted.ethereum.rpcUrl).toBe(ExternalEthereumRpcUrl)
     expect(emitted.ethereum.chainId).toBe(ExternalChainId)
     expect(emitted.solana.rpcUrl).toBe(ExternalSolanaRpcUrl)
+    // …and points at the tree's own artifacts: the deploy record, and the IDL
+    // built from source with the config's program id overlaid.
+    expect(emitted.ethereum.addressFile.startsWith(externalDir)).toBe(true)
+    expect(emitted.solana.idlFile.startsWith(externalDir)).toBe(true)
+    expect(JSON.parse(Fs.readFileSync(emitted.solana.idlFile, "utf-8")).address).toBe(
+      programKeypair().publicKey.toBase58()
+    )
   })
 
   it("excludes runtime artifacts (*.pid, logs/, reports/) from the clone", async () => {

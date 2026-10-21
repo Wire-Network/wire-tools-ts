@@ -35,10 +35,10 @@
  * anvil/solana (and only skips the OPP epoch-advance gate, gating success on
  * head-block advance instead) when `cluster-config.json.externalOutposts != null`.
  * A `create-external-config` clone of a plain cluster leaves `externalOutposts`
- * null, so this script sets it — derived verbatim from the emitted
- * `external-cluster-config.json`'s `ethereum` + `solana` sections (which are
- * already `ExternalOutpostConfig`-shaped and reference the cloned artifacts). The
- * original `cluster-config.json` is backed up and restored on teardown.
+ * null, so this script sets it — the deployed values read back out of the
+ * artifacts the emitted `external-cluster-config.json`'s `ethereum` + `solana`
+ * sections reference (the cloned deploy records and IDL). The original
+ * `cluster-config.json` is backed up and restored on teardown.
  *
  * Usage:
  *   node scripts/external/verify-external-bind-config.mjs \
@@ -330,20 +330,21 @@ const configBackup = `${clusterConfigFile}${ConfigBackupSuffix}`
 
 /**
  * Prepare the cluster config for the docker run (backing the original up first)
- * by setting `externalOutposts` — copied verbatim from the emitted
- * `external-cluster-config.json` (already `ExternalOutpostConfig`-shaped) — so
- * `wire-cluster-tool run` DIALS the containerized anvil/solana instead of
- * spawning its own, then parks. Operators are ALWAYS left in place: OPP can only
- * circulate — and the default epoch-advance gate can only pass — with the batch
- * operator + underwriter daemons running. (Under `--exclude-outposts` the chains
- * come up FRESH with no deployed outposts, so the operator plugins bounce at
- * startup and the gate falls back to depot HEAD BLOCKS; the operators still run.)
+ * by setting `externalOutposts` — the value-only `ExternalOutpostConfig` read
+ * back out of the artifacts the emitted `external-cluster-config.json`
+ * references (see {@link toExternalOutposts}) — so `wire-cluster-tool run`
+ * DIALS the containerized anvil/solana instead of spawning its own, then parks.
+ * Operators are ALWAYS left in place: OPP can only circulate — and the default
+ * epoch-advance gate can only pass — with the batch operator + underwriter
+ * daemons running. (Under `--exclude-outposts` the chains come up FRESH with no
+ * deployed outposts, so the operator plugins bounce at startup and the gate
+ * falls back to depot HEAD BLOCKS; the operators still run.)
  */
 function applyExternalOutpostPatch() {
   const externalConfig = readJson(externalConfigFile, "external-cluster-config.json")
   const clusterConfig = readJson(clusterConfigFile, "cluster-config.json")
   if (!Fs.existsSync(configBackup)) Fs.copyFileSync(clusterConfigFile, configBackup)
-  clusterConfig.externalOutposts = { ethereum: externalConfig.ethereum, solana: externalConfig.solana }
+  clusterConfig.externalOutposts = toExternalOutposts(externalConfig)
   Fs.writeFileSync(clusterConfigFile, `${JSON.stringify(clusterConfig, null, 2)}\n`)
   echo(
     chalk.dim(
@@ -355,6 +356,37 @@ function applyExternalOutpostPatch() {
         "; operators always on — original backed up"
     )
   )
+}
+
+/**
+ * The value-only `ExternalOutpostConfig` of the tree's cloned outposts: the
+ * chain id from the emitted config, the deployed addresses and SPL mints from
+ * the deploy records it references, and the program id from its IDL's
+ * top-level `address`.
+ */
+function toExternalOutposts({ ethereum, solana }) {
+  if (solana == null) {
+    fail(
+      "external-cluster-config.json has no solana section — the cloned tree carries no liqsol_core IDL to read the program id from"
+    )
+  }
+  return {
+    ethereum: {
+      oppProtocol: ethereum.oppProtocol,
+      chainId: ethereum.chainId,
+      outpostAddresses: readJson(ethereum.addressFile, "outpost-addrs.json"),
+      ...(ethereum.liqEthAddressFile != null
+        ? { liqEthAddresses: readJson(ethereum.liqEthAddressFile, "liqeth-addrs.json") }
+        : {})
+    },
+    solana: {
+      oppProtocol: solana.oppProtocol,
+      programId: readJson(solana.idlFile, "liqsol_core IDL").address,
+      ...(solana.mintsFile != null
+        ? { mints: readJson(solana.mintsFile, "sol-mock-mints.json") }
+        : {})
+    }
+  }
 }
 
 /** Restore the pristine cluster config (undo {@link applyExternalOutpostPatch}). */
