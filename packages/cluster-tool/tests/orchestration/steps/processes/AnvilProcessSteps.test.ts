@@ -5,9 +5,11 @@ import {
   AnvilProcess,
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
-import { Steps } from "@wireio/cluster-tool/orchestration"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { ClusterBuildContext, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
+import { PersistedFixture } from "../../../config/clusterConfigFixture.js"
 
 describe("Steps.processes.anvil", () => {
   it.each(["planStart", "planEnableIntervalMining"] as const)(
@@ -37,12 +39,13 @@ describe("Steps.processes.anvil", () => {
     const StandInBinary = "/bin/true"
     const signal = new AbortController().signal,
       createAnvil = AnvilProcess.create.bind(AnvilProcess)
-    let dir: string
+    let dir: string, anvilPort: number
 
     // ProcessManager is a set-once singleton: one sandbox for the whole block.
-    beforeAll(() => {
+    beforeAll(async () => {
       dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "anvilsteps-"))
       ProcessManager.setClusterPath(dir)
+      anvilPort = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
     })
     afterEach(async () => {
       jest.restoreAllMocks()
@@ -52,8 +55,20 @@ describe("Steps.processes.anvil", () => {
       Fs.rmSync(dir, { recursive: true, force: true })
     })
 
+    /** A context over the sandbox whose anvil binds the registry-issued port. */
+    function sandboxContext(): ClusterBuildContext {
+      return fixtureContext({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        bind: {
+          ...PersistedFixture.bind,
+          anvil: { ...PersistedFixture.bind.anvil, port: anvilPort }
+        }
+      })
+    }
+
     it("spawns anvil with the finality window and without interval mining", async () => {
-      const ctx = fixtureContext({ clusterPath: dir, dataPath: Path.join(dir, "data") }),
+      const ctx = sandboxContext(),
         create = jest
           .spyOn(AnvilProcess, "create")
           .mockImplementation((manager, options) =>
@@ -72,7 +87,7 @@ describe("Steps.processes.anvil", () => {
       expect(manager).toBe(ctx.processManager)
       expect(options).toMatchObject({
         host: ctx.config.bind.anvil.address,
-        port: ctx.config.bind.anvil.port,
+        port: anvilPort,
         chainId: AnvilProcess.DefaultChainId,
         slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch
       })
@@ -81,7 +96,7 @@ describe("Steps.processes.anvil", () => {
     })
 
     it("is a no-op when the anvil is already registered", async () => {
-      const ctx = fixtureContext({ clusterPath: dir, dataPath: Path.join(dir, "data") })
+      const ctx = sandboxContext()
       await createAnvil(ctx.processManager, { binary: StandInBinary })
       const create = jest.spyOn(AnvilProcess, "create")
 
