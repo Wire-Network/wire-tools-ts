@@ -5,6 +5,42 @@ import { isIpv6PortFree, Localhost } from "@wireio/cluster-tool/utils"
 
 describe("BindConfigProvider wildcard probes", () => {
   it.each([Localhost, "::1"])(
+    "redraws an RPC/WebSocket pair when the companion is bound on %s",
+    async host => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc(),
+        holder = Net.createServer()
+      try {
+        await Deferred.useCallback<void>(deferred => {
+          holder.once("error", error => deferred.reject(error))
+          holder.listen(
+            {
+              port: rpc + BindConfigProvider.SolanaWsPortOffset,
+              host,
+              ipv6Only: true
+            },
+            () => deferred.resolve()
+          )
+        }).promise
+        await BindConfigProvider.clearPortLocks()
+        expect(await BindConfigProvider.findAvailableSolanaRpc(rpc)).not.toBe(
+          rpc
+        )
+        await BindConfigProvider.clearPortLocks()
+        await expect(
+          BindConfigProvider.resolve({ solana: { ports: { http: rpc } } }, {})
+        ).rejects.toThrow(/WebSocket companion.*unavailable or reserved/)
+      } finally {
+        if (holder.listening)
+          await Deferred.useCallback<void>(deferred =>
+            holder.close(() => deferred.resolve())
+          ).promise
+      }
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.findAvailableSolanaRpc(rpc)).toBe(rpc)
+    }
+  )
+
+  it.each([Localhost, "::1"])(
     "rejects an occupied port on %s and accepts it after release",
     async host => {
       const port = await BindConfigProvider.findAvailable(
