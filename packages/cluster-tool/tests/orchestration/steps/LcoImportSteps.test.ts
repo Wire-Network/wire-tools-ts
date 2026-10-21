@@ -238,9 +238,27 @@ describe("LcoImportSteps", () => {
     })
 
     describe("runVerify", () => {
-      /** Mock every read the verify makes; `outstanding` maps a token to its supply. */
-      function verifiable(outstanding: Record<string, bigint>) {
-        const { ctx, synd, dclaim } = contractContext()
+      /** The fixture's booked custody per shadow, in subunits. */
+      const BookedCustody = { LIQETH: 6_500_000_000n, LIQSOL: 8_000_000_000n }
+      /** An ABI `bool` as the chain's JSON spells it. */
+      const AbiTrue = 1,
+        AbiFalse = 0
+
+      /**
+       * Mock every read the verify makes; `outstanding` maps a token to its supply. The
+       * import singletons reach the typed accessors as the chain returns them, each seal an
+       * ABI `bool`.
+       */
+      function verifiable(
+        outstanding: Record<string, bigint>,
+        claimsSealed = AbiTrue,
+        syndicationSealed = AbiTrue
+      ) {
+        const ctx = importContext(),
+          singletons: Record<string, object> = {
+            capcfg: { imported_complete: claimsSealed },
+            syndstate: { import_complete: syndicationSealed }
+          }
         jest
           .spyOn(WireSyndicationTool, "readOutstanding")
           .mockImplementation(async (_ctx, token) => outstanding[token])
@@ -257,27 +275,46 @@ describe("LcoImportSteps", () => {
           .spyOn(ctx.wire, "getWireBalance")
           .mockResolvedValue(WireLcoImportTool.planClaimTotal(plan))
         jest
-          .spyOn(dclaim.tables.capcfg, "query")
-          .mockResolvedValue({ rows: [{ imported_complete: true }], more: false })
-        jest.spyOn(synd.tables.syndstate, "query").mockResolvedValue({
-          rows: [
-            {
-              import_complete: true,
-              queue_cursor: 0,
-              underwriting_cursor: 0,
-              sync_cursor: null
-            }
-          ],
-          more: false
-        })
+          .spyOn(ctx.wire, "getTableRows")
+          .mockImplementation(async ({ table }) => ({ rows: [singletons[table]], more: false }))
         return ctx
       }
 
-      it("passes when each shadow's outstanding is its booked custody", async () => {
+      it("passes when each shadow's outstanding is its booked custody and both imports are sealed", async () => {
         await expect(
           LcoImportSteps.runVerify(
-            verifiable({ LIQETH: 6_500_000_000n, LIQSOL: 8_000_000_000n }),
+            verifiable(BookedCustody),
             { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
+            signal
+          )
+        ).resolves.toBeUndefined()
+      })
+
+      it("fails when the claim import is not sealed", async () => {
+        await expect(
+          LcoImportSteps.runVerify(
+            verifiable(BookedCustody, AbiFalse),
+            { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
+            signal
+          )
+        ).rejects.toThrow(/the sysio.dclaim import is not sealed/)
+      })
+
+      it("fails when it sealed the syndication import and that import is not sealed", async () => {
+        await expect(
+          LcoImportSteps.runVerify(
+            verifiable(BookedCustody, AbiTrue, AbiFalse),
+            { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
+            signal
+          )
+        ).rejects.toThrow(/the sysio.synd import is not sealed/)
+      })
+
+      it("ignores the syndication seal when the import left it open", async () => {
+        await expect(
+          LcoImportSteps.runVerify(
+            verifiable(BookedCustody, AbiTrue, AbiFalse),
+            { kind: "LcoImportSteps.VerifyInput", sealsSyndication: false },
             signal
           )
         ).resolves.toBeUndefined()
@@ -286,7 +323,7 @@ describe("LcoImportSteps", () => {
       it("fails when a shadow's outstanding differs from its booked custody", async () => {
         await expect(
           LcoImportSteps.runVerify(
-            verifiable({ LIQETH: 6_500_000_001n, LIQSOL: 8_000_000_000n }),
+            verifiable({ ...BookedCustody, LIQETH: BookedCustody.LIQETH + 1n }),
             { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
             signal
           )

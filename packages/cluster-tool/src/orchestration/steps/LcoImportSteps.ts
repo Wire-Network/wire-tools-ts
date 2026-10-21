@@ -511,13 +511,14 @@ export namespace LcoImportSteps {
       claims,
       `LcoImportSteps: sysio.dclaim holds ${funded} WIRE subunits, not the ${claims} its claims need`
     )
+    // The chain's JSON spells an ABI `bool` as `0` / `1`, never `true` / `false`.
     Assert.ok(
-      claimConfig.rows[0]?.imported_complete === true,
+      Boolean(claimConfig.rows[0]?.imported_complete),
       "LcoImportSteps: the sysio.dclaim import is not sealed"
     )
     Assert.ok(
       !input.sealsSyndication ||
-        syndicationState.rows[0]?.import_complete === true,
+        Boolean(syndicationState.rows[0]?.import_complete),
       "LcoImportSteps: the sysio.synd import is not sealed"
     )
     Assert.deepStrictEqual(
