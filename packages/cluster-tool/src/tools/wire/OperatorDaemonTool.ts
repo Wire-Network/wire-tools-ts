@@ -14,7 +14,11 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { type ClusterConfig, NodeopReadMode } from "@wireio/cluster-tool-shared"
+import {
+  type ClusterConfig,
+  ExternalOutpostConfig,
+  NodeopReadMode
+} from "@wireio/cluster-tool-shared"
 import { OperatorType, type TokenAmount } from "@wireio/opp-typescript-models"
 import { Asset, KeyType, SlugName } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
@@ -26,6 +30,7 @@ import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
+import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -163,7 +168,8 @@ export namespace OperatorDaemonTool {
     SolanaEpochInInstruction
   ] as const
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
-  export const EthereumAbiContractNames = ["OPP", "OPPInbound", "BAR"] as const
+  export const EthereumAbiContractNames =
+    ExternalOutpostConfig.RequiredOutpostContractNames
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
@@ -223,12 +229,18 @@ export namespace OperatorDaemonTool {
   // ── Step: prepare the daemon's deploy artifacts (filesystem writes) ────────
 
   /**
-   * Prepare the artifacts every operator daemon's command line references:
-   * generate `<dataPath>/eth-abis/<Name>.json` (`{contractName, address, abi}`,
-   * from the wire-ethereum hardhat artifacts + `outpost-addrs.json`), copy the
-   * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, resolve the SOL program id,
-   * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
-   * outpost deploys, before any operator node starts.
+   * Prepare the artifacts every operator daemon's command line references,
+   * built from source: generate `<dataPath>/eth-abis/<Name>.json`
+   * (`{contractName, address, abi}`, from the wire-ethereum hardhat artifacts +
+   * `outpost-addrs.json`), write the `liqsol_core` (OPP outpost) IDL to
+   * `<dataPath>/solana-idls/` with the SOL program id as its top-level
+   * `address`, and store the typed {@link OperatorDaemonArtifacts}.
+   *
+   * Local mode reads the addresses the outpost deploy wrote and the program id
+   * from the committed program keypair. External-outpost mode reads the
+   * addresses `ExternalOutpostSteps.planMaterialize` wrote from the trusted
+   * config, and overlays the config's `solana.programId`. Runs ONCE, before any
+   * operator node starts.
    */
   export function planArtifactPreparation<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -261,7 +273,7 @@ export namespace OperatorDaemonTool {
     // into THIS cluster's deployments dir — per-run, parallel-safe).
     const addressesFile = Path.join(
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-      "outpost-addrs.json"
+      EthereumOutpostBootstrapper.OutpostAddressesFile
     )
     Assert.ok(
       Fs.existsSync(addressesFile),
@@ -286,15 +298,23 @@ export namespace OperatorDaemonTool {
         `${contractName}.sol`,
         `${artifactContractName}.json`
       )
-      if (!Fs.existsSync(artifactFile)) return null
+      Assert.ok(
+        Fs.existsSync(artifactFile),
+        `prepareArtifacts: no ${contractName} ABI artifact at ${artifactFile} — is wire-ethereum built?`
+      )
       const artifact = JSON.parse(Fs.readFileSync(artifactFile, "utf-8")),
-        abiFile = Path.join(abiDir, `${contractName}.json`)
+        abiFile = Path.join(abiDir, `${contractName}.json`),
+        address = ethereumAddresses[contractName]
+      Assert.ok(
+        address != null,
+        `prepareArtifacts: ${addressesFile} has no ${contractName} address to embed in its ABI`
+      )
       Fs.writeFileSync(
         abiFile,
         JSON.stringify(
           {
             contractName,
-            address: ethereumAddresses[contractName],
+            address,
             abi: artifact.abi
           },
           null,
@@ -302,16 +322,14 @@ export namespace OperatorDaemonTool {
         )
       )
       return abiFile
-    }).filter(file => file != null)
-    Assert.ok(
-      ethereumAbiFiles.length > 0,
-      "prepareArtifacts: no ETH outpost ABI artifacts found"
-    )
+    })
 
-    // SOL program id (from the committed liqsol_core program keypair) + a
-    // cluster-local VERBATIM IDL copy so operator nodes read a stable path
+    // SOL program id — the external-outpost config's, else the committed
+    // liqsol_core program keypair's — written as the top-level `address` of a
+    // cluster-local copy of the built IDL, so operator nodes read a stable path
     // (nodeop accepts it via --solana-outpost-program-name liqsol_core).
     const solanaProgramId =
+      ctx.config.externalOutposts?.solana.programId ??
       SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
 
     const idlSource = SolanaOutpostProgramTool.programIdlFile(solanaPath),
@@ -330,7 +348,10 @@ export namespace OperatorDaemonTool {
       mkdirs(Path.join(dataPath, SolanaIdlSubpath)),
       SolanaIdlFilename
     )
-    Fs.copyFileSync(idlSource, solanaIdlFile)
+    Fs.writeFileSync(
+      solanaIdlFile,
+      JSON.stringify({ ...idl, address: solanaProgramId }, null, 2)
+    )
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
@@ -440,7 +461,7 @@ export namespace OperatorDaemonTool {
     )
     assertOutpostKeys(operator)
     return [
-      ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
+      ...batchOperatorSyncArgs(),
       ...pluginArgs(
         debuggingGatedPlugins(
           BatchOperatorPlugins,
@@ -477,6 +498,19 @@ export namespace OperatorDaemonTool {
         SolanaOutpostProgramTool.ProgramName
       )
     ]
+  }
+
+  /**
+   * The extra args a batch-operator node SYNCS with when its OPP daemon must not
+   * run — an external-outpost `create`, which never contacts the outposts: the
+   * node's read mode only. No `batch_operator_plugin`, no outpost client, no
+   * debugging sink. {@link batchOperatorArgs} starts with these, so a node
+   * synced this way relaunches on the same read mode with its daemon added.
+   *
+   * @returns The sync-only extra args.
+   */
+  export function batchOperatorSyncArgs(): string[] {
+    return pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible)
   }
 
   /**

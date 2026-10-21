@@ -18,6 +18,7 @@ import {
   createMintToInstruction,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
+import type { SolanaMintRecord } from "@wireio/cluster-tool-shared"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -552,12 +553,8 @@ export namespace SolanaFundingTool {
   /** SPL mock-mint manifest filename in the cluster data dir. */
   export const SolMockMintsFilename = "sol-mock-mints.json"
 
-  /** One row of `sol-mock-mints.json` (harness artifact, no generated equivalent). */
-  export interface SolMockMint {
-    code: number
-    mint: string
-    decimals: number
-  }
+  /** One row of `sol-mock-mints.json` — the shared {@link SolanaMintRecord} shape. */
+  export type SolMockMint = SolanaMintRecord
 
   /**
    * Resolve the persisted mock SPL mint (base58) for a token code from THIS

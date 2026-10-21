@@ -100,7 +100,7 @@ the path flags.
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
-| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
+| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts, from their trusted deployed addresses + public keys — never contacting them |
 | `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
@@ -304,9 +304,8 @@ wire-cluster-tool create-external-config \
 # reconstructed from the pattern) — NO plaintext keys.
 ```
 
-External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config`
-and a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
-endpoints:
+External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config`,
+the outposts' trusted deployed addresses + public keys (no file references):
 
 ```bash
 wire-cluster-tool create \
@@ -314,16 +313,19 @@ wire-cluster-tool create \
   --build-path              <wire-sysio>/build/release \
   --ethereum-path           <wire-ethereum> \
   --solana-path             <wire-solana> \
-  --external-outpost-config ~/external-outpost.json \
-  --bind-config             ~/external-bind-config.json
+  --external-outpost-config ~/external-outpost-config.json
 ```
 
-`create` verifies
-`eth_chainId` / Solana `getVersion`, then gates success on head-block advance
-**and** on an outbound envelope being queued for every registered outpost (not
-on epoch distribution — there is no local chain to advance an epoch on). A LOCAL
-cluster instead gates on `sysio.epoch::current_epoch_index` passing the
-bootstrap epoch. See the repo root README's "External outpost clusters" section.
+`create` never contacts either outpost. It builds the operator daemons' ABI /
+IDL files from the wire-ethereum / wire-solana builds with the config's
+addresses and program id overlaid, starts each batch-operator node WITHOUT
+`batch_operator_plugin` so it only syncs the depot chain, and gates success on
+head-block advance, an outbound envelope queued for every registered outpost,
+and every batch-operator node synced (not on epoch distribution — there is no
+local chain to advance an epoch on). The batch-operator `start.sh` scripts carry
+the full daemon args. A LOCAL cluster instead gates on
+`sysio.epoch::current_epoch_index` passing the bootstrap epoch. See the repo
+root README's "External outpost clusters" section for the file format.
 
 ---
 
@@ -380,8 +382,9 @@ After `create`:
 ```
 
 In external-outpost mode no local `anvil` / `solana-ledger` state is written
-(`cluster-state.json` records them as `null`); the operator-daemon artifacts come
-from the `--external-outpost-config` instead.
+(`cluster-state.json` records them as `null`); `ethereum-deployments/` holds the
+deploy records written from the `--external-outpost-config`, and `eth-abis/` /
+`solana-idls/` are built from source over them.
 
 ---
 

@@ -310,7 +310,8 @@ wire-cluster-tool create-api-node \                    # standalone (non-cluster
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
 secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
-against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
+against already-deployed REMOTE ETH+SOL outposts — see "`create` against external
+outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off, forced
@@ -396,6 +397,21 @@ There is no opt-out on a local `create`. An `externalOutpostConfig` build keeps 
 caller's options, and `ClusterConfigProvider.resolve` refuses either mock flag there.
 `FlowCLI` never sets the option: a flow declares these options in its
 `Scenario.defaults`.
+
+**`create` against external outposts never contacts them.** The
+`--external-outpost-config` file is TRUSTED and value-only (`ExternalOutpostConfig`:
+chain id, outpost + liqEth address maps, Solana program id + mints, optional
+`rpcUrl`s — no file references). `ExternalOutpostSteps.planMaterialize` writes the
+values into the canonical deploy records, and `OperatorDaemonTool.planArtifactPreparation`
+— the same step local mode runs — builds the ABI / IDL files from the wire-ethereum
+/ wire-solana builds over them (the IDL's `address` is the config's `programId`).
+No endpoint is probed: `ClusterBuildContext.ethereum` / `.solana` throw in this
+mode, so any step reaching for an outpost client fails the build. Batch-operator
+nodes start SYNC-ONLY (`NodeopProcessSteps.resolveStartArgs` →
+`OperatorDaemonTool.batchOperatorSyncArgs`: read mode only, no `batch_operator_plugin`,
+no outpost client), the `OperatorNodesSynced` phase gates each on the depot head,
+and `create` stops them with every other daemon. Their `start.sh` carries the full
+daemon args (`resolveOperatorDaemonArgs`).
 
 **Flow authoring — mock LIQ pools and syndication import.** The mock shadow-liq yield pools (`enableMockLiqPools: true`,
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow

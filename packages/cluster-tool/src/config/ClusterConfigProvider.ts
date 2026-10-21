@@ -747,12 +747,13 @@ export namespace ClusterConfigProvider {
   }
 
   /**
-   * Load + validate an `--external-outpost-config` file (external-outpost mode),
-   * resolving its `*File`/`*Files` references to absolute paths relative to the
-   * config file's directory. Returns `null` for the standard local bootstrap.
+   * Load + validate an `--external-outpost-config` file (external-outpost mode).
+   * The file is trusted and carries values only, so the decoded config is
+   * returned as-is — every field, `rpcUrl` included. Returns `null` for the
+   * standard local bootstrap.
    *
    * @param file - Path to the `ExternalOutpostConfig` JSON (may be omitted).
-   * @returns The resolved config, or `null`.
+   * @returns The decoded config, or `null`.
    */
   async function loadExternalOutposts(
     file: string
@@ -760,29 +761,9 @@ export namespace ClusterConfigProvider {
     if (file == null) {
       return null
     }
-    const configFile = Path.resolve(file),
-      baseDir = Path.dirname(configFile),
-      config = ExternalOutpostConfigSchemaCodec.deserialize(
-        await Fsp.readFile(configFile, "utf-8")
-      ),
-      resolveRef = (ref: string): string =>
-        Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
-    return {
-      ethereum: {
-        addressFile: resolveRef(config.ethereum.addressFile),
-        abiFiles: config.ethereum.abiFiles.map(resolveRef),
-        chainId: config.ethereum.chainId,
-        ...(config.ethereum.liqEthAddressFile != null
-          ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
-          : {})
-      },
-      solana: {
-        idlFile: resolveRef(config.solana.idlFile),
-        ...(config.solana.mintsFile != null
-          ? { mintsFile: resolveRef(config.solana.mintsFile) }
-          : {})
-      }
-    }
+    return ExternalOutpostConfigSchemaCodec.deserialize(
+      await Fsp.readFile(Path.resolve(file), "utf-8")
+    )
   }
 
   /** Resolve + validate every binary path (the build-dir bins + PATH lookups). */

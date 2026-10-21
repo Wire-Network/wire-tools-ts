@@ -5,6 +5,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  ExternalOutpostConfigSchemaCodec,
   NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
@@ -22,7 +23,9 @@ import {
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
+  ExternalOutpostChainId,
   fixtureExternalOutpostConfig,
+  fixtureExternalOutposts,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
@@ -306,14 +309,7 @@ describe("ClusterConfigProvider", () => {
           regions: ["us-east-1", "eu-west-1"],
           ssm: null
         },
-        externalOutposts: {
-          ethereum: {
-            addressFile: "/x/outpost-addrs.json",
-            abiFiles: ["/x/eth-abis/OPP.json"],
-            chainId: 1
-          },
-          solana: { idlFile: "/x/idl.json" }
-        }
+        externalOutposts: fixtureExternalOutposts()
       })
       const round = ClusterConfigProvider.deserialize(
         ClusterConfigProvider.serialize(cfg)
@@ -328,7 +324,10 @@ describe("ClusterConfigProvider", () => {
         "us-east-1",
         "eu-west-1"
       ])
-      expect(round.externalOutposts?.ethereum.chainId).toBe(1)
+      expect(round.externalOutposts).toEqual(fixtureExternalOutposts())
+      expect(round.externalOutposts?.ethereum.chainId).toBe(
+        ExternalOutpostChainId
+      )
     })
   })
 
@@ -907,6 +906,54 @@ describe("ClusterConfigProvider", () => {
       expect(config.underwriterCount).toBe(
         ClusterConfigProvider.DefaultUnderwriterCount
       )
+    })
+  })
+
+  describe("external-outpost config loading", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-outpost-load-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    it("carries the trusted config verbatim — every value, rpcUrl included", async () => {
+      const outposts = fixtureExternalOutposts()
+      outposts.ethereum.rpcUrl = "https://ethereum-rpc.external.example/"
+      outposts.solana.rpcUrl = "https://solana-rpc.external.example/"
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        ExternalOutpostConfigSchemaCodec.serialize(outposts)
+      )
+      const config = await ClusterConfigProvider.resolve({
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        externalOutpostConfig: configFile
+      })
+      expect(config.externalOutposts).toEqual(outposts)
+    })
+
+    it("refuses a config that fails the schema", async () => {
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        JSON.stringify({ ethereum: { chainId: 1 }, solana: {} })
+      )
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          buildPath: environment.buildPath,
+          ethereumPath: "/fake/eth",
+          solanaPath: "/fake/sol",
+          externalOutpostConfig: configFile
+        })
+      ).rejects.toThrow()
     })
   })
 
