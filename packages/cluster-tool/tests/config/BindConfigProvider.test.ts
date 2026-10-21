@@ -9,7 +9,11 @@ import {
   type BindConfig
 } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
-import { ListenAllAddress, Localhost } from "@wireio/cluster-tool/utils"
+import {
+  ListenAllAddress,
+  Localhost,
+  MaximumPort
+} from "@wireio/cluster-tool/utils"
 
 /**
  * Options the fake `get-port` honors — the subset {@link BindConfigProvider}
@@ -441,6 +445,112 @@ describe("BindConfigProvider", () => {
       expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
       allocator.reset()
       expect(await BindConfigProvider.isPortAvailable(port)).toBe(true)
+    })
+  })
+
+  describe("Solana RPC/WebSocket pair", () => {
+    it("redraws the RPC preference when only its companion is occupied", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc()
+      await BindConfigProvider.clearPortLocks()
+      allocator.markTaken(rpc + BindConfigProvider.SolanaWsPortOffset)
+      const config = await BindConfigProvider.resolve({}, {})
+      expect(config.solana.ports.http).not.toBe(rpc)
+      expect(
+        allocator.taken.has(
+          config.solana.ports.http + BindConfigProvider.SolanaWsPortOffset
+        )
+      ).toBe(false)
+    })
+
+    it("redraws for an IPv6-only companion listener", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc()
+      await BindConfigProvider.clearPortLocks()
+      mockIpv6TakenPorts.add(rpc + BindConfigProvider.SolanaWsPortOffset)
+      expect(await BindConfigProvider.findAvailableSolanaRpc()).not.toBe(rpc)
+    })
+
+    it("rejects a pinned pair when the unbound companion is already claimed", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc()
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.resolve(
+          {
+            kiod: { port: rpc + BindConfigProvider.SolanaWsPortOffset },
+            solana: { ports: { http: rpc } }
+          },
+          {}
+        )
+      ).rejects.toThrow(/WebSocket companion.*unavailable or reserved/)
+    })
+
+    it("rejects a pinned pair when only its companion is occupied", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc()
+      await BindConfigProvider.clearPortLocks()
+      allocator.markTaken(rpc + BindConfigProvider.SolanaWsPortOffset)
+      await expect(
+        BindConfigProvider.resolve({ solana: { ports: { http: rpc } } }, {})
+      ).rejects.toThrow(/WebSocket companion.*unavailable or reserved/)
+    })
+
+    it("rejects a pinned companion inside the reserved Agave band", async () => {
+      const rpc = await BindConfigProvider.findAvailable(
+        BindConfigProvider.ReservedAgavePortBand.first -
+          BindConfigProvider.SolanaWsPortOffset
+      )
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.resolve({ solana: { ports: { http: rpc } } }, {})
+      ).rejects.toThrow(/WebSocket companion.*unavailable or reserved/)
+    })
+
+    it("rejects a pinned RPC port whose companion exceeds the TCP port limit", async () => {
+      const rpc = await BindConfigProvider.findAvailable(MaximumPort)
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.resolve({ solana: { ports: { http: rpc } } }, {})
+      ).rejects.toThrow(/invalid Solana RPC port/)
+    })
+
+    it("redraws an unpinned preference whose companion exceeds the TCP port limit", async () => {
+      const lastPort = await BindConfigProvider.findAvailable(MaximumPort)
+      await BindConfigProvider.clearPortLocks()
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc(lastPort)
+      expect(rpc).toBeLessThan(lastPort)
+    })
+
+    it("honors a free pinned pair and persists both reservations", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc()
+      await BindConfigProvider.clearPortLocks()
+      const config = await BindConfigProvider.resolve(
+        { solana: { ports: { http: rpc } } },
+        {}
+      )
+      expect(config.solana.ports.http).toBe(rpc)
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.findAvailable(rpc)).not.toBe(rpc)
+      const companion = rpc + BindConfigProvider.SolanaWsPortOffset
+      expect(await BindConfigProvider.findAvailable(companion)).not.toBe(
+        companion
+      )
+    })
+
+    it("fails within a bounded number of draws when every companion is unavailable", async () => {
+      const { isIpv6PortFree } =
+          await import("@wireio/cluster-tool/utils/netUtils"),
+        probe = jest.mocked(isIpv6PortFree)
+      let calls = 0
+      // HTTP candidates are available; each companion fails its IPv6 check.
+      probe.mockImplementation(async () => ++calls % 2 !== 0)
+      try {
+        await expect(
+          BindConfigProvider.findAvailableSolanaRpc()
+        ).rejects.toThrow(
+          /no free Solana RPC\/WebSocket port pair found within \d+ attempts/
+        )
+        expect(calls).toBeGreaterThan(2)
+      } finally {
+        probe.mockImplementation(async port => !mockIpv6TakenPorts.has(port))
+      }
     })
   })
 
@@ -1053,6 +1163,18 @@ describe("BindConfigProvider", () => {
       expect(port).not.toBe(claimed)
       // reading never registers THIS process
       expect(Fs.existsSync(BindConfigProvider.registryFile())).toBe(false)
+    })
+
+    it("redraws when ONLY the WebSocket companion is reserved by a live process", async () => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc(),
+        companion = rpc + BindConfigProvider.SolanaWsPortOffset
+      await BindConfigProvider.clearPortLocks()
+      seedRegistration(registrant.pid, configClaiming(companion))
+      expect(allocator.taken.has(companion)).toBe(false)
+      expect(allocator.locked.has(companion)).toBe(false)
+      const config = await BindConfigProvider.resolve({}, {})
+      expect(config.solana.ports.http).not.toBe(rpc)
+      expect(await BindConfigProvider.findAvailableSolanaRpc(rpc)).not.toBe(rpc)
     })
   })
 })
