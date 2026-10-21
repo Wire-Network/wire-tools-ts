@@ -1,4 +1,5 @@
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
+import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -9,7 +10,7 @@ import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
 
-/** `sysio@active` — issue + transfer are signed by the issuer/sender `sysio`, not the token contract. */
+/** `sysio@active` — issue is signed by the issuer `sysio`, not the token contract. */
 const SysioActiveAuthorization: PermissionLevelType[] = [
   { actor: "sysio", permission: "active" }
 ]
@@ -92,7 +93,7 @@ export namespace TokenContractSteps {
     readonly data: SysioContracts.SysioTokenTransferAction
   }
 
-  /** `sysio.token::transfer` — transfer tokens, signed by the sender `sysio@active`. */
+  /** `sysio.token::transfer` — transfer tokens, signed by the sender (`from@active`). */
   export function planTransfer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
@@ -110,7 +111,7 @@ export namespace TokenContractSteps {
     )
   }
 
-  /** Named runner — `sysio.token::transfer` (authorized `sysio@active`). */
+  /** Named runner — `sysio.token::transfer`, authorized by the sender `from@active`. */
   export async function runTransfer<C extends ClusterBuildContext>(
     ctx: C,
     input: TransferInput,
@@ -119,6 +120,8 @@ export namespace TokenContractSteps {
     signal.throwIfAborted()
     await ctx.wire
       .getSysioContract(SysioContractName.token)
-      .actions.transfer.invoke(input.data, { authorization: SysioActiveAuthorization })
+      .actions.transfer.invoke(input.data, {
+        authorization: WireClient.activeAuthorization(input.data.from)
+      })
   }
 }

@@ -8,6 +8,7 @@ import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { SolanaClient } from "@wireio/cluster-tool/clients/solana"
 import { Report } from "@wireio/cluster-tool/report"
 import { toURL } from "@wireio/cluster-tool/utils"
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 describe("SolanaFundingTool input validation", () => {
   // The Assert guards fire before any RPC, so this connection is never dialed —
@@ -320,6 +321,50 @@ describe("SolanaFundingTool named keypairs", () => {
     expect(() => SolanaFundingTool.publicKeyHex(dataPath, "absent")).toThrow(
       /SOL keypair "absent" not found/
     )
+  })
+
+  it("seededKeypair derives one fixed identity per seed", () => {
+    const seed = "flow-lco-import:solana-staker"
+    expect(SolanaFundingTool.seededKeypair(seed).publicKey.toBase58()).toBe(
+      "23znL2rifcBadqzoV2aPc9jWHVv4ucnJD7tUF5LTV58r"
+    )
+    expect(SolanaFundingTool.seededKeypair(`${seed}-2`).publicKey.toBase58()).not.toBe(
+      SolanaFundingTool.seededKeypair(seed).publicKey.toBase58()
+    )
+  })
+
+  it("persists a seeded keypair once, keeps it, and refuses a different key under the handle", async () => {
+    const ctx = fixtureContext({ dataPath }),
+      signal = new AbortController().signal,
+      step = SolanaFundingTool.planSeededKeypair(
+        Report.Actor.User,
+        "persist-seeded",
+        "persist the seeded key",
+        {},
+        "seeded-user",
+        "seed-a"
+      )
+    expect(step.input).toEqual({
+      kind: "SolanaFundingTool.SeededKeypairInput",
+      keypairName: "seeded-user",
+      seed: "seed-a"
+    })
+    expect(step.runner).toBe(SolanaFundingTool.runSeededKeypair)
+    await SolanaFundingTool.runSeededKeypair(ctx, step.input, signal)
+    await SolanaFundingTool.runSeededKeypair(ctx, step.input, signal)
+    expect(
+      SolanaFundingTool.loadKeypair(dataPath, "seeded-user").publicKey.toBase58()
+    ).toBe(SolanaFundingTool.seededKeypair("seed-a").publicKey.toBase58())
+    expect(
+      Fs.statSync(SolanaFundingTool.keypairFile(dataPath, "seeded-user")).mode & 0o777
+    ).toBe(SolanaFundingTool.SeededKeypairFileMode)
+    await expect(
+      SolanaFundingTool.runSeededKeypair(
+        ctx,
+        { ...step.input, seed: "seed-b" },
+        signal
+      )
+    ).rejects.toThrow(/already holds a different key/)
   })
 
   it("loadKeypair throws for a handle that was never created", () => {

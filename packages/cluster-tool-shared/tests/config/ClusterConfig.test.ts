@@ -10,6 +10,7 @@ import {
   createUnsetQueryEngineConfig,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
+import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { Level } from "@wireio/shared"
 
 describe("ClusterConfig shape", () => {
@@ -94,6 +95,7 @@ describe("ClusterConfig shape", () => {
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
     batchOperatorUnderwriting: null,
+    lcoImport: null,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
@@ -134,6 +136,51 @@ describe("ClusterConfig shape", () => {
     expect(enabled.enableMockSyndicationImport).toBe(true)
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     parsed.enableMockSyndicationImport = "true"
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
+    ).toThrow()
+  })
+
+  it("round-trips an LCO import: export paths, prices and the LiqPoolSpec tuning", () => {
+    const imported: ClusterConfig = {
+        ...config,
+        lcoImport: {
+          ethereum: {
+            bootstrapJsonFile: "/inputs/ethereum.json",
+            nativePriceUsd: "400000000000",
+            highestTranchePriceUsd: "30000000",
+            pool: LiqPoolSpec.create({
+              fee: 30,
+              conversionHorizonSec: 86_400,
+              depthCapBps: 50,
+              clipFloor: 1_000n
+            })
+          },
+          solana: {
+            bootstrapJsonFile: "/inputs/solana.json",
+            nativePriceUsd: null,
+            highestTranchePriceUsd: null,
+            pool: null
+          },
+          dclaimFundingAccount: "sysio"
+        }
+      },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(imported)
+      )
+    expect(rehydrated).toEqual(imported)
+    expect(rehydrated.lcoImport.ethereum.pool.clipFloor).toBe(1_000n)
+  })
+
+  it("resolves an absent lcoImport to null and rejects a non-decimal price", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.lcoImport
+    expect(
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).lcoImport
+    ).toBeNull()
+    parsed.lcoImport = {
+      solana: { bootstrapJsonFile: "/inputs/solana.json", nativePriceUsd: "2.5" }
+    }
     expect(() =>
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     ).toThrow()

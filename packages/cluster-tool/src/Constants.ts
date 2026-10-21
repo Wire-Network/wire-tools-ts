@@ -150,6 +150,8 @@ export namespace Constants {
   export const CORE_SYMBOL = "SYS"
   /** Core symbol decimal precision. */
   export const CORE_SYMBOL_PRECISION = 4
+  /** Decimal precision of the WIRE token (`9,WIRE`): one WIRE is 10^9 subunits. */
+  export const WIRE_PRECISION = 9
   /**
    * Depot-frame precision every liq token is registered at, and so the precision of every
    * shadow symbol (`9,LIQSOL`). Changing it changes the registered tokens and every shadow
@@ -164,6 +166,50 @@ export namespace Constants {
    */
   export function liqSymbol(codename: string): string {
     return `${LIQ_TOKEN_PRECISION},${codename}`
+  }
+
+  /** The depot chain code of the Ethereum outpost (`sysio.chains` row). */
+  export const ETHEREUM_CHAIN_CODE = "ETHEREUM"
+  /** The depot chain code of the Solana outpost (`sysio.chains` row). */
+  export const SOLANA_CHAIN_CODE = "SOLANA"
+
+  /**
+   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
+   * tokenCodename]`, one per liq token the registry registers. The shadow symbols, the
+   * syndication pairs, the mock yield pools and the launch-data import all derive from it,
+   * in this order.
+   */
+  export const SHADOW_LIQ_TOKEN_PAIRS = [
+    [ETHEREUM_CHAIN_CODE, "LIQETH"],
+    [SOLANA_CHAIN_CODE, LIQSOL_CODENAME]
+  ] as const
+
+  /**
+   * The liq token a chain syndicates — its {@link SHADOW_LIQ_TOKEN_PAIRS} entry's token.
+   *
+   * @param chainCode - The depot chain code (`SOLANA`).
+   * @returns The liq token codename (`LIQSOL`).
+   * @throws When the chain has no shadow liq pair.
+   */
+  export function liqTokenCode(chainCode: string): string {
+    const pair = SHADOW_LIQ_TOKEN_PAIRS.find(([chain]) => chain === chainCode)
+    if (pair == null) {
+      throw new Error(`Constants: chain ${chainCode} has no shadow liq token`)
+    }
+    return pair[1]
+  }
+
+  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
+  export const LIQ_POOL_PAIR_SUFFIX = "P"
+
+  /**
+   * The pair (LP) token code of a liq token's yield pool.
+   *
+   * @param codename - The liq token codename (`LIQSOL`).
+   * @returns The pair code (`LIQSOLP`).
+   */
+  export function liqPoolPairCode(codename: string): string {
+    return `${codename}${LIQ_POOL_PAIR_SUFFIX}`
   }
 
   /**

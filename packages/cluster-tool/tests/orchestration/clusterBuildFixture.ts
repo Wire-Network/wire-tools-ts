@@ -78,3 +78,26 @@ export function collectStepActors<C extends ClusterBuildContext>(
     )
   )
 }
+
+/**
+ * The phase named `name` anywhere in a built cluster tree, recursing through groups — for
+ * a composition test that inspects one phase's steps.
+ *
+ * @param children - The build's (or a group's) registered children.
+ * @param name - The phase name.
+ * @returns The first phase with that name, or nothing.
+ */
+export function findPhase<C extends ClusterBuildContext>(
+  children: ReadonlyArray<ClusterBuildPhaseBase<C>>,
+  name: string
+): ClusterBuildPhase<C> {
+  return children
+    .flatMap(child =>
+      child instanceof ClusterBuildPhaseGroup
+        ? [findPhase(child.children, name)]
+        : child instanceof ClusterBuildPhase && child.name === name
+          ? [child]
+          : []
+    )
+    .find(phase => phase != null)
+}
