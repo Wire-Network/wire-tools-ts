@@ -35,10 +35,12 @@ export interface AnvilOptions {
 export interface AnvilConfig extends Required<AnvilOptions> {}
 
 /**
- * Manages an anvil (Foundry) local Ethereum node. The run-phase finality knobs
- * (`slotsInAnEpoch` / `blockTimeSec`) are opt-in — they MUST NOT be set during
- * the deploy phase (`--block-time` disables instamine, which the hardhat deploy
- * depends on).
+ * Manages an anvil (Foundry) local Ethereum node. Finality (`slotsInAnEpoch`) is
+ * set at spawn on every launch, since anvil has no RPC to change it. Interval
+ * mining (`blockTimeSec`) is the one knob the deploy phase leaves off:
+ * `--block-time` disables instamine, which the Hardhat deploy depends on, so a
+ * cluster's first spawn turns it on afterwards over RPC and only a relaunch
+ * spawns with it.
  */
 export class AnvilProcess extends ManagedProcess {
   /**
