@@ -1,5 +1,7 @@
-import { BatchOperatorDisputeConstants as Constants } from "./batchOperatorDisputeConstants.js"
-import { BatchOperatorDisputeScenario } from "./BatchOperatorDisputeScenario.js"
+import {
+  BatchOperatorDisputeConstants as Constants,
+  BatchOperatorDisputeScenario
+} from "@wireio/batch-operator-dispute-scenario"
 
 /** Three distinct candidates open a dispute and slash both non-canonical deliverers. */
 export class BatchOperatorSlashingScenario extends BatchOperatorDisputeScenario {

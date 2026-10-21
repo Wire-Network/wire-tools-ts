@@ -4,11 +4,15 @@
     "rootDir": "src",
     "outDir": "lib",
     "paths": {
+      "@wireio/batch-operator-dispute-scenario": [
+        "../batch-operator-dispute-scenario/src"
+      ],
       "@wireio/cluster-tool": ["../cluster-tool/src"]
     }
   },
   "include": ["src"],
   "references": [
+    { "path": "../batch-operator-dispute-scenario/tsconfig.json" },
     { "path": "../cluster-tool/tsconfig.json" }
   ]
 }

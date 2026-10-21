@@ -3,23 +3,25 @@ import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
-import { WireClient } from "../../clients/wire/WireClient.js"
-import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
+  ClusterBuildContext,
   ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
-import { outputKey } from "../../orchestration/OutputStore.js"
-import { pollFor, pollUntil } from "../../orchestration/StepTools.js"
-import type { StepInput } from "../../orchestration/StepRunner.js"
-import { Steps } from "../../orchestration/steps/index.js"
-import { Report } from "../../report/Report.js"
-import { isNotEmpty, matchesProtoEnum } from "../../utils/predicateUtils.js"
-import { bytesToHex, encodeTaggedEnvelope } from "../envelopeCanonicalCodec.js"
-import {
   InboundTipReader,
-  type OutpostInboundTips
-} from "../InboundTipReader.js"
+  Report,
+  Steps,
+  WireClient,
+  bytesToHex,
+  encodeTaggedEnvelope,
+  isNotEmpty,
+  matchesProtoEnum,
+  outputKey,
+  pollFor,
+  pollUntil,
+  type ClusterBuildStepOptions,
+  type OutpostInboundTips,
+  type StepInput
+} from "@wireio/cluster-tool"
+
 import { BatchOperatorDisputeConstants as Constants } from "../batchOperatorDisputeConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =

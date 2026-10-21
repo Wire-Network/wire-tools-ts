@@ -1,0 +1,23 @@
+{
+  "name": "@wireio/batch-operator-dispute-scenario",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "types": "lib/index.d.ts",
+  "main": "lib/index.js",
+  "description": "Shared scenario support for batch-operator dispute flows",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test:unit": "node --test tests/*.test.cjs tests/steps/*.test.cjs",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.54",
+    "@wireio/sdk-core": "^1.0.102",
+    "@wireio/shared": "^1.0.102"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

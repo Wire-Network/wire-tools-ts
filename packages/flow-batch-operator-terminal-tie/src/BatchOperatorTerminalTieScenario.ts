@@ -1,5 +1,7 @@
-import { BatchOperatorDisputeConstants as Constants } from "./batchOperatorDisputeConstants.js"
-import { BatchOperatorDisputeScenario } from "./BatchOperatorDisputeScenario.js"
+import {
+  BatchOperatorDisputeConstants as Constants,
+  BatchOperatorDisputeScenario
+} from "@wireio/batch-operator-dispute-scenario"
 
 /** Two live operators contest a three-member schedule after one termination. */
 export class BatchOperatorTerminalTieScenario extends BatchOperatorDisputeScenario {

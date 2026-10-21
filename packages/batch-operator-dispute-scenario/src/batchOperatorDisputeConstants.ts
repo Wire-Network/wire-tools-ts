@@ -1,6 +1,6 @@
 import { SlugName } from "@wireio/sdk-core"
 
-import { ProtocolTiming } from "../Constants.js"
+import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the shared batch-operator-dispute harness. Names, tags, epoch budgets,
