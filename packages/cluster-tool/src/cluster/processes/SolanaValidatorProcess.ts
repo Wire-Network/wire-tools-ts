@@ -1,18 +1,24 @@
-import {
-  BindConfigPortProtocol,
-  DefaultSolanaSlotsPerEpoch,
-  type BindConfigPortRange
-} from "@wireio/cluster-tool-shared"
-import { Connection } from "@solana/web3.js"
 import Assert from "node:assert"
 import { execFileSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
+
 import { isEmpty, range } from "lodash"
-import { getValue } from "@wireio/shared"
+import WebSocket from "ws"
+
+import { Deferred, getLogger, getValue, isNumber } from "@wireio/shared"
+import {
+  BindConfigPortProtocol,
+  DefaultSolanaSlotsPerEpoch,
+  JsonRPCProtocol,
+  JsonRPCResponseEnvelopeSchema,
+  JsonRPCResponseEnvelopeSchemaCodec,
+  JsonRPCTransport,
+  type BindConfigPortRange
+} from "@wireio/cluster-tool-shared"
+
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
-import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
 import {
   filterSocketLinesByLocalPort,
@@ -23,6 +29,8 @@ import {
 } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
+
+const log = getLogger(__filename)
 
 /** A BPF program to deploy on validator startup. */
 export interface SolanaValidatorProgram {
@@ -112,9 +120,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
         binary,
         rpcPort:
           options.rpcPort ??
-          (await BindConfigProvider.findAvailable(
-            BindConfigProvider.DefaultSolanaRpc
-          )),
+          (await BindConfigProvider.findAvailableSolanaRpc()),
         faucetPort:
           options.faucetPort ??
           (await BindConfigProvider.findAvailable(
@@ -175,18 +181,98 @@ export class SolanaValidatorProcess extends ManagedProcess {
     return SolanaValidatorProcess.StartupTimeoutMs
   }
 
-  /** Ready only once the endpoint answers AND ≥1 slot has been produced (an
-   *  airdrop before the first slot times out). */
+  /** Ready after a produced slot AND an acknowledged WebSocket subscription.
+   * Agave can keep producing slots after its PubSub listener fails to bind. */
   async verifyReady(): Promise<boolean> {
-    if (!(await probeEndpoint(this.rpcUrl))) return false
     try {
-      const slot = await new Connection(
-        this.rpcUrl,
-        SolanaClient.DefaultCommitment
-      ).getSlot()
-      return slot > 0
-    } catch {
+      const response = await JsonRPCTransport.invoke({
+        url: this.rpcUrl,
+        request: {
+          jsonrpc: JsonRPCProtocol.Version,
+          id: SolanaValidatorProcess.ReadySubscriptionId,
+          method: SolanaValidatorProcess.ReadySlotMethod,
+          params: [{ commitment: SolanaClient.DefaultCommitment }]
+        },
+        requestSerializer: { serialize: JSON.stringify },
+        responseCodec: JsonRPCResponseEnvelopeSchemaCodec,
+        fetchProvider: globalThis.fetch.bind(globalThis),
+        signal: AbortSignal.timeout(SolanaValidatorProcess.ReadyProbeTimeoutMs)
+      })
+      if (response.error) {
+        log.debug(`Solana slot probe rejected: ${response.error.message}`)
+        return false
+      }
+      return (
+        isNumber(response.result) &&
+        Number.isSafeInteger(response.result) &&
+        response.result > 0 &&
+        (await this.verifyPubSubReady())
+      )
+    } catch (error) {
+      log.debug(`Solana readiness probe failed: ${error.message}`)
       return false
+    }
+  }
+
+  private async verifyPubSubReady(): Promise<boolean> {
+    const socket = new WebSocket(this.wsUrl, {
+        handshakeTimeout: SolanaValidatorProcess.ReadyProbeTimeoutMs
+      }),
+      closed = Deferred.useCallback<void>(deferred =>
+        socket.once("close", () => deferred.resolve())
+      ),
+      response = Deferred.useCallback<boolean>(deferred => {
+        socket.once("open", () =>
+          socket.send(
+            JSON.stringify({
+              jsonrpc: JsonRPCProtocol.Version,
+              id: SolanaValidatorProcess.ReadySubscriptionId,
+              method: SolanaValidatorProcess.ReadySubscriptionMethod,
+              params: []
+            })
+          )
+        )
+        socket.on("message", data => {
+          try {
+            const message = JsonRPCResponseEnvelopeSchema.parse(
+              JSON.parse(data.toString())
+            )
+            if (message.id !== SolanaValidatorProcess.ReadySubscriptionId)
+              return
+            const ready =
+              !message.error &&
+              isNumber(message.result) &&
+              Number.isSafeInteger(message.result) &&
+              message.result >= 0
+            if (!ready)
+              log.debug(
+                `Solana PubSub probe rejected: ${message.error?.message ?? "invalid subscription acknowledgement"}`
+              )
+            deferred.resolve(ready)
+          } catch (error) {
+            log.debug(`Solana PubSub probe response failed: ${error.message}`)
+            deferred.resolve(false)
+          }
+        })
+        socket.once("error", error => {
+          log.debug(`Solana PubSub probe failed: ${error.message}`)
+          deferred.resolve(false)
+        })
+        socket.once("close", () => deferred.resolve(false))
+      }),
+      timeout = setTimeout(() => {
+        log.debug(`Solana PubSub probe timed out at ${this.wsUrl}`)
+        response.resolve(false)
+      }, SolanaValidatorProcess.ReadyProbeTimeoutMs)
+    try {
+      return await response.promise
+    } finally {
+      clearTimeout(timeout)
+      // Do not wait for the peer's close handshake: even a broken endpoint
+      // must release its socket before the next readiness attempt.
+      socket.terminate()
+      await closed.promise
+      socket.removeAllListeners()
     }
   }
 
@@ -259,6 +345,14 @@ export class SolanaValidatorProcess extends ManagedProcess {
 }
 
 export namespace SolanaValidatorProcess {
+  /** Per-request budget; the outer startup poll retries until StartupTimeoutMs. */
+  export const ReadyProbeTimeoutMs = 5_000
+  /** HTTP readiness requires a produced slot at the client's commitment. */
+  export const ReadySlotMethod = "getSlot"
+  /** Correlation id used by the short-lived readiness subscription. */
+  export const ReadySubscriptionId = 1
+  /** PubSub must acknowledge a real subscription, not merely accept a socket. */
+  export const ReadySubscriptionMethod = "slotSubscribe"
   /**
    * Resolve caller options into a complete {@link SolanaValidatorConfig}. PURE —
    * the PATH-resolved binary and every registry-issued port/range are INJECTED,

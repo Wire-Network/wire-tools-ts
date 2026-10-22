@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import {
   Connection,
   PublicKey,
@@ -10,6 +11,7 @@ import {
   type TransactionSignature
 } from "@solana/web3.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import { scaleTimeoutMs, sleep } from "../../utils/asyncUtils.js"
 
 declare module "@solana/web3.js" {
   interface Connection {
@@ -36,6 +38,9 @@ declare module "@solana/web3.js" {
  * into one `count`ed entry in the recorder instead of ballooning `extra`.
  */
 export class RecordingConnection extends Connection {
+  /** Reserve signatures before sending; retain ambiguous sends until expiry. */
+  private readonly legacyTransactionSignatures = new Map<string, number>()
+
   constructor(endpoint: string, commitmentOrConfig?: Commitment | ConnectionConfig) {
     super(endpoint, commitmentOrConfig)
     // Every web3.js call funnels through the connection's private
@@ -50,6 +55,13 @@ export class RecordingConnection extends Connection {
     }
   }
 
+  /**
+   * Legacy transactions get a fresh blockhash at the preflight commitment before
+   * signing. web3.js caches finalized hashes for 30 seconds, which can outlive
+   * their validity on a fast local validator during a depot wait. Sign and send
+   * the bytes directly so its legacy send path cannot replace the fresh hash.
+   * Durable nonces and caller-signed versioned transactions keep their hashes.
+   */
   override async sendTransaction(
     transaction: Transaction | VersionedTransaction,
     signersOrOptions?: Signer[] | SendOptions,
@@ -57,11 +69,15 @@ export class RecordingConnection extends Connection {
   ): Promise<TransactionSignature> {
     const call = RecordingConnection.toTransactionCall(transaction)
     try {
-      // web3.js overloads sendTransaction (legacy vs versioned); the runtime
-      // dispatch is by argument shape, so forward verbatim.
-      const signature = await (
-        super.sendTransaction as (...args: unknown[]) => Promise<TransactionSignature>
-      )(transaction, signersOrOptions, options)
+      let signature: TransactionSignature
+      if (transaction instanceof VersionedTransaction) {
+        if (Array.isArray(signersOrOptions)) throw new Error("Invalid arguments")
+        signature = await super.sendTransaction(transaction, signersOrOptions)
+      } else {
+        if (!Array.isArray(signersOrOptions)) throw new Error("Invalid arguments")
+        const raw = await this.signLegacyTransaction(transaction, signersOrOptions, options)
+        signature = await this.sendRawTransaction(raw, options)
+      }
       StepExtraRecorder.record({ ...call, ok: true, signature })
       return signature
     } catch (error) {
@@ -72,6 +88,41 @@ export class RecordingConnection extends Connection {
       })
       throw error
     }
+  }
+
+  /** Fetch fresh hashes, reserve a distinct signature and capture its signed bytes. */
+  private async signLegacyTransaction(
+    transaction: Transaction,
+    signers: Signer[],
+    options?: SendOptions
+  ): Promise<Buffer> {
+    if (transaction.nonceInfo != null) {
+      transaction.sign(...signers)
+      return transaction.serialize()
+    }
+    const commitment = options?.preflightCommitment ?? this.commitment,
+      height = await this.getBlockHeight(commitment),
+      timeoutMs = scaleTimeoutMs(RecordingConnection.NewBlockhashTimeoutMs),
+      deadline = Date.now() + timeoutMs
+    for (const [signature, lastValidBlockHeight] of this.legacyTransactionSignatures) {
+      if (height > lastValidBlockHeight) this.legacyTransactionSignatures.delete(signature)
+    }
+    do {
+      const latest = await this.getLatestBlockhash(commitment)
+      transaction.recentBlockhash = latest.blockhash
+      transaction.lastValidBlockHeight = latest.lastValidBlockHeight
+      transaction.sign(...signers)
+      const signature = transaction.signature?.toString("base64")
+      Assert.ok(signature, "Solana transaction has no signature")
+      // No await between checking and reserving: concurrent callers must not
+      // submit identical bytes. Failed sends retain the reservation too.
+      if (!this.legacyTransactionSignatures.has(signature)) {
+        this.legacyTransactionSignatures.set(signature, latest.lastValidBlockHeight)
+        return transaction.serialize()
+      }
+      await sleep(RecordingConnection.NewBlockhashPollIntervalMs)
+    } while (Date.now() < deadline)
+    throw new Error(`Unable to obtain a distinct Solana transaction signature within ${timeoutMs}ms`)
   }
 
   override async sendRawTransaction(
@@ -124,6 +175,11 @@ export class RecordingConnection extends Connection {
 }
 
 export namespace RecordingConnection {
+  /** Match the SDK's ten-second polling window for a distinct blockhash. */
+  export const NewBlockhashTimeoutMs = 10_000
+  /** Poll twice per nominal Solana slot, as the SDK does. */
+  export const NewBlockhashPollIntervalMs = 200
+
   /**
    * Raw RPC method names the rich overrides (sendTransaction /
    * sendRawTransaction / requestAirdrop) already record with decoded
