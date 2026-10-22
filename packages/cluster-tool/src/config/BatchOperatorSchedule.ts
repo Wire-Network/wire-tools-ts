@@ -17,20 +17,22 @@ export const MinimumOperatorsPerEpoch = 1
 /**
  * Depot ceilings, mirrored from `sysio.epoch.hpp` so an over-large topology
  * fails HERE instead of inside `sysio.epoch::setconfig` after the whole cluster
- * has been stood up. Keep in lock-step with the contract.
+ * has been stood up: a group holds at most Ethereum's 7 operators and the window
+ * at most Solana's 8 groups. The two bound the window, so the contract has no
+ * separate window ceiling. Keep in lock-step with the contract.
  */
-export const MaxOperatorsPerEpoch = 100
-export const MaxBatchOperatorGroups = 255
-export const MaxScheduledBatchOperators = 1000
+export const MaxOperatorsPerEpoch = 7
+export const MaxBatchOperatorGroups = 8
 /**
  * HARNESS ceiling on the roster — not a depot limit.
  * `Constants.batchOperatorLabel` names operators `batchop.<letter>` off a
  * 26-letter alphabet and wraps modulo its length, so index 26 would collide with
  * index 0: two operators would share one WIRE account, parallel provisioning
  * would try to create it twice, and their node/key config would reuse a single
- * identity. The depot itself would accept a larger roster (`27 = 9 x 3` is a
- * legal shape), so raising this means giving `batchOperatorLabel` a unique
- * suffix past 26 first — the way `producerName` already does.
+ * identity. The depot itself would accept a larger roster (it schedules the
+ * window and leaves the rest out), so raising this means giving
+ * `batchOperatorLabel` a unique suffix past 26 first — the way `producerName`
+ * already does.
  */
 export const MaxBatchOperatorRoster = 26
 
@@ -84,12 +86,15 @@ export type BatchOperatorScheduleOptions = z.infer<
 
 /**
  * The largest ODD group SIZE that fits `batchOperatorCount` into
- * `batchOpGroups` groups: `floor(count / groups)` rounded DOWN to odd, floored
- * at {@link MinimumOperatorsPerEpoch}.
+ * `batchOpGroups` groups: `floor(count / groups)` capped at
+ * {@link MaxOperatorsPerEpoch}, rounded DOWN to odd, floored at
+ * {@link MinimumOperatorsPerEpoch}.
  *
  * FLOOR because `schbatchgps` asserts the ACTIVE pool is at least
- * `size × groups`; ODD because the depot's path-2 consensus threshold is a
- * strict group majority (`opp-consensus.md`).
+ * `size × groups`; CAPPED because `setconfig` rejects a larger group, so a
+ * roster wider than the window leaves its extra operators unscheduled; ODD
+ * because the depot's path-2 consensus threshold is a strict group majority
+ * (`opp-consensus.md`).
  *
  * @param batchOperatorCount - Bootstrapped batch operators in the roster.
  * @param batchOpGroups - The sliding-window group COUNT (positive).
@@ -99,7 +104,10 @@ function deriveOperatorsPerEpoch(
   batchOperatorCount: number,
   batchOpGroups: number
 ): number {
-  const fits = Math.floor(batchOperatorCount / batchOpGroups),
+  const fits = Math.min(
+      Math.floor(batchOperatorCount / batchOpGroups),
+      MaxOperatorsPerEpoch
+    ),
     odd = fits % 2 === 0 ? fits - 1 : fits
   return Math.max(MinimumOperatorsPerEpoch, odd)
 }
@@ -144,15 +152,6 @@ export const BatchOperatorScheduleSchema =
         message:
           `batch-op group SIZE must be ODD — got operators-per-epoch ${size} ` +
           `(an even group has no strict majority, so the depot's path-2 consensus threshold is undefined)`
-      })
-    }
-    if (total > MaxScheduledBatchOperators) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["batchOperatorMinimumActive"],
-        message:
-          `batch_operator_minimum_active ${total} exceeds the depot ceiling of ` +
-          `${MaxScheduledBatchOperators}`
       })
     }
     // DERIVED path: the default shape is exact, so the roster must sit on the

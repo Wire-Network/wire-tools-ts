@@ -6,8 +6,7 @@ import {
   DefaultBatchOperatorGroupCount,
   MaxBatchOperatorGroups,
   MaxBatchOperatorRoster,
-  MaxOperatorsPerEpoch,
-  MaxScheduledBatchOperators
+  MaxOperatorsPerEpoch
 } from "@wireio/cluster-tool/config"
 // Direct module, not the root barrel (it re-exports FlowCLI → yargs@18, which
 // jest cannot require as ESM on Node < 24.9).
@@ -130,27 +129,40 @@ describe("BatchOperatorSchedule.resolve", () => {
   describe("depot ceilings (sysio.epoch.hpp)", () => {
     // Review finding: these used to pass here and fail inside
     // `sysio.epoch::setconfig` after the whole cluster had been stood up.
-    // The depot ceilings sit far above the harness roster cap, so they are
-    // reachable only through explicit overrides — which is exactly how an
-    // operator would trip them.
-    it("rejects an explicit size past MAX_OPERATORS_PER_EPOCH (100)", () => {
-      expect(() => resolve(21, 101, 1)).toThrow(
-        /operatorsPerEpoch: operators-per-epoch exceeds the depot ceiling of 100/
+    // The group-size ceiling sits below the harness roster cap, so a DERIVED
+    // size is capped at it; an explicit size or group count past its ceiling
+    // is rejected on its own field.
+    it("rejects an explicit size past MAX_OPERATORS_PER_EPOCH (7)", () => {
+      expect(() => resolve(21, 9, 1)).toThrow(
+        /operatorsPerEpoch: operators-per-epoch exceeds the depot ceiling of 7/
       )
     })
 
-    it("rejects a group count past MAX_BATCH_OP_GROUPS (255)", () => {
-      expect(() => resolve(21, 1, 256)).toThrow(
-        /batchOpGroups: batch-op-groups exceeds the depot ceiling of 255/
+    it("rejects a group count past MAX_BATCH_OP_GROUPS (8)", () => {
+      expect(() => resolve(21, 1, 9)).toThrow(
+        /batchOpGroups: batch-op-groups exceeds the depot ceiling of 8/
       )
     })
 
-    it("rejects a scheduled total past MAX_SCHEDULED_BATCH_OPERATORS (1000)", () => {
-      // 5 x 255 = 1275 — under both per-field caps, over the total cap.
-      expect(() => resolve(21, 5, 255)).toThrow(
-        /batch_operator_minimum_active 1275 exceeds the depot ceiling of 1000/
-      )
+    it("accepts a size and a group count at their ceilings", () => {
+      expect(resolve(21, 7, 3).batchOperatorMinimumActive).toBe(21)
+      expect(resolve(24, 3, 8).batchOperatorMinimumActive).toBe(24)
     })
+
+    it.each([
+      [1, 7],
+      [2, 14]
+    ])(
+      "caps a size derived over %i group(s) at MAX_OPERATORS_PER_EPOCH",
+      (groups, total) => {
+        // 21 operators would fill groups of 21 or 10; the rest stay unscheduled.
+        expect(resolve(21, undefined, groups)).toEqual({
+          operatorsPerEpoch: 7,
+          batchOpGroups: groups,
+          batchOperatorMinimumActive: total
+        })
+      }
+    )
 
     it("accepts the largest legal DERIVED roster (21 = 7 x 3)", () => {
       expect(resolve(21)).toMatchObject({
@@ -160,8 +172,9 @@ describe("BatchOperatorSchedule.resolve", () => {
     })
 
     it("rejects a roster past the harness label space", () => {
-      // 27 IS a legal depot shape (9 x 3) but `Constants.batchOperatorLabel`
-      // wraps modulo 26, so operator 27 would reuse the `batchop.a` handle.
+      // The depot would take a roster of 27 (it schedules the window and leaves
+      // the rest out), but `Constants.batchOperatorLabel` wraps modulo 26, so
+      // operator 27 would reuse the `batchop.a` handle.
       expect(() => resolve(27)).toThrow(
         /batchOperatorCount: batch-operator-count exceeds the harness ceiling of 26/
       )
@@ -181,9 +194,8 @@ describe("BatchOperatorSchedule.resolve", () => {
     })
 
     it("pins the ceilings against the contract", () => {
-      expect(MaxOperatorsPerEpoch).toBe(100)
-      expect(MaxBatchOperatorGroups).toBe(255)
-      expect(MaxScheduledBatchOperators).toBe(1000)
+      expect(MaxOperatorsPerEpoch).toBe(7)
+      expect(MaxBatchOperatorGroups).toBe(8)
       expect(DefaultBatchOperatorGroupCount).toBe(3)
       expect(MaxBatchOperatorRoster).toBe(26)
     })
