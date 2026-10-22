@@ -23,7 +23,10 @@ const Accounting = {
   wireState: "Launching",
   mode: "genesis",
   epoch: "7",
+  historyAddress: "6mQH7tCvb6b7gWmY1HxcbyX3c8QGQh2dXvQnZt1kDhHV",
+  attributionThroughEpoch: "6",
   poolAuthority: "8rUz82MkFsfqjpVjjgWEM66Brr1sm1R7VKZ991fF41e",
+  poolTokenAccount: "3pNvWmDmM9QvJ9Y3zHzN7bKrj9Q3q6vFrAhZB8NnjWeR",
   poolBalance: "9000000000",
   poolPretokens: "120000000",
   allocatedPretokenYield: "120000000",
@@ -34,8 +37,9 @@ const Accounting = {
   ownerlessShares: "0",
   unreportedLiqsolYield: "1000000000",
   backingAvailable: "8000000000",
-  maxInitialChainAmount: "3000000000",
+  initialChainAmount: "0",
   issues: [],
+  warnings: [],
   units: {
     liqsolDecimals: 9,
     pretokenDecimals: 8,
@@ -60,6 +64,28 @@ describe("SolanaGenesisSnapshotSchema", () => {
     expect(snapshot.balances[0].syndicatedLiqsol).toBe("5000000000")
     expect(snapshot.accounting.units.pretokenDecimals).toBe(8)
     expect(snapshot.accounting.highestTranchePriceUsd).toBeUndefined()
+  })
+
+  it("carries the purchased principal, the attribution window and the exporter's warnings", () => {
+    const warning = "120 pool pretokens remain unallocated",
+      { accounting } = SolanaGenesisSnapshotSchema.parse({
+        ...Snapshot,
+        accounting: {
+          ...Accounting,
+          attributionThroughEpoch: null,
+          initialChainAmount: "1000000000",
+          warnings: [warning]
+        }
+      })
+    expect(accounting.attributionThroughEpoch).toBeNull()
+    expect(accounting.initialChainAmount).toBe("1000000000")
+    expect(accounting.warnings).toEqual([warning])
+    expect(
+      SolanaGenesisSnapshotSchema.safeParse({
+        ...Snapshot,
+        accounting: { ...Accounting, initialChainAmount: "-1" }
+      }).success
+    ).toBe(false)
   })
 
   it("carries the tranche price once the exporter adds it", () => {

@@ -104,7 +104,10 @@ export const SolanaStakerAddress = "So11111111111111111111111111111111111111112"
 /** A wallet that only bought 3 pretokens. */
 export const SolanaPurchaserAddress = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
-/** A genesis export: 8 liqSOL backing, 5 syndicated, 3 left for the pool. */
+/**
+ * A genesis export: 5 liqSOL syndicated and 1 spent on pretokens, so the pool gets exactly that
+ * 1. The 8 liqSOL backing also holds 2 of slack, which is not minted.
+ */
 export function solanaSnapshot(): SolanaGenesisSnapshot {
   return {
     schemaVersion: 1,
@@ -141,7 +144,10 @@ export function solanaSnapshot(): SolanaGenesisSnapshot {
       wireState: "Launching",
       mode: "genesis",
       epoch: "7",
+      historyAddress: "6mQH7tCvb6b7gWmY1HxcbyX3c8QGQh2dXvQnZt1kDhHV",
+      attributionThroughEpoch: "6",
       poolAuthority: "8rUz82MkFsfqjpVjjgWEM66Brr1sm1R7VKZ991fF41e",
+      poolTokenAccount: "3pNvWmDmM9QvJ9Y3zHzN7bKrj9Q3q6vFrAhZB8NnjWeR",
       poolBalance: "9000000000",
       poolPretokens: "120000000",
       allocatedPretokenYield: "120000000",
@@ -152,8 +158,9 @@ export function solanaSnapshot(): SolanaGenesisSnapshot {
       ownerlessShares: "0",
       unreportedLiqsolYield: "1000000000",
       backingAvailable: "8000000000",
-      maxInitialChainAmount: "3000000000",
+      initialChainAmount: "1000000000",
       issues: [],
+      warnings: [],
       units: {
         liqsolDecimals: 9,
         pretokenDecimals: 8,

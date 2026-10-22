@@ -239,7 +239,7 @@ describe("LcoImportSteps", () => {
 
     describe("runVerify", () => {
       /** The fixture's booked custody per shadow, in subunits. */
-      const BookedCustody = { LIQETH: 6_500_000_000n, LIQSOL: 8_000_000_000n }
+      const BookedCustody = { LIQETH: 6_500_000_000n, LIQSOL: 6_000_000_000n }
       /** An ABI `bool` as the chain's JSON spells it. */
       const AbiTrue = 1,
         AbiFalse = 0

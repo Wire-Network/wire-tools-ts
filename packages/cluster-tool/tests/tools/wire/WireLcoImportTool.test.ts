@@ -82,7 +82,7 @@ describe("WireLcoImportTool", () => {
         solana.pool.initialWireAmount,
         solana.pool.custodyTotal,
         solana.pool.pairSymbol
-      ]).toEqual([3_000_000_000n, 6_000_000_000_000n, 8_000_000_000n, "LIQSOLP"])
+      ]).toEqual([1_000_000_000n, 2_000_000_000_000n, 6_000_000_000n, "LIQSOLP"])
     })
 
     it("lists every placeholder it used, and none once every value is set", () => {
@@ -176,18 +176,18 @@ describe("WireLcoImportTool", () => {
       ).toThrow(/no LCO liq is left for the LIQETH pool/)
     })
 
-    it("refuses a Solana export whose accounting disagrees with its balances, or reports issues", () => {
-      const disagreeing = solanaSnapshot(),
+    it("refuses a Solana export whose booked principal exceeds its backing, or reports issues", () => {
+      const overbooked = solanaSnapshot(),
         troubled = solanaSnapshot()
-      disagreeing.accounting.maxInitialChainAmount = "2000000000"
+      overbooked.accounting.initialChainAmount = "4000000000"
       troubled.accounting.issues = ["ownerless shares"]
       expect(() =>
         WireLcoImportTool.createPlan({
           ethereum: null,
-          solana: fixture.chain("disagreeing.json", disagreeing),
+          solana: fixture.chain("overbooked.json", overbooked),
           dclaimFundingAccount: null
         })
-      ).toThrow(/maxInitialChainAmount disagrees/)
+      ).toThrow(/booked principal 9000000000 exceeds the 8000000000 the pool can back/)
       expect(() =>
         WireLcoImportTool.createPlan({
           ethereum: null,
@@ -300,8 +300,8 @@ describe("WireLcoImportTool", () => {
         chain_code: "SOLANA",
         token_code: "LIQSOL",
         pair_symbol: "9,LIQSOLP",
-        initial_chain_amount: "3000000000",
-        initial_wire_amount: "6000000000000",
+        initial_chain_amount: "1000000000",
+        initial_wire_amount: "2000000000000",
         fee: 30,
         locked_shares: "0",
         conversion_horizon_sec: 86_400,
@@ -312,7 +312,9 @@ describe("WireLcoImportTool", () => {
 
     it("totals and summarizes each chain", () => {
       expect(WireLcoImportTool.chainPlans(plan)).toEqual([plan.ethereum, plan.solana])
-      expect(WireLcoImportTool.syndicatedTotal(plan.ethereum)).toBe(4_500_000_000n)
+      expect(WireLcoImportTool.syndicatedTotal(plan.ethereum.syndications)).toBe(
+        4_500_000_000n
+      )
       expect(WireLcoImportTool.claimTotal(plan.solana)).toBe(4_200_000_000n)
       expect(WireLcoImportTool.planClaimTotal(plan)).toBe(8_450_000_000n)
       expect(WireLcoImportTool.summarize(plan).ethereum).toEqual({
@@ -329,7 +331,7 @@ describe("WireLcoImportTool", () => {
     it("records every pool and position as a BootstrapPlatformConfig in authored-config JSON", () => {
       const record = WireLcoImportTool.toBootstrapPlatformConfig(plan, "sandbox"),
         json = JSON.parse(WireLcoImportTool.serializeRecord(record))
-      expect(record.t5DexAllocation).toBe(80_000_000_000_000n + 6_000_000_000_000n)
+      expect(record.t5DexAllocation).toBe(80_000_000_000_000n + 2_000_000_000_000n)
       expect(record.syndications).toHaveLength(3)
       expect(json.schema_version).toBe(1)
       expect(json.network).toBe("sandbox")

@@ -33,8 +33,9 @@ export. The import runs inside the bootstrap; nothing seeds from `plan()`.
 | `lcosolstaker` | Solana | seed `flow-lco-import:solana-staker` | 4 liqSOL syndicated, 2.5 pretoken yield |
 | `lcosolbuyer1` | Solana | seed `flow-lco-import:solana-purchaser` | 10 pretokens bought with 2 liqSOL |
 
-The Ethereum booked custody is 3.1 liqETH and the Solana backing 6.5 liqSOL, so the pools
-seed 1.1 liqETH and 2.5 liqSOL. Changing a holder's key derivation requires regenerating
+The Ethereum booked custody is 3.1 liqETH, so its pool seeds 1.1 liqETH. The Solana pool seeds
+exactly the 2 liqSOL spent on pretokens; the 6.5 liqSOL backing also holds 0.5 of slack, which is
+not minted. Changing a holder's key derivation requires regenerating
 its rows in `resources/`; the first verify step fails otherwise.
 
 ## Single-shot per cluster

@@ -145,8 +145,9 @@ depot inside the epoch-0 window, in the `LcoImport` phase group right after
 
 - each staker's principal → `sysio.synd::importsynd`, keyed by its pubkey (50 per push);
 - each address's pretokens → `sysio.dclaim::importseed` at one pretoken per WIRE (500 per push);
-- the protocol-owned liq (booked custody less every staked position) → `sysio.liq::regliqpool`,
-  its WIRE side `liq × native price ÷ highest tranche price`;
+- the protocol-owned liq (booked custody less every staked position; on Solana exactly the
+  export's `initialChainAmount`, never the custody slack) → `sysio.liq::regliqpool`, its WIRE side
+  `liq × native price ÷ highest tranche price`;
 - then `sysio.dclaim` is funded with every claim, both imports are sealed (`sysio.synd` only
   when no mock import follows), and the result is verified.
 

@@ -60,8 +60,14 @@ export const SolanaGenesisAccountingSchema = z.object({
   mode: z.literal("genesis"),
   /** The Solana epoch the export read. */
   epoch: UnsignedDecimalStringSchema,
+  /** The `PretokenPurchaseHistory` PDA the yield attribution read. */
+  historyAddress: z.string(),
+  /** The last epoch whose pool purchases were attributed to wallets; `null` when none was. */
+  attributionThroughEpoch: UnsignedDecimalStringSchema.nullable(),
   /** The pool authority PDA. */
   poolAuthority: z.string(),
+  /** The pool's liqSOL token account. */
+  poolTokenAccount: z.string(),
   /** liqSOL in the pool ATA. */
   poolBalance: UnsignedDecimalStringSchema,
   /** Pretokens bought with pool yield. */
@@ -82,10 +88,16 @@ export const SolanaGenesisAccountingSchema = z.object({
   unreportedLiqsolYield: UnsignedDecimalStringSchema,
   /** The pool balance minus the unreported yield: what may back the launch mint. */
   backingAvailable: UnsignedDecimalStringSchema,
-  /** `backingAvailable` minus the syndicated principal: the LIQSOL pool's liq side. */
-  maxInitialChainAmount: UnsignedDecimalStringSchema,
+  /**
+   * The frozen `totalPurchasedLiqsol`: the principal spent on pretokens. The PostLaunch flip
+   * books exactly staked plus purchased principal, so this is the LIQSOL pool's liq side; custody
+   * slack (converted yield, donations) is not LIQ.
+   */
+  initialChainAmount: UnsignedDecimalStringSchema,
   /** Reconciliation failures; a genesis export is only produced with none. */
   issues: z.array(z.string()),
+  /** Non-blocking attribution warnings, such as pool pretokens no wallet was attributed. */
+  warnings: z.array(z.string()),
   /** The units of every amount in the export. */
   units: SolanaGenesisUnitsSchema,
   /**

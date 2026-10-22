@@ -276,8 +276,10 @@ export namespace WireLcoImportTool {
   }
 
   /** The total of a chain's syndicated positions, in the liq token's depot subunits. */
-  export function syndicatedTotal(chainPlan: ChainPlan): bigint {
-    return chainPlan.syndications.reduce((sum, spec) => sum + spec.amount, 0n)
+  export function syndicatedTotal(
+    syndications: ChainPlan["syndications"]
+  ): bigint {
+    return syndications.reduce((sum, spec) => sum + spec.amount, 0n)
   }
 
   /** The total of a chain's WIRE claims, in WIRE subunits. */
@@ -556,28 +558,32 @@ export namespace WireLcoImportTool {
           )
           .filter(spec => spec.amount > 0n)
       ),
-      { pool, placeholders } = createPool({
+      // The PostLaunch flip books exactly staked plus purchased principal; minting the
+      // custody slack too would create LIQSOL the settlement ledger cannot pay out.
+      custodyTotal =
+        toDepot(accounting.initialChainAmount) + syndicatedTotal(syndications),
+      backing = toDepot(accounting.backingAvailable)
+    Assert.ok(
+      custodyTotal <= backing,
+      `WireLcoImportTool: ${file}: the booked principal ${custodyTotal} exceeds the ${backing} the pool can back`
+    )
+    const { pool, placeholders } = createPool({
         chainConfig,
         member: "solana",
         chainCode,
         tokenCode,
-        custodyTotal: toDepot(accounting.backingAvailable),
+        custodyTotal,
         syndications,
         exportedTranchePriceUsd: accounting.highestTranchePriceUsd,
         placeholderNativePriceUsd: PlaceholderSolanaPriceUsd
-      })
-    Assert.strictEqual(
-      pool.initialChainAmount,
-      toDepot(accounting.maxInitialChainAmount),
-      `WireLcoImportTool: ${file}: accounting.maxInitialChainAmount disagrees with backingAvailable less the wallets' syndicated liqSOL`
-    )
-    const claims = createClaims(
-      snapshot.balances.map(balance => ({
-        nativeAddress: nativeBytesHex(ChainKind.SVM, balance.address),
-        amount: BigInt(balance.totalPretokens)
-      })),
-      units.pretokenDecimals
-    )
+      }),
+      claims = createClaims(
+        snapshot.balances.map(balance => ({
+          nativeAddress: nativeBytesHex(ChainKind.SVM, balance.address),
+          amount: BigInt(balance.totalPretokens)
+        })),
+        units.pretokenDecimals
+      )
     return {
       plan: {
         chain: ChainKind.SVM,
@@ -596,10 +602,7 @@ export namespace WireLcoImportTool {
    */
   function createPool(source: PoolSource): PoolDerivation {
     const { chainCode, tokenCode, custodyTotal, chainConfig, member } = source,
-      syndicated = source.syndications.reduce(
-        (sum, spec) => sum + spec.amount,
-        0n
-      ),
+      syndicated = syndicatedTotal(source.syndications),
       initialChainAmount = custodyTotal - syndicated
     Assert.ok(
       initialChainAmount > 0n,
@@ -840,7 +843,7 @@ export namespace WireLcoImportTool {
     return {
       bootstrapJsonFile: chainPlan.bootstrapJsonFile,
       syndicationCount: chainPlan.syndications.length,
-      syndicatedTotal: syndicatedTotal(chainPlan).toString(),
+      syndicatedTotal: syndicatedTotal(chainPlan.syndications).toString(),
       claimCount: chainPlan.claims.length,
       claimTotal: claimTotal(chainPlan).toString(),
       poolChainAmount: chainPlan.pool.initialChainAmount.toString(),

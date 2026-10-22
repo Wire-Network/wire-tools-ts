@@ -476,8 +476,10 @@ drops every `SYNDICATE_LIQ` of the pair).
     - `sysio.dclaim::importseed({chain, credits})` — `[sysio.dclaim@active]`, 500 credits a push — each
       address's pretokens as WIRE, one pretoken per WIRE;
     - `sysio.liq::regliqpool({...})` — `[sysio.liq@active]` — the chain's pool: booked custody less every
-      imported position as the liq side, `liq × native price ÷ highest tranche price` as the WIRE side
-      (drained from the `sysio` treasury), the caller's tuning.
+      imported position as the liq side (on Solana exactly the export's `initialChainAmount`, the purchased
+      principal; custody slack is never minted, and the booked principal must not exceed `backingAvailable`),
+      `liq × native price ÷ highest tranche price` as the WIRE side (drained from the `sysio` treasury), the
+      caller's tuning.
     Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account,
     `sysio.dclaim::importdone` and (unless the mock import follows) `sysio.synd::importdone` seal the imports,
     and a verify checks each imported shadow's outstanding equals its booked custody. Placeholders stand in for
