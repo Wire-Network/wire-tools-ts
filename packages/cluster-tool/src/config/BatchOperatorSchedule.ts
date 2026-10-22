@@ -18,11 +18,18 @@ export const MinimumOperatorsPerEpoch = 1
  * Depot ceilings, mirrored from `sysio.epoch.hpp` so an over-large topology
  * fails HERE instead of inside `sysio.epoch::setconfig` after the whole cluster
  * has been stood up: a group holds at most Ethereum's 7 operators and the window
- * at most Solana's 8 groups. The two bound the window, so the contract has no
- * separate window ceiling. Keep in lock-step with the contract.
+ * at most Solana's 8 groups. The two bound the window, so the contract derives
+ * its window ceiling from them instead of checking it separately. Keep in
+ * lock-step with the contract.
  */
 export const MaxOperatorsPerEpoch = 7
 export const MaxBatchOperatorGroups = 8
+/**
+ * The largest schedule window (`batch_operator_minimum_active`), derived from
+ * the two ceilings above the way `sysio.epoch.hpp` derives
+ * `MAX_SCHEDULED_BATCH_OPERATORS`. Nothing checks it separately.
+ */
+export const MaxScheduledBatchOperators = MaxBatchOperatorGroups * MaxOperatorsPerEpoch
 /**
  * HARNESS ceiling on the roster — not a depot limit.
  * `Constants.batchOperatorLabel` names operators `batchop.<letter>` off a

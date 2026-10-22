@@ -6,7 +6,8 @@ import {
   DefaultBatchOperatorGroupCount,
   MaxBatchOperatorGroups,
   MaxBatchOperatorRoster,
-  MaxOperatorsPerEpoch
+  MaxOperatorsPerEpoch,
+  MaxScheduledBatchOperators
 } from "@wireio/cluster-tool/config"
 // Direct module, not the root barrel (it re-exports FlowCLI → yargs@18, which
 // jest cannot require as ESM on Node < 24.9).
@@ -196,6 +197,7 @@ describe("BatchOperatorSchedule.resolve", () => {
     it("pins the ceilings against the contract", () => {
       expect(MaxOperatorsPerEpoch).toBe(7)
       expect(MaxBatchOperatorGroups).toBe(8)
+      expect(MaxScheduledBatchOperators).toBe(56)
       expect(DefaultBatchOperatorGroupCount).toBe(3)
       expect(MaxBatchOperatorRoster).toBe(26)
     })
