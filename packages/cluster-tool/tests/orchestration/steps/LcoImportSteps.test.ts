@@ -9,13 +9,17 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import { Report } from "@wireio/cluster-tool/report"
-import { WireLcoImportTool, WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+import {
+  formatWireAsset,
+  WireLcoImportTool,
+  WireSyndicationTool
+} from "@wireio/cluster-tool/tools/wire"
 import { BootstrapPlatformConfig } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { LcoImportFixture } from "../../tools/wire/lcoImportFixture.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioContractName, SysioDclaimChainkind } = SysioContracts
 const LcoImportSteps = Steps.lcoImport
 const signal = new AbortController().signal
 
@@ -63,7 +67,7 @@ describe("LcoImportSteps", () => {
       ).children as ClusterBuildPhase[]
     }
 
-    it("plans the plan, one phase per chain, then the funding, seals and verify", () => {
+    it("plans the plan, one phase per chain, then the funding, reconcile, seals and verify", () => {
       const [planPhase, ethereum, solana, seal] = phases(true)
       expect(phases(true).map(phase => phase.name)).toEqual([
         "LcoImportPlan",
@@ -96,10 +100,15 @@ describe("LcoImportSteps", () => {
       })
       expect(seal.steps.map(step => step.runner)).toEqual([
         Steps.contracts.sysio.token.runTransfer,
+        LcoImportSteps.runReconcileClaims,
         Steps.contracts.sysio.dclaim.runImportdone,
         Steps.contracts.sysio.synd.runImportdone,
         LcoImportSteps.runVerify
       ])
+      expect(seal.steps[1].input).toEqual({
+        kind: "LcoImportSteps.ReconcileClaimsInput",
+        claimCount: plan.ethereum.claims.length + plan.solana.claims.length
+      })
       expect(seal.steps[0].input).toEqual({
         kind: "TokenContractSteps.TransferInput",
         data: {
@@ -115,6 +124,7 @@ describe("LcoImportSteps", () => {
       const seal = phases(false).at(-1)
       expect(seal.steps.map(step => step.runner)).toEqual([
         Steps.contracts.sysio.token.runTransfer,
+        LcoImportSteps.runReconcileClaims,
         Steps.contracts.sysio.dclaim.runImportdone,
         LcoImportSteps.runVerify
       ])
@@ -235,6 +245,152 @@ describe("LcoImportSteps", () => {
         signal
       )
       expect(invoke).toHaveBeenCalledWith(WireLcoImportTool.claimBatch(plan.ethereum, 0))
+    })
+
+    describe("runReconcileClaims", () => {
+      /** The plan's claims as the `sysio.dclaim::unmapped` rows the import writes, the chain by name. */
+      function plannedRows(): SysioContracts.SysioDclaimUnmappedTokenType[] {
+        return WireLcoImportTool.chainPlans(plan).flatMap(chainPlan =>
+          chainPlan.claims.map((claim, index) => ({
+            id: index + 1,
+            chain_kind: SysioDclaimChainkind[
+              chainPlan.chain
+            ] as keyof typeof SysioDclaimChainkind,
+            native_pubkey: claim.native_address,
+            balance: formatWireAsset(BigInt(claim.wire_atomic))
+          }))
+        )
+      }
+
+      /** A context whose `unmapped` read answers `rows`, truncated when `more` is set. */
+      function reconcilable(
+        rows: SysioContracts.SysioDclaimUnmappedTokenType[],
+        more = false
+      ) {
+        const ctx = importContext(),
+          getTableRows = jest
+            .spyOn(ctx.wire, "getTableRows")
+            .mockResolvedValue({ rows, more })
+        return { ctx, getTableRows }
+      }
+
+      /** The reconcile's input, composed for `claimCount` claims. */
+      function reconcileInput(claimCount = plannedRows().length) {
+        return {
+          kind: "LcoImportSteps.ReconcileClaimsInput" as const,
+          claimCount
+        }
+      }
+
+      it("passes when unmapped holds exactly the planned claims, in any order", async () => {
+        const { ctx, getTableRows } = reconcilable(plannedRows().reverse())
+        await expect(
+          LcoImportSteps.runReconcileClaims(ctx, reconcileInput(), signal)
+        ).resolves.toBeUndefined()
+        expect(getTableRows).toHaveBeenCalledWith(
+          expect.objectContaining({
+            account: "sysio.dclaim",
+            table: "unmapped",
+            limit: WireSyndicationTool.TableRowLimit
+          })
+        )
+      })
+
+      it("reads a chain_kind the node answers as its number", async () => {
+        const rows = plannedRows().map(row => ({
+          ...row,
+          chain_kind:
+            SysioDclaimChainkind[row.chain_kind as keyof typeof SysioDclaimChainkind]
+        }))
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable(rows).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).resolves.toBeUndefined()
+      })
+
+      it("fails when a planned claim is missing", async () => {
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable(plannedRows().slice(1)).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/differs from the planned claims/)
+      })
+
+      it("fails when a claim's amount differs", async () => {
+        const [first, ...rest] = plannedRows(),
+          raised = {
+            ...first,
+            balance: formatWireAsset(WireSyndicationTool.assetUnits(first.balance) + 1n)
+          }
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable([raised, ...rest]).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/differs from the planned claims/)
+      })
+
+      it("fails on a row the plan does not hold", async () => {
+        const rows = plannedRows(),
+          [first] = rows,
+          stray = {
+            ...first,
+            id: rows.length + 1,
+            native_pubkey: "00".repeat(first.native_pubkey.length / 2)
+          }
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable([...rows, stray]).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/differs from the planned claims/)
+      })
+
+      it("fails when a planned address sits on a chain the plan does not import", async () => {
+        const [first, ...rest] = plannedRows(),
+          moved = {
+            ...first,
+            chain_kind: SysioDclaimChainkind[
+              SysioDclaimChainkind.CHAIN_KIND_WIRE
+            ] as keyof typeof SysioDclaimChainkind
+          }
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable([moved, ...rest]).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/differs from the planned claims/)
+      })
+
+      it("fails when the unmapped read is truncated", async () => {
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            reconcilable(plannedRows(), true).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/the read is truncated/)
+      })
+
+      it("refuses a plan whose claim count changed after the seal was composed", async () => {
+        const { ctx, getTableRows } = reconcilable(plannedRows())
+        await expect(
+          LcoImportSteps.runReconcileClaims(
+            ctx,
+            reconcileInput(plannedRows().length + 1),
+            signal
+          )
+        ).rejects.toThrow(/the seal was composed for/)
+        expect(getTableRows).not.toHaveBeenCalled()
+      })
     })
 
     describe("runVerify", () => {
