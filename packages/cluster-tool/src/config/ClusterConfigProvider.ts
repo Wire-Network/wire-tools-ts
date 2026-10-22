@@ -927,8 +927,8 @@ export namespace ClusterConfigProvider {
    * Parse + rehydrate a persisted config via {@link ClusterConfigSchemaCodec} —
    * zod DECODE (`underwriterCollateral.amount` restored to a `TokenAmount`;
    * missing `signatureProvider`/`externalOutposts` filled by schema defaults).
-   * Does NOT re-claim ports (reload, not resolve) — `run` re-probes via
-   * `BindConfigProvider.validate`.
+   * Does NOT re-claim ports (reload, not resolve) — `run` re-claims them via
+   * `BindConfigProvider.claimResolved`.
    *
    * @param input - Raw JSON string.
    * @returns The rehydrated config.
