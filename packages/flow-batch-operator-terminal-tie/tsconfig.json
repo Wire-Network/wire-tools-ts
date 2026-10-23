@@ -3,7 +3,7 @@
   "compilerOptions": {},
   "include": [],
   "references": [
-    { "path": "../batch-operator-dispute-scenario/tsconfig.json" },
+    { "path": "../batch-operator-dispute-shared/tsconfig.json" },
     { "path": "../cluster-tool/tsconfig.json" },
     { "path": "./tsconfig.src.json" }
   ]

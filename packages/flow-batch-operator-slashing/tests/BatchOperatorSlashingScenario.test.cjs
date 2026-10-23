@@ -3,7 +3,7 @@ const { test } = require("node:test")
 
 const {
   BatchOperatorDisputeConstants: Constants
-} = require("@wireio/batch-operator-dispute-scenario")
+} = require("@wireio/batch-operator-dispute-shared")
 const { ClusterBuild } = require("@wireio/cluster-tool")
 
 const {

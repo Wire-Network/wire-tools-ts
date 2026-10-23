@@ -1,7 +1,7 @@
 import {
   BatchOperatorDisputeConstants as Constants,
   BatchOperatorDisputeScenario
-} from "@wireio/batch-operator-dispute-scenario"
+} from "@wireio/batch-operator-dispute-shared"
 
 /** Two live operators contest a three-member schedule after one termination. */
 export class BatchOperatorTerminalTieScenario extends BatchOperatorDisputeScenario {

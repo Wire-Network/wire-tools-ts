@@ -11,7 +11,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/batch-operator-dispute-scenario": "workspace:*",
+    "@wireio/batch-operator-dispute-shared": "workspace:*",
     "@wireio/cluster-tool": "workspace:*",
     "source-map-support": "^0.5.21"
   },

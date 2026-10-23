@@ -15,7 +15,7 @@
   "references": [
     { "path": "./packages/cluster-tool-shared/tsconfig.json" },
     { "path": "./packages/cluster-tool/tsconfig.json" },
-    { "path": "./packages/batch-operator-dispute-scenario/tsconfig.json" },
+    { "path": "./packages/batch-operator-dispute-shared/tsconfig.json" },
     { "path": "./packages/flow-operator-collateral-deposit/tsconfig.json" },
     { "path": "./packages/flow-producer-registration/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-termination/tsconfig.json" },

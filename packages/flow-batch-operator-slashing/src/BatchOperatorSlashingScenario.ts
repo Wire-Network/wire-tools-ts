@@ -1,7 +1,7 @@
 import {
   BatchOperatorDisputeConstants as Constants,
   BatchOperatorDisputeScenario
-} from "@wireio/batch-operator-dispute-scenario"
+} from "@wireio/batch-operator-dispute-shared"
 
 /** Three distinct candidates open a dispute and slash both non-canonical deliverers. */
 export class BatchOperatorSlashingScenario extends BatchOperatorDisputeScenario {
