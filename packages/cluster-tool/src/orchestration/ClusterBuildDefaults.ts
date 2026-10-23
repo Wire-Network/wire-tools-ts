@@ -18,6 +18,7 @@ import {
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
+import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
@@ -253,7 +254,24 @@ export namespace ClusterBuildDefaults {
       // (`config.externalOutposts`, trusted), so skip the local anvil/validator
       // starts + outpost deploys, record the config's deployed values instead,
       // and never contact either outpost.
-      isExternalOutpost = config.externalOutposts != null
+      isExternalOutpost = config.externalOutposts != null,
+      // The launch-data import's plan, read from each outpost's export now so a bad export or
+      // (against external outposts) a placeholder fails the build before anything runs.
+      lcoImportPlan = WireLcoImportTool.createPlan(config.lcoImport),
+      lcoPoolTokenCodes =
+        lcoImportPlan == null
+          ? []
+          : WireLcoImportTool.chainPlans(lcoImportPlan).map(
+              chainPlan => chainPlan.pool.tokenCode
+            ),
+      // A shadow has one pool: the launch-data import's replaces its mock one.
+      mockLiqPools = Steps.registry.MockLiqPoolRegistrations.filter(
+        registration => !lcoPoolTokenCodes.includes(registration.token_code)
+      ),
+      // Local outposts were deployed empty, so the imported shadow is backed like mock shadow.
+      backLcoImport = lcoImportPlan != null && !isExternalOutpost
+    if (lcoImportPlan != null && isExternalOutpost)
+      WireLcoImportTool.assertRealData(lcoImportPlan)
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
         owner: Constants.BOOTSTRAP_NODE_OWNER,
@@ -1092,16 +1110,30 @@ export namespace ClusterBuildDefaults {
       "Configure sysio.bond + each shadow pair on sysio.synd",
       {}
     )
+    // The launch-data import of each outpost's frozen export: positions, WIRE claims and the
+    // LCO pool. Epoch-zero only (importsynd, regliqpool) and the first mint of each imported
+    // shadow; it seals sysio.synd's import unless the mock import follows and seals it.
+    if (lcoImportPlan != null) {
+      Steps.lcoImport.planImport<C>(
+        prerequisites,
+        "LcoImport",
+        "Import each outpost's frozen launch data during epoch zero",
+        {},
+        lcoImportPlan,
+        !config.enableMockSyndicationImport
+      )
+    }
     // Mock shadow-liq yield pools — on for a local `create` (automatic underwriting)
     // or a flow that opts in; refused for external outposts, so a real depot never
     // mints unbacked shadow. Seeded HERE, pre-EpochBootstrap, because the contract
     // gates `regliqpool` to the epoch-0 bootstrap window, exactly like `regreserve`.
-    if (config.enableMockLiqPools) {
+    if (config.enableMockLiqPools && mockLiqPools.length > 0) {
       Steps.registry.planMockLiqPools<C>(
         prerequisites,
         "MockLiqPools",
-        "Seed the 2 mock shadow-liq yield pools on sysio.swap",
-        {}
+        `Seed the ${mockLiqPools.length} mock shadow-liq yield pools on sysio.swap`,
+        {},
+        mockLiqPools
       )
     }
     // Underwriting batch operators are funded by the same epoch-zero import, to their own
@@ -1110,7 +1142,12 @@ export namespace ClusterBuildDefaults {
     // before `EpochBootstrap` closes the bootstrap window; every other cluster keeps it here.
     const underwritingImport = isUnderwritingImport(config)
     if (!underwritingImport)
-      planMockImportAndBacking<C>(prerequisites, config, batchOperators)
+      planMockImportAndBacking<C>(
+        prerequisites,
+        config,
+        batchOperators,
+        backLcoImport
+      )
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -1202,7 +1239,8 @@ export namespace ClusterBuildDefaults {
       planMockImportAndBacking<C>(
         postContractDeployment,
         config,
-        batchOperators
+        batchOperators,
+        backLcoImport
       )
 
     // API nodes are mesh members that no bootstrap step reads, so they start
@@ -1382,17 +1420,20 @@ export namespace ClusterBuildDefaults {
   /**
    * Plan the epoch-zero mock syndication import (with each FUNDED underwriting operator's
    * credit — the first `batchOperatorUnderwriting.fundedOperatorCount` — when
-   * {@link isUnderwritingImport}) and the custody backing that must follow every mock shadow
-   * mint, each only when its option is on.
+   * {@link isUnderwritingImport}) and the custody backing that must follow every shadow
+   * mint: mock shadow, and the launch-data import's when local outposts hold its custody.
+   * Each only when its option is on.
    *
    * @param parent - The PhaseGroup the phases join.
    * @param config - The resolved cluster config.
    * @param batchOperators - The bootstrap batch-operator labels.
+   * @param backLcoImport - Whether the launch-data import's shadow needs local custody too.
    */
   function planMockImportAndBacking<C extends ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     config: ClusterConfig,
-    batchOperators: readonly string[]
+    batchOperators: readonly string[],
+    backLcoImport: boolean
   ): void {
     const underwritingImport = isUnderwritingImport(config)
     if (config.enableMockSyndicationImport) {
@@ -1411,7 +1452,11 @@ export namespace ClusterBuildDefaults {
           : []
       )
     }
-    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
+    if (
+      config.enableMockSyndicationImport ||
+      config.enableMockLiqPools ||
+      backLcoImport
+    ) {
       Steps.mockShadowBacking.planSolana<C>(parent)
       Steps.mockShadowBacking.planEthereum<C>(parent)
     }

@@ -60,18 +60,6 @@ const {
  */
 export namespace RegistrySteps {
   /**
-   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
-   * tokenCodename]`, one per liq token {@link runSeedRegistry} registers. Private
-   * source both {@link ShadowLiqTokenRegistrations} and
-   * {@link MockLiqPoolRegistrations} derive from, in this order.
-   */
-  const ShadowLiqTokenPairs = [
-    ["ETHEREUM", "LIQETH"],
-    ["SOLANA", Constants.LIQSOL_CODENAME]
-  ] as const
-  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
-  const LiqPoolPairSuffix = "P"
-  /**
    * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
    * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
    * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
@@ -728,7 +716,7 @@ export namespace RegistrySteps {
    * (one Report step per row) and its unit test.
    */
   export const ShadowLiqTokenRegistrations: SysioContracts.SysioLiqCreateAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       sym: Constants.liqSymbol(tokenCodename),
       chain_code: chainCodename,
       token_code: tokenCodename
@@ -741,10 +729,10 @@ export namespace RegistrySteps {
    * window (epoch 0), so these seed ONLY during bootstrap — never from a flow phase.
    */
   export const MockLiqPoolRegistrations: SysioContracts.SysioLiqRegliqpoolAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
-      pair_symbol: Constants.liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
+      pair_symbol: Constants.liqSymbol(Constants.liqPoolPairCode(tokenCodename)),
       initial_chain_amount: MockLiqPoolShadowSeed,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
@@ -756,13 +744,13 @@ export namespace RegistrySteps {
 
   /**
    * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
-   * {@link runSeedRegistry} registers, in {@link ShadowLiqTokenPairs} order. A pair with no
+   * {@link runSeedRegistry} registers, in {@link Constants.SHADOW_LIQ_TOKEN_PAIRS} order. A pair with no
    * row releases no syndication and accepts no desyndication, so a real depot configures
    * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
    * that phase (one Report step per row) and its unit test.
    */
   export const SyndicationConfigRegistrations: SysioContracts.SysioSyndSetconfigAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
       synd_fee_bps: SyndicationFeeBps,
@@ -886,7 +874,7 @@ export namespace RegistrySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+    const steps: ClusterBuildStep.Any<C>[] = Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
       ([, tokenCodename], index) =>
         LiqContractSteps.planCreate<C>(
           Report.Actor.Sysio,
@@ -931,7 +919,7 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename], index) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename], index) =>
         SyndContractSteps.planSetconfig<C>(
           Report.Actor.Sysio,
           `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -945,9 +933,9 @@ export namespace RegistrySteps {
         "verify-shadow-precision",
         "every shadow symbol is at the depot frame's precision, which sysio.bond can bond",
         options,
-        ShadowLiqTokenPairs.map(([, tokenCodename]) => tokenCodename)
+        Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) => tokenCodename)
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) =>
         WireSyndicationTool.planVerifyLiqTokenActive<C>(
           Report.Actor.Sysio,
           `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -973,6 +961,8 @@ export namespace RegistrySteps {
    * @param name - Short phase name.
    * @param description - Human-readable phase description.
    * @param options - Step option overrides threaded to every pool step.
+   * @param registrations - The pools to seed: {@link MockLiqPoolRegistrations} less any shadow
+   *   whose one pool the launch-data import seeds instead.
    * @returns The self-registered pool-seeding phase.
    */
   export function planMockLiqPools<
@@ -981,17 +971,17 @@ export namespace RegistrySteps {
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    registrations: readonly SysioContracts.SysioLiqRegliqpoolAction[] = MockLiqPoolRegistrations
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
-      ([chainCodename, tokenCodename], index) =>
-        LiqContractSteps.planRegliqpool<C>(
-          Report.Actor.Sysio,
-          `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
-          options,
-          MockLiqPoolRegistrations[index]
-        )
+    const steps: ClusterBuildStep.Any<C>[] = registrations.map(registration =>
+      LiqContractSteps.planRegliqpool<C>(
+        Report.Actor.Sysio,
+        `seed-liq-pool-${registration.chain_code.toLowerCase()}-${registration.token_code.toLowerCase()}`,
+        `seed the ${registration.token_code}/WIRE yield pool on sysio.swap`,
+        options,
+        registration
+      )
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
   }

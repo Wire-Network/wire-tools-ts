@@ -9,7 +9,7 @@ import {
   NodeopReadMode,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { TokenAmount } from "@wireio/opp-typescript-models"
+import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
 import { KeyType, SlugName } from "@wireio/sdk-core"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
@@ -162,6 +162,68 @@ describe("ClusterConfigProvider", () => {
       expect(reloaded.batchOperatorUnderwriting.maxExposure[0].amount).toBe(
         2_010_000_000n
       )
+    })
+  })
+
+  describe("resolveLcoImport", () => {
+    /** Pool tuning a caller sets. */
+    const pool = LiqPoolSpec.create({
+      fee: 25,
+      conversionHorizonSec: 3_600,
+      depthCapBps: 40,
+      clipFloor: 10n
+    })
+
+    it("is null without an export", () => {
+      expect(ClusterConfigProvider.resolveLcoImport({})).toBeNull()
+      expect(ClusterConfigProvider.resolveLcoImport({ lcoImport: {} })).toBeNull()
+    })
+
+    it("resolves each export absolute and leaves every unset value null", () => {
+      expect(
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "exports/solana.json",
+          lcoImport: {
+            solana: { nativePriceUsd: "15000000000", pool },
+            dclaimFundingAccount: "lco.treasury"
+          }
+        })
+      ).toEqual({
+        ethereum: null,
+        solana: {
+          bootstrapJsonFile: Path.resolve("exports/solana.json"),
+          nativePriceUsd: "15000000000",
+          highestTranchePriceUsd: null,
+          pool
+        },
+        dclaimFundingAccount: "lco.treasury"
+      })
+    })
+
+    it("refuses a chain's options without its export, and options with no export at all", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "/exports/solana.json",
+          lcoImport: { ethereum: { nativePriceUsd: "1" } }
+        })
+      ).toThrow(/lcoImport\.ethereum is set but ethereumBootstrapJsonFile is not/)
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          lcoImport: { dclaimFundingAccount: "sysio" }
+        })
+      ).toThrow(/lcoImport is set but no bootstrap JSON file is/)
+    })
+
+    it("persists the import through cluster-config.json, its pool tuning intact", () => {
+      const lcoImport = ClusterConfigProvider.resolveLcoImport({
+          ethereumBootstrapJsonFile: "/exports/ethereum.json",
+          lcoImport: { ethereum: { pool } }
+        }),
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize({ ...fixtureConfig(), lcoImport })
+        )
+      expect(reloaded.lcoImport).toEqual(lcoImport)
+      expect(reloaded.lcoImport.ethereum.pool.clipFloor).toBe(10n)
     })
   })
 

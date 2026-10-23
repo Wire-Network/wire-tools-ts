@@ -13,6 +13,34 @@ describe("Constants", () => {
       expect(Constants.liqSymbol("LIQETHP")).toBe("9,LIQETHP")
     })
   })
+  describe("shadow liq pairs", () => {
+    it("pairs each outpost chain with its liq token, Ethereum first", () => {
+      expect(Constants.SHADOW_LIQ_TOKEN_PAIRS).toEqual([
+        [Constants.ETHEREUM_CHAIN_CODE, "LIQETH"],
+        [Constants.SOLANA_CHAIN_CODE, Constants.LIQSOL_CODENAME]
+      ])
+      expect([Constants.ETHEREUM_CHAIN_CODE, Constants.SOLANA_CHAIN_CODE]).toEqual([
+        "ETHEREUM",
+        "SOLANA"
+      ])
+    })
+
+    it("names a chain's liq token, refusing a chain with none", () => {
+      expect(Constants.liqTokenCode("SOLANA")).toBe("LIQSOL")
+      expect(Constants.liqTokenCode("ETHEREUM")).toBe("LIQETH")
+      expect(() => Constants.liqTokenCode("WIRE")).toThrow(/WIRE has no shadow liq token/)
+    })
+
+    it("names a liq token's pool pair code with the pair suffix", () => {
+      expect(Constants.LIQ_POOL_PAIR_SUFFIX).toBe("P")
+      expect(Constants.liqPoolPairCode("LIQSOL")).toBe("LIQSOLP")
+      expect(Constants.liqSymbol(Constants.liqPoolPairCode("LIQETH"))).toBe("9,LIQETHP")
+    })
+
+    it("carries WIRE's nine-decimal precision", () => {
+      expect(Constants.WIRE_PRECISION).toBe(9)
+    })
+  })
   describe("batchOperatorLabels", () => {
     it("lists the bootstrap batch-operator labels in index order", () => {
       expect(Constants.batchOperatorLabels(3)).toEqual([

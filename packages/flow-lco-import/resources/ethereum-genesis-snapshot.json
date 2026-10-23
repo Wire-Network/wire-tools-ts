@@ -1,0 +1,47 @@
+{
+  "stakers": [
+    {
+      "address": "0x145e2dc5c8238d1be628f87076a37d4a26a78544",
+      "pubkey": "0x024982335a4f5adc6a12deb2e993b4a3a758c934cfd7f039f9b7f2da9bba3584e5",
+      "totalShares": "2000000000000000000",
+      "totalPrincipalIn": "2000000000000000000",
+      "totalAmountOut": "0",
+      "netPrincipal": "2000000000000000000",
+      "yieldClaimed": "0",
+      "pretokenYield": "500000000000000000"
+    }
+  ],
+  "purchasers": [
+    {
+      "address": "0x145e2dc5c8238d1be628f87076a37d4a26a78544",
+      "pretokens": "1500000000000000000",
+      "liqShares": "0",
+      "liqPrincipalIn": "0",
+      "yieldClaimed": "0",
+      "pretokenYield": "0",
+      "totalPretokens": "1500000000000000000"
+    },
+    {
+      "address": "0xd6a098ebcc5f8bd4e174d915c54486b077a34a51",
+      "pretokens": "4000000000000000000",
+      "liqShares": "1000000000000000000",
+      "liqPrincipalIn": "1000000000000000000",
+      "yieldClaimed": "0",
+      "pretokenYield": "0",
+      "totalPretokens": "4000000000000000000"
+    }
+  ],
+  "metadata": {
+    "lastMessageId": "flow-lco-import-fixture",
+    "lastTimestamp": "1761000000",
+    "latestIndex": "1000000000000000000000000000",
+    "totalMessages": 4,
+    "totalPrincipal": "2000000000000000000",
+    "yieldDust": "0",
+    "totalLiqEthStaked": "2000000000000000000",
+    "totalLiqEthPurchased": "1000000000000000000",
+    "generatedAt": "2026-10-21T00:00:00.000Z",
+    "lastPoolLiqBalance": "3100000000000000000",
+    "highestTranchePriceUsd": "20000000"
+  }
+}
