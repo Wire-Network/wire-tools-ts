@@ -372,6 +372,7 @@ function toExternalOutposts({ ethereum, solana }) {
   }
   return {
     ethereum: {
+      oppProtocol: ethereum.oppProtocol,
       chainId: ethereum.chainId,
       outpostAddresses: readJson(ethereum.addressFile, "outpost-addrs.json"),
       ...(ethereum.liqEthAddressFile != null
@@ -379,6 +380,7 @@ function toExternalOutposts({ ethereum, solana }) {
         : {})
     },
     solana: {
+      oppProtocol: solana.oppProtocol,
       programId: readJson(solana.idlFile, "liqsol_core IDL").address,
       ...(solana.mintsFile != null
         ? { mints: readJson(solana.mintsFile, "sol-mock-mints.json") }

@@ -60,6 +60,8 @@ export type ExternalClusterConfigWire = z.infer<
  * the operator daemons read, plus the chain the outpost runs on.
  */
 export const ExternalClusterConfigEthereumSchema = z.object({
+  /** Preserve the source deployment's declared OPP capabilities. */
+  oppProtocol: ExternalOutpostConfigEthereumSchema.shape.oppProtocol,
   /** The tree's `outpost-addrs.json` (deployed contract addresses). */
   addressFile: z.string(),
   /** The tree's `{contractName, address, abi}` files the daemons load. */
@@ -81,6 +83,8 @@ export type ExternalClusterConfigEthereum = z.infer<
  * operator daemons load (its top-level `address` is the program id).
  */
 export const ExternalClusterConfigSolanaSchema = z.object({
+  /** Preserve the source deployment's declared OPP capabilities. */
+  oppProtocol: ExternalOutpostConfigSolanaSchema.shape.oppProtocol,
   /** The tree's `liqsol_core` IDL. */
   idlFile: z.string(),
   /** The outpost RPC endpoint, when the source cluster's external-outpost config set one. */

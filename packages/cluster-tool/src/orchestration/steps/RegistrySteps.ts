@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
+import { OppProtocolCapabilities } from "@wireio/cluster-tool-shared"
 import {
   KeyType,
   PrivateKey,
@@ -825,7 +826,7 @@ export namespace RegistrySteps {
     )
   }
 
-  /** Named runner — `sysio.chains::setoutpost` for every outpost chain. */
+  /** Named runner — validate BOTH routes before any `sysio.chains::setoutpost` activation. */
   export async function runSeedOutpostAddresses<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -843,6 +844,17 @@ export namespace RegistrySteps {
         }
         return address
       }
+
+    // Validate the complete deployment before the first activation. An incompatible Solana
+    // outpost must not leave Ethereum partially activated. Remote declarations are REQUIRED.
+    const depot = OppProtocolCapabilities.Current,
+      external = ctx.config.externalOutposts,
+      ethereum = external == null ? depot : external.ethereum.oppProtocol,
+      solana = external == null ? depot : external.solana.oppProtocol
+    OppProtocolCapabilities.assertCompatible(depot, ethereum, "depot -> Ethereum")
+    OppProtocolCapabilities.assertCompatible(ethereum, depot, "Ethereum -> depot")
+    OppProtocolCapabilities.assertCompatible(depot, solana, "depot -> Solana")
+    OppProtocolCapabilities.assertCompatible(solana, depot, "Solana -> depot")
 
     await chains.actions.setoutpost.invoke({
       code: "ETHEREUM",
