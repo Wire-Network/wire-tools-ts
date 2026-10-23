@@ -660,7 +660,7 @@ export namespace ClusterBuildDefaults {
     ClusterBuildPhase.create<C>(
       prerequisites,
       "OPPConfig",
-      "Configure sysio.epoch + sysio.opreg"
+      "Configure sysio.epoch"
     ).push(
       Steps.contracts.sysio.epoch.planSetconfig<C>(
         Actor.Sysio,
@@ -668,17 +668,12 @@ export namespace ClusterBuildDefaults {
         "set the global epoch config",
         {},
         epochConfig(config)
-      ),
-      Steps.contracts.sysio.opreg.planSetconfig<C>(
-        Actor.Sysio,
-        "configure-opreg",
-        "set the operator-registry config",
-        {},
-        operatorRegistryConfig(config)
       )
     )
     // The opreg half of genesis-producer registration — deferred to here because sysio.opreg is
-    // only deployed by `OPPContracts` and configured by `OPPConfig` above. Bootstrapped by fiat:
+    // only deployed by `OPPContracts` above. Bootstrapped operators use the default configuration
+    // until the registry rows exist and `OperatorRegistryConfig` installs collateral requirements.
+    // Bootstrapped by fiat:
     // genesis producers post no collateral, `req_prod_collat` ships empty, and `meets_role_min`
     // refuses an empty requirement vector by design (SEC-22) — so a non-bootstrapped
     // registration would sit UNKNOWN forever and never become schedulable. They are also exempt
@@ -1052,6 +1047,21 @@ export namespace ClusterBuildDefaults {
         "seed-registry",
         "register chains, tokens, chain-tokens",
         {}
+      )
+    )
+    // Collateral requirements reference registry rows and bindings, so configure them only
+    // after seeding. Genesis producers are bootstrapped and do not require collateral.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "OperatorRegistryConfig",
+      "Configure sysio.opreg collateral requirements"
+    ).push(
+      Steps.contracts.sysio.opreg.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-opreg",
+        "set the operator-registry config",
+        {},
+        operatorRegistryConfig(config)
       )
     )
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
