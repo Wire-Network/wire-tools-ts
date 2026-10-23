@@ -371,10 +371,7 @@ describe("ClusterManager.run", () => {
     ClusterState.saveKeys(config, { nodes: [], operators: [] })
     // Every other seam would probe host ports, spawn a daemon, or dial a
     // chain; the start + resume spies record the call order under test.
-    jest.spyOn(BindConfigProvider, "validate").mockResolvedValue(true)
-    jest
-      .spyOn(BindConfigProvider, "registerResolved")
-      .mockReturnValue(undefined)
+    jest.spyOn(BindConfigProvider, "claimResolved").mockResolvedValue(true)
     jest.spyOn(Steps.processes.kiod, "runStart").mockResolvedValue(undefined)
     jest.spyOn(WireWallet.prototype, "unlock").mockResolvedValue(undefined)
     jest.spyOn(Steps.processes.nodeop, "resolveOperators").mockReturnValue([])

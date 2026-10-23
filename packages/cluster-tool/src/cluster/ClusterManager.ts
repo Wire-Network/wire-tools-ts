@@ -346,11 +346,12 @@ export namespace ClusterManager {
     // condition.
     const isExternalOutpost = config.externalOutposts != null
 
+    // Check-and-register under the port lock, so no other resolver can take a
+    // port between the check and this process's registration.
     Assert.ok(
-      await BindConfigProvider.validate(config.bind),
-      `cluster ${config.clusterPath}: one or more resolved ports are no longer free — cannot relaunch`
+      await BindConfigProvider.claimResolved(config.bind),
+      `cluster ${config.clusterPath}: one or more resolved ports are reserved, held by another process or no longer bind — cannot relaunch (the "bind registry:" warning logged just before names the ports)`
     )
-    BindConfigProvider.registerResolved(config.bind)
 
     const controller = new AbortController(),
       nodes = NodeConfig.plan(config),

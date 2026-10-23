@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "executable": {
+      "type": "string",
+      "description": "Basename of the owner's argv[0] as /proc/<pid>/cmdline reports it; empty when unknown. A reader deletes a live pid's file only when this and the pid's current basename are both non-empty and differ (the pid was recycled)."
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      },
+      "uniqueItems": true,
+      "description": "Every port the owner holds and has not released, each once. Every registry reader excludes them until the owner exits."
+    }
+  },
+  "required": [
+    "executable",
+    "ports"
+  ],
+  "title": "Bind registry registration",
+  "description": "One process's registration in the wire-tools-ts cross-process bind registry: <registry>/<pid>.bind-config.json, written atomically under the registry lock. Protocol: docs/bind-registry/README.md."
+}
