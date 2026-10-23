@@ -1,0 +1,24 @@
+{
+  "name": "@wireio/test-flow-solana-genesis-snapshot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: real prelaunch Solana positions and yield reconcile with the capital-index Launching genesis export",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "test:unit": "node --test tests/*.test.cjs",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "ts-pattern": "^5.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

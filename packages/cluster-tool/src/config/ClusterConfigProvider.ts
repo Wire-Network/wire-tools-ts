@@ -319,6 +319,8 @@ export namespace ClusterConfigProvider {
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
+      enableSolanaFixedPriceOracle:
+        options.enableSolanaFixedPriceOracle ?? false,
       batchOperatorUnderwriting: resolveBatchOperatorUnderwriting(
         options,
         batchOperatorCount
@@ -537,19 +539,21 @@ export namespace ClusterConfigProvider {
   }
 
   /**
-   * The {@link ClusterBuildOptions} members that seed mock shadow — refused
+   * The {@link ClusterBuildOptions} members that install local test fixtures — refused
    * against external outposts by {@link assertExternalOutpostMockData}.
    */
   export const MockDataOptionKeys = [
     "enableMockLiqPools",
-    "enableMockSyndicationImport"
+    "enableMockSyndicationImport",
+    "enableSolanaFixedPriceOracle"
   ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
   /**
    * Refuse mock data against EXTERNAL outposts. The mock LIQ pools and the mock
    * syndication import mint shadow that the bootstrap backs with custody on the
    * outposts, and the harness cannot fund or verify custody on outposts it did
-   * not deploy. Batch-operator underwriting stays the caller's choice: it is the
+   * not deploy. The fixed-price oracle likewise requires a local validator
+   * whose genesis the harness owns. Batch-operator underwriting stays the caller's choice: it is the
    * real role, not mock data.
    *
    * @param options - The caller's options (its `externalOutpostConfig` and mock flags).
@@ -559,7 +563,7 @@ export namespace ClusterConfigProvider {
     const requested = MockDataOptionKeys.filter(key => options[key] === true)
     Assert.ok(
       options.externalOutpostConfig == null || requested.length === 0,
-      `Mock data cannot be seeded against external outposts (${requested.join(", ")} set with externalOutpostConfig): the harness cannot back its shadow there.`
+      `Mock data cannot be seeded against external outposts (${requested.join(", ")} set with externalOutpostConfig): local test fixtures require a validator or outpost owned by the harness.`
     )
   }
 

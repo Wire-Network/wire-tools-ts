@@ -92,6 +92,7 @@ describe("ClusterConfig shape", () => {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
+    enableSolanaFixedPriceOracle: false,
     enableMockSyndicationImport: false,
     batchOperatorUnderwriting: null,
     deploymentKind: ClusterDeploymentKind.local,
@@ -157,6 +158,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.enableMockSyndicationImport
     delete parsed.batchOperatorUnderwriting
     delete parsed.enableMockLiqPools
+    delete parsed.enableSolanaFixedPriceOracle
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -170,6 +172,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockLiqPools).toBe(false)
+    expect(rehydrated.enableSolanaFixedPriceOracle).toBe(false)
     expect(rehydrated.enableMockSyndicationImport).toBe(false)
     expect(rehydrated.batchOperatorUnderwriting).toBeNull()
     // A config predating either field loads as the CREATE shape: trace_api on
@@ -193,6 +196,16 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("preserves the opted-in local oracle through persistence", () => {
+    const roundTrip = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize({
+        ...config,
+        enableSolanaFixedPriceOracle: true
+      })
+    )
+    expect(roundTrip.enableSolanaFixedPriceOracle).toBe(true)
   })
 
   it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {

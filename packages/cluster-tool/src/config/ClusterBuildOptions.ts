@@ -112,6 +112,8 @@ export interface ClusterBuildOptions {
    * initialized against.
    */
   solanaSlotsPerEpoch?: number
+  /** Install a $100 Chainlink CPI fixture at genesis on a local test validator. Default false. */
+  enableSolanaFixedPriceOracle?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

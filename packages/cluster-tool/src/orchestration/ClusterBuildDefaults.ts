@@ -18,6 +18,7 @@ import {
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
+import { SolanaFixedPriceOracleTool } from "../tools/solana/SolanaFixedPriceOracleTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
@@ -276,6 +277,16 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── processes + keys + producing nodes ──
+    if (!isExternalOutpost && config.enableSolanaFixedPriceOracle)
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "SolanaFixedPriceOracle",
+        "Prepare the local $100 oracle before starting the cluster clocks"
+      ).push(
+        SolanaFixedPriceOracleTool.planBuild<C>(Actor.SolanaOutpost),
+        SolanaFixedPriceOracleTool.planFeed<C>(Actor.SolanaOutpost)
+      )
+
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Kiod",

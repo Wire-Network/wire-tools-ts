@@ -969,7 +969,9 @@ describe("ClusterConfigProvider", () => {
     })
 
     /** Base options for a LOCAL-outpost resolve over the sandbox. */
-    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+    function localOptions(
+      extra: ClusterBuildOptions = {}
+    ): ClusterBuildOptions {
       return {
         clusterPath: Path.join(environment.rootPath, "cluster"),
         buildPath: environment.buildPath,
@@ -984,15 +986,18 @@ describe("ClusterConfigProvider", () => {
       extra: ClusterBuildOptions = {}
     ): ClusterBuildOptions {
       return localOptions({
-        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        externalOutpostConfig: fixtureExternalOutpostConfig(
+          environment.rootPath
+        ),
         ...extra
       })
     }
 
-    it("refuses exactly the two mock-data options", () => {
+    it("refuses shadow fixtures and the local oracle against external outposts", () => {
       expect(ClusterConfigProvider.MockDataOptionKeys).toEqual([
         "enableMockLiqPools",
-        "enableMockSyndicationImport"
+        "enableMockSyndicationImport",
+        "enableSolanaFixedPriceOracle"
       ])
     })
 
@@ -1035,11 +1040,13 @@ describe("ClusterConfigProvider", () => {
       const config = await ClusterConfigProvider.resolve(
         localOptions({
           enableMockLiqPools: true,
-          enableMockSyndicationImport: true
+          enableMockSyndicationImport: true,
+          enableSolanaFixedPriceOracle: true
         })
       )
       expect(config.enableMockLiqPools).toBe(true)
       expect(config.enableMockSyndicationImport).toBe(true)
+      expect(config.enableSolanaFixedPriceOracle).toBe(true)
     })
   })
 
