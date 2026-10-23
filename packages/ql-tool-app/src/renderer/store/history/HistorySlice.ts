@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import type { QueryHistoryEntry } from "@wireio/ql-shared"
 
@@ -33,11 +33,11 @@ export const HistorySlice = createSlice({
   initialState: createHistoryInitialState(),
   reducers: {
     /** Entries (re)loaded. */
-    historyLoaded(state, action: PayloadAction<QueryHistoryEntry[]>) {
+    historyLoaded(state: Draft<HistoryState>, action: PayloadAction<QueryHistoryEntry[]>) {
       state.entries = action.payload
     },
     /** Search text changed. */
-    searchChanged(state, action: PayloadAction<string>) {
+    searchChanged(state: Draft<HistoryState>, action: PayloadAction<string>) {
       state.search = action.payload
     }
   }

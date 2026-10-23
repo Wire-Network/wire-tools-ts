@@ -1,4 +1,4 @@
-import { createSelector, createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSelector, createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import { xor } from "lodash"
 import { match } from "ts-pattern"
 
@@ -312,12 +312,12 @@ export const ResultsSlice = createSlice({
   initialState: initialResultsState,
   reducers: {
     /** A run started. */
-    runStarted(state: ResultsState, action: PayloadAction<string>) {
+    runStarted(state: Draft<ResultsState>, action: PayloadAction<string>) {
       state.status = QueryRunStatus.running
       state.query = action.payload
     },
     /** A run finished (success or failure); the cursor returns to the first row. */
-    runFinished(state: ResultsState, action: PayloadAction<QueryExecution>) {
+    runFinished(state: Draft<ResultsState>, action: PayloadAction<QueryExecution>) {
       state.execution = action.payload
       state.status =
         action.payload.status === QueryExecutionStatus.success ? QueryRunStatus.succeeded : QueryRunStatus.failed
@@ -325,19 +325,19 @@ export const ResultsSlice = createSlice({
       state.jsonLine = 0
     },
     /** Select a server page. */
-    pageSelected(state: ResultsState, action: PayloadAction<number>) {
+    pageSelected(state: Draft<ResultsState>, action: PayloadAction<number>) {
       state.page = Math.max(QueryPager.FirstPage, action.payload)
     },
     /** Cycle the page size (choices, then All); back to page 1, any explicit window cleared (the size decides again). */
-    pageSizeCycled(state: ResultsState) {
+    pageSizeCycled(state: Draft<ResultsState>) {
       Object.assign(state, ResultsState.nextPageSize(state), { page: QueryPager.FirstPage, window: null })
     },
     /** Set (or clear with null) an explicit offset/limit window. */
-    windowSet(state: ResultsState, action: PayloadAction<PageWindow>) {
+    windowSet(state: Draft<ResultsState>, action: PayloadAction<PageWindow>) {
       state.window = action.payload
     },
     /** Sort by a column: asc → desc → off (a different column starts asc). */
-    sortToggled(state: ResultsState, action: PayloadAction<string>) {
+    sortToggled(state: Draft<ResultsState>, action: PayloadAction<string>) {
       const column = action.payload
       state.sorts = match(state.sorts[0])
         .with({ column, direction: SortDirection.asc }, () => [{ column, direction: SortDirection.desc }])
@@ -345,41 +345,41 @@ export const ResultsSlice = createSlice({
         .otherwise(() => [{ column, direction: SortDirection.asc }])
     },
     /** Set a column filter; empty text removes it. */
-    filterSet(state: ResultsState, action: PayloadAction<ColumnFilter>) {
+    filterSet(state: Draft<ResultsState>, action: PayloadAction<ColumnFilter>) {
       const others = state.filters.filter(filter => filter.column !== action.payload.column)
       state.filters = action.payload.text.length === 0 ? others : [...others, action.payload]
       state.cursorRow = 0
     },
     /** Remove every filter. */
-    filtersCleared(state: ResultsState) {
+    filtersCleared(state: Draft<ResultsState>) {
       state.filters = []
     },
     /** Show a hidden column, or hide a shown one; the grid cursor returns to the first column. */
-    columnToggled(state: ResultsState, action: PayloadAction<string>) {
+    columnToggled(state: Draft<ResultsState>, action: PayloadAction<string>) {
       state.hiddenColumns = xor(state.hiddenColumns, [action.payload])
       state.cursorColumn = 0
     },
     /** Show every column again. */
-    columnsShown(state: ResultsState) {
+    columnsShown(state: Draft<ResultsState>) {
       state.hiddenColumns = []
     },
     /** Move the grid cursor (clamped). */
-    cursorMoved(state: ResultsState, action: PayloadAction<GridCursorMove>) {
+    cursorMoved(state: Draft<ResultsState>, action: PayloadAction<GridCursorMove>) {
       const { rowDelta, columnDelta, rowCount, columnCount } = action.payload
       state.cursorRow = moveCursor(state.cursorRow, rowDelta, rowCount)
       state.cursorColumn = moveCursor(state.cursorColumn, columnDelta, columnCount)
     },
     /** Place the grid cursor on a row (find hits). */
-    cursorPlaced(state: ResultsState, action: PayloadAction<number>) {
+    cursorPlaced(state: Draft<ResultsState>, action: PayloadAction<number>) {
       state.cursorRow = Math.max(0, action.payload)
     },
     /** Scroll the JSON tab (clamped so the last line stays on screen). */
-    jsonScrolled(state: ResultsState, action: PayloadAction<JsonScroll>) {
+    jsonScrolled(state: Draft<ResultsState>, action: PayloadAction<JsonScroll>) {
       const { delta, lineCount, height } = action.payload
       state.jsonLine = moveCursor(state.jsonLine, delta, lineCount - height + 1)
     },
     /** Set the find text. */
-    findTextSet(state: ResultsState, action: PayloadAction<string>) {
+    findTextSet(state: Draft<ResultsState>, action: PayloadAction<string>) {
       state.findText = action.payload
     }
   }
