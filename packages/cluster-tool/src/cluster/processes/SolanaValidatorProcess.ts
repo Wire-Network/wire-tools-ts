@@ -181,6 +181,80 @@ export class SolanaValidatorProcess extends ManagedProcess {
     return SolanaValidatorProcess.StartupTimeoutMs
   }
 
+  private bindFailureDetail: string = null
+  private validatorLogRemainder = ""
+
+  /**
+   * Watch the validator's file during startup so a short-lived conflicting
+   * socket is recorded when the bind fails, while readiness still requires
+   * both slot production and a subscription acknowledgement.
+   *
+   * @returns This validator once the normal readiness gate passes.
+   */
+  async start(): Promise<this> {
+    if (this.config.ledgerPath == null) return super.start()
+    const logFile = Path.join(this.config.ledgerPath, "validator.log")
+    let offset = getValue(() => Fs.statSync(logFile).size, 0)
+    const observe = (current: Fs.Stats, previous: Fs.Stats) => {
+      if (this.bindFailureDetail != null) return
+      if (current.ino !== previous.ino || current.size < offset) {
+        offset = 0
+        this.validatorLogRemainder = ""
+      }
+      offset = this.captureBindFailure(logFile, offset)
+    }
+    Fs.watchFile(
+      logFile,
+      { interval: SolanaValidatorProcess.ValidatorLogWatchIntervalMs },
+      observe
+    )
+    try {
+      return await super.start()
+    } finally {
+      Fs.unwatchFile(logFile, observe)
+    }
+  }
+
+  /** Read only appended bytes, retaining the first bind-error socket snapshot. */
+  private captureBindFailure(logFile: string, offset: number): number {
+    return getValue(
+      () => {
+        const descriptor = Fs.openSync(logFile, "r")
+        try {
+          const size = Fs.fstatSync(descriptor).size,
+            buffer = Buffer.alloc(SolanaValidatorProcess.ValidatorLogReadSize),
+            chunks = Math.ceil(Math.max(0, size - offset) / buffer.length)
+          range(chunks).some(() => {
+            const length = Fs.readSync(
+              descriptor,
+              buffer,
+              0,
+              Math.min(buffer.length, size - offset),
+              offset
+            )
+            offset += length
+            const text =
+              this.validatorLogRemainder + buffer.toString("utf8", 0, length)
+            this.validatorLogRemainder = text.slice(
+              -SolanaValidatorProcess.ValidatorLogReadSize
+            )
+            if (!SolanaValidatorProcess.BindFailurePattern.test(text))
+              return false
+            this.bindFailureDetail = `bind failure observed at ${new Date().toISOString()}:\n${this.assignedPortHolders() ?? "socket ownership unavailable"}`
+            this.manager.writeRaw(this.label, this.bindFailureDetail)
+            this.log.error(this.bindFailureDetail)
+            return true
+          })
+          return offset
+        } finally {
+          Fs.closeSync(descriptor)
+        }
+      },
+      offset,
+      error => log.debug(`validator log observation failed: ${error.message}`)
+    )
+  }
+
   /** Ready after a produced slot AND an acknowledged WebSocket subscription.
    * Agave can keep producing slots after its PubSub listener fails to bind. */
   async verifyReady(): Promise<boolean> {
@@ -299,9 +373,11 @@ export class SolanaValidatorProcess extends ManagedProcess {
    * HOLDER, which is gone from every log by teardown time.
    */
   protected async startupFailureDetail(): Promise<string> {
-    const parts = [this.validatorLogTail(), this.assignedPortHolders()].filter(
-      part => !isEmpty(part)
-    )
+    const parts = [
+      this.bindFailureDetail,
+      this.validatorLogTail(),
+      this.assignedPortHolders()
+    ].filter(part => !isEmpty(part))
     return parts.length === 0 ? null : parts.join("\n")
   }
 
@@ -322,7 +398,10 @@ export class SolanaValidatorProcess extends ManagedProcess {
   private assignedPortHolders(): string {
     return getValue(() => {
       const sockets = filterSocketLinesByLocalPort(
-        execFileSync("ss", ["-tuapn"], { encoding: "utf8" }),
+        execFileSync("ss", ["-tuapn"], {
+          encoding: "utf8",
+          timeout: SolanaValidatorProcess.SocketSnapshotTimeoutMs
+        }),
         this.assignedPorts
       )
       return `sockets live on assigned ports (ss -tuapn):\n${
@@ -345,6 +424,15 @@ export class SolanaValidatorProcess extends ManagedProcess {
 }
 
 export namespace SolanaValidatorProcess {
+  /** Poll file metadata promptly during startup, including before log creation. */
+  export const ValidatorLogWatchIntervalMs = 100
+  /** Bound each appended-log read while still scanning every new byte. */
+  export const ValidatorLogReadSize = 65_536
+  /** Agave/Rust bind-error spellings that require an immediate socket snapshot. */
+  export const BindFailurePattern =
+    /failed to bind|Address already in use|AddrInUse/i
+  /** Best-effort diagnostics must not hang the readiness loop. */
+  export const SocketSnapshotTimeoutMs = 5_000
   /** Per-request budget; the outer startup poll retries until StartupTimeoutMs. */
   export const ReadyProbeTimeoutMs = 5_000
   /** HTTP readiness requires a produced slot at the client's commitment. */
