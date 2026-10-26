@@ -10,8 +10,10 @@ import {
 
 /** The wire-tools-ts repository root (tests/cluster → package → packages → repository). */
 const RepoRoot = Path.resolve(__dirname, "..", "..", "..", "..")
+/** The docs root the generator writes under. */
+const DocsRoot = Path.join(RepoRoot, "docs")
 /** The published documentation directory of the file. */
-const DocsPath = Path.join(RepoRoot, "docs", "outpost")
+const DocsPath = Path.join(DocsRoot, "outpost")
 /** The committed, generated JSON Schema. */
 const SchemaFile = Path.join(DocsPath, "wire-opreg-bootstrap.schema.json")
 /** The committed example document. */
@@ -76,14 +78,18 @@ describe("docs/outpost/wire-opreg-bootstrap.schema.json", () => {
     withTempDirectory(outputPath => {
       expect(runGenerator("--output-path", outputPath)).toBe(GeneratorExit.success)
       expect(
-        Fs.readFileSync(Path.join(outputPath, Path.basename(SchemaFile)), "utf8")
+        Fs.readFileSync(Path.join(outputPath, Path.relative(DocsRoot, SchemaFile)), "utf8")
       ).toBe(schemaText())
     })
   })
 
-  it("makes the generator's --check exit 1 on a stale document", () => {
+  it("makes the generator's --check exit 1 when only this document is stale", () => {
     withTempDirectory(outputPath => {
-      Fs.writeFileSync(Path.join(outputPath, Path.basename(SchemaFile)), "{}\n")
+      // Every document present and correct first, so the drift below is ONLY
+      // this one — not a document the temp root simply lacks.
+      expect(runGenerator("--output-path", outputPath)).toBe(GeneratorExit.success)
+      expect(runGenerator("--check", "--output-path", outputPath)).toBe(GeneratorExit.success)
+      Fs.writeFileSync(Path.join(outputPath, Path.relative(DocsRoot, SchemaFile)), "{}\n")
       expect(runGenerator("--check", "--output-path", outputPath)).toBe(GeneratorExit.drift)
     })
   })

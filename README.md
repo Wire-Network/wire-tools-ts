@@ -358,7 +358,7 @@ between at random:
 | Starts | the WHOLE cluster, in dependency order | ONE daemon |
 | Needs | this repo installed + built | only that daemon's binary |
 | Ports/paths | re-read from `cluster-config.json` at launch | frozen from the config at emit time |
-| Registers with the bind registry | yes (`validate` + `registerResolved`) | **no** |
+| Registers with the bind registry | yes (`claimResolved`) | **no** |
 
 `run` is the local development path. `start.sh` exists for the **published
 artifact**: a consumer who unpacks
@@ -493,7 +493,7 @@ command comes first).
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
-| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
+| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults). Give a remote outpost as an IP literal: `run` treats every host name as local, so it checks and registers a host name's ports on this host ([bind registry §6](docs/bind-registry/README.md#6-ports-a-client-must-never-take)) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
@@ -782,13 +782,15 @@ handled. Keep them in mind when touching any of these areas:
 - **Port selection vs port binding.** `BindConfigProvider.resolve` picks free ports,
   but a picked port is not *bound* until its daemon spawns (possibly minutes
   later). A second process resolving in that window would happily re-pick it.
-  Every resolving process therefore registers its full resolved `BindConfig`
-  in `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
+  Every resolving process therefore registers the ports it resolved in
+  `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
   releasing the host-global port lock; later resolvers read every LIVE
   registration into their exclusion set (dead-pid files are reaped —
-  `kill(pid, 0)` + a `/proc/<pid>/cmdline` recycled-pid guard). Files are
-  removed on process exit; `findAvailable` reads the registry but never
-  writes it.
+  `kill(pid, 0)`, plus a recycled-pid guard comparing `/proc/<pid>/cmdline`
+  with the executable the file records). Files are removed on process exit;
+  `findAvailable` reads the registry but never writes it. The file format and
+  lock are a language-neutral protocol that non-Node clients (wire-sysio's
+  Python test-port lease) implement too: [`docs/bind-registry/`](docs/bind-registry/README.md).
 - **Hardhat deploy shares the repo's compile cache.** The Ethereum outpost
   deploy (`npx hardhat run src/scripts/deployLocal.ts`) compiles-if-stale
   into `<wire-ethereum>/artifacts/` + `<wire-ethereum>/cache/`, which are

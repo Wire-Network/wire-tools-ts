@@ -1,6 +1,7 @@
 export * from "./AWSClusterNodeConfig.js"
 export * from "./BatchOperatorUnderwritingConfig.js"
 export * from "./BindConfig.js"
+export * from "./BindRegistration.js"
 export * from "./ClusterConfig.js"
 export * from "./ExternalClusterConfig.js"
 export * from "./ExternalOutpostConfig.js"
