@@ -2,9 +2,10 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
-import { EthereumOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
+import { EthereumOutpostBootstrapper, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
+import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 
 /**
  * The `SyndicationPool` and `DepositManager` ABIs, TRIMMED from wire-ethereum's
@@ -29,6 +30,14 @@ const AccessManagerAddress = "0x00000000000000000000000000000000000000a4"
 
 /** An anvil HD index a flow-owned holder might use. */
 const HolderIndex = 48
+
+/** Gross fixture return and its exact net under the bootstrap's Ethereum fee. */
+const GrossReturn = 500_000_000n,
+  NetReturn = GrossReturn - WireSyndicationTool.feeOf(
+    GrossReturn,
+    Steps.registry.DesyndicationFeeBps,
+    BigInt(Steps.registry.DesyndicationFlatFees.LIQETH)
+  )
 
 /** The four-byte selector of a Solidity signature. */
 const selector = (signature: string): string =>
@@ -338,6 +347,122 @@ describe("EthereumSyndicationTool", () => {
       ).resolves.toBe(77n)
     })
 
+    it("readLiqEthBalance and readLiqEthRate read at the requested block", async () => {
+      const blockTags: ethers.BlockTag[] = [],
+        base = answeringRunner({
+          [`${token}:balanceOf`]: [78n],
+          [`${token}:index`]: [3n * 10n ** 17n + 10n ** 18n],
+          [`${token}:unit`]: [10n ** 18n]
+        }),
+        recording = {
+          provider: null,
+          call: async (transaction: ethers.TransactionRequest) => {
+            blockTags.push(transaction.blockTag)
+            return base.call(transaction)
+          }
+        } as unknown as ethers.ContractRunner,
+        holder = EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
+      await expect(
+        EthereumSyndicationTool.readLiqEthBalance(context(recording), holder, 41)
+      ).resolves.toBe(78n)
+      await expect(
+        EthereumSyndicationTool.readLiqEthRate(context(recording), 41)
+      ).resolves.toEqual({ index: 13n * 10n ** 17n, unit: 10n ** 18n })
+      expect(blockTags).toEqual([41, 41, 41])
+    })
+
+    describe("readDesyndicationPayment", () => {
+      const holder = EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
+
+      /** A `Desyndicated` log as the provider returns it, encoded by the pool ABI. */
+      function desyndicatedLog(
+        requestId: bigint,
+        blockNumber: number,
+        transactionIndex: number
+      ): ethers.Log {
+        const { data, topics } = poolInterface.encodeEventLog("Desyndicated", [
+          holder,
+          NetReturn * 10n ** 9n,
+          NetReturn,
+          requestId
+        ])
+        return {
+          address: ethers.getAddress(PoolAddress),
+          blockHash: ethers.ZeroHash,
+          blockNumber,
+          data,
+          topics,
+          index: 0,
+          removed: false,
+          transactionHash: ethers.ZeroHash,
+          transactionIndex
+        } as unknown as ethers.Log
+      }
+
+      /** A runner whose provider answers `getLogs` with `logs`, recording each filter. */
+      function loggingRunner(
+        logs: ReadonlyArray<ethers.Log>,
+        filters: ethers.Filter[] = []
+      ): ethers.ContractRunner {
+        return {
+          provider: {
+            getLogs: async (filter: ethers.Filter) => {
+              filters.push(filter)
+              return logs
+            }
+          }
+        } as unknown as ethers.ContractRunner
+      }
+
+      it("returns the one payment for the request, scanning the pool from genesis", async () => {
+        const filters: ethers.Filter[] = []
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(
+              loggingRunner(
+                [desyndicatedLog(6n, 90, 0), desyndicatedLog(7n, 120, 0)],
+                filters
+              )
+            ),
+            7n
+          )
+        ).resolves.toEqual({
+          recipient: holder,
+          nativeAmount: NetReturn * 10n ** 9n,
+          depotAmount: NetReturn,
+          requestId: 7n,
+          blockNumber: 120,
+          transactionIndex: 0
+        })
+        expect(filters).toHaveLength(1)
+        expect(filters[0].address).toBe(PoolAddress)
+        expect(filters[0].fromBlock).toBe(EthereumSyndicationTool.EventScanFromBlock)
+        expect(filters[0].topics[0]).toBe(
+          poolInterface.getEvent("Desyndicated").topicHash
+        )
+      })
+
+      it("refuses a request the pool never paid", async () => {
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(loggingRunner([desyndicatedLog(6n, 90, 0)])),
+            7n
+          )
+        ).rejects.toThrow(/expected exactly one Desyndicated event for request 7, found 0/)
+      })
+
+      it("refuses a request the pool paid twice", async () => {
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(
+              loggingRunner([desyndicatedLog(7n, 120, 0), desyndicatedLog(7n, 121, 1)])
+            ),
+            7n
+          )
+        ).rejects.toThrow(/expected exactly one Desyndicated event for request 7, found 2/)
+      })
+    })
+
     it("readPoolConfiguration reads the four configured values", async () => {
       await expect(
         EthereumSyndicationTool.readPoolConfiguration(
@@ -447,6 +572,40 @@ describe("EthereumSyndicationTool", () => {
       expect(EthereumSyndicationTool.PendingPayoutReason.SETTLEMENT_REFUSED).toBe(1)
       expect(EthereumSyndicationTool.PendingPayoutReason.CUSTODY_SHORTFALL).toBe(2)
     })
+
+    describe("liqEthBalanceAfterTransfer", () => {
+      /** 1.5 wei per share: shares 2 → balance 3. */
+      const rate = { index: 3n, unit: 2n }
+
+      it("credits the ceil-rounded shares, which can exceed balance + value", () => {
+        // ceil(2·2/3) = 2 shares added to 2 → floor(4·3/2) = 6 = 3 + 2 + 1.
+        expect(EthereumSyndicationTool.liqEthBalanceAfterTransfer(3n, 2n, rate)).toBe(6n)
+        // ceil(1·2/3) = 1 share added to 2 → floor(3·3/2) = 4 = 3 + 1.
+        expect(EthereumSyndicationTool.liqEthBalanceAfterTransfer(3n, 1n, rate)).toBe(4n)
+      })
+
+      it("is plain addition at an index equal to its unit", () => {
+        expect(
+          EthereumSyndicationTool.liqEthBalanceAfterTransfer(
+            999_500_000_000_000_000n,
+            499_750_000_000_000_000n,
+            { index: 10n ** 18n, unit: 10n ** 18n }
+          )
+        ).toBe(1_499_250_000_000_000_000n)
+      })
+
+      it("refuses an index below its unit", () => {
+        expect(() =>
+          EthereumSyndicationTool.liqEthBalanceAfterTransfer(3n, 2n, { index: 1n, unit: 2n })
+        ).toThrow(/index 1 below its unit 2/)
+      })
+
+      it("refuses a balance no share count produces", () => {
+        expect(() =>
+          EthereumSyndicationTool.liqEthBalanceAfterTransfer(2n, 2n, rate)
+        ).toThrow(/no share count yields balance 2 at index 3\/2/)
+      })
+    })
   })
 
   describe("step factories", () => {
@@ -494,12 +653,12 @@ describe("EthereumSyndicationTool", () => {
     it("planSyndicate carries the compressed key as given", () => {
       const key = EthereumSyndicationTool.compressedPubkey(HolderIndex),
         step = EthereumSyndicationTool.planSyndicate(
-          Report.Actor.User, "syndicate", "syndicate liqETH", {}, HolderIndex, 4n, key
+          Report.Actor.User, "syndicate", "syndicate liqETH", {}, HolderIndex, 5_000_000_000_000_000n, key
         )
       expect(step.input).toEqual({
         kind: "EthereumSyndicationTool.SyndicateInput",
         ethereumHdIndex: HolderIndex,
-        amount: 4n,
+        amount: 5_000_000_000_000_000n,
         compressedPubkey: key
       })
       expect(step.runner).toBe(EthereumSyndicationTool.runSyndicate)

@@ -1,7 +1,13 @@
+import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
+
+/** Fee computed from the live-row fixture used by the runner test. */
+function syndicationScenarioFee(quantity: string): string {
+  return WireSyndicationTool.feeOf(WireSyndicationTool.assetUnits(quantity), 5, 100_000n).toString()
+}
 
 const { SysioContractName } = SysioContracts
 
@@ -41,7 +47,8 @@ describe("Steps.contracts.sysio.synd", () => {
       window_sec: 60,
       bounty: 0,
       challenge_extra: 1_000_000_000,
-      min_desyndicate: 1_000_000
+      min_desyndicate: 50_000_000,
+      desynd_fee_flat: 100_000
     }
     const step = Steps.contracts.sysio.synd.planSetconfig(
       Report.Actor.Sysio,
@@ -70,7 +77,8 @@ describe("Steps.contracts.sysio.synd", () => {
       window_sec: 60,
       bounty: 0,
       challenge_extra: 1_000_000_000,
-      min_desyndicate: 1_000_000
+      min_desyndicate: 50_000_000,
+      desynd_fee_flat: 100_000
     }
     await Steps.contracts.sysio.synd.runSetconfig(
       ctx,
@@ -163,8 +171,8 @@ describe("Steps.contracts.sysio.synd", () => {
     expect(invoke).toHaveBeenCalledWith(data, signedBy(SystemAccount))
   })
 
-  it("desyndicate carries the synd::desyndicate data and binds runDesyndicate", () => {
-    const data: SysioContracts.SysioSyndDesyndicateAction = { holder: "liq.holder", quantity: "2.000000000 LIQSOL" }
+  it("desyndicate carries the return intent and binds runQuotedDesyndicate", () => {
+    const data: Omit<SysioContracts.SysioSyndDesyndicateAction, "max_fee"> = { holder: "liq.holder", quantity: "2.000000000 LIQSOL" }
     const step = Steps.contracts.sysio.synd.planDesyndicate(
       Report.Actor.Sysio,
       "synd-desyndicate",
@@ -173,21 +181,58 @@ describe("Steps.contracts.sysio.synd", () => {
       data
     )
     expect(step.actor).toBe(Report.Actor.Sysio)
-    expect(step.input).toEqual({ kind: "SyndContractSteps.DesyndicateInput", data })
-    expect(step.runner).toBe(Steps.contracts.sysio.synd.runDesyndicate)
+    expect(step.input).toEqual({ kind: "SyndContractSteps.QuotedDesyndicateInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.synd.runQuotedDesyndicate)
   })
 
-  it("runDesyndicate pushes synd::desyndicate as the holder", async () => {
+  it("runQuotedDesyndicate derives the cap and pushes synd::desyndicate as the holder", async () => {
     const { ctx, contract, getSysioContract } = syndContext(),
       invoke = jest.spyOn(contract.actions.desyndicate, "invoke").mockResolvedValue(undefined),
-      data: SysioContracts.SysioSyndDesyndicateAction = { holder: "liq.holder", quantity: "2.000000000 LIQSOL" }
-    await Steps.contracts.sysio.synd.runDesyndicate(
+      data: Omit<SysioContracts.SysioSyndDesyndicateAction, "max_fee"> = { holder: "liq.holder", quantity: "2.000000000 LIQSOL" }
+    const fee = syndicationScenarioFee(data.quantity)
+    jest.spyOn(WireSyndicationTool, "readDesyndicationFee").mockResolvedValue(fee)
+    await Steps.contracts.sysio.synd.runQuotedDesyndicate(
       ctx,
-      { kind: "SyndContractSteps.DesyndicateInput", data },
+      { kind: "SyndContractSteps.QuotedDesyndicateInput", data },
       signal
     )
     expect(getSysioContract).toHaveBeenCalledWith(SysioContractName.synd)
+    expect(invoke).toHaveBeenCalledWith({ ...data, max_fee: fee }, signedBy(data.holder))
+    expect(WireSyndicationTool.readDesyndicationFee).toHaveBeenCalledWith(ctx, data.quantity)
+  })
+
+  it("runDesyndicate preserves the caller's derived cap", async () => {
+    const { ctx, contract } = syndContext(),
+      invoke = jest.spyOn(contract.actions.desyndicate, "invoke").mockResolvedValue(undefined),
+      quantity = "2.000000000 LIQSOL",
+      data: SysioContracts.SysioSyndDesyndicateAction = {
+        holder: "liq.holder",
+        quantity,
+        max_fee: syndicationScenarioFee(quantity)
+      }
+    await Steps.contracts.sysio.synd.runDesyndicate(
+      ctx, { kind: "SyndContractSteps.DesyndicateInput", data }, signal
+    )
     expect(invoke).toHaveBeenCalledWith(data, signedBy(data.holder))
+  })
+
+  it("runQuotedDesyndicate never submits when quoting fails or execution is aborted", async () => {
+    const { ctx, contract } = syndContext(),
+      invoke = jest.spyOn(contract.actions.desyndicate, "invoke").mockResolvedValue(undefined),
+      quote = jest.spyOn(WireSyndicationTool, "readDesyndicationFee")
+        .mockRejectedValue(new Error("configuration unavailable")),
+      step = Steps.contracts.sysio.synd.planDesyndicate(
+        Report.Actor.User, "return", "return shadow", {},
+        { holder: "liq.holder", quantity: "2.000000000 LIQSOL" }
+      )
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow("configuration unavailable")
+    expect(invoke).not.toHaveBeenCalled()
+    quote.mockClear()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(step.runner(ctx, step.input, controller.signal)).rejects.toThrow()
+    expect(quote).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it("sweep carries the synd::sweep data and binds runSweep", () => {
@@ -316,7 +361,8 @@ describe("Steps.contracts.sysio.synd", () => {
       window_sec: 60,
       bounty: 0,
       challenge_extra: 1_000_000_000,
-      min_desyndicate: 1_000_000
+      min_desyndicate: 50_000_000,
+      desynd_fee_flat: 100_000
     }
     controller.abort()
     await expect(

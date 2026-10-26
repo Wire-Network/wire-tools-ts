@@ -447,7 +447,15 @@ unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: t
 panic account `Constants.PANIC_ACCOUNT`, funded native `pull`/`clear` permissions
 and action links) and `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
-`Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
+`Steps.registry.SyndicationConfigRegistrations`: free syndication;
+desyndication = floor(quantity × 5 / 10000) + flat fee, recovering gas for both
+round-trip legs (Ethereum ≈507k gas; Solana 9k–104k lamports). At 9 decimals,
+LIQETH flat/minimum = 5,000,000/100,000,000 and LIQSOL = 100,000/50,000,000;
+flat < minimum). Break-even sizing assumes a syndication of min_desyndicate.
+Outpost syndication minima are separately configured at 0.005 liqETH and
+0.0025 liqSOL (1/20 of the depot return minima). `runQuotedDesyndicate` derives
+`max_fee` from the live pair before the write; a governance increase between
+read and submission is refused on chain. A flow that needs a
 fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not
 bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /

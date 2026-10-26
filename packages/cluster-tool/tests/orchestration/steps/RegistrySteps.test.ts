@@ -144,11 +144,19 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       ])
     })
 
-    it("charges no bootstrap fee and posts no bounty", () => {
+    it("charges no syndication fee and posts no bounty", () => {
       rows.forEach(row => {
+        expect(row.synd_fee_bps).toBe(Steps.registry.SyndicationFeeBps)
         expect(row.synd_fee_bps).toBe(0)
-        expect(row.desynd_fee_bps).toBe(0)
         expect(row.bounty).toBe(0)
+      })
+    })
+
+    it("charges 5 bps plus the pair flat fee for both legs of gas", () => {
+      expect(Steps.registry.DesyndicationFeeBps).toBe(5)
+      rows.forEach(row => {
+        expect(row.desynd_fee_bps).toBe(Steps.registry.DesyndicationFeeBps)
+        expect(row.desynd_fee_bps).toBe(5)
       })
     })
 
@@ -162,10 +170,13 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       })
     })
 
-    it("uses the same 0.001 SOL equivalent gross minimum for both shadow tokens", () => {
-      expect(Steps.registry.MinimumDesyndication).toBe(1_000_000)
+    it("pins pair-specific flat fees below the gross minimum", () => {
+      expect(rows.map(row => [row.desynd_fee_flat, row.min_desyndicate])).toEqual([
+        [5_000_000, 100_000_000],
+        [100_000, 50_000_000]
+      ])
       rows.forEach(row =>
-        expect(row.min_desyndicate).toBe(Steps.registry.MinimumDesyndication)
+        expect(Number(row.desynd_fee_flat)).toBeLessThan(Number(row.min_desyndicate))
       )
     })
 

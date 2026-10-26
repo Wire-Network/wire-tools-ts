@@ -85,13 +85,29 @@ export namespace RegistrySteps {
    */
   export const BondHoldBps = 1000
   /**
-   * Fee on each released syndication tranche and on each desyndication (bps). The
-   * bootstrap charges none; a flow that exercises the fee path sets its own through
-   * `sysio.synd::setconfig` in its scenario and restores this.
+   * Fee on each released syndication tranche (bps). The bootstrap charges none: the
+   * only fee planned is on desyndication. A flow that exercises the syndication fee
+   * path sets its own through `sysio.synd::setconfig` in its scenario and restores this.
    */
   export const SyndicationFeeBps = 0
-  /** Fee on each desyndication (bps); see {@link SyndicationFeeBps}. */
-  export const DesyndicationFeeBps = 0
+  /**
+   * Syndication is free. Desyndication takes floor(quantity * 5 / 10000) plus
+   * the pair's flat fee to recover external-chain gas for BOTH round-trip legs.
+   * A lone Ethereum round trip measured about 507k gas; Solana measured
+   * 9k–104k lamports. Break-even sizing assumes syndicating min_desyndicate.
+   * Each flat fee must remain strictly below its pair's min_desyndicate.
+   */
+  export const DesyndicationFeeBps = 5
+  /** Flat return charge in depot base units (9 decimals), by shadow token. */
+  export const DesyndicationFlatFees = {
+    LIQETH: 5_000_000,
+    LIQSOL: 100_000
+  } as const
+  /** Gross return floors in depot base units (9 decimals), by shadow token. */
+  export const MinimumDesyndications = {
+    LIQETH: 100_000_000,
+    LIQSOL: 50_000_000
+  } as const
   /**
    * Size and per-epoch refill of each pair's syndication and desyndication buckets
    * (shadow base units): one million tokens at the depot's 9 decimals, far above any
@@ -105,8 +121,6 @@ export namespace RegistrySteps {
    * contract refuses a challenge whose charge is zero, so this is never 0.
    */
   export const SyndicationChallengeExtra = 1_000_000_000
-  /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
-  export const MinimumDesyndication = 1_000_000
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -762,7 +776,8 @@ export namespace RegistrySteps {
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
-      min_desyndicate: MinimumDesyndication
+      min_desyndicate: MinimumDesyndications[tokenCodename],
+      desynd_fee_flat: DesyndicationFlatFees[tokenCodename]
     }))
 
   /** Seed chains + tokens + chain-token bindings. */

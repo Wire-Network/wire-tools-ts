@@ -21,8 +21,9 @@ Every write is a Report Step; depot confirmations wait for irreversibility.
    reported yield. Claim exactly the WIRE owed by the cumulative index and
    verify the pot falls by the payout.
 7. Call `sysio.synd::desyndicate`. Verify the outbound attestation and the user's
-   liqSOL payout equal the burned amount minus the floor-rounded
-   `desynd_fee_bps` read from `syndconfig`.
+   liqSOL payout equal the gross requested amount minus the fee
+   `floor(quantity × desynd_fee_bps / 10000) + desynd_fee_flat` read from
+   `syndconfig`; the write caps that charge with a live-derived `max_fee`.
 8. Verify epochs advanced, the emergency cord is clear and `mismatch` is empty.
 
 ## Bootstrap defaults

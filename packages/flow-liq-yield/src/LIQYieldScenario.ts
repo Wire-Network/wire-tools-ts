@@ -788,7 +788,8 @@ export class LIQYieldScenario extends FlowScenario {
             Constants.SyndicateAmount -
               SyndicationScenario.feeOf(
                 Constants.SyndicateAmount,
-                config.desynd_fee_bps
+                config.desynd_fee_bps,
+                BigInt(config.desynd_fee_flat)
               )
           )
           ctx.outputs.set(

@@ -29,7 +29,7 @@ for (const complete of [true, false])
       },
       build = ClusterBuild.forContext(ctx),
       baseline = 123456n,
-      expected = baseline + Constants.DesyndicationAmount,
+      expected = baseline + Constants.DesyndicationNet,
       balance = complete ? expected : expected - 1n
     new SyndicationRateLimitScenario().plan(build)
     const step = steps(build).find(value => value.name === "return-in-wallet")
@@ -66,7 +66,7 @@ for (const fault of [
         returns: 0
       },
       row = {
-        amount: Constants.DesyndicationAmount.toString(),
+        amount: Constants.DesyndicationNet.toString(),
         holder: Constants.UserA.account,
         token_code: SyndicationScenario.Token
       },
@@ -83,7 +83,7 @@ for (const fault of [
       },
       build = ClusterBuild.forContext(ctx)
     if (fault === "amount")
-      row.amount = (Constants.DesyndicationAmount - 1n).toString()
+      row.amount = (Constants.DesyndicationNet - 1n).toString()
     if (fault === "holder") row.holder = Constants.UserB.account
     if (fault === "token") row.token_code = "LIQETH"
     new SyndicationRateLimitScenario().plan(build)
@@ -99,7 +99,7 @@ for (const fault of [
     mock.method(WireSyndicationTool, "readShadowStat", async () => ({
       supply: SyndicationScenario.quantity(
         before.supply -
-          Constants.DesyndicationAmount +
+          Constants.DesyndicationNet +
           (fault === "supply" ? 1n : 0n)
       )
     }))

@@ -213,7 +213,8 @@ describe("syndication scenario accounting", () => {
       window_sec: 60,
       bounty: 5,
       challenge_extra: 6,
-      min_desyndicate: 1
+      min_desyndicate: 50_000_000,
+      desynd_fee_flat: 100_000
     }
     ctx.outputs.set(SyndicationScenario.OriginalConfigKey, config)
     await step.runner(ctx, step.input, signal)
@@ -589,6 +590,8 @@ describe("syndication bond provider and fee arithmetic", () => {
   it("rounds fees down and coverage up to the increment", () => {
     expect(SyndicationScenario.feeOf(2_000_000_001n, 100)).toBe(20_000_000n)
     expect(SyndicationScenario.feeOf(99n, 100)).toBe(0n)
+    expect(SyndicationScenario.feeOf(99n, 100, 100_000n)).toBe(100_000n)
+    expect(SyndicationScenario.feeOf(2_000_000_001n, 5, 100_000n)).toBe(1_100_000n)
     expect(SyndicationScenario.feeOf(0n, 100)).toBe(0n)
     expect(SyndicationScenario.coveredOf(2_000_000_001n)).toBe(2_010_000_000n)
     expect(SyndicationScenario.coveredOf(2_000_000_000n)).toBe(2_000_000_000n)
