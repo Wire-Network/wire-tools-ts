@@ -18,10 +18,16 @@ import {
   LiqPoolSpec,
   SyndicationSpec
 } from "@wireio/opp-typescript-models"
-import { KeyType, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import {
+  getCompressedPublicKey,
+  KeyType,
+  PublicKey,
+  SysioContracts
+} from "@wireio/sdk-core"
 import { getValue, NestedError } from "@wireio/shared"
 import { ethers } from "ethers"
 import { countBy, sortBy } from "lodash"
+import { match } from "ts-pattern"
 import { Constants } from "../../Constants.js"
 import { isqrt } from "../../utils/bigintUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
@@ -1258,6 +1264,31 @@ export namespace WireLcoImportTool {
       type: LinkKeyTypes[chain],
       compressed: Buffer.from(nativeBytesHex(chain, pubkey), "hex")
     }).toString()
+  }
+
+  /**
+   * A `sysio.authex::links` row's `pub_key` in {@link linkKey}'s spelling. nodeop renders an EM
+   * key as unprefixed uncompressed hex (`PUB_EM_04…`), while `bypubkey` hashes it compressed.
+   *
+   * @param pubKey - The row's `pub_key`, as the node returns it.
+   * @returns The canonical key string.
+   */
+  export function linkRowKey(pubKey: string): string {
+    const key = PublicKey.from(pubKey)
+    return match(key.type)
+      .with(KeyType.EM, () =>
+        PublicKey.from({
+          type: KeyType.EM,
+          compressed: Buffer.from(
+            getCompressedPublicKey(
+              Buffer.from(key.data.array).toString("hex"),
+              KeyType.EM
+            ),
+            "hex"
+          )
+        }).toString()
+      )
+      .otherwise(() => key.toString())
   }
 
   /**

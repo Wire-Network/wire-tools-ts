@@ -6,6 +6,7 @@ import {
   LiqPoolSpec
 } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+import { ethers } from "ethers"
 import { fixtureExternalOutposts } from "../../config/resolveEnvironmentFixture.js"
 import {
   DoubleGeneratorPublicKey,
@@ -732,6 +733,19 @@ describe("WireLcoImportTool", () => {
       ).toBe(`PUB_EM_${GeneratorPublicKey.slice(2)}`)
       expect(WireLcoImportTool.linkKey(ChainKind.SVM, SolanaStakerAddress)).toBe(
         `PUB_ED_${SolanaStakerAddress}`
+      )
+    })
+
+    it("respells a links row's key as linkKey does, compressing the uncompressed EM key nodeop renders", () => {
+      const compressed = WireLcoImportTool.linkKey(ChainKind.EVM, GeneratorPublicKey)
+      expect(
+        WireLcoImportTool.linkRowKey(
+          `PUB_EM_${ethers.SigningKey.computePublicKey(GeneratorPublicKey, false).slice(2)}`
+        )
+      ).toBe(compressed)
+      expect(WireLcoImportTool.linkRowKey(compressed)).toBe(compressed)
+      expect(WireLcoImportTool.linkRowKey(`PUB_ED_${SolanaStakerAddress}`)).toBe(
+        WireLcoImportTool.linkKey(ChainKind.SVM, SolanaStakerAddress)
       )
     })
 

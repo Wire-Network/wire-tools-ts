@@ -15,8 +15,9 @@ import {
   WireLcoImportTool,
   WireSyndicationTool
 } from "@wireio/cluster-tool/tools/wire"
-import { BootstrapPlatformConfig } from "@wireio/opp-typescript-models"
+import { BootstrapPlatformConfig, ChainKind } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+import { ethers } from "ethers"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import {
   LcoImportFixture,
@@ -579,7 +580,10 @@ describe("LcoImportSteps", () => {
         }))
       )
 
-      /** The `sysio.authex::links` row linking position `index`'s pubkey to `username`. */
+      /**
+       * The `sysio.authex::links` row linking position `index`'s pubkey to `username`, its key
+       * spelled as nodeop renders it: an EM key as unprefixed uncompressed hex, an ED key in base58.
+       */
       function linkRow(
         index: number,
         username: string,
@@ -590,7 +594,10 @@ describe("LcoImportSteps", () => {
           key,
           username,
           chain_kind: SysioAuthexChainkind[chain] as keyof typeof SysioAuthexChainkind,
-          pub_key: WireLcoImportTool.linkKey(chain, pubkey)
+          pub_key:
+            chain === ChainKind.EVM
+              ? `PUB_EM_${ethers.SigningKey.computePublicKey(pubkey, false).slice(2)}`
+              : `PUB_ED_${pubkey}`
         }
       }
 

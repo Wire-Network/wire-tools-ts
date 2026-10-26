@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterFiles, type ClusterConfig } from "@wireio/cluster-tool-shared"
-import { PublicKey, SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   partition,
   range,
@@ -855,7 +855,7 @@ export namespace LcoImportSteps {
     return new Map(
       sortBy(links, link => BigInt(link.key))
         .reverse()
-        .map(link => [PublicKey.from(link.pub_key).toString(), link.username])
+        .map(link => [WireLcoImportTool.linkRowKey(link.pub_key), link.username])
     )
   }
 
