@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
 import { getLogger } from "@wireio/shared"
 import { negate } from "lodash"
+import type { API } from "@wireio/sdk-core"
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
@@ -203,6 +204,28 @@ export namespace ClioRunner {
   /** The chain error code clio prints for a failed command (`Error 3050003: …`). */
   export const ChainErrorCodePattern = /Error (3\d{6}):/
 
+  /** Inclusive lower and exclusive upper bounds of clio's chain exception codes. */
+  const ChainErrorCodeMinimum = 3_000_000,
+    ChainErrorCodeLimit = 4_000_000
+
+  /** Read only the transaction-level rejection in clio -j's failed stdout trace. */
+  function failedTraceCode(stdout: ClioError["stdout"]): number {
+    if (typeof stdout !== "string") return null
+    try {
+      const response = JSON.parse(stdout) as API.v1.SendTransactionResponse,
+        code = response?.processed?.except?.code
+      return typeof code === "number" &&
+        Number.isInteger(code) &&
+        code >= ChainErrorCodeMinimum &&
+        code < ChainErrorCodeLimit
+        ? code
+        : null
+    } catch {
+      // An incomplete/non-JSON reply proves nothing about transaction delivery.
+      return null
+    }
+  }
+
   /**
    * clio's `http_exception` family (`Error 3200000`–`3200006`): an HTTP failure after the
    * connection opened, such as a reply that never arrived, so the request may have reached
@@ -226,7 +249,8 @@ export namespace ClioRunner {
 
   /**
    * True only when a failed clio push provably did not apply, so it may be sent again: its
-   * connection failed, or clio printed a chain error code for a rejection — not an HTTP
+   * connection failed, or clio printed a chain error code for a rejection (text or the
+   * transaction-level processed.except in JSON stdout) — not an HTTP
    * failure after connecting, and not `Duplicate transaction`. Anything else, a killed clio
    * included, may have reached the node; its outcome is read from the chain instead.
    */
@@ -241,13 +265,15 @@ export namespace ClioRunner {
     ) {
       return false
     }
-    const code = asOption(ChainErrorCodePattern.exec(candidate.message))
+    const textCode = asOption(ChainErrorCodePattern.exec(candidate.message))
       .map(([, digits]) => Number(digits))
-      .getOrUndefined()
+      .getOrUndefined(),
+      code = textCode ?? failedTraceCode(candidate.stdout)
     return (
       isTransportFailure(candidate) ||
       (code != null &&
         code !== DuplicateTransactionCode &&
+        !HttpExceptionPattern.test(`Error ${code}`) &&
         !HttpExceptionPattern.test(candidate.message))
     )
   }
