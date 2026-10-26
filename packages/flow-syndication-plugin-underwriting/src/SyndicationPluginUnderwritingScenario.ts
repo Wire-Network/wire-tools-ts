@@ -189,7 +189,7 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
   /** Prove LIQETH is backed, automatically bonded, released to a linked wallet, and repaid. */
   private planEthereum(cluster: ClusterBuild): void {
     const plan = Constants.EthereumPlan,
-      chain = "ETHEREUM",
+      chain = HarnessConstants.ETHEREUM_CHAIN_CODENAME,
       token = "LIQETH",
       options = SyndicationScenario.OutpostOptions,
       phase = ClusterBuildPhase.create(

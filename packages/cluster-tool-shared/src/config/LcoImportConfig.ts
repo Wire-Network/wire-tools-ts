@@ -1,4 +1,5 @@
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
+import { getValue } from "@wireio/shared"
 import { z } from "zod"
 
 import { UnsignedDecimalStringSchema } from "../types/decimalStrings.js"
@@ -14,12 +15,10 @@ type LiqPoolSpecJson = Parameters<typeof LiqPoolSpec.fromJson>[0]
 
 /** True when `json` decodes as a `LiqPoolSpec` (`fromJson` does not throw). */
 function isLiqPoolSpecJson(json: unknown): boolean {
-  try {
-    LiqPoolSpec.fromJson(json as LiqPoolSpecJson)
-    return true
-  } catch {
-    return false
-  }
+  return getValue(
+    () => LiqPoolSpec.fromJson(json as LiqPoolSpecJson) != null,
+    false
+  )
 }
 
 /**

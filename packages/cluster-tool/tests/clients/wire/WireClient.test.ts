@@ -422,6 +422,84 @@ describe("WireClient", () => {
     })
   })
 
+  describe("paged table reads", () => {
+    const query: WireClient.TableRowsQuery = {
+        account: "sysio.dclaim",
+        scope: "sysio.dclaim",
+        table: "unmapped",
+        limit: 2
+      },
+      kvRow = (id: number) => ({ key: { id }, value: { id } }),
+      page = (ids: number[], nextKey: string) => ({
+        rows: ids.map(kvRow),
+        more: nextKey != null,
+        next_key: nextKey
+      })
+
+    it("getTableRows passes the node's next_key through as the next page's bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([1, 2], `{"id":3}`) as never)
+      expect(await client.getTableRows(query)).toEqual({
+        rows: [{ id: 1 }, { id: 2 }],
+        more: true,
+        nextKey: `{"id":3}`
+      })
+    })
+
+    it("getAllTableRows resumes each page at the previous page's next_key", async () => {
+      const client = new WireClient(config),
+        read = jest
+          .spyOn(client.api.v1.chain, "get_table_rows")
+          .mockResolvedValueOnce(page([1, 2], `{"id":3}`) as never)
+          .mockResolvedValueOnce(page([3, 4], `{"id":5}`) as never)
+          .mockResolvedValueOnce(page([5], undefined) as never)
+      expect(await client.getAllTableRows(query)).toEqual(
+        [1, 2, 3, 4, 5].map(id => ({ id }))
+      )
+      expect(
+        read.mock.calls.map(([params]: any[]) => params.lower_bound)
+      ).toEqual([undefined, `{"id":3}`, `{"id":5}`])
+    })
+
+    it("getAllTableRows refuses a page with more rows but no resume key", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue({ rows: [kvRow(1)], more: true } as never)
+      await expect(client.getAllTableRows(query)).rejects.toThrow(
+        /sysio\.dclaim::unmapped reported more rows but no resume key/
+      )
+    })
+
+    it("getAllTableRows refuses a resume key that does not move past its own bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([3], `{"id":3}`) as never)
+      await expect(
+        client.getAllTableRows({ ...query, lowerBound: `{"id":3}` })
+      ).rejects.toThrow(/no resume key past \{"id":3\}/)
+    })
+
+    it("queryAll reads the contract's table in its own scope through getAllTableRows", async () => {
+      const client = new WireClient(config),
+        all = jest.spyOn(client, "getAllTableRows").mockResolvedValue([])
+      await client
+        .getSysioContract(SysioContracts.SysioContractName.dclaim)
+        .tables.unmapped.queryAll({ limit: 500 })
+      expect(all).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account: "sysio.dclaim",
+          scope: "sysio.dclaim",
+          table: "unmapped",
+          limit: 500
+        })
+      )
+    })
+  })
+
   describe("typed table getters", () => {
     it("getProducers reads sysio::producers through the typed accessor", async () => {
       const client = new WireClient(config),

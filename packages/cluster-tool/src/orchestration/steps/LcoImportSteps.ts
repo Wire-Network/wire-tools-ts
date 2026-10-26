@@ -1,9 +1,8 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
 import { ClusterFiles, type ClusterConfig } from "@wireio/cluster-tool-shared"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range, sortBy, sumBy, toLower, upperFirst } from "lodash"
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
@@ -12,7 +11,7 @@ import { WireLcoImportTool } from "../../tools/wire/WireLcoImportTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { formatWireAsset } from "../../tools/wire/WireUserTool.js"
 import { eachSeries } from "../../utils/asyncUtils.js"
-import { matchesProtoEnum } from "../../utils/predicateUtils.js"
+import { slugValue } from "../../utils/slugUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
@@ -30,15 +29,20 @@ import { TokenContractSteps } from "./contracts/sysio/TokenContractSteps.js"
 
 const log = getLogger(__filename)
 
-const { SysioContractAccount, SysioContractName, SysioDclaimChainkind } = SysioContracts
+const {
+  SysioContractAccount,
+  SysioContractName,
+  SysioDclaimChainkind,
+  SysioSyndChainkind
+} = SysioContracts
 const { Actor } = Report
 
 /**
  * The launch-data (LCO) import: each outpost's frozen pre-launch export replayed onto the
  * depot during epoch zero — every syndicated position (`sysio.synd::importsynd`), every
  * WIRE claim (`sysio.dclaim::importseed`) and each chain's LCO yield pool
- * (`sysio.liq::regliqpool`), then the claims funded and reconciled, both imports sealed and
- * the result verified. One write per Step; the positions and claims ride the published plan
+ * (`sysio.liq::regliqpool`), then the claims funded, the claims and positions reconciled,
+ * both imports sealed and the result verified. One write per Step; the positions and claims ride the published plan
  * ({@link LcoImportPlanKey}) so each batch's Report row stays small, and the plan's record
  * (`ClusterFiles.LcoImportRecordFilename`) lists every value imported.
  */
@@ -81,6 +85,25 @@ export namespace LcoImportSteps {
     readonly claimCount: number
   }
 
+  /** Input for {@link planReconcileSyndication}: the positions the seals were composed for. */
+  export interface ReconcileSyndicationInput extends StepInput {
+    readonly kind: "LcoImportSteps.ReconcileSyndicationInput"
+    /** How many positions the plan imports across every chain. */
+    readonly positionCount: number
+  }
+
+  /** One syndicated position as the syndication reconcile compares it. */
+  export interface ImportedPosition {
+    /** The depot chain code; a row on a chain the plan lacks keeps its raw `chain_kind`. */
+    readonly chainCode: string
+    /** The liq token code. */
+    readonly tokenCode: string
+    /** The pubkey, raw-byte hex. */
+    readonly pubkey: string
+    /** The position, in the liq token's depot subunits. */
+    readonly amount: bigint
+  }
+
   /** One `sysio.dclaim::unmapped` claim as the reconcile compares it. */
   export interface UnmappedClaim {
     /** The depot chain code of the claim's chain; a row on a chain the plan lacks keeps its raw `chain_kind`. */
@@ -101,7 +124,7 @@ export namespace LcoImportSteps {
   /**
    * ONE PhaseGroup holding the whole import: the plan and its record, one Phase per
    * exported chain (its position batches, claim batches and pool), and the funding, the
-   * claim reconcile, the seals and the verify. Must run during epoch zero, after the shadow
+   * claim and position reconciles, the seals and the verify. Must run during epoch zero, after the shadow
    * symbols, the swap and `sysio.dclaim` are configured and before any other mint of an
    * imported shadow. Self-registers on `parent`.
    *
@@ -125,10 +148,12 @@ export namespace LcoImportSteps {
     sealSyndication: boolean
   ): ClusterBuildPhaseGroup<C> {
     const group = ClusterBuildPhaseGroup.create<C>(parent, name, description),
+      chainPlans = WireLcoImportTool.chainPlans(plan),
       claimTotal = WireLcoImportTool.planClaimTotal(plan),
-      claimCount = sumBy(
-        WireLcoImportTool.chainPlans(plan),
-        chainPlan => chainPlan.claims.length
+      claimCount = sumBy(chainPlans, chainPlan => chainPlan.claims.length),
+      positionCount = sumBy(
+        chainPlans,
+        chainPlan => chainPlan.syndications.length
       )
     ClusterBuildPhase.create<C>(
       group,
@@ -150,13 +175,13 @@ export namespace LcoImportSteps {
         )
       ]
     )
-    WireLcoImportTool.chainPlans(plan).forEach(chainPlan =>
+    chainPlans.forEach(chainPlan =>
       planChainImport<C>(group, options, chainPlan)
     )
     ClusterBuildPhase.create<C>(
       group,
       "LcoImportSeal",
-      "Fund the WIRE claims, reconcile them, seal the imports and verify them",
+      "Fund the WIRE claims, reconcile the claims and positions, seal the imports and verify them",
       [
         ...(claimTotal > 0n
           ? [
@@ -180,6 +205,13 @@ export namespace LcoImportSteps {
           "check that sysio.dclaim::unmapped holds exactly the planned claims before the seal",
           options,
           claimCount
+        ),
+        planReconcileSyndication<C>(
+          Actor.Sysio,
+          "reconcile-lco-syndication",
+          "check that sysio.synd holds exactly the planned positions before the seals",
+          options,
+          positionCount
         ),
         DclaimContractSteps.planImportdone<C>(
           Actor.Sysio,
@@ -250,8 +282,11 @@ export namespace LcoImportSteps {
             options,
             chainCode,
             batchIndex,
-            WireLcoImportTool.syndicationBatch(chainPlan, batchIndex).credits
-              .length
+            WireLcoImportTool.batchCreditCount(
+              chainPlan.syndications.length,
+              WireLcoImportTool.SyndicationBatchSize,
+              batchIndex
+            )
           )
         ),
         ...range(claimBatches).map(batchIndex =>
@@ -262,7 +297,11 @@ export namespace LcoImportSteps {
             options,
             chainCode,
             batchIndex,
-            WireLcoImportTool.claimBatch(chainPlan, batchIndex).credits.length
+            WireLcoImportTool.batchCreditCount(
+              chainPlan.claims.length,
+              WireLcoImportTool.ClaimBatchSize,
+              batchIndex
+            )
           )
         ),
         LiqContractSteps.planRegliqpool<C>(
@@ -523,25 +562,18 @@ export namespace LcoImportSteps {
       input.claimCount,
       `LcoImportSteps: the plan holds ${planned.length} claims, not the ${input.claimCount} the seal was composed for`
     )
-    const { rows, more } = await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .tables.unmapped.query({ limit: WireSyndicationTool.TableRowLimit })
-    WireSyndicationTool.assertCompleteRead(
-      more,
-      SysioContractName.dclaim,
-      "unmapped"
-    )
-    const imported = rows.map(row => ({
-      chainCode: asOption(
-        chainPlans.find(chainPlan =>
-          matchesProtoEnum(row.chain_kind, SysioDclaimChainkind, chainPlan.chain)
-        )
-      )
-        .map(chainPlan => chainPlan.pool.chainCode)
-        .getOrElse(String(row.chain_kind)),
-      nativeAddress: row.native_pubkey,
-      amount: WireSyndicationTool.assetUnits(row.balance)
-    }))
+    const rows = await ctx.wire
+        .getSysioContract(SysioContractName.dclaim)
+        .tables.unmapped.queryAll({ limit: WireSyndicationTool.TableRowLimit }),
+      imported = rows.map(row => ({
+        chainCode: WireLcoImportTool.chainCodeOf(
+          chainPlans,
+          row.chain_kind,
+          SysioDclaimChainkind
+        ),
+        nativeAddress: row.native_pubkey,
+        amount: WireSyndicationTool.assetUnits(row.balance)
+      }))
     Assert.deepStrictEqual(
       sortClaims(imported),
       sortClaims(planned),
@@ -558,6 +590,102 @@ export namespace LcoImportSteps {
       claim => claim.chainCode,
       claim => claim.nativeAddress
     ])
+  }
+
+  /** Reconcile `sysio.synd` against the plan's positions — the gate before the seals. */
+  export function planReconcileSyndication<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    positionCount: number
+  ): ClusterBuildStep<C, ReconcileSyndicationInput> {
+    return ClusterBuildStep.create<C, ReconcileSyndicationInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "LcoImportSteps.ReconcileSyndicationInput", positionCount },
+      runReconcileSyndication
+    )
+  }
+
+  /**
+   * Named runner — refuse the seals unless `sysio.synd` holds exactly the plan's positions.
+   * `importsynd` parks a position whose pubkey has no authex link and mints it to the linked
+   * account otherwise, so every `parked` row must be a planned position at its planned
+   * amount, and each shadow's outstanding must equal its booked custody: the pool's LCO liq
+   * plus every position, parked or minted. A batch pushed twice fails one or the other, and
+   * `importdone` would make it final.
+   */
+  export async function runReconcileSyndication<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ReconcileSyndicationInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const chainPlans = WireLcoImportTool.chainPlans(
+        ctx.outputs.assert(LcoImportPlanKey)
+      ),
+      planned = chainPlans.flatMap(chainPlan =>
+        chainPlan.syndications.map(spec => ({
+          chainCode: chainPlan.pool.chainCode,
+          tokenCode: chainPlan.pool.tokenCode,
+          pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
+          amount: spec.amount
+        }))
+      )
+    Assert.strictEqual(
+      planned.length,
+      input.positionCount,
+      `LcoImportSteps: the plan holds ${planned.length} positions, not the ${input.positionCount} the seals were composed for`
+    )
+    const plannedAmounts = new Map(
+        planned.map(position => [positionKey(position), position.amount])
+      ),
+      parked = (
+        await ctx.wire
+          .getSysioContract(SysioContractName.synd)
+          .tables.parked.queryAll({ limit: WireSyndicationTool.TableRowLimit })
+      ).map(row => ({
+        chainCode: WireLcoImportTool.chainCodeOf(
+          chainPlans,
+          row.chain_kind,
+          SysioSyndChainkind
+        ),
+        tokenCode: SlugName.toString(slugValue(row.token_code)),
+        pubkey: row.pubkey,
+        amount: BigInt(row.balance)
+      }))
+    Assert.deepStrictEqual(
+      parked.filter(
+        position => plannedAmounts.get(positionKey(position)) !== position.amount
+      ),
+      [],
+      "LcoImportSteps: sysio.synd::parked holds positions the plan does not; the syndication import stays unsealed"
+    )
+    await eachSeries(chainPlans, async ({ pool }) => {
+      const outstanding = await WireSyndicationTool.readOutstanding(
+        ctx,
+        pool.tokenCode
+      )
+      Assert.strictEqual(
+        outstanding,
+        pool.custodyTotal,
+        `LcoImportSteps: ${pool.tokenCode} outstanding ${outstanding} differs from its booked custody ${pool.custodyTotal}; the syndication import stays unsealed`
+      )
+    })
+    StepExtraRecorder.note("launch-data positions reconciled", {
+      positions: planned.length,
+      parked: parked.length
+    })
+  }
+
+  /** The identity of a position: its token, chain and pubkey. */
+  function positionKey(position: ImportedPosition): string {
+    return `${position.tokenCode}/${position.chainCode}/${position.pubkey}`
   }
 
   /** Verify the import on the depot — the Report checkpoint closing it. */
@@ -581,7 +709,7 @@ export namespace LcoImportSteps {
   /**
    * Named runner — each imported shadow's outstanding equals its booked custody (the
    * import is that shadow's first mint), each shadow carries its pool, `sysio.dclaim` holds
-   * exactly the claims, the claim import is sealed (and the syndication import when this
+   * at least the claims (WIRE it held before the funding stays), the claim import is sealed (and the syndication import when this
    * import sealed it), and no custody mismatch exists.
    */
   export async function runVerify<C extends ClusterBuildContext>(
@@ -619,10 +747,9 @@ export namespace LcoImportSteps {
       syndicationState = await ctx.wire
         .getSysioContract(SysioContractName.synd)
         .tables.syndstate.query()
-    Assert.strictEqual(
-      funded,
-      claims,
-      `LcoImportSteps: sysio.dclaim holds ${funded} WIRE subunits, not the ${claims} its claims need`
+    Assert.ok(
+      funded >= claims,
+      `LcoImportSteps: sysio.dclaim holds ${funded} WIRE subunits, less than the ${claims} its claims need`
     )
     // The chain's JSON spells an ABI `bool` as `0` / `1`, never `true` / `false`.
     Assert.ok(

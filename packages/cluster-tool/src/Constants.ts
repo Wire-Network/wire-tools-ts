@@ -168,10 +168,13 @@ export namespace Constants {
     return `${LIQ_TOKEN_PRECISION},${codename}`
   }
 
-  /** The depot chain code of the Ethereum outpost (`sysio.chains` row). */
-  export const ETHEREUM_CHAIN_CODE = "ETHEREUM"
-  /** The depot chain code of the Solana outpost (`sysio.chains` row). */
-  export const SOLANA_CHAIN_CODE = "SOLANA"
+  /**
+   * The `sysio.chains` codename of the Ethereum outpost. The registry, the operator daemons'
+   * outpost client ids and every chain-keyed contract row use it.
+   */
+  export const ETHEREUM_CHAIN_CODENAME = "ETHEREUM"
+  /** The `sysio.chains` codename of the Solana outpost; see {@link ETHEREUM_CHAIN_CODENAME}. */
+  export const SOLANA_CHAIN_CODENAME = "SOLANA"
 
   /**
    * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
@@ -180,8 +183,8 @@ export namespace Constants {
    * in this order.
    */
   export const SHADOW_LIQ_TOKEN_PAIRS = [
-    [ETHEREUM_CHAIN_CODE, "LIQETH"],
-    [SOLANA_CHAIN_CODE, LIQSOL_CODENAME]
+    [ETHEREUM_CHAIN_CODENAME, "LIQETH"],
+    [SOLANA_CHAIN_CODENAME, LIQSOL_CODENAME]
   ] as const
 
   /**

@@ -137,6 +137,34 @@ describe("WireLcoImportTool", () => {
       ]).toEqual([7_000_000_000n, 2_500_000_000n, 37_500_000_000_000n, 25, "launch pool"])
     })
 
+    it("books placeholder custody as the imported positions plus the purchases, so sub-unit principal never reaches the pool", () => {
+      // 0.6 gwei under each position: floored per position, but 1.2 gwei once summed raw.
+      const exported = ethereumSnapshot()
+      exported.stakers[0].netPrincipal = (3n * WeiPerEther + 600_000_000n).toString()
+      exported.stakers[1].netPrincipal = (
+        (3n * WeiPerEther) / 2n +
+        600_000_000n
+      ).toString()
+      const { ethereum, placeholders } = WireLcoImportTool.createPlan({
+        ethereum: fixture.chain("remainders.json", exported),
+        solana: null,
+        dclaimFundingAccount: null
+      })
+      expect([
+        ethereum.pool.custodyTotal,
+        ethereum.pool.initialChainAmount
+      ]).toEqual([6_500_000_000n, 2_000_000_000n])
+      expect(placeholders[0].value).toBe(((13n * WeiPerEther) / 2n).toString())
+      exported.metadata.totalLiqEthPurchased = "0"
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("unpurchased.json", exported),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/no LCO liq is left for the LIQETH pool/)
+    })
+
     it("refuses a staker holding liqETH with no recovered pubkey", () => {
       const exported = ethereumSnapshot()
       exported.stakers[0].pubkey = null
@@ -293,6 +321,34 @@ describe("WireLcoImportTool", () => {
       expect(WireLcoImportTool.batchCount(0, 50)).toBe(0)
       expect(WireLcoImportTool.batchCount(50, 50)).toBe(1)
       expect(WireLcoImportTool.batchCount(51, 50)).toBe(2)
+    })
+
+    it("names a row's chain by the plan's chain code, whichever spelling the node used", () => {
+      const chains = WireLcoImportTool.chainPlans(plan),
+        { SysioSyndChainkind } = SysioContracts
+      expect(
+        WireLcoImportTool.chainCodeOf(chains, "CHAIN_KIND_SVM", SysioSyndChainkind)
+      ).toBe("SOLANA")
+      expect(
+        WireLcoImportTool.chainCodeOf(
+          chains,
+          SysioSyndChainkind.CHAIN_KIND_EVM,
+          SysioSyndChainkind
+        )
+      ).toBe("ETHEREUM")
+      expect(
+        WireLcoImportTool.chainCodeOf(chains, "CHAIN_KIND_WIRE", SysioSyndChainkind)
+      ).toBe("CHAIN_KIND_WIRE")
+    })
+
+    it("counts each batch's credits as the batch itself carries them", () => {
+      expect(
+        [0, 1, 2].map(index => WireLcoImportTool.batchCreditCount(101, 50, index))
+      ).toEqual([50, 50, 1])
+      expect(WireLcoImportTool.batchCreditCount(50, 50, 0)).toBe(50)
+      expect(WireLcoImportTool.batchCreditCount(2, 50, 0)).toBe(
+        WireLcoImportTool.syndicationBatch(plan.ethereum, 0).credits.length
+      )
     })
 
     it("renders a pool as its regliqpool data", () => {

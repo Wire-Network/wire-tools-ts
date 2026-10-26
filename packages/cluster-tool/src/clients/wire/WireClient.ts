@@ -167,16 +167,19 @@ export class WireClient {
     account: string,
     table: string
   ): WireClient.TableQuery<any, any> {
+    const rowsQuery = (
+      args: WireClient.TableQueryArgs
+    ): WireClient.TableRowsQuery => ({
+      account,
+      scope: args.scope ?? account,
+      table,
+      limit: args.limit,
+      lowerBound: args.lowerBound,
+      upperBound: args.upperBound
+    })
     return {
-      query: (args = {}) =>
-        this.getTableRows({
-          account,
-          scope: args.scope ?? account,
-          table,
-          limit: args.limit,
-          lowerBound: args.lowerBound,
-          upperBound: args.upperBound
-        })
+      query: (args = {}) => this.getTableRows(rowsQuery(args)),
+      queryAll: (args = {}) => this.getAllTableRows(rowsQuery(args))
     }
   }
 
@@ -447,7 +450,40 @@ export class WireClient {
     const rows = (result.rows ?? []).map((row: any) =>
       row != null && typeof row === "object" && "value" in row ? row.value : row
     )
-    return { rows: rows as Row[], more: result.more ?? false }
+    return {
+      rows: rows as Row[],
+      more: result.more ?? false,
+      nextKey: result.next_key?.toString()
+    }
+  }
+
+  /**
+   * Every row of a raw table read, page by page: each page resumes at the previous page's
+   * `next_key` until the node reports no `more`. ESCAPE HATCH like {@link getTableRows};
+   * prefer `getSysioContract(name).tables.<table>.queryAll(...)`.
+   *
+   * @param query - The read: its `limit` is the page size, its bounds the key range.
+   * @returns Every row in the range, in key order.
+   * @throws When a page reports `more` without a resume key past its own lower bound.
+   */
+  async getAllTableRows<Row = unknown>(
+    query: WireClient.TableRowsQuery
+  ): Promise<Row[]> {
+    const page = await this.getTableRows<Row>(query)
+    if (!page.more) {
+      return page.rows
+    }
+    Assert.ok(
+      page.nextKey != null && page.nextKey !== query.lowerBound,
+      `WireClient: ${query.account}::${query.table} reported more rows but no resume key past ${query.lowerBound}`
+    )
+    return [
+      ...page.rows,
+      ...(await this.getAllTableRows<Row>({
+        ...query,
+        lowerBound: page.nextKey
+      }))
+    ]
   }
 
   /** Real WIRE token balance (raw 9-decimal base units), or 0n when no row. */
@@ -1090,6 +1126,8 @@ export namespace WireClient {
   export interface TableQueryResult<Row> {
     rows: Row[]
     more: boolean
+    /** The lower bound the next page starts at, when the node returned one. */
+    nextKey?: string
   }
   export interface TableQuery<
     Name extends SysioContractName,
@@ -1098,6 +1136,11 @@ export namespace WireClient {
     query(
       args?: TableQueryArgs
     ): Promise<TableQueryResult<TableRow<Name, Table>>>
+    /**
+     * Every row in the range, read page by page ({@link WireClient.getAllTableRows});
+     * `limit` is the page size.
+     */
+    queryAll(args?: TableQueryArgs): Promise<TableRow<Name, Table>[]>
   }
   export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {

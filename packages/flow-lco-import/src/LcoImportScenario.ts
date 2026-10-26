@@ -14,10 +14,8 @@ import {
   SyndicationUserSteps,
   WireLcoImportTool,
   WireSyndicationTool,
-  abiEnumValue,
   eachSeries,
   formatWireAsset,
-  matchesProtoEnum,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
@@ -81,52 +79,86 @@ function tokenOf(plan: WireLcoImportTool.Plan, holder: Constants.Holder): string
   return chainPlanOf(plan, holder.chain).pool.tokenCode
 }
 
-/** `sysio.synd`'s parked balance under a pubkey (display form); nothing parked is `0n`. */
-async function readParkedPosition(
-  ctx: ClusterBuildContext,
-  chain: ImportSeedChainKind,
-  tokenCode: string,
-  pubkey: string
-): Promise<bigint> {
-  const row = await WireSyndicationTool.readParked(
-    ctx,
-    tokenCode,
-    // proto ChainKind → the synd ABI's own enum, bridged by VALUE.
-    abiEnumValue(SysioSyndChainkind, chain),
-    WireLcoImportTool.nativeBytesHex(chain, pubkey)
-  )
-  return row == null ? 0n : BigInt(row.balance)
+/**
+ * The key a chain's holding is read back under: its chain code and the holder's native key
+ * or address as raw-byte hex.
+ */
+function holdingKey(chainCode: string, nativeHex: string): string {
+  return `${chainCode}/${nativeHex}`
 }
 
-/** `sysio.dclaim`'s unmapped claim of a native address (raw-byte hex); none is `0n`. */
-async function readUnmappedClaim(
-  ctx: ClusterBuildContext,
-  chain: ImportSeedChainKind,
-  nativeAddress: string
-): Promise<bigint> {
-  const { rows, more } = await ctx.wire
-    .getSysioContract(SysioContractName.dclaim)
-    .tables.unmapped.query({ limit: WireSyndicationTool.TableRowLimit })
-  Assert.ok(!more, "sysio.dclaim::unmapped read is truncated")
-  const row = rows.find(
-    candidate =>
-      matchesProtoEnum(candidate.chain_kind, SysioDclaimChainkind, chain) &&
-      candidate.native_pubkey === nativeAddress
+/** A holder's {@link holdingKey} for its imported position. */
+function positionKeyOf(
+  plan: WireLcoImportTool.Plan,
+  holder: Constants.Holder
+): string {
+  return holdingKey(
+    chainPlanOf(plan, holder.chain).pool.chainCode,
+    WireLcoImportTool.nativeBytesHex(holder.chain, holder.pubkey)
   )
-  return row == null ? 0n : WireSyndicationTool.assetUnits(row.balance)
 }
 
-/** `sysio.dclaim`'s pending claim of an account; none is `0n`. */
-async function readPendingClaim(
+/** Every `sysio.synd` parked balance, by {@link holdingKey} — one paged read of the table. */
+async function readParkedPositions(
   ctx: ClusterBuildContext,
-  account: string
-): Promise<bigint> {
-  const { rows, more } = await ctx.wire
+  plan: WireLcoImportTool.Plan
+): Promise<Map<string, bigint>> {
+  const chainPlans = WireLcoImportTool.chainPlans(plan),
+    rows = await ctx.wire
+      .getSysioContract(SysioContractName.synd)
+      .tables.parked.queryAll({ limit: WireSyndicationTool.TableRowLimit })
+  return new Map(
+    rows.map(row => [
+      holdingKey(
+        WireLcoImportTool.chainCodeOf(
+          chainPlans,
+          row.chain_kind,
+          SysioSyndChainkind
+        ),
+        row.pubkey
+      ),
+      BigInt(row.balance)
+    ])
+  )
+}
+
+/** Every `sysio.dclaim` unmapped claim, by {@link holdingKey} — one paged read of the table. */
+async function readUnmappedClaims(
+  ctx: ClusterBuildContext,
+  plan: WireLcoImportTool.Plan
+): Promise<Map<string, bigint>> {
+  const chainPlans = WireLcoImportTool.chainPlans(plan),
+    rows = await ctx.wire
+      .getSysioContract(SysioContractName.dclaim)
+      .tables.unmapped.queryAll({ limit: WireSyndicationTool.TableRowLimit })
+  return new Map(
+    rows.map(row => [
+      holdingKey(
+        WireLcoImportTool.chainCodeOf(
+          chainPlans,
+          row.chain_kind,
+          SysioDclaimChainkind
+        ),
+        row.native_pubkey
+      ),
+      WireSyndicationTool.assetUnits(row.balance)
+    ])
+  )
+}
+
+/** Every `sysio.dclaim` pending claim, by WIRE account — one paged read of the table. */
+async function readPendingClaims(
+  ctx: ClusterBuildContext
+): Promise<Map<string, bigint>> {
+  const rows = await ctx.wire
     .getSysioContract(SysioContractName.dclaim)
-    .tables.pclaims.query({ limit: WireSyndicationTool.TableRowLimit })
-  Assert.ok(!more, "sysio.dclaim::pclaims read is truncated")
-  const row = rows.find(candidate => candidate.wire_account === account)
-  return row == null ? 0n : WireSyndicationTool.assetUnits(row.balance)
+    .tables.pclaims.queryAll({ limit: WireSyndicationTool.TableRowLimit })
+  return new Map(
+    rows.map(row => [
+      row.wire_account,
+      WireSyndicationTool.assetUnits(row.balance)
+    ])
+  )
 }
 
 /** The `sysio.swap::stat` row of the pair whose token code is `pairCode`. */
@@ -134,10 +166,9 @@ async function readPool(
   ctx: ClusterBuildContext,
   pairCode: string
 ): Promise<SysioContracts.SysioSwapCurrencyStatsType> {
-  const { rows, more } = await ctx.wire
+  const rows = await ctx.wire
     .getSysioContract(SysioContractName.swap)
-    .tables.stat.query({ limit: WireSyndicationTool.TableRowLimit })
-  Assert.ok(!more, "sysio.swap::stat read is truncated")
+    .tables.stat.queryAll({ limit: WireSyndicationTool.TableRowLimit })
   const row = rows.find(
     candidate =>
       Asset.from(candidate.supply).symbol.code.toString() === pairCode
@@ -215,40 +246,47 @@ export class LcoImportScenario extends FlowScenario {
         Actor.Sysio,
         "verify-lco-parked-positions",
         "each imported position is parked under its pubkey for exactly its amount",
-        async ctx =>
-          eachSeries(WireLcoImportTool.chainPlans(readPlan(ctx)), chainPlan =>
-            eachSeries(chainPlan.syndications, async spec =>
+        async ctx => {
+          const plan = readPlan(ctx),
+            parked = await readParkedPositions(ctx, plan)
+          WireLcoImportTool.chainPlans(plan).forEach(chainPlan =>
+            chainPlan.syndications.forEach(spec =>
               Assert.strictEqual(
-                await readParkedPosition(
-                  ctx,
-                  chainPlan.chain,
-                  spec.tokenCode,
-                  spec.pubkey
-                ),
+                parked.get(
+                  holdingKey(
+                    chainPlan.pool.chainCode,
+                    WireLcoImportTool.nativeBytesHex(
+                      chainPlan.chain,
+                      spec.pubkey
+                    )
+                  )
+                ) ?? 0n,
                 spec.amount,
                 `${spec.tokenCode} parked under ${spec.pubkey}`
               )
             )
           )
+        }
       ),
       verifyStep(
         Actor.Sysio,
         "verify-lco-unmapped-claims",
         "each imported claim is unmapped under its native address for exactly its WIRE",
-        async ctx =>
-          eachSeries(WireLcoImportTool.chainPlans(readPlan(ctx)), chainPlan =>
-            eachSeries(chainPlan.claims, async claim =>
+        async ctx => {
+          const plan = readPlan(ctx),
+            unmapped = await readUnmappedClaims(ctx, plan)
+          WireLcoImportTool.chainPlans(plan).forEach(chainPlan =>
+            chainPlan.claims.forEach(claim =>
               Assert.strictEqual(
-                await readUnmappedClaim(
-                  ctx,
-                  chainPlan.chain,
-                  claim.native_address
-                ),
+                unmapped.get(
+                  holdingKey(chainPlan.pool.chainCode, claim.native_address)
+                ) ?? 0n,
                 BigInt(claim.wire_atomic),
                 `WIRE claim of ${claim.native_address}`
               )
             )
           )
+        }
       ),
       verifyStep(
         Actor.Sysio,
@@ -344,7 +382,8 @@ export class LcoImportScenario extends FlowScenario {
         "verify-lco-positions-delivered",
         "each holder holds exactly its imported position, and nothing stays parked",
         async ctx => {
-          const plan = readPlan(ctx)
+          const plan = readPlan(ctx),
+            parked = await readParkedPositions(ctx, plan)
           await eachSeries(Constants.Holders, async holder => {
             const tokenCode = tokenOf(plan, holder)
             Assert.strictEqual(
@@ -353,7 +392,7 @@ export class LcoImportScenario extends FlowScenario {
               `${holder.account} ${tokenCode}`
             )
             Assert.strictEqual(
-              await readParkedPosition(ctx, holder.chain, tokenCode, holder.pubkey),
+              parked.get(positionKeyOf(plan, holder)) ?? 0n,
               0n,
               `${tokenCode} still parked under ${holder.pubkey}`
             )
@@ -365,10 +404,11 @@ export class LcoImportScenario extends FlowScenario {
         "verify-lco-claims-pending",
         "each holder's imported claim is pending under its account",
         async ctx => {
-          const plan = readPlan(ctx)
-          await eachSeries(Constants.Holders, async holder =>
+          const plan = readPlan(ctx),
+            pending = await readPendingClaims(ctx)
+          Constants.Holders.forEach(holder =>
             Assert.strictEqual(
-              await readPendingClaim(ctx, holder.account),
+              pending.get(holder.account) ?? 0n,
               claimOf(plan, holder),
               `${holder.account} pending claim`
             )
@@ -397,7 +437,8 @@ export class LcoImportScenario extends FlowScenario {
         "verify-lco-claims-paid",
         "each holder holds exactly its claim in WIRE and has nothing pending",
         async ctx => {
-          const plan = readPlan(ctx)
+          const plan = readPlan(ctx),
+            pending = await readPendingClaims(ctx)
           await eachSeries(Constants.Holders, async holder => {
             Assert.strictEqual(
               await ctx.wire.getWireBalance(holder.account),
@@ -405,7 +446,7 @@ export class LcoImportScenario extends FlowScenario {
               `${holder.account} WIRE`
             )
             Assert.strictEqual(
-              await readPendingClaim(ctx, holder.account),
+              pending.get(holder.account) ?? 0n,
               0n,
               `${holder.account} pending claim after claiming`
             )

@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-termination flow: the doomed operator's
@@ -25,8 +25,10 @@ export namespace TerminationScenarioConstants {
   export const DoomedOperatorEthereumHdIndex = 35
 
   /** Registered outpost chain codes whose inbound cursors must keep advancing. */
-  export const EthereumChainCode = SlugName.from("ETHEREUM")
-  export const SolanaChainCode = SlugName.from("SOLANA")
+  export const EthereumChainCode = SlugName.from(
+    Constants.ETHEREUM_CHAIN_CODENAME
+  )
+  export const SolanaChainCode = SlugName.from(Constants.SOLANA_CHAIN_CODENAME)
 
   /** Epoch duration (s) — the bare-cluster working baseline (`sysio.epoch::setconfig` floor is 60). */
   export const EpochDurationSec = 60

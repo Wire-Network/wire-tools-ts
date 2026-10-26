@@ -19,7 +19,8 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { LcoImportFixture } from "../../tools/wire/lcoImportFixture.js"
 
-const { SysioContractName, SysioDclaimChainkind } = SysioContracts
+const { SysioContractName, SysioDclaimChainkind, SysioSyndChainkind } =
+  SysioContracts
 const LcoImportSteps = Steps.lcoImport
 const signal = new AbortController().signal
 
@@ -101,6 +102,7 @@ describe("LcoImportSteps", () => {
       expect(seal.steps.map(step => step.runner)).toEqual([
         Steps.contracts.sysio.token.runTransfer,
         LcoImportSteps.runReconcileClaims,
+        LcoImportSteps.runReconcileSyndication,
         Steps.contracts.sysio.dclaim.runImportdone,
         Steps.contracts.sysio.synd.runImportdone,
         LcoImportSteps.runVerify
@@ -108,6 +110,11 @@ describe("LcoImportSteps", () => {
       expect(seal.steps[1].input).toEqual({
         kind: "LcoImportSteps.ReconcileClaimsInput",
         claimCount: plan.ethereum.claims.length + plan.solana.claims.length
+      })
+      expect(seal.steps[2].input).toEqual({
+        kind: "LcoImportSteps.ReconcileSyndicationInput",
+        positionCount:
+          plan.ethereum.syndications.length + plan.solana.syndications.length
       })
       expect(seal.steps[0].input).toEqual({
         kind: "TokenContractSteps.TransferInput",
@@ -120,11 +127,12 @@ describe("LcoImportSteps", () => {
       })
     })
 
-    it("leaves the syndication seal to a later import when told to", () => {
+    it("leaves the syndication seal to a later import when told to, still reconciling the positions", () => {
       const seal = phases(false).at(-1)
       expect(seal.steps.map(step => step.runner)).toEqual([
         Steps.contracts.sysio.token.runTransfer,
         LcoImportSteps.runReconcileClaims,
+        LcoImportSteps.runReconcileSyndication,
         Steps.contracts.sysio.dclaim.runImportdone,
         LcoImportSteps.runVerify
       ])
@@ -154,6 +162,9 @@ describe("LcoImportSteps", () => {
   })
 
   describe("runners", () => {
+    /** The fixture's booked custody per shadow, in subunits. */
+    const BookedCustody = { LIQETH: 6_500_000_000n, LIQSOL: 6_000_000_000n }
+
     it("publishes the plan its summary describes, and refuses one that changed", async () => {
       const ctx = importContext(false),
         { summary } = LcoImportSteps.planPublishPlan(
@@ -262,15 +273,12 @@ describe("LcoImportSteps", () => {
         )
       }
 
-      /** A context whose `unmapped` read answers `rows`, truncated when `more` is set. */
-      function reconcilable(
-        rows: SysioContracts.SysioDclaimUnmappedTokenType[],
-        more = false
-      ) {
+      /** A context whose `unmapped` read answers `rows` in one page. */
+      function reconcilable(rows: SysioContracts.SysioDclaimUnmappedTokenType[]) {
         const ctx = importContext(),
           getTableRows = jest
             .spyOn(ctx.wire, "getTableRows")
-            .mockResolvedValue({ rows, more })
+            .mockResolvedValue({ rows, more: false })
         return { ctx, getTableRows }
       }
 
@@ -370,14 +378,24 @@ describe("LcoImportSteps", () => {
         ).rejects.toThrow(/differs from the planned claims/)
       })
 
-      it("fails when the unmapped read is truncated", async () => {
+      it("reads unmapped page by page past a full page", async () => {
+        const rows = plannedRows(),
+          ctx = importContext(),
+          resumeKey = JSON.stringify({ id: rows[2].id }),
+          getTableRows = jest
+            .spyOn(ctx.wire, "getTableRows")
+            .mockResolvedValueOnce({
+              rows: rows.slice(0, 2),
+              more: true,
+              nextKey: resumeKey
+            })
+            .mockResolvedValueOnce({ rows: rows.slice(2), more: false })
         await expect(
-          LcoImportSteps.runReconcileClaims(
-            reconcilable(plannedRows(), true).ctx,
-            reconcileInput(),
-            signal
-          )
-        ).rejects.toThrow(/the read is truncated/)
+          LcoImportSteps.runReconcileClaims(ctx, reconcileInput(), signal)
+        ).resolves.toBeUndefined()
+        expect(getTableRows).toHaveBeenLastCalledWith(
+          expect.objectContaining({ table: "unmapped", lowerBound: resumeKey })
+        )
       })
 
       it("refuses a plan whose claim count changed after the seal was composed", async () => {
@@ -393,9 +411,123 @@ describe("LcoImportSteps", () => {
       })
     })
 
+    describe("runReconcileSyndication", () => {
+      /** The plan's positions as the `sysio.synd::parked` rows an unlinked import writes. */
+      function parkedRows(): SysioContracts.SysioSyndParkedRowType[] {
+        return WireLcoImportTool.chainPlans(plan).flatMap(chainPlan =>
+          chainPlan.syndications.map(spec => ({
+            token_code: chainPlan.pool.tokenCode,
+            chain_kind: SysioSyndChainkind[
+              chainPlan.chain
+            ] as keyof typeof SysioSyndChainkind,
+            pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
+            balance: spec.amount.toString(),
+            position: { index_checkpoint: "1.0", owed_wire: 0 }
+          }))
+        )
+      }
+
+      /** A context whose `parked` read answers `rows`, and whose shadows' outstanding is `outstanding`. */
+      function reconcilable(
+        rows: SysioContracts.SysioSyndParkedRowType[],
+        outstanding: Record<string, bigint> = BookedCustody
+      ) {
+        const ctx = importContext(),
+          getTableRows = jest
+            .spyOn(ctx.wire, "getTableRows")
+            .mockResolvedValue({ rows, more: false })
+        jest
+          .spyOn(WireSyndicationTool, "readOutstanding")
+          .mockImplementation(async (_ctx, token) => outstanding[token])
+        return { ctx, getTableRows }
+      }
+
+      /** The reconcile's input, composed for `positionCount` positions. */
+      function reconcileInput(positionCount = parkedRows().length) {
+        return {
+          kind: "LcoImportSteps.ReconcileSyndicationInput" as const,
+          positionCount
+        }
+      }
+
+      it("passes when parked holds every planned position and each outstanding is its booked custody", async () => {
+        const { ctx, getTableRows } = reconcilable(parkedRows().reverse())
+        await expect(
+          LcoImportSteps.runReconcileSyndication(ctx, reconcileInput(), signal)
+        ).resolves.toBeUndefined()
+        expect(getTableRows).toHaveBeenCalledWith(
+          expect.objectContaining({
+            account: "sysio.synd",
+            table: "parked",
+            limit: WireSyndicationTool.TableRowLimit
+          })
+        )
+      })
+
+      it("passes when a linked pubkey's position was minted instead of parked", async () => {
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows().slice(1)).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).resolves.toBeUndefined()
+      })
+
+      it("fails when a batch was credited twice to an unlinked pubkey", async () => {
+        const [first, ...rest] = parkedRows(),
+          doubled = { ...first, balance: (BigInt(first.balance) * 2n).toString() }
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable([doubled, ...rest]).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/parked holds positions the plan does not/)
+      })
+
+      it("fails on a parked position the plan does not hold", async () => {
+        const rows = parkedRows(),
+          [first] = rows,
+          stray = { ...first, pubkey: "00".repeat(first.pubkey.length / 2) }
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable([...rows, stray]).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/parked holds positions the plan does not/)
+      })
+
+      it("fails when a shadow's outstanding differs from its booked custody, as a linked batch credited twice leaves it", async () => {
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows(), {
+              ...BookedCustody,
+              LIQETH: BookedCustody.LIQETH + 3_000_000_000n
+            }).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(
+          /LIQETH outstanding 9500000000 differs from its booked custody 6500000000/
+        )
+      })
+
+      it("refuses a plan whose position count changed after the seals were composed", async () => {
+        const { ctx, getTableRows } = reconcilable(parkedRows())
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            ctx,
+            reconcileInput(parkedRows().length + 1),
+            signal
+          )
+        ).rejects.toThrow(/the seals were composed for/)
+        expect(getTableRows).not.toHaveBeenCalled()
+      })
+    })
+
     describe("runVerify", () => {
-      /** The fixture's booked custody per shadow, in subunits. */
-      const BookedCustody = { LIQETH: 6_500_000_000n, LIQSOL: 6_000_000_000n }
       /** An ABI `bool` as the chain's JSON spells it. */
       const AbiTrue = 1,
         AbiFalse = 0
@@ -408,7 +540,8 @@ describe("LcoImportSteps", () => {
       function verifiable(
         outstanding: Record<string, bigint>,
         claimsSealed = AbiTrue,
-        syndicationSealed = AbiTrue
+        syndicationSealed = AbiTrue,
+        funded = WireLcoImportTool.planClaimTotal(plan)
       ) {
         const ctx = importContext(),
           singletons: Record<string, object> = {
@@ -427,9 +560,7 @@ describe("LcoImportSteps", () => {
             pair_symbol: `${token}P`
           }))
         jest.spyOn(WireSyndicationTool, "readMismatches").mockResolvedValue([])
-        jest
-          .spyOn(ctx.wire, "getWireBalance")
-          .mockResolvedValue(WireLcoImportTool.planClaimTotal(plan))
+        jest.spyOn(ctx.wire, "getWireBalance").mockResolvedValue(funded)
         jest
           .spyOn(ctx.wire, "getTableRows")
           .mockImplementation(async ({ table }) => ({ rows: [singletons[table]], more: false }))
@@ -474,6 +605,24 @@ describe("LcoImportSteps", () => {
             signal
           )
         ).resolves.toBeUndefined()
+      })
+
+      it("passes when sysio.dclaim held WIRE before the funding, and fails when it holds less than its claims", async () => {
+        const claims = WireLcoImportTool.planClaimTotal(plan)
+        await expect(
+          LcoImportSteps.runVerify(
+            verifiable(BookedCustody, AbiTrue, AbiTrue, claims + 1_000_000_000n),
+            { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
+            signal
+          )
+        ).resolves.toBeUndefined()
+        await expect(
+          LcoImportSteps.runVerify(
+            verifiable(BookedCustody, AbiTrue, AbiTrue, claims - 1n),
+            { kind: "LcoImportSteps.VerifyInput", sealsSyndication: true },
+            signal
+          )
+        ).rejects.toThrow(/less than the \d+ its claims need/)
       })
 
       it("fails when a shadow's outstanding differs from its booked custody", async () => {

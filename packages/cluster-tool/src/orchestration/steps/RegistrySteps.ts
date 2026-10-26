@@ -130,14 +130,14 @@ export namespace RegistrySteps {
   export const MockSyndicationImportCredits: MockSyndicationImportInput[] = [
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "SOLANA",
+      chain_code: Constants.SOLANA_CHAIN_CODENAME,
       token_code: Constants.LIQSOL_CODENAME,
       keyType: KeyType.ED,
       amount: MockSyndicationImportAmount
     },
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "ETHEREUM",
+      chain_code: Constants.ETHEREUM_CHAIN_CODENAME,
       token_code: "LIQETH",
       keyType: KeyType.EM,
       amount: MockSyndicationImportAmount
@@ -833,7 +833,7 @@ export namespace RegistrySteps {
       }
 
     await chains.actions.setoutpost.invoke({
-      code: "ETHEREUM",
+      code: Constants.ETHEREUM_CHAIN_CODENAME,
       outpost: {
         opp_addr: ethAddress("OPP"),
         opp_inbound_addr: ethAddress("OPPInbound")
@@ -843,7 +843,7 @@ export namespace RegistrySteps {
     // goes in `opp_addr` alone — `sysio.chains` rejects an SVM row that sets
     // `opp_inbound_addr`.
     await chains.actions.setoutpost.invoke({
-      code: "SOLANA",
+      code: Constants.SOLANA_CHAIN_CODENAME,
       outpost: {
         opp_addr: artifacts.solanaProgramId,
         opp_inbound_addr: ""
@@ -1051,7 +1051,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
-        code: "ETHEREUM",
+        code: Constants.ETHEREUM_CHAIN_CODENAME,
         // External-outpost mode registers the REAL remote chain id so the
         // depot's chains row matches what the daemons dial (networkFromConfig).
         external_chain_id:
@@ -1063,7 +1063,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_SVM,
-        code: "SOLANA",
+        code: Constants.SOLANA_CHAIN_CODENAME,
         external_chain_id: 0,
         name: "Solana (test-validator)",
         description: "Local solana-test-validator (test cluster)",
@@ -1123,34 +1123,44 @@ export namespace RegistrySteps {
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
-      chainToken("ETHEREUM", "ETH", "", true),
+      chainToken(Constants.ETHEREUM_CHAIN_CODENAME, "ETH", "", true),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "LIQETH",
         nullableStrip(liqEthAddresses.LiqEthToken, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDC",
         nullableStrip(ethereumAddresses.MockUsdc, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDT",
         nullableStrip(ethereumAddresses.MockUsdt, strip0x),
         false
       ),
-      chainToken("SOLANA", "SOL", "", true),
+      chainToken(Constants.SOLANA_CHAIN_CODENAME, "SOL", "", true),
       chainToken(
-        "SOLANA",
+        Constants.SOLANA_CHAIN_CODENAME,
         Constants.LIQSOL_CODENAME,
         nullableMintHex(solanaMints.LIQSOL),
         false
       ),
-      chainToken("SOLANA", "USDCSOL", nullableMintHex(solanaMints.USDC), false),
-      chainToken("SOLANA", "USDTSOL", nullableMintHex(solanaMints.USDT), false)
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDCSOL",
+        nullableMintHex(solanaMints.USDC),
+        false
+      ),
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDTSOL",
+        nullableMintHex(solanaMints.USDT),
+        false
+      )
     ]
     await eachSeries(chainTokenBindings, data =>
       tokens.actions.regctok.invoke(data)

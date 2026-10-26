@@ -21,6 +21,7 @@ import { ethers } from "ethers"
 import { sortBy } from "lodash"
 import { Constants } from "../../Constants.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import type { ImportSeedChainKind } from "./WireDclaimSeedTool.js"
 
 const { SysioContractAccount, SysioContractName, SysioDclaimChainkind } =
@@ -275,6 +276,29 @@ export namespace WireLcoImportTool {
     )
   }
 
+  /**
+   * The depot chain code of the plan's chain a table row's chain-kind cell names, else the
+   * raw cell, so a row on a chain the plan lacks still shows when compared to the plan.
+   *
+   * @param chainPlans - The plan's chains.
+   * @param kind - The row's chain-kind cell, as the node returns it (name or number).
+   * @param kindEnum - The table's generated chain-kind enum (`SysioSyndChainkind`).
+   * @returns The chain code, or the raw cell.
+   */
+  export function chainCodeOf<Kind>(
+    chainPlans: ChainPlan[],
+    kind: Kind,
+    kindEnum: Record<string | number, string | number>
+  ): string {
+    return asOption(
+      chainPlans.find(chainPlan =>
+        matchesProtoEnum(kind, kindEnum, chainPlan.chain)
+      )
+    )
+      .map(chainPlan => chainPlan.pool.chainCode)
+      .getOrElse(String(kind))
+  }
+
   /** The total of a chain's syndicated positions, in the liq token's depot subunits. */
   export function syndicatedTotal(
     syndications: ChainPlan["syndications"]
@@ -307,6 +331,22 @@ export namespace WireLcoImportTool {
    */
   export function batchCount(length: number, batchSize: number): number {
     return Math.ceil(length / batchSize)
+  }
+
+  /**
+   * The number of credits batch `index` of `length` credits carries, without building it.
+   *
+   * @param length - The credit count.
+   * @param batchSize - Credits per batch.
+   * @param index - The batch index, from 0, below {@link batchCount}.
+   * @returns The batch's credit count.
+   */
+  export function batchCreditCount(
+    length: number,
+    batchSize: number,
+    index: number
+  ): number {
+    return Math.min(batchSize, length - index * batchSize)
   }
 
   /**
@@ -442,7 +482,7 @@ export namespace WireLcoImportTool {
   ): ChainDerivation {
     const file = chainConfig.bootstrapJsonFile,
       snapshot = readExport(EthereumGenesisSnapshotSchemaCodec, file),
-      chainCode = Constants.ETHEREUM_CHAIN_CODE,
+      chainCode = Constants.ETHEREUM_CHAIN_CODENAME,
       tokenCode = Constants.liqTokenCode(chainCode),
       positions = snapshot.stakers
         .map(staker => ({
@@ -473,10 +513,13 @@ export namespace WireLcoImportTool {
       ),
       { lastPoolLiqBalance, totalLiqEthPurchased, highestTranchePriceUsd } =
         snapshot.metadata,
+      // The imported positions in wei plus the purchases, so the pool gets exactly the
+      // purchases once custody is floored to the depot precision.
       bookedPlaceholder =
-        snapshot.stakers.reduce(
-          (sum, staker) => sum + BigInt(staker.netPrincipal),
-          0n
+        scaleUnits(
+          syndicatedTotal(syndications),
+          Constants.LIQ_TOKEN_PRECISION,
+          EthereumDecimals
         ) + BigInt(totalLiqEthPurchased),
       bookedWei =
         lastPoolLiqBalance == null ? bookedPlaceholder : BigInt(lastPoolLiqBalance),
@@ -534,7 +577,7 @@ export namespace WireLcoImportTool {
       snapshot = readExport(SolanaGenesisSnapshotSchemaCodec, file),
       { accounting } = snapshot,
       { units } = accounting,
-      chainCode = Constants.SOLANA_CHAIN_CODE,
+      chainCode = Constants.SOLANA_CHAIN_CODENAME,
       tokenCode = Constants.liqTokenCode(chainCode),
       toDepot = (amount: string): bigint =>
         scaleUnits(

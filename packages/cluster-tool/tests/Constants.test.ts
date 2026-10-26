@@ -16,10 +16,10 @@ describe("Constants", () => {
   describe("shadow liq pairs", () => {
     it("pairs each outpost chain with its liq token, Ethereum first", () => {
       expect(Constants.SHADOW_LIQ_TOKEN_PAIRS).toEqual([
-        [Constants.ETHEREUM_CHAIN_CODE, "LIQETH"],
-        [Constants.SOLANA_CHAIN_CODE, Constants.LIQSOL_CODENAME]
+        [Constants.ETHEREUM_CHAIN_CODENAME, "LIQETH"],
+        [Constants.SOLANA_CHAIN_CODENAME, Constants.LIQSOL_CODENAME]
       ])
-      expect([Constants.ETHEREUM_CHAIN_CODE, Constants.SOLANA_CHAIN_CODE]).toEqual([
+      expect([Constants.ETHEREUM_CHAIN_CODENAME, Constants.SOLANA_CHAIN_CODENAME]).toEqual([
         "ETHEREUM",
         "SOLANA"
       ])
