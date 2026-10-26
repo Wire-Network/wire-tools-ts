@@ -41,6 +41,22 @@ describe("Constants", () => {
       expect(Constants.WIRE_PRECISION).toBe(9)
     })
   })
+  describe("nodeOwnerCommitment", () => {
+    it("commits each tier's allocation times its owner cap: 341.5M WIRE at the defaults", () => {
+      expect(Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS)).toBe(
+        341_500_000n * 10n ** 9n
+      )
+      expect(
+        Constants.nodeOwnerCommitment({
+          ...Constants.EMISSION_CONFIG_DEFAULTS,
+          t1_allocation: 1,
+          t2_allocation: 0,
+          t3_allocation: 0
+        })
+      ).toBe(BigInt(Constants.T1_MAX_NODE_OWNERS))
+    })
+  })
+
   describe("batchOperatorLabels", () => {
     it("lists the bootstrap batch-operator labels in index order", () => {
       expect(Constants.batchOperatorLabels(3)).toEqual([

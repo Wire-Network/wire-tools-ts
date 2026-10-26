@@ -1,6 +1,8 @@
 import Path from "node:path"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
+import { WireLcoImportTool } from "@wireio/cluster-tool/tools/wire"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { omit } from "lodash"
 import {
@@ -80,6 +82,45 @@ describe("ClusterBuildDefaults — launch-data import", () => {
     expect(steps).not.toContain("seal-lco-syndication")
     expect(steps).toContain("seal-mock-syndication-import")
     expect(names.indexOf("MockSyndicationImport")).toBeGreaterThan(names.indexOf("LcoImportSeal"))
+  })
+
+  it("carves every seeded pool's WIRE out of the T5 distributable it configures", async () => {
+    const ethereumOnly = omit(baseOptions(), "solanaBootstrapJsonFile"),
+      cluster = await ClusterBuildDefaults.create({
+        ...ethereumOnly,
+        enableMockLiqPools: true
+      }),
+      plan = WireLcoImportTool.createPlan({
+        ethereum: fixture.chain("earmark-ethereum.json", ethereumSnapshot()),
+        solana: null,
+        dclaimFundingAccount: null
+      }),
+      mockSolanaPool = Steps.registry.MockLiqPoolRegistrations.find(
+        registration => registration.token_code === "LIQSOL"
+      ),
+      dexEarmark =
+        WireLcoImportTool.dexEarmark(plan) +
+        BigInt(mockSolanaPool.initial_wire_amount),
+      setEmitConfig = findPhase(cluster.children, "Emissions").steps.find(
+        step => step.name === "set-emit-config"
+      )
+    expect(setEmitConfig.input).toEqual({
+      kind: "SystemContractSteps.SetemitcfgInput",
+      data: ClusterBuildDefaults.emissionConfig(dexEarmark)
+    })
+    expect(ClusterBuildDefaults.emissionConfig(dexEarmark).t5_distributable).toBe(
+      (
+        BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) - dexEarmark
+      ).toString()
+    )
+    expect(ClusterBuildDefaults.emissionConfig(dexEarmark).t5_floor).toBe(
+      Constants.EMISSION_CONFIG_DEFAULTS.t5_floor
+    )
+    expect(() =>
+      ClusterBuildDefaults.emissionConfig(
+        BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) + 1n
+      )
+    ).toThrow(/exceed the T5 allotment/)
   })
 
   it("seeds the mock pool of a shadow only when the import seeds none for it", async () => {

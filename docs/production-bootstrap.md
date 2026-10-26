@@ -323,7 +323,7 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `t2_duration` | `62208000` | 24 × 30 d |
 | `t3_duration` | `93312000` | 36 × 30 d |
 | `min_claimable` | `10000000000` | 10 WIRE |
-| `t5_distributable` | `375000000000000000` | 375,000,000 WIRE (T5 treasury budget) |
+| `t5_distributable` | `375000000000000000` less the DEX earmark | 375,000,000 WIRE (T5 treasury budget), less every seeded pool's WIRE side (the LCO pools and any mock pools), which leaves the treasury |
 | `t5_floor` | `125000000000000000` | 125,000,000 WIRE (T5 floor) |
 | `target_annual_decay_bps` | `6940` | 69.40% annual survival (≈30.6% decay) |
 | `annual_initial_emission` | `563150000000000 × 365 = 205549750000000000` | ≈563,150 WIRE/day, annualized |
@@ -485,8 +485,12 @@ drops every `SYNDICATE_LIQ` of the pair).
     the mock import follows) `sysio.synd::importdone` seal the imports, and a verify checks each imported
     shadow's outstanding equals its booked custody. Each export is checked before anything runs: a Solana
     export must hash to its `allocationHash`, its `initialChainAmount` must equal its wallets' purchased
-    liqSOL, and against external outposts its `programId` must be the targeted program; an Ethereum staker's
-    pubkey must be its address's key. Placeholders stand in for unset prices, tuning, the Ethereum booked
+    liqSOL, its `backingAvailable` must be `poolBalance − unreportedLiqsolYield`, and against external
+    outposts its `programId` must be the targeted program; an Ethereum staker's pubkey must be its address's
+    key; every row's `totalPretokens` and every declared total must add up; and each pool must meet
+    `sysio.swap`'s own limits (seeds below 10^15, a share left for the creator). Before the first import
+    write, the funding account must hold every claim and `sysio` must keep its T5 allotment and node-owner
+    commitments. Placeholders stand in for unset prices, tuning, the Ethereum booked
     custody and the funding account; external outposts refuse them.
     **(production: real exports and real values only.)**
 38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:

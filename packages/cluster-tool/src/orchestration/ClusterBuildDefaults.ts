@@ -269,6 +269,18 @@ export namespace ClusterBuildDefaults {
       mockLiqPools = Steps.registry.MockLiqPoolRegistrations.filter(
         registration => !lcoPoolTokenCodes.includes(registration.token_code)
       ),
+      // The T5 DEX earmark: the WIRE side of every pool this bootstrap seeds.
+      dexEarmark =
+        (lcoImportPlan == null
+          ? 0n
+          : WireLcoImportTool.dexEarmark(lcoImportPlan)) +
+        (config.enableMockLiqPools
+          ? mockLiqPools.reduce(
+              (sum, registration) =>
+                sum + BigInt(registration.initial_wire_amount),
+              0n
+            )
+          : 0n),
       // Local outposts were deployed empty, so the imported shadow is backed like mock shadow.
       backLcoImport = lcoImportPlan != null && !isExternalOutpost
     if (lcoImportPlan != null && isExternalOutpost) {
@@ -784,9 +796,9 @@ export namespace ClusterBuildDefaults {
       Steps.contracts.sysio.system.planSetemitcfg<C>(
         Actor.Sysio,
         "set-emit-config",
-        "set the emission config",
+        "set the emission config, the pools' WIRE outside the T5 distributable",
         {},
-        Constants.EMISSION_CONFIG_DEFAULTS
+        emissionConfig(dexEarmark)
       ),
       // Anchors node-owner vesting. Without it every `claimnodedis` aborts with
       // "emission state not initialized", so node owners register successfully but can
@@ -1599,6 +1611,34 @@ export namespace ClusterBuildDefaults {
       epochAdvanceBudgetMs(ctx.config),
       ProtocolTiming.EpochVerifyPollIntervalMs
     )
+  }
+
+  /**
+   * The bootstrap's emission config with the T5 DEX earmark carved out of `t5_distributable`
+   * (`t5_floor` unchanged). Every launch pool's WIRE side leaves the `sysio` treasury, so it
+   * must sit outside the distributable pool, or the epoch readiness gate later finds the
+   * treasury short by it (wire-sysio `docs/platform-bootstrap-config.md`, "T5 DEX earmark").
+   *
+   * @param dexEarmark - The WIRE subunits every seeded pool drains: the import's and the
+   *   mock ones that survive it.
+   * @returns The `system::setemitcfg` config.
+   * @throws If the earmark exceeds the T5 allotment.
+   */
+  export function emissionConfig(
+    dexEarmark: bigint
+  ): SysioContracts.SysioSystemEmissionConfigType {
+    const allotment = BigInt(
+      Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable
+    )
+    Assert.ok(
+      dexEarmark <= allotment,
+      `ClusterBuildDefaults: the pools' ${dexEarmark} WIRE subunits exceed the T5 allotment ${allotment}`
+    )
+    return {
+      ...Constants.EMISSION_CONFIG_DEFAULTS,
+      // A string: the difference need not fit a double exactly.
+      t5_distributable: (allotment - dexEarmark).toString()
+    }
   }
 
   /**

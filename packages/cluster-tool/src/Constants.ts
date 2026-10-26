@@ -578,6 +578,28 @@ export namespace Constants {
     epoch_log_retention_count: 8640,
     pay_cadence_epochs: 1
   }
+
+  /** The node owners tier 1 admits at most (wire-sysio `emissions.hpp` `T1_MAX_NODE_OWNERS`). */
+  export const T1_MAX_NODE_OWNERS = 21
+  /** The node owners tier 2 admits at most (`T2_MAX_NODE_OWNERS`). */
+  export const T2_MAX_NODE_OWNERS = 84
+  /** The node owners tier 3 admits at most (`T3_MAX_NODE_OWNERS`). */
+  export const T3_MAX_NODE_OWNERS = 1000
+
+  /**
+   * The most WIRE node owners can vest from the `sysio` treasury under `config`: each
+   * tier's per-owner allocation times its owner cap (341,500,000 WIRE at the defaults).
+   *
+   * @param config - The emission config.
+   * @returns The commitment, in WIRE subunits.
+   */
+  export function nodeOwnerCommitment(config: EmissionConfig): bigint {
+    return (
+      BigInt(config.t1_allocation) * BigInt(T1_MAX_NODE_OWNERS) +
+      BigInt(config.t2_allocation) * BigInt(T2_MAX_NODE_OWNERS) +
+      BigInt(config.t3_allocation) * BigInt(T3_MAX_NODE_OWNERS)
+    )
+  }
 }
 
 /**

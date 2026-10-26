@@ -100,6 +100,24 @@ export function ethereumSnapshot(): EthereumGenesisSnapshot {
   }
 }
 
+/**
+ * `snapshot` with the metadata totals opp-snapshot derives from its rows: the stakers' net
+ * principal and the purchasers' liqETH principal.
+ */
+export function withEthereumTotals(
+  snapshot: EthereumGenesisSnapshot
+): EthereumGenesisSnapshot {
+  const sum = (amounts: string[]) =>
+      amounts.reduce((total, amount) => total + BigInt(amount), 0n).toString(),
+    staked = sum(snapshot.stakers.map(staker => staker.netPrincipal))
+  snapshot.metadata.totalPrincipal = staked
+  snapshot.metadata.totalLiqEthStaked = staked
+  snapshot.metadata.totalLiqEthPurchased = sum(
+    snapshot.purchasers.map(purchaser => purchaser.liqPrincipalIn)
+  )
+  return snapshot
+}
+
 /** A wallet that syndicated 5 liqSOL and earned 1.2 pretokens. */
 export const SolanaStakerAddress = "So11111111111111111111111111111111111111112"
 /** A wallet that only bought 3 pretokens. */

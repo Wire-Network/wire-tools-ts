@@ -148,6 +148,24 @@ describe("WireClient", () => {
       expect(send).toHaveBeenCalledTimes(1)
     })
 
+    it.each([
+      ["the node already has", "Error 3040008: Duplicate transaction", {}],
+      [
+        "failed unrecognizably",
+        "",
+        { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }
+      ]
+    ])("does NOT re-send a push that %s", async (_case, stderr, fields) => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stderr, fields) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
     it("re-sends a push the node rejected", async () => {
       const client = new WireClient(config),
         send = jest

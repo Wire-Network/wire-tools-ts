@@ -7,6 +7,7 @@ import {
   ClusterBuildPhase,
   LcoImportPlanKey
 } from "@wireio/cluster-tool/orchestration"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import { Report } from "@wireio/cluster-tool/report"
 import {
@@ -82,6 +83,7 @@ describe("LcoImportSteps", () => {
       ])
       expect(planPhase.steps.map(step => step.runner)).toEqual([
         LcoImportSteps.runPublishPlan,
+        LcoImportSteps.runVerifyFunding,
         LcoImportSteps.runWriteRecord
       ])
       expect(planPhase.steps[0].input).toEqual({
@@ -197,11 +199,21 @@ describe("LcoImportSteps", () => {
     })
 
     it("refuses exports whose allocations moved, even with the same counts and totals", async () => {
+      // Swap the two wallets' pretokens: every row and total still adds up.
       const moved = solanaSnapshot(),
         [staker, purchaser] = moved.balances,
-        stakerClaim = staker.totalPretokens
-      staker.totalPretokens = purchaser.totalPretokens
-      purchaser.totalPretokens = stakerClaim
+        claimOf = ({
+          directlyPurchasedPretokens,
+          pretokenYield,
+          totalPretokens
+        }: typeof staker) => ({
+          directlyPurchasedPretokens,
+          pretokenYield,
+          totalPretokens
+        }),
+        stakerClaim = claimOf(staker)
+      Object.assign(staker, claimOf(purchaser))
+      Object.assign(purchaser, stakerClaim)
       withAllocationHash(moved)
       const ctx = new ClusterBuildContext(
         fixtureConfig({
@@ -289,6 +301,67 @@ describe("LcoImportSteps", () => {
         signal
       )
       expect(invoke).toHaveBeenCalledWith(WireLcoImportTool.claimBatch(plan.ethereum, 0))
+    })
+
+    describe("runVerifyFunding", () => {
+      const Claims = WireLcoImportTool.planClaimTotal(plan),
+        Reserved =
+          BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) +
+          Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS)
+
+      /** A context over `fundedPlan` whose accounts hold `balances` WIRE subunits. */
+      function funded(
+        balances: Record<string, bigint>,
+        fundedPlan: WireLcoImportTool.Plan = plan
+      ) {
+        const ctx = importContext(false)
+        ctx.outputs.set(LcoImportPlanKey, fundedPlan)
+        jest
+          .spyOn(ctx.wire, "getWireBalance")
+          .mockImplementation(async account => balances[account] ?? 0n)
+        return ctx
+      }
+
+      it("passes when the treasury funds the claims and keeps its commitments", async () => {
+        await expect(
+          LcoImportSteps.runVerifyFunding(funded({ sysio: Reserved + Claims }), null, signal)
+        ).resolves.toBeUndefined()
+      })
+
+      it("fails when funding the claims would eat into the treasury's commitments", async () => {
+        await expect(
+          LcoImportSteps.runVerifyFunding(
+            funded({ sysio: Reserved + Claims - 1n }),
+            null,
+            signal
+          )
+        ).rejects.toThrow(/sysio would keep \d+ WIRE subunits after the import, less than the \d+/)
+      })
+
+      it("checks another funding account for the claims and the treasury for its commitments", async () => {
+        const treasuryFunded = { ...plan, dclaimFundingAccount: "lco.treasury" }
+        await expect(
+          LcoImportSteps.runVerifyFunding(
+            funded({ sysio: Reserved, "lco.treasury": Claims }, treasuryFunded),
+            null,
+            signal
+          )
+        ).resolves.toBeUndefined()
+        await expect(
+          LcoImportSteps.runVerifyFunding(
+            funded({ sysio: Reserved, "lco.treasury": Claims - 1n }, treasuryFunded),
+            null,
+            signal
+          )
+        ).rejects.toThrow(/lco\.treasury holds \d+ WIRE subunits, less than the \d+ the claims need/)
+        await expect(
+          LcoImportSteps.runVerifyFunding(
+            funded({ sysio: Reserved - 1n, "lco.treasury": Claims }, treasuryFunded),
+            null,
+            signal
+          )
+        ).rejects.toThrow(/sysio would keep/)
+      })
     })
 
     describe("runReconcileClaims", () => {

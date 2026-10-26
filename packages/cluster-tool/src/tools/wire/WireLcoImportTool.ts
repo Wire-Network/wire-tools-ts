@@ -23,6 +23,7 @@ import { getValue, NestedError } from "@wireio/shared"
 import { ethers } from "ethers"
 import { sortBy } from "lodash"
 import { Constants } from "../../Constants.js"
+import { isqrt } from "../../utils/bigintUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import type { ImportSeedChainKind } from "./WireDclaimSeedTool.js"
@@ -62,6 +63,11 @@ export namespace WireLcoImportTool {
   export const MaxPoolFee = 9_999
   /** The largest clip cap of a pool, in basis points of its shadow side. */
   export const MaxDepthCapBps = 10_000
+  /**
+   * `sysio.swap::inittoken`'s `INIT_MAX`: each pool seed must be below it, in base units
+   * (1,000,000 tokens at 9 decimals).
+   */
+  export const PoolSeedLimit = 10n ** 15n
   /** A pool's pair (LP) token code: one to seven capitals. */
   export const PairCodePattern = /^[A-Z]{1,7}$/
   /** The launch schema version a record carries (`BootstrapPlatformConfig.schema_version`). */
@@ -380,6 +386,20 @@ export namespace WireLcoImportTool {
     )
   }
 
+  /**
+   * The WIRE every pool of the plan drains from the `sysio` treasury: its T5 DEX earmark
+   * (`BootstrapPlatformConfig.t5_dex_allocation`).
+   *
+   * @param plan - The import's plan.
+   * @returns The total of the pools' WIRE sides, in WIRE subunits.
+   */
+  export function dexEarmark(plan: Plan): bigint {
+    return chainPlans(plan).reduce(
+      (sum, chainPlan) => sum + chainPlan.pool.initialWireAmount,
+      0n
+    )
+  }
+
   /** The total of every chain's WIRE claims — what `sysio.dclaim` must be funded with. */
   export function planClaimTotal(plan: Plan): bigint {
     return chainPlans(plan).reduce(
@@ -519,10 +539,7 @@ export namespace WireLcoImportTool {
     return BootstrapPlatformConfig.create({
       schemaVersion: RecordSchemaVersion,
       network,
-      t5DexAllocation: liqPools.reduce(
-        (sum, pool) => sum + pool.initialWireAmount,
-        0n
-      ),
+      t5DexAllocation: dexEarmark(plan),
       liqPools,
       syndications: chains.flatMap(chainPlan => chainPlan.syndications)
     })
@@ -580,6 +597,31 @@ export namespace WireLcoImportTool {
       misKeyed.length === 0,
       `WireLcoImportTool: ${file}: ${misKeyed.length} staker(s) carry a pubkey that is not their address's key: ${misKeyed.join(", ")}`
     )
+    assertRowTotals(
+      file,
+      snapshot.purchasers.map(purchaser => ({
+        address: purchaser.address,
+        declared: purchaser.totalPretokens,
+        derived: BigInt(purchaser.pretokens) + BigInt(purchaser.pretokenYield)
+      }))
+    )
+    const staked = sumOf(snapshot.stakers.map(staker => staker.netPrincipal))
+    assertTotals(file, {
+      "metadata.totalPrincipal": {
+        declared: snapshot.metadata.totalPrincipal,
+        derived: staked
+      },
+      "metadata.totalLiqEthStaked": {
+        declared: snapshot.metadata.totalLiqEthStaked,
+        derived: staked
+      },
+      "metadata.totalLiqEthPurchased": {
+        declared: snapshot.metadata.totalLiqEthPurchased,
+        derived: sumOf(
+          snapshot.purchasers.map(purchaser => purchaser.liqPrincipalIn)
+        )
+      }
+    })
     const syndications = mergeSyndications(
         positions.map(({ staker, amount }) =>
           SyndicationSpec.create({
@@ -664,11 +706,10 @@ export namespace WireLcoImportTool {
           units.liqsolDecimals,
           Constants.LIQ_TOKEN_PRECISION
         )
-    const allocationHash = solanaAllocationHash(text),
-      purchased = snapshot.balances.reduce(
-        (sum, balance) => sum + BigInt(balance.purchasedLiqsol),
-        0n
-      )
+    const { balances } = snapshot,
+      allocationHash = solanaAllocationHash(text),
+      poolBalance = BigInt(accounting.poolBalance),
+      unreported = BigInt(accounting.unreportedLiqsolYield)
     Assert.ok(
       accounting.issues.length === 0,
       `WireLcoImportTool: ${file}: the export reports reconciliation issues: ${accounting.issues.join("; ")}`
@@ -678,12 +719,43 @@ export namespace WireLcoImportTool {
       snapshot.allocationHash,
       `WireLcoImportTool: ${file}: the balances hash to ${allocationHash}, not the declared allocationHash ${snapshot.allocationHash}`
     )
-    // The pool's principal is the wallets' purchased liqSOL, which the settlement ledger books.
-    Assert.strictEqual(
-      BigInt(accounting.initialChainAmount),
-      purchased,
-      `WireLcoImportTool: ${file}: accounting.initialChainAmount ${accounting.initialChainAmount} is not the ${purchased} the wallets purchased`
+    assertRowTotals(
+      file,
+      balances.map(balance => ({
+        address: balance.address,
+        declared: balance.totalPretokens,
+        derived:
+          BigInt(balance.directlyPurchasedPretokens) +
+          BigInt(balance.pretokenYield)
+      }))
     )
+    Assert.ok(
+      poolBalance >= unreported,
+      `WireLcoImportTool: ${file}: the pool's ${poolBalance} liqSOL is less than its ${unreported} unreported yield`
+    )
+    assertTotals(file, {
+      // The pool's principal is the wallets' purchased liqSOL, which the settlement ledger books.
+      "accounting.initialChainAmount": {
+        declared: accounting.initialChainAmount,
+        derived: sumOf(balances.map(balance => balance.purchasedLiqsol))
+      },
+      "accounting.backingAvailable": {
+        declared: accounting.backingAvailable,
+        derived: poolBalance - unreported
+      },
+      "accounting.directlyPurchasedPretokens": {
+        declared: accounting.directlyPurchasedPretokens,
+        derived: sumOf(balances.map(balance => balance.directlyPurchasedPretokens))
+      },
+      "accounting.allocatedPretokenYield": {
+        declared: accounting.allocatedPretokenYield,
+        derived: sumOf(balances.map(balance => balance.pretokenYield))
+      },
+      "accounting.totalUserPretokens": {
+        declared: accounting.totalUserPretokens,
+        derived: sumOf(balances.map(balance => balance.totalPretokens))
+      }
+    })
     const syndications = mergeSyndications(
         snapshot.balances
           .map(balance =>
@@ -868,9 +940,9 @@ export namespace WireLcoImportTool {
       `${label}: its WIRE side rounds to nothing`
     )
     Assert.ok(
-      pool.initialChainAmount <= AssetMaxAmount &&
-        pool.initialWireAmount <= AssetMaxAmount,
-      `${label}: a seed exceeds the asset range`
+      pool.initialChainAmount < PoolSeedLimit &&
+        pool.initialWireAmount < PoolSeedLimit,
+      `${label}: a seed reaches sysio.swap's ${PoolSeedLimit} limit (liq ${pool.initialChainAmount}, WIRE ${pool.initialWireAmount})`
     )
     // The shadow's supply reaches the whole booked custody once every position is imported.
     Assert.ok(
@@ -886,11 +958,62 @@ export namespace WireLcoImportTool {
       pool.depthCapBps >= 1 && pool.depthCapBps <= MaxDepthCapBps,
       `${label}: depthCapBps ${pool.depthCapBps} must be 1..${MaxDepthCapBps}`
     )
-    Assert.ok(pool.clipFloor > 0n, `${label}: clipFloor must be positive`)
     Assert.ok(
-      pool.lockedShares * pool.lockedShares <
-        pool.initialChainAmount * pool.initialWireAmount,
-      `${label}: lockedShares ${pool.lockedShares} must stay below the minted pool shares`
+      pool.clipFloor > 0n && pool.clipFloor <= AssetMaxAmount,
+      `${label}: clipFloor must be positive and within the asset range`
+    )
+    // `inittoken` mints isqrt(liq × WIRE) shares and keeps at least one for the creator.
+    const shares = isqrt(pool.initialChainAmount * pool.initialWireAmount)
+    Assert.ok(
+      pool.lockedShares < shares,
+      `${label}: lockedShares ${pool.lockedShares} must stay below the ${shares} minted pool shares`
+    )
+  }
+
+  /** A declared total and what the export's rows add up to. */
+  interface DeclaredTotal {
+    readonly declared: string
+    readonly derived: bigint
+  }
+
+  /** One row's declared total and what its components add up to. */
+  interface RowTotal extends DeclaredTotal {
+    readonly address: string
+  }
+
+  /** The total of decimal-string amounts. */
+  function sumOf(amounts: string[]): bigint {
+    return amounts.reduce((sum, amount) => sum + BigInt(amount), 0n)
+  }
+
+  /**
+   * Refuse an export whose declared totals disagree with its rows. The exporter derives each
+   * total from the rows, so a mismatch means a broken or edited file.
+   */
+  function assertTotals(
+    file: string,
+    totals: Record<string, DeclaredTotal>
+  ): void {
+    const wrong = Object.entries(totals)
+      .filter(([, { declared, derived }]) => BigInt(declared) !== derived)
+      .map(
+        ([setting, { declared, derived }]) =>
+          `${setting} ${declared} (rows: ${derived})`
+      )
+    Assert.ok(
+      wrong.length === 0,
+      `WireLcoImportTool: ${file}: totals disagree with the rows: ${wrong.join("; ")}`
+    )
+  }
+
+  /** Refuse an export with a row whose `totalPretokens` is not the sum of its parts. */
+  function assertRowTotals(file: string, rows: RowTotal[]): void {
+    const wrong = rows
+      .filter(({ declared, derived }) => BigInt(declared) !== derived)
+      .map(({ address }) => address)
+    Assert.ok(
+      wrong.length === 0,
+      `WireLcoImportTool: ${file}: ${wrong.length} row(s) whose totalPretokens is not its pretokens plus pretokenYield: ${wrong.join(", ")}`
     )
   }
 
@@ -994,7 +1117,8 @@ export namespace WireLcoImportTool {
   function isKeyOf(pubkey: string, address: string): boolean {
     return getValue(
       () =>
-        ethers.computeAddress(pubkey).toLowerCase() === address.toLowerCase(),
+        ethers.computeAddress(evmDisplayHex(pubkey)).toLowerCase() ===
+        address.toLowerCase(),
       false
     )
   }

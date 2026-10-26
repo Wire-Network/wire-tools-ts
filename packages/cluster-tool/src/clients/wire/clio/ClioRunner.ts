@@ -103,8 +103,8 @@ export class ClioRunner {
     ]
     log.debug("clio %s", fullArgs.join(" "))
     // Retries only a failed connection (`TransportFailurePattern`): nothing reached the
-    // node, so even a push may re-run. Any other error is the result; a push that may have
-    // been sent (`isAmbiguousSubmission`) must never re-run, as clio re-signs it into a new
+    // node, so even a push may re-run. Any other error is the result; a push not proven
+    // unapplied (`isProvenUnapplied`) must never re-run, as clio re-signs it into a new
     // transaction. Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
@@ -200,12 +200,18 @@ export namespace ClioRunner {
   export const TransportFailurePattern =
     /Failed http request to nodeop|Connection refused|couldn't connect to server/i
 
+  /** The chain error code clio prints for a failed command (`Error 3050003: …`). */
+  export const ChainErrorCodePattern = /Error (3\d{6}):/
+
   /**
    * clio's `http_exception` family (`Error 3200000`–`3200006`): an HTTP failure after the
    * connection opened, such as a reply that never arrived, so the request may have reached
    * the node.
    */
   export const HttpExceptionPattern = /Error 3200\d{3}\b/
+
+  /** `tx_duplicate`: the node already has the transaction. */
+  export const DuplicateTransactionCode = 3040008
 
   /** True when `error` is a failed clio connection (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {
@@ -219,19 +225,30 @@ export namespace ClioRunner {
   }
 
   /**
-   * True when a failed clio push may still have reached the node: an `http_exception`, or
-   * a clio killed mid-run (`execFile`'s timeout). Such a push is never re-sent; its outcome
-   * is read from the chain instead.
+   * True only when a failed clio push provably did not apply, so it may be sent again: its
+   * connection failed, or clio printed a chain error code for a rejection — not an HTTP
+   * failure after connecting, and not `Duplicate transaction`. Anything else, a killed clio
+   * included, may have reached the node; its outcome is read from the chain instead.
    */
-  export function isAmbiguousSubmission(error: unknown): boolean {
+  export function isProvenUnapplied(error: unknown): boolean {
     const candidate = error as ClioError
+    if (
+      candidate == null ||
+      typeof candidate !== "object" ||
+      typeof candidate.message !== "string" ||
+      candidate.killed === true ||
+      candidate.signal != null
+    ) {
+      return false
+    }
+    const code = asOption(ChainErrorCodePattern.exec(candidate.message))
+      .map(([, digits]) => Number(digits))
+      .getOrUndefined()
     return (
-      candidate != null &&
-      typeof candidate === "object" &&
-      (candidate.killed === true ||
-        candidate.signal != null ||
-        (typeof candidate.message === "string" &&
-          HttpExceptionPattern.test(candidate.message)))
+      isTransportFailure(candidate) ||
+      (code != null &&
+        code !== DuplicateTransactionCode &&
+        !HttpExceptionPattern.test(candidate.message))
     )
   }
 

@@ -18,7 +18,8 @@ import {
   WeiPerEther,
   ethereumSnapshot,
   solanaSnapshot,
-  withAllocationHash
+  withAllocationHash,
+  withEthereumTotals
 } from "./lcoImportFixture.js"
 
 /** Raw-byte hex of a base58 Solana key. */
@@ -147,6 +148,7 @@ describe("WireLcoImportTool", () => {
         (3n * WeiPerEther) / 2n +
         600_000_000n
       ).toString()
+      withEthereumTotals(exported)
       const { ethereum, placeholders } = WireLcoImportTool.createPlan({
         ethereum: fixture.chain("remainders.json", exported),
         solana: null,
@@ -157,7 +159,10 @@ describe("WireLcoImportTool", () => {
         ethereum.pool.initialChainAmount
       ]).toEqual([6_500_000_000n, 2_000_000_000n])
       expect(placeholders[0].value).toBe(((13n * WeiPerEther) / 2n).toString())
-      exported.metadata.totalLiqEthPurchased = "0"
+      exported.purchasers.forEach(purchaser => {
+        purchaser.liqPrincipalIn = "0"
+      })
+      withEthereumTotals(exported)
       expect(() =>
         WireLcoImportTool.createPlan({
           ethereum: fixture.chain("unpurchased.json", exported),
@@ -214,22 +219,21 @@ describe("WireLcoImportTool", () => {
           solana: fixture.chain("inflated.json", inflated),
           dclaimFundingAccount: null
         })
-      ).toThrow(/initialChainAmount 2000000000 is not the 1000000000 the wallets purchased/)
+      ).toThrow(
+        /totals disagree with the rows: accounting\.initialChainAmount 2000000000 \(rows: 1000000000\)/
+      )
     })
 
     it("refuses a booked custody or a claim total beyond the asset range", () => {
-      const overbooked = ethereumSnapshot()
-      overbooked.metadata.lastPoolLiqBalance = (
-        (WireLcoImportTool.AssetMaxAmount + 1n) *
-        10n ** 9n
-      ).toString()
+      // Two positions at the asset maximum each: the pool stays small, its custody does not.
+      const overbooked = ethereumSnapshot(),
+        maxPosition = (WireLcoImportTool.AssetMaxAmount * 10n ** 9n).toString()
+      overbooked.stakers[0].netPrincipal = maxPosition
+      overbooked.stakers[1].netPrincipal = maxPosition
+      withEthereumTotals(overbooked)
       expect(() =>
         WireLcoImportTool.createPlan({
-          ethereum: {
-            ...fixture.chain("huge-custody.json", overbooked),
-            nativePriceUsd: "1",
-            highestTranchePriceUsd: "1000000000"
-          },
+          ethereum: fixture.chain("huge-custody.json", overbooked),
           solana: null,
           dclaimFundingAccount: null
         })
@@ -238,6 +242,7 @@ describe("WireLcoImportTool", () => {
         maxClaim = (WireLcoImportTool.AssetMaxAmount * 10n ** 9n).toString()
       claimed.stakers[0].pretokenYield = "0"
       claimed.purchasers.forEach(purchaser => {
+        purchaser.pretokens = maxClaim
         purchaser.totalPretokens = maxClaim
       })
       expect(() =>
@@ -247,6 +252,86 @@ describe("WireLcoImportTool", () => {
           dclaimFundingAccount: null
         })
       ).toThrow(/the claims total \d+ WIRE subunits, beyond the asset range/)
+    })
+
+    it("refuses a row whose totalPretokens is not its parts", () => {
+      const ethereum = ethereumSnapshot(),
+        solana = solanaSnapshot()
+      ethereum.purchasers[0].totalPretokens = (999n * WeiPerEther).toString()
+      solana.balances[1].totalPretokens = "99900000000"
+      withAllocationHash(solana)
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("inflated-claim.json", ethereum),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(
+        new RegExp(`1 row\\(s\\) whose totalPretokens is not its pretokens plus pretokenYield: ${PurchaserAddress}`)
+      )
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("inflated-claim.json", solana),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(new RegExp(`pretokens plus pretokenYield: ${SolanaPurchaserAddress}`))
+    })
+
+    it("refuses declared totals the rows do not add up to", () => {
+      const ethereum = ethereumSnapshot(),
+        solana = solanaSnapshot()
+      ethereum.metadata.totalLiqEthPurchased = (5n * WeiPerEther).toString()
+      solana.accounting.totalUserPretokens = "1"
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("wrong-purchased.json", ethereum),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(
+        /totals disagree with the rows: metadata\.totalLiqEthPurchased 5000000000000000000 \(rows: 2000000000000000000\)/
+      )
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("wrong-user-pretokens.json", solana),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/accounting\.totalUserPretokens 1 \(rows: 420000000\)/)
+    })
+
+    it("derives the Solana backing from the pool balance and its unreported yield", () => {
+      const drained = solanaSnapshot(),
+        stale = solanaSnapshot()
+      drained.accounting.poolBalance = "1"
+      stale.accounting.poolBalance = "8500000000"
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("drained-pool.json", drained),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/the pool's 1 liqSOL is less than its 1000000000 unreported yield/)
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("stale-backing.json", stale),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/accounting\.backingAvailable 8000000000 \(rows: 7500000000\)/)
+    })
+
+    it("accepts a staker pubkey with or without its 0x prefix", () => {
+      const exported = ethereumSnapshot()
+      exported.stakers[0].pubkey = GeneratorPublicKey.slice(2)
+      expect(
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("unprefixed.json", exported),
+          solana: null,
+          dclaimFundingAccount: null
+        }).ethereum.syndications.map(spec => spec.pubkey)
+      ).toContain(GeneratorPublicKey)
     })
 
     it("refuses a configured tranche price the export contradicts", () => {
@@ -325,6 +410,36 @@ describe("WireLcoImportTool", () => {
           )
         )
       ).toThrow(/depthCapBps 0 must be 1\.\.10000/)
+    })
+
+    it("holds a pool to sysio.swap's own limits: seeds below 10^15, a share for the creator", () => {
+      const tuned = (tuning: Partial<LiqPoolSpec>, nativePriceUsd: string = null) =>
+        WireLcoImportTool.createPlan({
+          ethereum: {
+            ...fixture.chain("swap-limits.json", ethereumSnapshot()),
+            nativePriceUsd,
+            pool: LiqPoolSpec.create({
+              ...WireLcoImportTool.PlaceholderPoolTuning,
+              ...tuning
+            })
+          },
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      // 2 LIQETH against 80,000 WIRE mints isqrt(2e9 × 8e13) = 4e11 shares.
+      expect(tuned({ lockedShares: 399_999_999_999n }).ethereum.pool.lockedShares).toBe(
+        399_999_999_999n
+      )
+      expect(() => tuned({ lockedShares: 400_000_000_000n })).toThrow(
+        /lockedShares 400000000000 must stay below the 400000000000 minted pool shares/
+      )
+      expect(() =>
+        tuned({ clipFloor: WireLcoImportTool.AssetMaxAmount + 1n })
+      ).toThrow(/clipFloor must be positive and within the asset range/)
+      // At $50,000 an ETH, 2 LIQETH is worth 1,000,000 WIRE: 10^15 subunits, the limit.
+      expect(() => tuned({}, "5000000000000")).toThrow(
+        /a seed reaches sysio\.swap's 1000000000000000 limit \(liq 2000000000, WIRE 1000000000000000\)/
+      )
     })
 
     it("names the file of a missing or invalid export", () => {
@@ -506,6 +621,15 @@ describe("WireLcoImportTool", () => {
           outposts(SolanaPurchaserAddress)
         )
       ).not.toThrow()
+    })
+
+    it("earmarks every pool's WIRE side, as the record's t5DexAllocation", () => {
+      expect(WireLcoImportTool.dexEarmark(plan)).toBe(
+        plan.ethereum.pool.initialWireAmount + plan.solana.pool.initialWireAmount
+      )
+      expect(
+        WireLcoImportTool.toBootstrapPlatformConfig(plan, "test").t5DexAllocation
+      ).toBe(WireLcoImportTool.dexEarmark(plan))
     })
 
     it("digests every allocation, so equal counts and totals still differ", () => {

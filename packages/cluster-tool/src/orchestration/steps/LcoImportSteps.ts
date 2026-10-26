@@ -4,6 +4,7 @@ import Path from "node:path"
 import { ClusterFiles, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range, sortBy, sumBy, toLower, upperFirst } from "lodash"
+import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -158,7 +159,7 @@ export namespace LcoImportSteps {
     ClusterBuildPhase.create<C>(
       group,
       "LcoImportPlan",
-      "Read the exports, publish the import plan and write its record",
+      "Read the exports, publish the import plan, check the WIRE it needs and write its record",
       [
         planPublishPlan<C>(
           Actor.Sysio,
@@ -166,6 +167,12 @@ export namespace LcoImportSteps {
           "read and validate the exports and publish the import plan",
           options,
           WireLcoImportTool.summarize(plan)
+        ),
+        planVerifyFunding<C>(
+          Actor.Sysio,
+          "verify-lco-funding",
+          "the funding account covers the claims and the treasury keeps its T5 and node-owner commitments",
+          options
         ),
         planWriteRecord<C>(
           Actor.Sysio,
@@ -363,6 +370,66 @@ export namespace LcoImportSteps {
     )
     StepExtraRecorder.note("launch-data import plan", {
       placeholders: plan.placeholders
+    })
+  }
+
+  /** Check the WIRE the import needs is there, before its first write. */
+  export function planVerifyFunding<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runVerifyFunding
+    )
+  }
+
+  /**
+   * Named runner — refuse the import unless its WIRE is there: the funding account holds every
+   * claim, and the `sysio` treasury, after paying any claims it funds, still holds the T5
+   * allotment (the distributable pool plus the pools' earmark) and every node-owner
+   * commitment. Reads only, so it fails before the import writes anything.
+   */
+  export async function runVerifyFunding<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const plan = ctx.outputs.assert(LcoImportPlanKey),
+      { dclaimFundingAccount } = plan,
+      claims = WireLcoImportTool.planClaimTotal(plan),
+      treasury = SysioContractAccount[SysioContractName.system],
+      reserved =
+        BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) +
+        Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS),
+      fromTreasury = dclaimFundingAccount === treasury,
+      treasuryBalance = await ctx.wire.getWireBalance(treasury),
+      funding = fromTreasury
+        ? treasuryBalance
+        : await ctx.wire.getWireBalance(dclaimFundingAccount),
+      kept = treasuryBalance - (fromTreasury ? claims : 0n)
+    Assert.ok(
+      funding >= claims,
+      `LcoImportSteps: ${dclaimFundingAccount} holds ${funding} WIRE subunits, less than the ${claims} the claims need`
+    )
+    Assert.ok(
+      kept >= reserved,
+      `LcoImportSteps: ${treasury} would keep ${kept} WIRE subunits after the import, less than the ${reserved} its T5 allotment and node-owner commitments reserve`
+    )
+    StepExtraRecorder.note("launch-data import funding", {
+      claims: claims.toString(),
+      fundingAccount: dclaimFundingAccount,
+      treasuryKeeps: kept.toString(),
+      reserved: reserved.toString()
     })
   }
 

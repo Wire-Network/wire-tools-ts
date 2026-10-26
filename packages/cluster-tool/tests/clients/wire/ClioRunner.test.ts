@@ -108,7 +108,7 @@ describe("ClioRunner", () => {
       expect(runCount(runs)).toBe(1)
     })
 
-    it("tells a failed connection from a push that may have been sent", () => {
+    it("proves a push unapplied only by a failed connection or a chain rejection", () => {
       const failure = (message: string, fields: object = {}) => ({
         message,
         ...fields
@@ -122,21 +122,26 @@ describe("ClioRunner", () => {
         ClioRunner.isTransportFailure(failure("Error 3200000: http exception"))
       ).toBe(false)
       expect(
-        ClioRunner.isAmbiguousSubmission(
-          failure("Error 3200005: http request fail")
-        )
-      ).toBe(true)
+        [
+          "Failed http request to nodeop at http://127.0.0.1:1; is nodeop running?",
+          "\u001b[31mError 3050003: sysio_assert_message assertion failure\u001b[0m",
+          "Error 3040005: Expired Transaction"
+        ].map(message => ClioRunner.isProvenUnapplied(failure(message)))
+      ).toEqual([true, true, true])
       expect(
-        ClioRunner.isAmbiguousSubmission(
-          failure("Command failed", { killed: true, signal: "SIGTERM" })
-        )
-      ).toBe(true)
-      expect(
-        ClioRunner.isAmbiguousSubmission(
-          failure("Error 3050003: assertion failure")
-        )
-      ).toBe(false)
-      expect(ClioRunner.isAmbiguousSubmission("not an error")).toBe(false)
+        [
+          failure("Error 3200005: http request fail"),
+          failure("Error 3040008: Duplicate transaction"),
+          failure("Command failed: clio", {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+          }),
+          failure("Error 3050003: assertion failure", {
+            killed: true,
+            signal: "SIGTERM"
+          })
+        ].map(ClioRunner.isProvenUnapplied)
+      ).toEqual([false, false, false, false])
+      expect(ClioRunner.isProvenUnapplied("not an error")).toBe(false)
     })
   })
 

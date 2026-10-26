@@ -152,10 +152,14 @@ depot inside the epoch-0 window, in the `LcoImport` phase group right after
   against the plan, both imports are sealed (`sysio.synd` only when no mock import follows),
   and the result is verified.
 
-Each export is checked first: a Solana export must hash to its `allocationHash` and book
-exactly its wallets' purchased liqSOL as `initialChainAmount`, and an Ethereum staker's pubkey
-must be its address's key. Against external outposts the Solana export must also come from the
-targeted `programId`.
+Each export is checked first: a Solana export must hash to its `allocationHash`, book exactly
+its wallets' purchased liqSOL as `initialChainAmount` and derive its `backingAvailable`; an
+Ethereum staker's pubkey must be its address's key; every declared total must add up; and each
+pool must meet `sysio.swap`'s limits (seeds below 10^15). Against external outposts the Solana
+export must also come from the targeted `programId`. Before the first import write,
+`verify-lco-funding` checks the funding account holds every claim and `sysio` keeps its T5
+allotment and node-owner commitments; the emission config's `t5_distributable` already excludes
+every seeded pool's WIRE.
 
 The prices, pool tuning and claim funding account come from the flag-less `lcoImport`
 member of a `--cluster-build-options-file` document (or a flow's scenario defaults):

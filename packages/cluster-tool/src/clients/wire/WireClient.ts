@@ -3,7 +3,7 @@ import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
-import { flatten } from "lodash"
+import { flatten, negate } from "lodash"
 import { match } from "ts-pattern"
 import {
   getLogger,
@@ -700,22 +700,23 @@ export class WireClient {
       ),
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
-          // Pre-inclusion retry ONLY of a push the node rejected or never received.
-          // A push that may have reached it (`ClioRunner.isAmbiguousSubmission`) is
-          // never re-sent: clio would sign it again as a second transaction.
-          // Deliberately NOT fused with the finality wait; fusing them is the defect above.
+          // Pre-inclusion retry ONLY of a push proven not applied: its connection failed or
+          // the node rejected it (`ClioRunner.isProvenUnapplied`). Anything else may have
+          // reached the node and is never re-sent: clio would sign it again as a second
+          // transaction. Deliberately NOT fused with the finality wait; fusing them is the
+          // defect above.
           result = await retry(send, {
             maxAttempts: WireClient.PushMaxAttempts,
             delayMs: WireClient.FinalityRetryDelayMs,
             label,
-            checkResult: ClioRunner.isAmbiguousSubmission
+            checkResult: negate(ClioRunner.isProvenUnapplied)
           }).catch(error => {
-            throw ClioRunner.isAmbiguousSubmission(error)
-              ? new NestedError(
+            throw ClioRunner.isProvenUnapplied(error)
+              ? error
+              : new NestedError(
                   `${label}: the push may have reached the node, so it is not re-sent; read its outcome on the chain before running it again`,
                   { cause: error }
                 )
-              : error
           }),
           transactionId = WireClient.getTransactionId(result)
         // Nothing reached the chain: no id, or `setContract`'s settled-no-op
