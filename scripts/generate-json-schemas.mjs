@@ -3,19 +3,22 @@
  * Generate the committed JSON Schema documents of the @wireio/cluster-tool-shared codecs:
  *   packages/cluster-tool-shared (the BUILT lib/cjs) → <codec>.toJSONSchema()
  *   → docs/outpost/wire-opreg-bootstrap.schema.json
+ *   → docs/bind-registry/bind-registration.schema.json
  *
  * The zod schema is the single source: each document is its codec's wire-side JSON Schema
  * (draft 2020-12), pretty-printed with `SchemaCodec.SerializeIndent` plus a trailing newline.
  * The script reads the BUILT package, so run `pnpm build` first. Drift is gated by the jest
- * suite (`packages/cluster-tool-shared/tests/cluster/WireOpregBootstrapDocs.test.ts`), which
- * compares the committed document against the source schema and runs this script's `--check`.
+ * suites (`packages/cluster-tool-shared/tests/cluster/WireOpregBootstrapDocs.test.ts`,
+ * `packages/cluster-tool-shared/tests/config/BindRegistrationDocs.test.ts`), which compare each
+ * committed document against its source schema and run this script's `--check`.
  *
  * Usage:
  *   ./scripts/generate-json-schemas.mjs [options]
  *
  * Options:
- *   --output-path <dir>  where the documents are written or compared
- *                        (env: WIRE_JSON_SCHEMA_OUTPUT_PATH; default: docs/outpost)
+ *   --output-path <dir>  the docs root the documents are written under or compared against,
+ *                        each at its own relative path (env: WIRE_JSON_SCHEMA_OUTPUT_PATH;
+ *                        default: docs)
  *   --shared-path <dir>  the @wireio/cluster-tool-shared package
  *                        (env: WIRE_CLUSTER_TOOL_SHARED_PATH; default: packages/cluster-tool-shared)
  *   --check              compare the committed documents instead of writing them
@@ -55,8 +58,8 @@ const ExitCode = Object.freeze({ ...CommonExitCode, drift: CommonExitCode.failur
 /** Flag kinds this script accepts (anything else is a usage error). */
 const Flags = Object.freeze({ booleans: ["check"], strings: ["output-path", "shared-path"] })
 
-/** Default directory of the generated documents. */
-const DefaultOutputPath = path.join(RepoRoot, "docs", "outpost")
+/** Default docs root the generated documents live under. */
+const DefaultOutputPath = path.join(RepoRoot, "docs")
 
 /** Default location of the @wireio/cluster-tool-shared package. */
 const DefaultSharedPath = path.join(RepoRoot, "packages", "cluster-tool-shared")
@@ -64,9 +67,16 @@ const DefaultSharedPath = path.join(RepoRoot, "packages", "cluster-tool-shared")
 /** The built CommonJS entry, relative to the package. */
 const BuiltEntrySubpath = path.join("lib", "cjs", "index.js")
 
-/** Every generated document: the package's exported codec and the file it renders to. */
+/** Every generated document: the package's exported codec and its path under the docs root. */
 const Schemas = Object.freeze([
-  Object.freeze({ codec: "WireOpregBootstrapSchemaCodec", file: "wire-opreg-bootstrap.schema.json" })
+  Object.freeze({
+    codec: "WireOpregBootstrapSchemaCodec",
+    file: path.join("outpost", "wire-opreg-bootstrap.schema.json")
+  }),
+  Object.freeze({
+    codec: "BindRegistrationSchemaCodec",
+    file: path.join("bind-registry", "bind-registration.schema.json")
+  })
 ])
 
 // ---------------------------------------------------------------------------
@@ -89,7 +99,7 @@ function loadShared(sharedPath) {
  * Render every document of {@link Schemas}.
  *
  * @param {Record<string, any>} shared the built package's exports.
- * @return {{ file: string, text: string }[]} each document's file name and text.
+ * @return {{ file: string, text: string }[]} each document's path under the docs root and text.
  */
 function renderSchemas(shared) {
   return Schemas.map(({ codec, file }) => {
@@ -102,13 +112,16 @@ function renderSchemas(shared) {
 /**
  * Write the rendered documents.
  *
- * @param {string} outputPath the output directory.
+ * @param {string} outputPath the docs root.
  * @param {{ file: string, text: string }[]} rendered the documents.
  * @return {number} exit code.
  */
 function generate(outputPath, rendered) {
-  fs.ensureDirSync(outputPath)
-  rendered.forEach(({ file, text }) => fs.writeFileSync(path.join(outputPath, file), text))
+  rendered.forEach(({ file, text }) => {
+    const target = path.join(outputPath, file)
+    fs.ensureDirSync(path.dirname(target))
+    fs.writeFileSync(target, text)
+  })
   echo(chalk.green(`json-schemas: wrote ${rendered.map(({ file }) => file).join(", ")} into ${outputPath}`))
   return ExitCode.success
 }
@@ -116,7 +129,7 @@ function generate(outputPath, rendered) {
 /**
  * Compare the committed documents with the rendered ones.
  *
- * @param {string} outputPath the directory holding the committed documents.
+ * @param {string} outputPath the docs root holding the committed documents.
  * @param {{ file: string, text: string }[]} rendered the documents.
  * @return {number} exit code.
  */

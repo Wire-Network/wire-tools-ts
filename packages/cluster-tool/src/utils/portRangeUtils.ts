@@ -7,11 +7,11 @@ import { match } from "ts-pattern"
 
 import {
   BindConfigPortProtocol,
+  MaximumPort,
+  MinimumPort,
   type BindConfigPortRange
 } from "@wireio/cluster-tool-shared"
 import { NestedError } from "@wireio/shared"
-
-import { MaximumPort, MinimumPort } from "./netUtils.js"
 
 /** Linux shares this automatic port range across TCP/UDP and IPv4/IPv6. */
 const LinuxAutomaticPortRangeFile = "/proc/sys/net/ipv4/ip_local_port_range"
