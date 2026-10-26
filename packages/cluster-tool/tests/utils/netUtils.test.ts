@@ -1,23 +1,102 @@
+import { jest } from "@jest/globals"
 import Dgram from "node:dgram"
+import Os from "node:os"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
-import { BindConfigPortProtocol } from "@wireio/cluster-tool-shared"
+import { BindConfigPortProtocol, MaximumPort, MinimumPort } from "@wireio/cluster-tool-shared"
 import { Deferred } from "@wireio/shared"
 import {
   assertEndpoint,
   EndpointPattern,
   filterSocketLinesByLocalPort,
+  isLocalAddress,
   isUdpPortFree,
   ListenAllAddress,
+  ListenAllAddressV6,
+  LocalhostV6,
   Localhost,
-  MaximumPort,
-  MinimumPort,
   toAddress,
   toDialAddress,
   toURL,
   URLScheme
 } from "@wireio/cluster-tool/utils"
 
+/** TEST-NET-1 (RFC 5737): never assigned to a real host. */
+const RemoteAddressV4 = "192.0.2.1"
+/** The IPv6 documentation prefix (RFC 3849): never assigned to a real host. */
+const RemoteAddressV6 = "2001:db8::1"
+/** `family` of an IPv6 entry in `Os.networkInterfaces()`. */
+const IPv6Family = "IPv6"
+
 describe("netUtils", () => {
+  it("does not re-export the port bounds (they come from @wireio/cluster-tool-shared)", async () => {
+    const netUtils = await import("@wireio/cluster-tool/utils/netUtils")
+    expect("MinimumPort" in netUtils).toBe(false)
+    expect("MaximumPort" in netUtils).toBe(false)
+  })
+
+  describe("isLocalAddress", () => {
+    it.each([
+      ListenAllAddress,
+      ListenAllAddressV6,
+      "::0",
+      "0:0:0:0:0:0:0:0",
+      "::ffff:0.0.0.0",
+      Localhost,
+      "127.1.2.3",
+      LocalhostV6,
+      "0:0:0:0:0:0:0:1"
+    ])("is true for the wildcard or loopback spelling %s", address =>
+      expect(isLocalAddress(address)).toBe(true)
+    )
+
+    // Fails closed: this host cannot tell which machine a name means.
+    it.each(["localhost", "rpc.testnet.example", ""])(
+      "is true for the non-literal %p",
+      address => expect(isLocalAddress(address)).toBe(true)
+    )
+
+    it("is true for an address of one of this host's interfaces", () => {
+      const interfaceAddress = Object.values(Os.networkInterfaces())
+        .flat()
+        .find(networkInterface => !networkInterface.internal)
+      // A host with no external interface has nothing to check here.
+      if (interfaceAddress != null) {
+        expect(isLocalAddress(interfaceAddress.address)).toBe(true)
+      }
+    })
+
+    it("ignores an IPv6 zone suffix when matching an interface address", () => {
+      // A non-loopback IPv6 interface address: loopback would match without
+      // the interface lookup this test is about.
+      const isExternalIpv6 = (entry: Os.NetworkInterfaceInfo) =>
+          entry.family === IPv6Family && !entry.internal,
+        [interfaceName, addresses] = Object.entries(Os.networkInterfaces()).find(
+          ([, entries]) => entries?.some(isExternalIpv6) ?? false
+        ) ?? [null, []],
+        ipv6 = addresses?.find(isExternalIpv6)
+      // A host with no IPv6 interface has nothing to check here.
+      if (ipv6 != null) {
+        expect(isLocalAddress(`${ipv6.address}%${interfaceName}`)).toBe(true)
+      }
+    })
+
+    it("is true when this host's interfaces cannot be listed", () => {
+      const listing = jest.spyOn(Os, "networkInterfaces").mockImplementation(() => {
+        throw new Error("interfaces unavailable")
+      })
+      try {
+        expect(isLocalAddress(RemoteAddressV4)).toBe(true)
+      } finally {
+        listing.mockRestore()
+      }
+    })
+
+    it.each([RemoteAddressV4, RemoteAddressV6, `${RemoteAddressV6}%eth0`])(
+      "is false for the remote IP literal %s",
+      address => expect(isLocalAddress(address)).toBe(false)
+    )
+  })
+
   it("exposes the loopback and bind-all address constants", () => {
     expect(Localhost).toBe("127.0.0.1")
     expect(ListenAllAddress).toBe("0.0.0.0")

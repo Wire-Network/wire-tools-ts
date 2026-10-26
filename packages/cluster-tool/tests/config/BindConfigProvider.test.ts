@@ -3,8 +3,11 @@ import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { uniq } from "lodash"
 import {
   BindConfigPortProtocol,
+  BindRegistrationSchemaCodec,
+  MaximumPort,
   ProcessSignalName,
   type BindConfig
 } from "@wireio/cluster-tool-shared"
@@ -12,7 +15,8 @@ import { Deferred, guard } from "@wireio/shared"
 import {
   ListenAllAddress,
   Localhost,
-  MaximumPort
+  processCommandBasename,
+  sleep
 } from "@wireio/cluster-tool/utils"
 
 /**
@@ -24,6 +28,21 @@ interface FakeGetPortOptions {
   host?: string
   exclude?: Iterable<number>
 }
+
+/** Effective user id of root, which reads any file whatever its mode. */
+const RootUserId = 0
+/** Mode that denies this process read access to a registration file. */
+const UnreadableFileMode = 0o000
+/** Mode that restores read access (so the suite can clean up). */
+const ReadableFileMode = 0o644
+/** A remote Ethereum outpost endpoint in a complete external bind config. */
+const RemoteAnvilAddress = "10.0.0.5"
+/** Its port — another host's, inside the local agave band on purpose. */
+const RemoteAnvilPort = 8545
+/** A remote Solana outpost endpoint in a complete external bind config. */
+const RemoteSolanaAddress = "10.0.0.6"
+/** Its RPC port — another host's, inside the local agave band on purpose. */
+const RemoteSolanaRpcPort = 8899
 
 /** Ephemeral ports the fake hands out start here — well clear of every default. */
 const FakeEphemeralBase = 50000
@@ -43,7 +62,7 @@ const FakeEphemeralBase = 50000
  *   re-check is exercised for real,
  * - every returned port is LOCKED in-process, so consecutive calls never repeat
  *   — the same collision-avoidance real `get-port` provides. {@link clearLocks}
- *   drops those locks (what {@link BindConfigProvider.validate} does before re-probing).
+ *   drops those locks (what {@link BindConfigProvider.claimResolved} does before re-probing).
  *
  * `taken` is the test-controlled "occupied by the OS / another process" set:
  * marking a port taken makes it un-bindable exactly as a live listener would.
@@ -634,20 +653,6 @@ describe("BindConfigProvider", () => {
     })
   })
 
-  describe("validate", () => {
-    it("is true when every resolved port is free", async () => {
-      const config = await BindConfigProvider.resolve({}, {})
-      expect(await BindConfigProvider.validate(config)).toBe(true)
-    })
-
-    it("is false once a resolved port becomes taken", async () => {
-      const config = await BindConfigProvider.resolve({}, {})
-      // A port that was free at resolve is now occupied — validate must catch it.
-      allocator.markTaken(config.anvil.port)
-      expect(await BindConfigProvider.validate(config)).toBe(false)
-    })
-  })
-
   describe("solana dynamic port range", () => {
     it("resolves an aligned, full-width window included in allPorts", async () => {
       const config = await BindConfigProvider.resolve({}, {})
@@ -1041,23 +1046,38 @@ describe("BindConfigProvider", () => {
       }
     }
 
-    /** Write a registry file for `pid` claiming `config`'s ports. */
-    function seedRegistration(pid: number, config: BindConfig): string {
+    /**
+     * Write a registry file for `pid` claiming `config`'s ports, recording
+     * `executable` as its owner (by default what a reader observes for `pid`).
+     */
+    function seedRegistration(
+      pid: number,
+      config: BindConfig,
+      executable = processCommandBasename(pid)
+    ): string {
       Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
       const file = Path.join(
         BindConfigProvider.registryPath(),
         `${pid}${BindConfigProvider.RegistryFileSuffix}`
       )
-      Fs.writeFileSync(file, JSON.stringify([config]))
+      Fs.writeFileSync(
+        file,
+        BindRegistrationSchemaCodec.serialize({
+          executable,
+          // configClaiming's minimal layout puts the faucet on the RPC's
+          // websocket companion (rpc+1), so allPorts repeats that one port.
+          ports: uniq(BindConfigProvider.allPorts(config))
+        })
+      )
       return file
     }
 
     /**
-     * A LIVE registrant pid with a guaranteed `node` command basename. The
-     * registry's recycled-pid guard honors only live `node` pids, and
-     * `process.ppid` is NOT reliably one — under wrapper chains (npx → sh,
-     * `--detectOpenHandles` in-band) the parent is a shell and the guard
-     * reaps the seeded registration, failing the live-registrant tests.
+     * A LIVE registrant pid this suite owns. The registry honors a live pid's
+     * file only while the pid still runs the executable the file records, so
+     * the seeded registrations need a pid whose lifetime the suite controls —
+     * `process.ppid` is not one (under wrapper chains it is a shell that can
+     * exit or be replaced).
      */
     let registrant: ReturnType<typeof spawn>
     beforeAll(() => {
@@ -1096,21 +1116,385 @@ describe("BindConfigProvider", () => {
       )
     })
 
-    it("resolve registers its ports in this process's file, appending per resolve", async () => {
+    it("resolve registers its ports in this process's file, accumulating per resolve", async () => {
       const first = await BindConfigProvider.resolve({}, {})
       const second = await BindConfigProvider.resolve({}, {})
-      const entries = JSON.parse(
-        Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")
+      const registration = BindRegistrationSchemaCodec.deserialize(
+        Fs.readFileSync(BindConfigProvider.registryFile())
       )
-      expect(Array.isArray(entries)).toBe(true)
-      expect(entries).toHaveLength(2)
-      expect(entries[0].kiod.port).toBe(first.kiod.port)
-      expect(entries[1].kiod.port).toBe(second.kiod.port)
+      expect(registration.executable).toBe(processCommandBasename(process.pid))
+      expect(registration.ports).toEqual([
+        ...BindConfigProvider.allPorts(first),
+        ...BindConfigProvider.allPorts(second)
+      ])
       // The second resolve read the first's registration — zero overlap.
       const overlap = BindConfigProvider.allPorts(first).filter(port =>
         BindConfigProvider.allPorts(second).includes(port)
       )
       expect(overlap).toEqual([])
+    })
+
+    it("registers through a rename, leaving no temporary file behind", async () => {
+      await BindConfigProvider.resolve({}, {})
+      expect(
+        Fs.readdirSync(BindConfigProvider.registryPath()).filter(fileName =>
+          fileName.endsWith(BindConfigProvider.RegistryTemporaryFileSuffix)
+        )
+      ).toEqual([])
+    })
+
+    it("reaps a LIVE pid's registration whose recorded executable is not what the pid runs", () => {
+      const file = seedRegistration(
+        registrant.pid,
+        configClaiming(BindConfigProvider.DefaultAnvil - 3),
+        `${processCommandBasename(registrant.pid)}-recycled`
+      )
+      const exclusions = BindConfigProvider.readRegistryPortExclusions()
+      expect(exclusions.has(BindConfigProvider.DefaultAnvil)).toBe(false)
+      expect(Fs.existsSync(file)).toBe(false) // reaped as a recycled pid
+    })
+
+    it("the process's FIRST registration replaces a dead same-pid predecessor's file; later ones merge", async () => {
+      await jest.isolateModulesAsync(async () => {
+        const { BindConfigProvider: fresh } = await import(
+          "@wireio/cluster-tool/config"
+        )
+        // A file under THIS pid written before this module instance registered
+        // anything: a dead process that had the same pid and executable.
+        const predecessor = seedRegistration(
+          process.pid,
+          configClaiming(BindConfigProvider.DefaultAnvil - 3)
+        )
+        expect(
+          fresh.readRegistryPortExclusions().has(BindConfigProvider.DefaultAnvil)
+        ).toBe(false) // skipped, not honored
+        expect(Fs.existsSync(predecessor)).toBe(true) // and not deleted
+
+        const first = await fresh.resolve({}, {})
+        expect(first.anvil.port).toBe(BindConfigProvider.DefaultAnvil)
+        const afterFirst = BindRegistrationSchemaCodec.deserialize(
+          Fs.readFileSync(fresh.registryFile())
+        )
+        expect(afterFirst.ports).toEqual(fresh.allPorts(first))
+
+        const second = await fresh.resolve({}, {})
+        const afterSecond = BindRegistrationSchemaCodec.deserialize(
+          Fs.readFileSync(fresh.registryFile())
+        )
+        expect(afterSecond.ports).toEqual([
+          ...fresh.allPorts(first),
+          ...fresh.allPorts(second)
+        ])
+      })
+    })
+
+    it.each(["0", "007", "123abc", "-5", "99999999999999999999"])(
+      "reaps a registration whose name %s is not a pid",
+      stem => {
+        Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+        const file = Path.join(
+          BindConfigProvider.registryPath(),
+          `${stem}${BindConfigProvider.RegistryFileSuffix}`
+        )
+        Fs.writeFileSync(
+          file,
+          BindRegistrationSchemaCodec.serialize({
+            executable: processCommandBasename(process.pid),
+            ports: [BindConfigProvider.DefaultAnvil]
+          })
+        )
+        const exclusions = BindConfigProvider.readRegistryPortExclusions()
+        expect(exclusions.has(BindConfigProvider.DefaultAnvil)).toBe(false)
+        expect(Fs.existsSync(file)).toBe(false)
+      }
+    )
+
+    it("reaps a dead writer's leftover temp file and keeps a live writer's", () => {
+      const dead = spawnSync("/bin/true"),
+        temporarySuffix = `${BindConfigProvider.RegistryFileSuffix}${BindConfigProvider.RegistryTemporaryFileSuffix}`,
+        deadFile = Path.join(
+          BindConfigProvider.registryPath(),
+          `${dead.pid}${temporarySuffix}`
+        ),
+        liveFile = Path.join(
+          BindConfigProvider.registryPath(),
+          `${registrant.pid}${temporarySuffix}`
+        )
+      Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+      Fs.writeFileSync(deadFile, "{")
+      Fs.writeFileSync(liveFile, "{")
+      BindConfigProvider.readRegistryPortExclusions()
+      expect(Fs.existsSync(deadFile)).toBe(false)
+      expect(Fs.existsSync(liveFile)).toBe(true)
+    })
+
+    it("registrationPid accepts only a positive pid without sign or leading zero", () => {
+      const suffix = BindConfigProvider.RegistryFileSuffix
+      expect(BindConfigProvider.registrationPid(`42${suffix}`, suffix)).toBe(42)
+      expect(
+        BindConfigProvider.registrationPid(
+          `${BindConfigProvider.MaximumPid}${suffix}`,
+          suffix
+        )
+      ).toBe(BindConfigProvider.MaximumPid)
+      expect(
+        BindConfigProvider.registrationPid(
+          `${BindConfigProvider.MaximumPid + 1}${suffix}`,
+          suffix
+        )
+      ).toBeNull()
+      expect(BindConfigProvider.registrationPid(`0${suffix}`, suffix)).toBeNull()
+      expect(BindConfigProvider.registrationPid(`42x${suffix}`, suffix)).toBeNull()
+    })
+
+    it("treats an empty registry-path override as unset", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      process.env[BindConfigProvider.RegistryPathEnvVar] = ""
+      try {
+        expect(BindConfigProvider.registryPath()).toBe(
+          Path.join(Os.tmpdir(), BindConfigProvider.RegistryDirectoryName)
+        )
+      } finally {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+
+    describe("claimResolved", () => {
+      it("registers a binding whose ports are free and unregistered", async () => {
+        const config = await BindConfigProvider.resolve({}, {})
+        Fs.rmSync(BindConfigProvider.registryFile(), { force: true })
+        expect(await BindConfigProvider.claimResolved(config)).toBe(true)
+        expect(
+          BindRegistrationSchemaCodec.deserialize(
+            Fs.readFileSync(BindConfigProvider.registryFile())
+          ).ports
+        ).toEqual(expect.arrayContaining(BindConfigProvider.allPorts(config)))
+      })
+
+      it("does not count this process's own registration as held elsewhere", async () => {
+        const config = await BindConfigProvider.resolve({}, {})
+        expect(await BindConfigProvider.claimResolved(config)).toBe(true)
+      })
+
+      it("refuses a binding another live process has registered", async () => {
+        const config = configClaiming(BindConfigProvider.DefaultAnvil - 3)
+        seedRegistration(registrant.pid, config)
+        expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      })
+
+      it("probes a port the binding lists twice only once", async () => {
+        // configClaiming puts the faucet on the RPC's websocket companion, so
+        // allPorts lists that port twice; a second probe would hit get-port's
+        // in-process lock from the first and refuse a free binding.
+        const config = configClaiming(BindConfigProvider.DefaultAnvil - 3),
+          ports = BindConfigProvider.allPorts(config)
+        expect(new Set(ports).size).toBeLessThan(ports.length)
+        expect(await BindConfigProvider.claimResolved(config)).toBe(true)
+      })
+
+      it("refuses a binding with a port inside the reserved agave band", async () => {
+        const config = configClaiming(BindConfigProvider.ReservedAgavePortBand.first)
+        expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      })
+
+      it("accepts remote outpost endpoints whose ports sit in the agave band", async () => {
+        const resolved = await BindConfigProvider.resolve({}, {})
+        Fs.rmSync(BindConfigProvider.registryFile(), { force: true })
+        // A complete --bind-config pointing at REMOTE outposts: these hosts and
+        // ports are another machine's, never bound or registered here.
+        const config: BindConfig = {
+          ...resolved,
+          anvil: { address: RemoteAnvilAddress, port: RemoteAnvilPort },
+          solana: {
+            ...resolved.solana,
+            address: RemoteSolanaAddress,
+            ports: { ...resolved.solana.ports, http: RemoteSolanaRpcPort }
+          }
+        }
+        expect(await BindConfigProvider.claimResolved(config)).toBe(true)
+      })
+
+      it("registers only the locally bound ports, never a remote outpost's", async () => {
+        const resolved = await BindConfigProvider.resolve({}, {})
+        Fs.rmSync(BindConfigProvider.registryFile(), { force: true })
+        const config: BindConfig = {
+          ...resolved,
+          anvil: { address: RemoteAnvilAddress, port: RemoteAnvilPort },
+          solana: {
+            ...resolved.solana,
+            address: RemoteSolanaAddress,
+            ports: { ...resolved.solana.ports, http: RemoteSolanaRpcPort }
+          }
+        }
+        expect(await BindConfigProvider.claimResolved(config)).toBe(true)
+        const { ports } = BindRegistrationSchemaCodec.deserialize(
+          Fs.readFileSync(BindConfigProvider.registryFile())
+        )
+        expect(ports).toEqual(BindConfigProvider.locallyBoundPorts(config))
+        expect(ports).not.toContain(RemoteAnvilPort)
+        expect(ports).not.toContain(RemoteSolanaRpcPort)
+      })
+
+      it("refuses a binding with a port that no longer binds", async () => {
+        const config = await BindConfigProvider.resolve({}, {})
+        allocator.markTaken(config.anvil.port)
+        expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      })
+    })
+
+    it("fails loudly on a LIVE pid's registration that names no owner executable, keeping it", () => {
+      Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+      const file = Path.join(
+        BindConfigProvider.registryPath(),
+        `${registrant.pid}${BindConfigProvider.RegistryFileSuffix}`
+      )
+      Fs.writeFileSync(
+        file,
+        JSON.stringify({
+          ports: uniq(
+            BindConfigProvider.allPorts(
+              configClaiming(BindConfigProvider.DefaultAnvil - 3)
+            )
+          )
+        })
+      )
+      expect(() => BindConfigProvider.readRegistryPortExclusions()).toThrow(file)
+      expect(Fs.existsSync(file)).toBe(true)
+    })
+
+    it("never reaps this process's own registration, whatever executable it records", async () => {
+      await BindConfigProvider.resolve({}, {})
+      const file = BindConfigProvider.registryFile()
+      Fs.writeFileSync(
+        file,
+        BindRegistrationSchemaCodec.serialize({
+          executable: `${processCommandBasename(process.pid)}-other`,
+          ports: [BindConfigProvider.DefaultAnvil]
+        })
+      )
+      const exclusions = BindConfigProvider.readRegistryPortExclusions()
+      expect(exclusions.has(BindConfigProvider.DefaultAnvil)).toBe(true)
+      expect(Fs.existsSync(file)).toBe(true)
+    })
+
+    it("keeps a LIVE pid's registration whose recorded executable is empty, honoring its ports", () => {
+      const file = seedRegistration(
+        registrant.pid,
+        configClaiming(BindConfigProvider.DefaultAnvil - 3),
+        ""
+      )
+      const exclusions = BindConfigProvider.readRegistryPortExclusions()
+      expect(exclusions.has(BindConfigProvider.DefaultAnvil)).toBe(true)
+      expect(Fs.existsSync(file)).toBe(true)
+    })
+
+    describe("a LIVE python3 owner whose registration cannot be read", () => {
+      /** Interpreter of the owner; its basename is what /proc reports for it. */
+      const PythonExecutable = "python3"
+      /** How long to wait between checks that the owner has exec'd python3. */
+      const ExecPollMs = 20
+      /** Checks before giving up on the owner exec'ing python3. */
+      const ExecPollAttempts = 250
+
+      /**
+       * Wait until `pid` runs `executable` — right after spawn the child can
+       * still show the parent's argv in /proc until its exec completes.
+       *
+       * @param pid - The owner's pid.
+       * @param executable - The basename to wait for.
+       * @param attemptsLeft - Remaining checks.
+       */
+      async function awaitExecutable(
+        pid: number,
+        executable: string,
+        attemptsLeft = ExecPollAttempts
+      ): Promise<void> {
+        if (processCommandBasename(pid) === executable) return
+        expect(attemptsLeft).toBeGreaterThan(0)
+        await sleep(ExecPollMs)
+        return awaitExecutable(pid, executable, attemptsLeft - 1)
+      }
+
+      let owner: ReturnType<typeof spawn>
+      beforeAll(async () => {
+        // Lives exactly as long as its stdin pipe — see `registrant` above.
+        owner = spawn(PythonExecutable, ["-c", "import sys; sys.stdin.read()"], {
+          stdio: ["pipe", "ignore", "ignore"]
+        })
+        expect(owner.pid).toBeGreaterThan(0)
+        await awaitExecutable(owner.pid, PythonExecutable)
+      })
+      afterAll(async () => {
+        const closed = Deferred.useCallback<void>(deferred => {
+          if (owner.exitCode != null || owner.signalCode != null) {
+            deferred.resolve()
+            return
+          }
+          owner.once("close", () => deferred.resolve())
+        }).promise
+        owner.stdin.destroy()
+        guard(() => process.kill(owner.pid, ProcessSignalName.SIGKILL))
+        await closed
+      })
+
+      /** The owner's registration file. */
+      function ownerFile(): string {
+        Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+        return Path.join(
+          BindConfigProvider.registryPath(),
+          `${owner.pid}${BindConfigProvider.RegistryFileSuffix}`
+        )
+      }
+
+      /**
+       * `findAvailable(port)` must fail naming the file, never hand out the
+       * owner's port, and leave the file in place.
+       *
+       * @param file - The owner's unreadable registration.
+       * @param port - The port the owner holds.
+       */
+      async function expectRefusedAndKept(file: string, port: number): Promise<void> {
+        await BindConfigProvider.clearPortLocks()
+        await expect(BindConfigProvider.findAvailable(port)).rejects.toThrow(file)
+        expect(Fs.existsSync(file)).toBe(true)
+      }
+
+      it("in the old array-of-BindConfigs format", async () => {
+        const config = configClaiming(BindConfigProvider.DefaultAnvil - 3),
+          file = ownerFile()
+        Fs.writeFileSync(file, JSON.stringify([config]))
+        await expectRefusedAndKept(file, config.anvil.port)
+      })
+
+      it("repeating a port", async () => {
+        const port = BindConfigProvider.DefaultAnvil,
+          file = ownerFile()
+        Fs.writeFileSync(
+          file,
+          JSON.stringify({ executable: PythonExecutable, ports: [port, port] })
+        )
+        await expectRefusedAndKept(file, port)
+      })
+
+      // root reads a mode-000 file anyway, so the case cannot arise as root.
+      const runningAsRoot = process.geteuid?.() === RootUserId
+      ;(runningAsRoot ? it.skip : it)("that this process may not read", async () => {
+        const port = BindConfigProvider.DefaultAnvil,
+          file = ownerFile()
+        Fs.writeFileSync(
+          file,
+          BindRegistrationSchemaCodec.serialize({
+            executable: PythonExecutable,
+            ports: [port]
+          })
+        )
+        Fs.chmodSync(file, UnreadableFileMode)
+        try {
+          await expectRefusedAndKept(file, port)
+        } finally {
+          Fs.chmodSync(file, ReadableFileMode)
+        }
+      })
     })
 
     it("resolve excludes a LIVE foreign registration's ports", async () => {
@@ -1138,22 +1522,15 @@ describe("BindConfigProvider", () => {
       expect(Fs.existsSync(file)).toBe(false) // reaped
     })
 
-    it("reaps a malformed registration file", () => {
+    it("fails loudly on a LIVE pid's registration that is not JSON, keeping it", () => {
       Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
       const file = Path.join(
         BindConfigProvider.registryPath(),
-        `${process.ppid}${BindConfigProvider.RegistryFileSuffix}`
+        `${registrant.pid}${BindConfigProvider.RegistryFileSuffix}`
       )
       Fs.writeFileSync(file, "not json {")
-      const exclusions = BindConfigProvider.readRegistryPortExclusions()
-      // Only the standing reserved-band seed remains — nothing from the
-      // malformed registration survived.
-      expect(exclusions.size).toBe(
-        BindConfigProvider.ReservedAgavePortBand.last -
-          BindConfigProvider.ReservedAgavePortBand.first +
-          1
-      )
-      expect(Fs.existsSync(file)).toBe(false) // reaped
+      expect(() => BindConfigProvider.readRegistryPortExclusions()).toThrow(file)
+      expect(Fs.existsSync(file)).toBe(true)
     })
 
     it("findAvailable respects a live registration without writing one", async () => {

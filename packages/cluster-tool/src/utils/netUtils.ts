@@ -7,7 +7,10 @@
 import Assert from "node:assert"
 import Dgram from "node:dgram"
 import Net from "node:net"
-import { Deferred, guard } from "@wireio/shared"
+import Os from "node:os"
+import { match, P } from "ts-pattern"
+import { MaximumPort, MinimumPort } from "@wireio/cluster-tool-shared"
+import { Deferred, getValue, guard } from "@wireio/shared"
 
 /**
  * Loopback IPv4 address — the default `address` for {@link toURL}/{@link toAddress}
@@ -26,6 +29,89 @@ export const ListenAllAddress = "0.0.0.0" as const
 
 /** Bind-all address, IPv6 form — the `::` wildcard (dialed at the loopback, like `0.0.0.0`). */
 export const ListenAllAddressV6 = "::" as const
+
+/** Loopback IPv6 address. */
+export const LocalhostV6 = "::1" as const
+
+/** The IPv4 loopback network, `127.0.0.0/8`. */
+const LoopbackNetworkV4 = "127.0.0.0"
+/** Prefix length of {@link LoopbackNetworkV4}. */
+const LoopbackPrefixLengthV4 = 8
+/** The address families `Net.BlockList` takes. */
+enum IpFamily {
+  ipv4 = "ipv4",
+  ipv6 = "ipv6"
+}
+
+/** Separator of an IPv6 zone suffix (`fe80::1%eth0`). */
+const Ipv6ZoneSeparator = "%"
+
+/**
+ * Addresses that are this host whatever its interfaces: the bind-all wildcards
+ * and loopback. `Net.BlockList` matches every spelling of them (`::0`,
+ * `0:0:0:0:0:0:0:0`, IPv4-mapped `::ffff:0.0.0.0`).
+ */
+const HostAddresses = new Net.BlockList()
+HostAddresses.addAddress(ListenAllAddress, IpFamily.ipv4)
+HostAddresses.addAddress(ListenAllAddressV6, IpFamily.ipv6)
+HostAddresses.addSubnet(LoopbackNetworkV4, LoopbackPrefixLengthV4, IpFamily.ipv4)
+HostAddresses.addAddress(LocalhostV6, IpFamily.ipv6)
+
+/**
+ * The address family of an IP literal, or `null` when `address` is not one.
+ *
+ * @param address - An address, zone suffix already removed.
+ * @returns Its family, or `null`.
+ */
+function ipFamily(address: string): IpFamily {
+  return match(address)
+    .with(P.when(Net.isIPv4), () => IpFamily.ipv4)
+    .with(P.when(Net.isIPv6), () => IpFamily.ipv6)
+    .otherwise(() => null)
+}
+
+/**
+ * Whether an IP literal is the address of one of this host's interfaces. Fails
+ * closed: when the interfaces cannot be listed, the answer is `true`.
+ *
+ * @param literal - An IP literal without a zone suffix.
+ * @param family - Its family.
+ * @returns Whether an interface of this host has that address.
+ */
+function isInterfaceAddress(literal: string, family: IpFamily): boolean {
+  return getValue(() => {
+    const interfaceAddresses = new Net.BlockList()
+    Object.values(Os.networkInterfaces())
+      .flat()
+      .filter(networkInterface => networkInterface != null)
+      .forEach(({ address }) =>
+        interfaceAddresses.addAddress(address, ipFamily(address))
+      )
+    return interfaceAddresses.check(literal, family)
+  }, true)
+}
+
+/**
+ * Whether a bind address may belong to THIS host. Fails closed: the answer is
+ * `false` (another host's) ONLY for an IP literal that is not a bind-all
+ * wildcard, not loopback, and not the address of one of this host's
+ * interfaces. Every host name (`localhost`, `rpc.example`) and the empty
+ * string count as local, because this host cannot tell which machine they
+ * name. An IPv6 zone suffix is ignored. A remote outpost endpoint is
+ * therefore recognised as remote only when it is given as an IP literal.
+ *
+ * @param address - A daemon's bind address.
+ * @returns Whether a daemon bound to it may listen on this host.
+ */
+export function isLocalAddress(address: string): boolean {
+  const [literal] = address.split(Ipv6ZoneSeparator),
+    family = ipFamily(literal)
+  return (
+    family === null ||
+    HostAddresses.check(literal, family) ||
+    isInterfaceAddress(literal, family)
+  )
+}
 
 /**
  * URL schemes the harness builds. A typed identity enum (not bare `string`)
@@ -91,10 +177,6 @@ export function toURL(
  */
 export const EndpointPattern = /^(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9._-]+):\d{1,5}$/
 
-/** Lowest port an endpoint may name (0 is "any", meaningless in a static config). */
-export const MinimumPort = 1
-/** Highest port an endpoint may name. */
-export const MaximumPort = 65_535
 
 /**
  * Assert one `<address>:<port>` endpoint — shape first, then port range.

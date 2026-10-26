@@ -128,7 +128,8 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
   validates on both ends (safeParse results ride `Either`, never `if`) and
   bridges the `TokenAmount` bigint round-trip via a `z.codec`. A shape published
   to other teams commits its generated JSON Schema (`scripts/generate-json-schemas.mjs`;
-  `docs/outpost/wire-opreg-bootstrap.schema.json`), gated against drift by jest.
+  `docs/outpost/wire-opreg-bootstrap.schema.json`,
+  `docs/bind-registry/bind-registration.schema.json`), gated against drift by jest.
 
 ## The Orchestration Model (read STYLE.md "Orchestration Model" first)
 
@@ -196,7 +197,10 @@ file lock against the cross-process registry
 (`/tmp/wire-platform-bind-config/<pid>.bind-config.json`, override
 `WIRE_BIND_REGISTRY_PATH`) and the reserved agave band. That registry is the ONLY
 mechanism making concurrent clusters safe on one host, and it works by *exclusion*:
-`resolve` seeds its claimed set from every live registrant. A port the registry never
+`resolve` seeds its claimed set from every live registrant. Non-Node clients (wire-sysio's
+Python test-port lease) join the same registry through the protocol in
+[`docs/bind-registry/`](docs/bind-registry/README.md); any change to the lock, file shape or
+liveness rule changes that protocol and its Python interop test. A port the registry never
 issued is invisible to that set, so a co-running cluster can resolve the same number.
 The resulting failures do not look like port collisions — a validator's UDP
 double-bind silently swallows forwarded transactions, and a daemon that resolves now
@@ -314,7 +318,8 @@ against already-deployed REMOTE ETH+SOL outposts — see "`create` against exter
 outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off, forced
+requires `--external-outpost-config` and must be an IP literal, since the bind
+registry treats every host name as local), `--enable-mock-liq-pools` (default off, forced
 on by a local `create`, refused with `--external-outpost-config` — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
 custody), `--enable-mock-syndication-import` (default off, forced on by a local
