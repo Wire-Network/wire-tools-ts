@@ -3,7 +3,7 @@ import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
-import { flatten } from "lodash"
+import { flatten, negate } from "lodash"
 import { match } from "ts-pattern"
 import {
   getLogger,
@@ -167,16 +167,19 @@ export class WireClient {
     account: string,
     table: string
   ): WireClient.TableQuery<any, any> {
+    const rowsQuery = (
+      args: WireClient.TableQueryArgs
+    ): WireClient.TableRowsQuery => ({
+      account,
+      scope: args.scope ?? account,
+      table,
+      limit: args.limit,
+      lowerBound: args.lowerBound,
+      upperBound: args.upperBound
+    })
     return {
-      query: (args = {}) =>
-        this.getTableRows({
-          account,
-          scope: args.scope ?? account,
-          table,
-          limit: args.limit,
-          lowerBound: args.lowerBound,
-          upperBound: args.upperBound
-        })
+      query: (args = {}) => this.getTableRows(rowsQuery(args)),
+      queryAll: (args = {}) => this.getAllTableRows(rowsQuery(args))
     }
   }
 
@@ -447,7 +450,40 @@ export class WireClient {
     const rows = (result.rows ?? []).map((row: any) =>
       row != null && typeof row === "object" && "value" in row ? row.value : row
     )
-    return { rows: rows as Row[], more: result.more ?? false }
+    return {
+      rows: rows as Row[],
+      more: result.more ?? false,
+      nextKey: result.next_key?.toString()
+    }
+  }
+
+  /**
+   * Every row of a raw table read, page by page: each page resumes at the previous page's
+   * `next_key` until the node reports no `more`. ESCAPE HATCH like {@link getTableRows};
+   * prefer `getSysioContract(name).tables.<table>.queryAll(...)`.
+   *
+   * @param query - The read: its `limit` is the page size, its bounds the key range.
+   * @returns Every row in the range, in key order.
+   * @throws When a page reports `more` without a resume key past its own lower bound.
+   */
+  async getAllTableRows<Row = unknown>(
+    query: WireClient.TableRowsQuery
+  ): Promise<Row[]> {
+    const page = await this.getTableRows<Row>(query)
+    if (!page.more) {
+      return page.rows
+    }
+    Assert.ok(
+      page.nextKey != null && page.nextKey !== query.lowerBound,
+      `WireClient: ${query.account}::${query.table} reported more rows but no resume key past ${query.lowerBound}`
+    )
+    return [
+      ...page.rows,
+      ...(await this.getAllTableRows<Row>({
+        ...query,
+        lowerBound: page.nextKey
+      }))
+    ]
   }
 
   /** Real WIRE token balance (raw 9-decimal base units), or 0n when no row. */
@@ -664,13 +700,23 @@ export class WireClient {
       ),
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
-          // Pre-inclusion retry ONLY — a throwing `send` produced no
-          // transaction id, so there is nothing to double-apply. Deliberately
-          // NOT fused with the finality wait; fusing them is the defect above.
+          // Pre-inclusion retry ONLY of a push proven not applied: its connection failed or
+          // the node rejected it (`ClioRunner.isProvenUnapplied`). Anything else may have
+          // reached the node and is never re-sent: clio would sign it again as a second
+          // transaction. Deliberately NOT fused with the finality wait; fusing them is the
+          // defect above.
           result = await retry(send, {
             maxAttempts: WireClient.PushMaxAttempts,
             delayMs: WireClient.FinalityRetryDelayMs,
-            label
+            label,
+            checkResult: negate(ClioRunner.isProvenUnapplied)
+          }).catch(error => {
+            throw ClioRunner.isProvenUnapplied(error)
+              ? error
+              : new NestedError(
+                  `${label}: the push may have reached the node, so it is not re-sent; read its outcome on the chain before running it again`,
+                  { cause: error }
+                )
           }),
           transactionId = WireClient.getTransactionId(result)
         // Nothing reached the chain: no id, or `setContract`'s settled-no-op
@@ -1090,6 +1136,8 @@ export namespace WireClient {
   export interface TableQueryResult<Row> {
     rows: Row[]
     more: boolean
+    /** The lower bound the next page starts at, when the node returned one. */
+    nextKey?: string
   }
   export interface TableQuery<
     Name extends SysioContractName,
@@ -1098,6 +1146,11 @@ export namespace WireClient {
     query(
       args?: TableQueryArgs
     ): Promise<TableQueryResult<TableRow<Name, Table>>>
+    /**
+     * Every row in the range, read page by page ({@link WireClient.getAllTableRows});
+     * `limit` is the page size.
+     */
+    queryAll(args?: TableQueryArgs): Promise<TableRow<Name, Table>[]>
   }
   export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {
@@ -1199,9 +1252,10 @@ export namespace WireClient {
   }
 
   /**
-   * Attempts for a push that THREW — i.e. produced no transaction id, so there
-   * is nothing to double-apply. Separate from {@link FinalityMaxAttempts},
-   * which bounds proven-safe re-pushes; fusing the two is the original defect.
+   * Attempts for a push the node rejected or never received, so there is nothing to
+   * double-apply (an ambiguous failure is never re-sent). Separate from
+   * {@link FinalityMaxAttempts}, which bounds proven-safe re-pushes; fusing the two is
+   * the original defect.
    */
   export const PushMaxAttempts = 3
 

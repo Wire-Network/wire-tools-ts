@@ -11,7 +11,6 @@ import { Asset, SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
   Constants as HarnessConstants,
-  SolanaOutpostBootstrapper,
   FlowScenario,
   ProtocolTiming,
   Report,
@@ -436,7 +435,7 @@ export class LIQYieldScenario extends FlowScenario {
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
                 ctx,
-                SolanaOutpostBootstrapper.SolanaChainCodename,
+                HarnessConstants.SOLANA_CHAIN_CODENAME,
                 Constants.LIQTokenCodename,
                 SysioSyndItemKind.SYNDICATION,
                 Constants.SyndicateAmount,
@@ -469,7 +468,7 @@ export class LIQYieldScenario extends FlowScenario {
       "Bond the held syndication envelope",
       circulationStepOptions,
       Constants.BonderAccount,
-      SolanaOutpostBootstrapper.SolanaChainCodename,
+      HarnessConstants.SOLANA_CHAIN_CODENAME,
       Constants.LIQTokenCodename,
       LIQYieldScenario.SyndicationEpochKey
     )
@@ -609,7 +608,7 @@ export class LIQYieldScenario extends FlowScenario {
                 return false
               const envelope = await WireSyndicationTool.readHeldEnvelope(
                 ctx,
-                SolanaOutpostBootstrapper.SolanaChainCodename,
+                HarnessConstants.SOLANA_CHAIN_CODENAME,
                 Constants.LIQTokenCodename,
                 SysioSyndItemKind.YIELD,
                 reportedAmount
@@ -644,7 +643,7 @@ export class LIQYieldScenario extends FlowScenario {
       "Bond the held yield envelope",
       circulationStepOptions,
       Constants.BonderAccount,
-      SolanaOutpostBootstrapper.SolanaChainCodename,
+      HarnessConstants.SOLANA_CHAIN_CODENAME,
       Constants.LIQTokenCodename,
       LIQYieldScenario.YieldEpochKey
     )
@@ -780,7 +779,7 @@ export class LIQYieldScenario extends FlowScenario {
         async ctx => {
           const config = await WireSyndicationTool.readSyndicationConfig(
             ctx,
-            SolanaOutpostBootstrapper.SolanaChainCodename,
+            HarnessConstants.SOLANA_CHAIN_CODENAME,
             Constants.LIQTokenCodename
           )
           Assert.ok(config != null, "missing syndication configuration")

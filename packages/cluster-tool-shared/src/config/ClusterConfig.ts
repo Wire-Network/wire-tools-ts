@@ -8,6 +8,7 @@ import { BatchOperatorUnderwritingConfigSchema } from "./BatchOperatorUnderwriti
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
+import { LcoImportConfigSchema } from "./LcoImportConfig.js"
 import { QueryEngineConfigSchema } from "./QueryEngineConfig.js"
 
 /**
@@ -295,6 +296,13 @@ export const ClusterConfigSchema = z.object({
    */
   batchOperatorUnderwriting:
     BatchOperatorUnderwritingConfigSchema.nullable().default(null),
+  /**
+   * The launch-data (LCO) import the bootstrap runs during epoch zero — the frozen outpost
+   * exports (`--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file`) and their
+   * pricing — or `null` when no export was given. Real data, not mock data: allowed against
+   * external outposts, where every value must be set rather than a placeholder.
+   */
+  lcoImport: LcoImportConfigSchema.nullable().default(null),
   /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every

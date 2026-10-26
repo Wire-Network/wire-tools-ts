@@ -30,7 +30,6 @@ import {
   WireState
 } from "../tools/solana/index.js"
 import { WireSyndicationTool } from "../tools/wire/index.js"
-import { SolanaOutpostBootstrapper } from "../orchestration/solana/SolanaOutpostBootstrapper.js"
 import { pollFor, verifyStep } from "../orchestration/StepTools.js"
 import { mapSeries } from "../utils/asyncUtils.js"
 import { compareBigInt } from "../utils/bigintUtils.js"
@@ -275,7 +274,7 @@ export namespace SyndicationScenario {
     readonly linked: boolean
   }
   /** Registered outpost codename. */
-  export const Chain = SolanaOutpostBootstrapper.SolanaChainCodename
+  export const Chain = Constants.SOLANA_CHAIN_CODENAME
   /** Registered shadow codename. */
   export const Token = Constants.LIQSOL_CODENAME
   /** Code stamped on Solana attestations. */

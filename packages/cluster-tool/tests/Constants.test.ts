@@ -13,6 +13,50 @@ describe("Constants", () => {
       expect(Constants.liqSymbol("LIQETHP")).toBe("9,LIQETHP")
     })
   })
+  describe("shadow liq pairs", () => {
+    it("pairs each outpost chain with its liq token, Ethereum first", () => {
+      expect(Constants.SHADOW_LIQ_TOKEN_PAIRS).toEqual([
+        [Constants.ETHEREUM_CHAIN_CODENAME, "LIQETH"],
+        [Constants.SOLANA_CHAIN_CODENAME, Constants.LIQSOL_CODENAME]
+      ])
+      expect([Constants.ETHEREUM_CHAIN_CODENAME, Constants.SOLANA_CHAIN_CODENAME]).toEqual([
+        "ETHEREUM",
+        "SOLANA"
+      ])
+    })
+
+    it("names a chain's liq token, refusing a chain with none", () => {
+      expect(Constants.liqTokenCode("SOLANA")).toBe("LIQSOL")
+      expect(Constants.liqTokenCode("ETHEREUM")).toBe("LIQETH")
+      expect(() => Constants.liqTokenCode("WIRE")).toThrow(/WIRE has no shadow liq token/)
+    })
+
+    it("names a liq token's pool pair code with the pair suffix", () => {
+      expect(Constants.LIQ_POOL_PAIR_SUFFIX).toBe("P")
+      expect(Constants.liqPoolPairCode("LIQSOL")).toBe("LIQSOLP")
+      expect(Constants.liqSymbol(Constants.liqPoolPairCode("LIQETH"))).toBe("9,LIQETHP")
+    })
+
+    it("carries WIRE's nine-decimal precision", () => {
+      expect(Constants.WIRE_PRECISION).toBe(9)
+    })
+  })
+  describe("nodeOwnerCommitment", () => {
+    it("commits each tier's allocation times its owner cap: 341.5M WIRE at the defaults", () => {
+      expect(Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS)).toBe(
+        341_500_000n * 10n ** 9n
+      )
+      expect(
+        Constants.nodeOwnerCommitment({
+          ...Constants.EMISSION_CONFIG_DEFAULTS,
+          t1_allocation: 1,
+          t2_allocation: 0,
+          t3_allocation: 0
+        })
+      ).toBe(BigInt(Constants.T1_MAX_NODE_OWNERS))
+    })
+  })
+
   describe("batchOperatorLabels", () => {
     it("lists the bootstrap batch-operator labels in index order", () => {
       expect(Constants.batchOperatorLabels(3)).toEqual([
@@ -249,8 +293,10 @@ describe("Constants", () => {
     const T1Cap = 21
     const T2Cap = 84
     const T3Cap = 1000
-    /** 1,000,000,000 WIRE x 1e9 subunits — the supply issued to `sysio` at bootstrap. */
-    const WireSupplySubunits = 1_000_000_000_000_000_000
+
+    it("issues 1,000,000,000 WIRE at 9 decimals", () => {
+      expect(Constants.WIRE_SUPPLY).toBe(1_000_000_000_000_000_000n)
+    })
 
     it("sets tier allocations PER OWNER, not per tier", () => {
       expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
@@ -264,7 +310,7 @@ describe("Constants", () => {
       const committed =
         t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
       expect(committed).toBe(341_500_000_000_000_000)
-      expect(committed).toBeLessThan(WireSupplySubunits)
+      expect(BigInt(committed)).toBeLessThan(Constants.WIRE_SUPPLY)
     })
 
     it("vests over 12 / 24 / 36 months on a 30-day month", () => {

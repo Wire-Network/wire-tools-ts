@@ -96,6 +96,25 @@ describe("Steps.registry", () => {
       })
     })
 
+    it("seeds only the registrations it is given", () => {
+      const liqsol = Steps.registry.MockLiqPoolRegistrations.filter(
+          row => row.token_code === LiqsolCode
+        ),
+        phase = Steps.registry.planMockLiqPools(
+          newBuild(),
+          "MockLiqPools",
+          "seed the mock yield pools",
+          {},
+          liqsol
+        )
+      expect(phase.steps.map(step => [step.name, step.input])).toEqual([
+        [
+          "seed-liq-pool-solana-liqsol",
+          { kind: "LiqContractSteps.RegliqpoolInput", data: liqsol[0] }
+        ]
+      ])
+    })
+
     it("names each pair token after its shadow, seeds both legs equally, and paces for one-tick sales", () => {
       const rows = Steps.registry.MockLiqPoolRegistrations
       expect(rows).toHaveLength(2)

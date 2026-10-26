@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "programId": "5nBtmutzLgNKe8NxgTWE3uhPMm8u8T3ggTq2ApZRnbbq",
+  "allocationHash": "ff3eafad9ecfa423ba4db83a7b9185c96b74b84434a5b4736959774de9d5298e",
+  "balances": [
+    {
+      "address": "23znL2rifcBadqzoV2aPc9jWHVv4ucnJD7tUF5LTV58r",
+      "outpostAccount": null,
+      "pretokenRecord": null,
+      "syndicatedLiqsol": "4000000000",
+      "purchasedLiqsol": "0",
+      "stakedShares": "4000000000",
+      "purchasedShares": "0",
+      "directlyPurchasedPretokens": "0",
+      "pretokenYield": "250000000",
+      "totalPretokens": "250000000"
+    },
+    {
+      "address": "H1fWPFrj7fcNNHrSysapKwCttyiiaWFXCHkPbrDpMHXG",
+      "outpostAccount": null,
+      "pretokenRecord": null,
+      "syndicatedLiqsol": "0",
+      "purchasedLiqsol": "2000000000",
+      "stakedShares": "0",
+      "purchasedShares": "2000000000",
+      "directlyPurchasedPretokens": "1000000000",
+      "pretokenYield": "0",
+      "totalPretokens": "1000000000"
+    }
+  ],
+  "accounting": {
+    "wireState": "Launching",
+    "mode": "genesis",
+    "epoch": "12",
+    "historyAddress": "6mQH7tCvb6b7gWmY1HxcbyX3c8QGQh2dXvQnZt1kDhHV",
+    "attributionThroughEpoch": "11",
+    "poolAuthority": "8rUz82MkFsfqjpVjjgWEM66Brr1sm1R7VKZ991fF41e",
+    "poolTokenAccount": "3pNvWmDmM9QvJ9Y3zHzN7bKrj9Q3q6vFrAhZB8NnjWeR",
+    "poolBalance": "7000000000",
+    "poolPretokens": "250000000",
+    "allocatedPretokenYield": "250000000",
+    "unallocatedPoolPretokens": "0",
+    "directlyPurchasedPretokens": "1000000000",
+    "totalUserPretokens": "1250000000",
+    "totalPretokensSold": "1250000000",
+    "ownerlessShares": "0",
+    "unreportedLiqsolYield": "500000000",
+    "backingAvailable": "6500000000",
+    "initialChainAmount": "2000000000",
+    "issues": [],
+    "warnings": [],
+    "units": {
+      "liqsolDecimals": 9,
+      "pretokenDecimals": 8,
+      "indexScale": "1000000000000"
+    },
+    "highestTranchePriceUsd": "20000000"
+  }
+}

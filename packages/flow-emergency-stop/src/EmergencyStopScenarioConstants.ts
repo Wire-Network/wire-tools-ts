@@ -1,5 +1,6 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  Constants as HarnessConstants,
   outputKey,
   type EthereumSyndicationTool,
   type SolanaLiqSyndicationTool
@@ -29,7 +30,7 @@ export namespace EmergencyStopScenarioConstants {
   export const EthereumDonor = 32
   /** Ethereum pair token and chain. */
   export const EthereumToken = "LIQETH"
-  export const EthereumChain = "ETHEREUM"
+  export const EthereumChain = HarnessConstants.ETHEREUM_CHAIN_CODENAME
   /** Saved envelope identities. */
   export const FirstEpoch = outputKey<number>(
     "emergency.firstEpoch",

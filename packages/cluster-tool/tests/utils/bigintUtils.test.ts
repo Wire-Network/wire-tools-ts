@@ -1,4 +1,4 @@
-import { compareBigInt } from "@wireio/cluster-tool/utils"
+import { compareBigInt, isqrt } from "@wireio/cluster-tool/utils"
 
 describe("compareBigInt", () => {
   it("orders bigints, including ones no number can hold", () => {
@@ -11,5 +11,27 @@ describe("compareBigInt", () => {
       huge,
       huge + 1n
     ])
+  })
+})
+
+describe("isqrt", () => {
+  it("floors the square root, exactly beyond a double's precision", () => {
+    expect([0n, 1n, 2n, 3n, 4n, 6n, 8n, 9n].map(isqrt)).toEqual([
+      0n,
+      1n,
+      1n,
+      1n,
+      2n,
+      2n,
+      2n,
+      3n
+    ])
+    const root = 10n ** 18n + 7n
+    expect(isqrt(root * root)).toBe(root)
+    expect(isqrt(root * root - 1n)).toBe(root - 1n)
+  })
+
+  it("refuses a negative value", () => {
+    expect(() => isqrt(-1n)).toThrow(/negative/)
   })
 })

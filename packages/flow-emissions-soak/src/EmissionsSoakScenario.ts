@@ -267,11 +267,12 @@ export class EmissionsSoakScenario extends FlowScenario {
           batch.credits.length
         )
       ),
-      EmissionsSoakScenarioSteps.planImportDone(
+      Steps.contracts.sysio.dclaim.planImportdone(
         Actor.Sysio,
         "import-done",
         "close the import window (sysio.dclaim::importdone)",
-        actionOptions
+        actionOptions,
+        {}
       ),
       verifyStep(
         Actor.Sysio,
@@ -446,12 +447,12 @@ export class EmissionsSoakScenario extends FlowScenario {
         }
       ),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.planClaim(
+        Steps.contracts.sysio.dclaim.planClaim(
           Actor.User,
           `claim-${identity.wireAccount}`,
           `${identity.wireAccount} claims its pending WIRE`,
           actionOptions,
-          identity.wireAccount
+          { wire_account: identity.wireAccount }
         )
       ),
       verifyStep(

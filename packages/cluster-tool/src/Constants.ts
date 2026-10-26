@@ -150,6 +150,14 @@ export namespace Constants {
   export const CORE_SYMBOL = "SYS"
   /** Core symbol decimal precision. */
   export const CORE_SYMBOL_PRECISION = 4
+  /** Decimal precision of the WIRE token (`9,WIRE`): one WIRE is 10^9 subunits. */
+  export const WIRE_PRECISION = 9
+  /**
+   * The WIRE supply, in subunits (1,000,000,000 WIRE): the token's maximum, all issued to
+   * `sysio` at bootstrap. Every emission allotment, node-owner commitment and launch-import
+   * claim draws on it.
+   */
+  export const WIRE_SUPPLY = 1_000_000_000n * 10n ** BigInt(WIRE_PRECISION)
   /**
    * Depot-frame precision every liq token is registered at, and so the precision of every
    * shadow symbol (`9,LIQSOL`). Changing it changes the registered tokens and every shadow
@@ -164,6 +172,53 @@ export namespace Constants {
    */
   export function liqSymbol(codename: string): string {
     return `${LIQ_TOKEN_PRECISION},${codename}`
+  }
+
+  /**
+   * The `sysio.chains` codename of the Ethereum outpost. The registry, the operator daemons'
+   * outpost client ids and every chain-keyed contract row use it.
+   */
+  export const ETHEREUM_CHAIN_CODENAME = "ETHEREUM"
+  /** The `sysio.chains` codename of the Solana outpost; see {@link ETHEREUM_CHAIN_CODENAME}. */
+  export const SOLANA_CHAIN_CODENAME = "SOLANA"
+
+  /**
+   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
+   * tokenCodename]`, one per liq token the registry registers. The shadow symbols, the
+   * syndication pairs, the mock yield pools and the launch-data import all derive from it,
+   * in this order.
+   */
+  export const SHADOW_LIQ_TOKEN_PAIRS = [
+    [ETHEREUM_CHAIN_CODENAME, "LIQETH"],
+    [SOLANA_CHAIN_CODENAME, LIQSOL_CODENAME]
+  ] as const
+
+  /**
+   * The liq token a chain syndicates — its {@link SHADOW_LIQ_TOKEN_PAIRS} entry's token.
+   *
+   * @param chainCode - The depot chain code (`SOLANA`).
+   * @returns The liq token codename (`LIQSOL`).
+   * @throws When the chain has no shadow liq pair.
+   */
+  export function liqTokenCode(chainCode: string): string {
+    const pair = SHADOW_LIQ_TOKEN_PAIRS.find(([chain]) => chain === chainCode)
+    if (pair == null) {
+      throw new Error(`Constants: chain ${chainCode} has no shadow liq token`)
+    }
+    return pair[1]
+  }
+
+  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
+  export const LIQ_POOL_PAIR_SUFFIX = "P"
+
+  /**
+   * The pair (LP) token code of a liq token's yield pool.
+   *
+   * @param codename - The liq token codename (`LIQSOL`).
+   * @returns The pair code (`LIQSOLP`).
+   */
+  export function liqPoolPairCode(codename: string): string {
+    return `${codename}${LIQ_POOL_PAIR_SUFFIX}`
   }
 
   /**
@@ -528,6 +583,28 @@ export namespace Constants {
     standby_bps: 800,
     epoch_log_retention_count: 8640,
     pay_cadence_epochs: 1
+  }
+
+  /** The node owners tier 1 admits at most (wire-sysio `emissions.hpp` `T1_MAX_NODE_OWNERS`). */
+  export const T1_MAX_NODE_OWNERS = 21
+  /** The node owners tier 2 admits at most (`T2_MAX_NODE_OWNERS`). */
+  export const T2_MAX_NODE_OWNERS = 84
+  /** The node owners tier 3 admits at most (`T3_MAX_NODE_OWNERS`). */
+  export const T3_MAX_NODE_OWNERS = 1000
+
+  /**
+   * The most WIRE node owners can vest from the `sysio` treasury under `config`: each
+   * tier's per-owner allocation times its owner cap (341,500,000 WIRE at the defaults).
+   *
+   * @param config - The emission config.
+   * @returns The commitment, in WIRE subunits.
+   */
+  export function nodeOwnerCommitment(config: EmissionConfig): bigint {
+    return (
+      BigInt(config.t1_allocation) * BigInt(T1_MAX_NODE_OWNERS) +
+      BigInt(config.t2_allocation) * BigInt(T2_MAX_NODE_OWNERS) +
+      BigInt(config.t3_allocation) * BigInt(T3_MAX_NODE_OWNERS)
+    )
   }
 }
 

@@ -1,4 +1,7 @@
 export * from "./ChainTokenAmount.js"
 export * from "./chainAddressPatterns.js"
+export * from "./decimalStrings.js"
+export * from "./EthereumGenesisSnapshot.js"
 export * from "./OperatorTypeCodec.js"
+export * from "./SolanaGenesisSnapshot.js"
 export * from "./SolanaMintRecord.js"

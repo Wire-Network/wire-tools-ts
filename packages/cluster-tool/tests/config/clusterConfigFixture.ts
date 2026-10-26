@@ -121,6 +121,7 @@ export const PersistedFixture: ClusterConfig = {
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
   batchOperatorUnderwriting: null,
+  lcoImport: null,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   // Nothing set: nodeop's read mode, the plugin's limits.

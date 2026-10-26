@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { TokenAmount } from "@wireio/opp-typescript-models"
+import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
@@ -508,6 +508,26 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
 
+  it("reads the launch-data export flags and carries the flag-less lcoImport from the defaults", () => {
+    const lcoImport = {
+        solana: {
+          nativePriceUsd: "15000000000",
+          pool: LiqPoolSpec.create({ fee: 25, clipFloor: 10n })
+        }
+      },
+      options = toClusterBuildOptions(
+        {
+          "ethereum-bootstrap-json-file": "/exports/ethereum.json",
+          "solana-bootstrap-json-file": "/exports/solana.json"
+        },
+        { lcoImport }
+      )
+    expect(options.ethereumBootstrapJsonFile).toBe("/exports/ethereum.json")
+    expect(options.solanaBootstrapJsonFile).toBe("/exports/solana.json")
+    expect(options.lcoImport).toBe(lcoImport)
+    expect(toClusterBuildOptions({}).lcoImport).toBeUndefined()
+  })
+
   it("reverse-parses ad-hoc-count, and sizes the ad-hoc bind array from it", () => {
     const options = toClusterBuildOptions({
       "ad-hoc-count": 2,
@@ -922,6 +942,38 @@ describe("--cluster-build-options-file", () => {
         })
       )
     ).toThrow()
+  })
+
+  it("decodes the flag-less lcoImport member, its pool tuning a LiqPoolSpec", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        solanaBootstrapJsonFile: "/exports/solana.json",
+        lcoImport: {
+          solana: {
+            nativePriceUsd: "15000000000",
+            pool: { fee: 25, depth_cap_bps: 40, clip_floor: "10" }
+          },
+          dclaimFundingAccount: "lco.treasury"
+        }
+      })
+    )
+    expect(loaded.solanaBootstrapJsonFile).toBe("/exports/solana.json")
+    expect(loaded.lcoImport.solana.pool).toEqual(
+      LiqPoolSpec.create({ fee: 25, depthCapBps: 40, clipFloor: 10n })
+    )
+    expect(loaded.lcoImport.dclaimFundingAccount).toBe("lco.treasury")
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ lcoImport: { ethereum: { nativePriceUsd: "4000.5" } } })
+      )
+    ).toThrow(/nativePriceUsd/)
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({
+          lcoImport: { ethereum: { nativePriceUSD: "400000000000" } }
+        })
+      )
+    ).toThrow(/nativePriceUSD/)
   })
 
   it("sizes the bind node-port arrays from the document's own counts", () => {

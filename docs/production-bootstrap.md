@@ -323,7 +323,7 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `t2_duration` | `62208000` | 24 × 30 d |
 | `t3_duration` | `93312000` | 36 × 30 d |
 | `min_claimable` | `10000000000` | 10 WIRE |
-| `t5_distributable` | `375000000000000000` | 375,000,000 WIRE (T5 treasury budget) |
+| `t5_distributable` | `375000000000000000` less the DEX earmark | 375,000,000 WIRE (T5 treasury budget), less every seeded pool's WIRE side (the LCO pools and any mock pools), which leaves the treasury |
 | `t5_floor` | `125000000000000000` | 125,000,000 WIRE (T5 floor) |
 | `target_annual_decay_bps` | `6940` | 69.40% annual survival (≈30.6% decay) |
 | `annual_initial_emission` | `563150000000000 × 365 = 205549750000000000` | ≈563,150 WIRE/day, annualized |
@@ -469,6 +469,35 @@ contract/mint addresses via the same shapes.
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`
 drops every `SYNDICATE_LIQ` of the pair).
+37b. **Launch-data (LCO) import — only with `--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file`.**
+    Each outpost's frozen pre-launch export is replayed inside the epoch-0 window, per chain:
+    - `sysio.synd::importsynd({chain_code, token_code, credits})` — `[sysio.synd@active]`, 50 credits a push —
+      each staker's principal at depot precision, keyed by its pubkey (EVM 33-byte compressed, SVM ed25519);
+    - `sysio.dclaim::importseed({chain, credits})` — `[sysio.dclaim@active]`, 500 credits a push — each
+      address's pretokens as WIRE, one pretoken per WIRE;
+    - `sysio.liq::regliqpool({...})` — `[sysio.liq@active]` — the chain's pool: booked custody less every
+      imported position as the liq side (on Solana exactly the export's `initialChainAmount`, the purchased
+      principal; custody slack is never minted, and the booked principal must not exceed `backingAvailable`),
+      `liq × native price ÷ highest tranche price` as the WIRE side (drained from the `sysio` treasury), the
+      caller's tuning.
+    Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account, the
+    claims and positions on the depot are reconciled against the plan (`sysio.synd::parked` holds exactly the
+    positions whose pubkey has no `sysio.authex::links` row, and each linked account holds exactly the
+    positions linked to it), `sysio.dclaim::importdone` and (unless the mock import follows)
+    `sysio.synd::importdone` seal the imports, and a verify checks each imported shadow's outstanding equals
+    its booked custody. Each export is checked before anything runs: a Solana export must hash to its
+    `allocationHash`, its `initialChainAmount` must equal its wallets' purchased liqSOL, its
+    `backingAvailable` must be `poolBalance − unreportedLiqsolYield`, and against external outposts its
+    `programId` must be the targeted program; an Ethereum staker's pubkey must be its address's key; no
+    export list may name an address twice; every row's `totalPretokens` and every declared total must add
+    up (on Solana `poolPretokens` and `totalPretokensSold` included); and each pool must meet `sysio.swap`'s
+    own limits (seeds below 10^15, a share left for the creator). The claims, the T5 allotment and the
+    node-owner commitments must fit the 1,000,000,000 WIRE supply, or the bootstrap is refused before it
+    starts. Before the first import write, the funding account must hold every claim, `sysio` must keep its
+    T5 allotment and node-owner commitments, and no imported shadow may have supply yet. Placeholders stand
+    in for unset prices, tuning, the Ethereum booked custody and the funding account; external outposts
+    refuse them.
+    **(production: real exports and real values only.)**
 38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`
       yield pool per shadow on `sysio.swap`, each seeded with `10000000000` shadow and `10000000000` WIRE base
@@ -485,8 +514,9 @@ drops every `SYNDICATE_LIQ` of the pair).
       `sysio.roa::addpolicy` RAM grant for its `sysio.bond` rows and runs the `batch_operator_plugin`
       underwriter role on its node. Only the mock import is a dev/test setup;
       the underwriting role also works with real liquid shadow balances.
-    - With either flag, outpost custody is then funded (Solana pool ATA, Ethereum `SyndicationPool`) to back
-      all outstanding mock shadow.
+    - With either flag, or a launch-data import against local outposts, outpost custody is then funded (Solana
+      pool ATA, Ethereum `SyndicationPool`) to back all outstanding shadow.
+    - A shadow whose pool the launch-data import seeds gets no mock pool.
 
 ## Stage 12 — Operator provisioning + first epoch
 The genesis-replacing real producer schedule is already live. NOTHING here uses `forcereg`.
