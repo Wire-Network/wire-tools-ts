@@ -284,7 +284,13 @@ export namespace WireLcoImportTool {
           ...fundingPlaceholders
         ]
       },
-      claims = planClaimTotal(plan)
+      claims = planClaimTotal(plan),
+      dclaim = SysioContractAccount[SysioContractName.dclaim]
+    // The claims are funded by a transfer into sysio.dclaim, which cannot come from itself.
+    Assert.ok(
+      plan.dclaimFundingAccount !== dclaim,
+      `WireLcoImportTool: lcoImport.dclaimFundingAccount cannot be ${dclaim}, which the claims are transferred into`
+    )
     // One transfer funds every claim, so the total must fit one asset.
     Assert.ok(
       claims <= AssetMaxAmount,

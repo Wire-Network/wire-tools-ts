@@ -38,6 +38,15 @@ describe("WireLcoImportTool", () => {
       expect(WireLcoImportTool.createPlan(null)).toBeNull()
     })
 
+    it("refuses sysio.dclaim as the claim funding account, since the claims are transferred into it", () => {
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ...fixture.config(),
+          dclaimFundingAccount: "sysio.dclaim"
+        })
+      ).toThrow(/lcoImport\.dclaimFundingAccount cannot be sysio\.dclaim/)
+    })
+
     it("derives the Ethereum positions, claims and pool from an opp-snapshot export", () => {
       const plan = WireLcoImportTool.createPlan(fixture.config()),
         { ethereum } = plan
