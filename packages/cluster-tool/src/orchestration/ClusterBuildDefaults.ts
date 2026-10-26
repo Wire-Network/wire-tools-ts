@@ -19,6 +19,7 @@ import {
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
+import { formatWireAsset } from "../tools/wire/WireUserTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
@@ -50,8 +51,8 @@ const EpochAdvanceTargetIndex = 2
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
 const ProducerSysGrant = "1000000.0000 SYS"
-/** The WIRE emissions token supply (9-decimal). */
-const WireSupply = "1000000000.000000000 WIRE"
+/** The WIRE emissions token supply, as an asset. */
+const WireSupply = formatWireAsset(Constants.WIRE_SUPPLY)
 /** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
 const WireSymbol = "9,WIRE"
 /**
@@ -283,6 +284,14 @@ export namespace ClusterBuildDefaults {
           : 0n),
       // Local outposts were deployed empty, so the imported shadow is backed like mock shadow.
       backLcoImport = lcoImportPlan != null && !isExternalOutpost
+    // Before anything runs: `verify-lco-funding` later checks what the treasury holds, but
+    // only after the bootstrap has already issued WIRE and deployed the contracts.
+    assertWireBudget(
+      lcoImportPlan == null
+        ? 0n
+        : WireLcoImportTool.planClaimTotal(lcoImportPlan),
+      dexEarmark
+    )
     if (lcoImportPlan != null && isExternalOutpost) {
       WireLcoImportTool.assertRealData(lcoImportPlan)
       WireLcoImportTool.assertExportOutposts(
@@ -1639,6 +1648,27 @@ export namespace ClusterBuildDefaults {
       // A string: the difference need not fit a double exactly.
       t5_distributable: (allotment - dexEarmark).toString()
     }
+  }
+
+  /**
+   * Refuse a bootstrap whose WIRE commitments exceed the supply: the launch import's claims,
+   * the T5 distributable left after the earmark, every seeded pool's WIRE side and the most
+   * the node-owner tiers can vest.
+   *
+   * @param claims - The launch import's WIRE claims, in subunits.
+   * @param dexEarmark - The WIRE subunits every seeded pool drains.
+   * @throws If the commitments exceed {@link Constants.WIRE_SUPPLY}.
+   */
+  export function assertWireBudget(claims: bigint, dexEarmark: bigint): void {
+    const distributable = BigInt(emissionConfig(dexEarmark).t5_distributable),
+      nodeOwners = Constants.nodeOwnerCommitment(
+        Constants.EMISSION_CONFIG_DEFAULTS
+      ),
+      committed = claims + distributable + dexEarmark + nodeOwners
+    Assert.ok(
+      committed <= Constants.WIRE_SUPPLY,
+      `ClusterBuildDefaults: the bootstrap commits ${committed} WIRE subunits (claims ${claims}, T5 distributable ${distributable}, pools ${dexEarmark}, node owners ${nodeOwners}), beyond the ${Constants.WIRE_SUPPLY} supply`
+    )
   }
 
   /**

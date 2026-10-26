@@ -18,10 +18,10 @@ import {
   LiqPoolSpec,
   SyndicationSpec
 } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { KeyType, PublicKey, SysioContracts } from "@wireio/sdk-core"
 import { getValue, NestedError } from "@wireio/shared"
 import { ethers } from "ethers"
-import { sortBy } from "lodash"
+import { countBy, sortBy } from "lodash"
 import { Constants } from "../../Constants.js"
 import { isqrt } from "../../utils/bigintUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
@@ -78,6 +78,14 @@ export namespace WireLcoImportTool {
   export const EvmHexPrefix = "0x"
   /** An EVM hex value's prefix, in either case. */
   export const EvmHexPrefixPattern = /^0x/i
+  /**
+   * The key type an importable chain's pubkeys carry in `sysio.authex::links`: secp256k1 EM on
+   * EVM, ed25519 ED on SVM (`public_key_from_op_address`).
+   */
+  export const LinkKeyTypes: Record<ImportSeedChainKind, KeyType> = {
+    [ChainKind.EVM]: KeyType.EM,
+    [ChainKind.SVM]: KeyType.ED
+  }
 
   /** Placeholder launch price of ETH: USD with 8 decimals ($4,000). */
   export const PlaceholderEthereumPriceUsd = "400000000000"
@@ -597,6 +605,17 @@ export namespace WireLcoImportTool {
       misKeyed.length === 0,
       `WireLcoImportTool: ${file}: ${misKeyed.length} staker(s) carry a pubkey that is not their address's key: ${misKeyed.join(", ")}`
     )
+    // An address may be both a staker and a purchaser, but only once in each list.
+    assertUnique(
+      file,
+      "stakers",
+      snapshot.stakers.map(staker => evmDisplayHex(staker.address))
+    )
+    assertUnique(
+      file,
+      "purchasers",
+      snapshot.purchasers.map(purchaser => evmDisplayHex(purchaser.address))
+    )
     assertRowTotals(
       file,
       snapshot.purchasers.map(purchaser => ({
@@ -622,7 +641,7 @@ export namespace WireLcoImportTool {
         )
       }
     })
-    const syndications = mergeSyndications(
+    const syndications = sortSyndications(
         positions.map(({ staker, amount }) =>
           SyndicationSpec.create({
             chainCode,
@@ -719,6 +738,11 @@ export namespace WireLcoImportTool {
       snapshot.allocationHash,
       `WireLcoImportTool: ${file}: the balances hash to ${allocationHash}, not the declared allocationHash ${snapshot.allocationHash}`
     )
+    assertUnique(
+      file,
+      "balances",
+      balances.map(balance => balance.address)
+    )
     assertRowTotals(
       file,
       balances.map(balance => ({
@@ -754,9 +778,25 @@ export namespace WireLcoImportTool {
       "accounting.totalUserPretokens": {
         declared: accounting.totalUserPretokens,
         derived: sumOf(balances.map(balance => balance.totalPretokens))
+      },
+      // The pool's pretokens may hold yield no wallet was allocated yet, so the sold total
+      // is checked through them rather than against the users' total.
+      "accounting.poolPretokens": {
+        declared: accounting.poolPretokens,
+        derived: sumOf([
+          accounting.allocatedPretokenYield,
+          accounting.unallocatedPoolPretokens
+        ])
+      },
+      "accounting.totalPretokensSold": {
+        declared: accounting.totalPretokensSold,
+        derived: sumOf([
+          accounting.directlyPurchasedPretokens,
+          accounting.poolPretokens
+        ])
       }
     })
-    const syndications = mergeSyndications(
+    const syndications = sortSyndications(
         snapshot.balances
           .map(balance =>
             SyndicationSpec.create({
@@ -970,7 +1010,7 @@ export namespace WireLcoImportTool {
     )
   }
 
-  /** A declared total and what the export's rows add up to. */
+  /** A declared total and what the exporter derives it from. */
   interface DeclaredTotal {
     readonly declared: string
     readonly derived: bigint
@@ -987,8 +1027,8 @@ export namespace WireLcoImportTool {
   }
 
   /**
-   * Refuse an export whose declared totals disagree with its rows. The exporter derives each
-   * total from the rows, so a mismatch means a broken or edited file.
+   * Refuse an export whose declared totals disagree with what the exporter derives them from:
+   * its rows or its other totals. A mismatch means a broken or edited file.
    */
   function assertTotals(
     file: string,
@@ -998,11 +1038,25 @@ export namespace WireLcoImportTool {
       .filter(([, { declared, derived }]) => BigInt(declared) !== derived)
       .map(
         ([setting, { declared, derived }]) =>
-          `${setting} ${declared} (rows: ${derived})`
+          `${setting} ${declared} (derived: ${derived})`
       )
     Assert.ok(
       wrong.length === 0,
-      `WireLcoImportTool: ${file}: totals disagree with the rows: ${wrong.join("; ")}`
+      `WireLcoImportTool: ${file}: declared totals do not add up: ${wrong.join("; ")}`
+    )
+  }
+
+  /**
+   * Refuse an export list naming one identity twice. The exporters write one row per
+   * address, and the import would credit a repeated row again.
+   */
+  function assertUnique(file: string, list: string, identities: string[]): void {
+    const repeated = Object.entries(countBy(identities))
+      .filter(([, count]) => count > 1)
+      .map(([identity]) => identity)
+    Assert.ok(
+      repeated.length === 0,
+      `WireLcoImportTool: ${file}: ${list} lists ${repeated.length} address(es) more than once: ${repeated.join(", ")}`
     )
   }
 
@@ -1017,30 +1071,18 @@ export namespace WireLcoImportTool {
     )
   }
 
-  /** One position per pubkey (amounts summed), sorted by pubkey, each within the asset range. */
-  function mergeSyndications(specs: SyndicationSpec[]): SyndicationSpec[] {
-    const merged = [
-      ...specs
-        .reduce(
-          (byPubkey, spec) =>
-            byPubkey.set(
-              spec.pubkey,
-              SyndicationSpec.create({
-                ...spec,
-                amount: (byPubkey.get(spec.pubkey)?.amount ?? 0n) + spec.amount
-              })
-            ),
-          new Map<string, SyndicationSpec>()
-        )
-        .values()
-    ]
-    merged.forEach(spec =>
+  /**
+   * The positions sorted by pubkey, each within the asset range. Each address holds one row,
+   * so each pubkey holds one position.
+   */
+  function sortSyndications(specs: SyndicationSpec[]): SyndicationSpec[] {
+    specs.forEach(spec =>
       Assert.ok(
         spec.amount <= AssetMaxAmount,
         `WireLcoImportTool: the ${spec.tokenCode} position of ${spec.pubkey} exceeds the asset range`
       )
     )
-    return sortBy(merged, spec => spec.pubkey)
+    return sortBy(specs, spec => spec.pubkey)
   }
 
   /**
@@ -1201,6 +1243,21 @@ export namespace WireLcoImportTool {
         ? ethers.getBytes(evmDisplayHex(value))
         : new SolanaPublicKey(value).toBytes()
     return Buffer.from(bytes).toString("hex")
+  }
+
+  /**
+   * A position's pubkey as `sysio.synd::importsynd` looks it up in `sysio.authex::links`: the
+   * canonical `PUB_EM_` / `PUB_ED_` spelling whose hash the `bypubkey` index holds.
+   *
+   * @param chain - The position's chain kind.
+   * @param pubkey - The pubkey in display form.
+   * @returns The canonical key string.
+   */
+  export function linkKey(chain: ImportSeedChainKind, pubkey: string): string {
+    return PublicKey.from({
+      type: LinkKeyTypes[chain],
+      compressed: Buffer.from(nativeBytesHex(chain, pubkey), "hex")
+    }).toString()
   }
 
   /**

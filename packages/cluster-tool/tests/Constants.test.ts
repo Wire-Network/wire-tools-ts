@@ -293,8 +293,10 @@ describe("Constants", () => {
     const T1Cap = 21
     const T2Cap = 84
     const T3Cap = 1000
-    /** 1,000,000,000 WIRE x 1e9 subunits — the supply issued to `sysio` at bootstrap. */
-    const WireSupplySubunits = 1_000_000_000_000_000_000
+
+    it("issues 1,000,000,000 WIRE at 9 decimals", () => {
+      expect(Constants.WIRE_SUPPLY).toBe(1_000_000_000_000_000_000n)
+    })
 
     it("sets tier allocations PER OWNER, not per tier", () => {
       expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
@@ -308,7 +310,7 @@ describe("Constants", () => {
       const committed =
         t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
       expect(committed).toBe(341_500_000_000_000_000)
-      expect(committed).toBeLessThan(WireSupplySubunits)
+      expect(BigInt(committed)).toBeLessThan(Constants.WIRE_SUPPLY)
     })
 
     it("vests over 12 / 24 / 36 months on a 30-day month", () => {

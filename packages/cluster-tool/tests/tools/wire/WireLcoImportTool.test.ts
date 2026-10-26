@@ -220,7 +220,7 @@ describe("WireLcoImportTool", () => {
           dclaimFundingAccount: null
         })
       ).toThrow(
-        /totals disagree with the rows: accounting\.initialChainAmount 2000000000 \(rows: 1000000000\)/
+        /declared totals do not add up: accounting\.initialChainAmount 2000000000 \(derived: 1000000000\)/
       )
     })
 
@@ -290,7 +290,7 @@ describe("WireLcoImportTool", () => {
           dclaimFundingAccount: null
         })
       ).toThrow(
-        /totals disagree with the rows: metadata\.totalLiqEthPurchased 5000000000000000000 \(rows: 2000000000000000000\)/
+        /declared totals do not add up: metadata\.totalLiqEthPurchased 5000000000000000000 \(derived: 2000000000000000000\)/
       )
       expect(() =>
         WireLcoImportTool.createPlan({
@@ -298,7 +298,7 @@ describe("WireLcoImportTool", () => {
           solana: fixture.chain("wrong-user-pretokens.json", solana),
           dclaimFundingAccount: null
         })
-      ).toThrow(/accounting\.totalUserPretokens 1 \(rows: 420000000\)/)
+      ).toThrow(/accounting\.totalUserPretokens 1 \(derived: 420000000\)/)
     })
 
     it("derives the Solana backing from the pool balance and its unreported yield", () => {
@@ -319,7 +319,7 @@ describe("WireLcoImportTool", () => {
           solana: fixture.chain("stale-backing.json", stale),
           dclaimFundingAccount: null
         })
-      ).toThrow(/accounting\.backingAvailable 8000000000 \(rows: 7500000000\)/)
+      ).toThrow(/accounting\.backingAvailable 8000000000 \(derived: 7500000000\)/)
     })
 
     it("accepts a staker pubkey with or without its 0x prefix", () => {
@@ -465,18 +465,73 @@ describe("WireLcoImportTool", () => {
       ).toThrow(/invalid\.json is not a valid export/)
     })
 
-    it("merges the positions of one pubkey", () => {
-      const exported = ethereumSnapshot()
-      exported.stakers[1].address = StakerAddress
-      exported.stakers[1].pubkey = GeneratorPublicKey
-      const { ethereum } = WireLcoImportTool.createPlan({
-        ethereum: fixture.chain("merged.json", exported),
-        solana: null,
-        dclaimFundingAccount: null
+    it("refuses an export list naming one address twice, whatever its case", () => {
+      const ethereumOnly = (file: string, exported: ReturnType<typeof ethereumSnapshot>) =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain(file, exported),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      // A repeated purchaser with no liqETH principal leaves every declared total intact.
+      const repurchased = ethereumSnapshot()
+      repurchased.purchasers.push({
+        ...repurchased.purchasers[1],
+        address: StakerAddress.toUpperCase().replace("0X", "0x")
       })
-      expect(ethereum.syndications.map(spec => [spec.pubkey, spec.amount])).toEqual([
-        [GeneratorPublicKey, 4_500_000_000n]
-      ])
+      expect(() => ethereumOnly("repeated-purchaser.json", repurchased)).toThrow(
+        new RegExp(`purchasers lists 1 address\\(es\\) more than once: ${StakerAddress}`)
+      )
+      const restaked = ethereumSnapshot()
+      restaked.stakers[1] = { ...restaked.stakers[0] }
+      withEthereumTotals(restaked)
+      expect(() => ethereumOnly("repeated-staker.json", restaked)).toThrow(
+        new RegExp(`stakers lists 1 address\\(es\\) more than once: ${StakerAddress}`)
+      )
+      const solana = solanaSnapshot()
+      solana.balances.push({ ...solana.balances[0] })
+      withAllocationHash(solana)
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("repeated-balance.json", solana),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(new RegExp(`balances lists 1 address\\(es\\) more than once: ${SolanaStakerAddress}`))
+    })
+
+    it("lets an Ethereum address be a staker and a purchaser once each, its claims summed", () => {
+      const { claims } = WireLcoImportTool.createPlan(fixture.config()).ethereum
+      // The staker's 0.25 pretoken yield plus the 1 pretoken it bought.
+      expect(claims).toContainEqual({
+        native_address: StakerAddress.slice(2),
+        wire_atomic: "1250000000"
+      })
+    })
+
+    it("refuses a Solana export whose pool pretokens or sold total disagree with their parts", () => {
+      const solanaOnly = (file: string, exported: ReturnType<typeof solanaSnapshot>) =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain(file, exported),
+          dclaimFundingAccount: null
+        })
+      const unallocated = solanaSnapshot()
+      // Yield the pool holds for no wallet yet is legitimate; both totals then carry it.
+      unallocated.accounting.unallocatedPoolPretokens = "5"
+      unallocated.accounting.poolPretokens = "120000005"
+      unallocated.accounting.totalPretokensSold = "420000005"
+      expect(solanaOnly("unallocated.json", unallocated).solana.claims).toHaveLength(2)
+      const pool = solanaSnapshot()
+      pool.accounting.poolPretokens = "120000001"
+      pool.accounting.totalPretokensSold = "420000001"
+      expect(() => solanaOnly("stale-pool.json", pool)).toThrow(
+        /accounting\.poolPretokens 120000001 \(derived: 120000000\)/
+      )
+      const sold = solanaSnapshot()
+      sold.accounting.totalPretokensSold = "1"
+      expect(() => solanaOnly("stale-sold.json", sold)).toThrow(
+        /accounting\.totalPretokensSold 1 \(derived: 420000000\)/
+      )
     })
   })
 
@@ -666,6 +721,18 @@ describe("WireLcoImportTool", () => {
       expect(WireLcoImportTool.scaleUnits(1_999_999_999n, 18, 9)).toBe(1n)
       expect(WireLcoImportTool.scaleUnits(12n, 8, 9)).toBe(120n)
       expect(WireLcoImportTool.scaleUnits(5n, 9, 9)).toBe(5n)
+    })
+
+    it("spells a position's pubkey as the authex link key importsynd looks up", () => {
+      expect(WireLcoImportTool.linkKey(ChainKind.EVM, GeneratorPublicKey)).toBe(
+        `PUB_EM_${GeneratorPublicKey.slice(2)}`
+      )
+      expect(
+        WireLcoImportTool.linkKey(ChainKind.EVM, GeneratorPublicKey.slice(2).toUpperCase())
+      ).toBe(`PUB_EM_${GeneratorPublicKey.slice(2)}`)
+      expect(WireLcoImportTool.linkKey(ChainKind.SVM, SolanaStakerAddress)).toBe(
+        `PUB_ED_${SolanaStakerAddress}`
+      )
     })
 
     it("renders native values as raw-byte hex and EVM values in display form", () => {

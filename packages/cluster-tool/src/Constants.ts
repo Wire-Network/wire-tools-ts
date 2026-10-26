@@ -153,6 +153,12 @@ export namespace Constants {
   /** Decimal precision of the WIRE token (`9,WIRE`): one WIRE is 10^9 subunits. */
   export const WIRE_PRECISION = 9
   /**
+   * The WIRE supply, in subunits (1,000,000,000 WIRE): the token's maximum, all issued to
+   * `sysio` at bootstrap. Every emission allotment, node-owner commitment and launch-import
+   * claim draws on it.
+   */
+  export const WIRE_SUPPLY = 1_000_000_000n * 10n ** BigInt(WIRE_PRECISION)
+  /**
    * Depot-frame precision every liq token is registered at, and so the precision of every
    * shadow symbol (`9,LIQSOL`). Changing it changes the registered tokens and every shadow
    * asset the harness renders.

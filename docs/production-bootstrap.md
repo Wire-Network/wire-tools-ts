@@ -481,17 +481,22 @@ drops every `SYNDICATE_LIQ` of the pair).
       `liq × native price ÷ highest tranche price` as the WIRE side (drained from the `sysio` treasury), the
       caller's tuning.
     Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account, the
-    claims and positions on the depot are reconciled against the plan, `sysio.dclaim::importdone` and (unless
-    the mock import follows) `sysio.synd::importdone` seal the imports, and a verify checks each imported
-    shadow's outstanding equals its booked custody. Each export is checked before anything runs: a Solana
-    export must hash to its `allocationHash`, its `initialChainAmount` must equal its wallets' purchased
-    liqSOL, its `backingAvailable` must be `poolBalance − unreportedLiqsolYield`, and against external
-    outposts its `programId` must be the targeted program; an Ethereum staker's pubkey must be its address's
-    key; every row's `totalPretokens` and every declared total must add up; and each pool must meet
-    `sysio.swap`'s own limits (seeds below 10^15, a share left for the creator). Before the first import
-    write, the funding account must hold every claim and `sysio` must keep its T5 allotment and node-owner
-    commitments. Placeholders stand in for unset prices, tuning, the Ethereum booked
-    custody and the funding account; external outposts refuse them.
+    claims and positions on the depot are reconciled against the plan (`sysio.synd::parked` holds exactly the
+    positions whose pubkey has no `sysio.authex::links` row, and each linked account holds exactly the
+    positions linked to it), `sysio.dclaim::importdone` and (unless the mock import follows)
+    `sysio.synd::importdone` seal the imports, and a verify checks each imported shadow's outstanding equals
+    its booked custody. Each export is checked before anything runs: a Solana export must hash to its
+    `allocationHash`, its `initialChainAmount` must equal its wallets' purchased liqSOL, its
+    `backingAvailable` must be `poolBalance − unreportedLiqsolYield`, and against external outposts its
+    `programId` must be the targeted program; an Ethereum staker's pubkey must be its address's key; no
+    export list may name an address twice; every row's `totalPretokens` and every declared total must add
+    up (on Solana `poolPretokens` and `totalPretokensSold` included); and each pool must meet `sysio.swap`'s
+    own limits (seeds below 10^15, a share left for the creator). The claims, the T5 allotment and the
+    node-owner commitments must fit the 1,000,000,000 WIRE supply, or the bootstrap is refused before it
+    starts. Before the first import write, the funding account must hold every claim, `sysio` must keep its
+    T5 allotment and node-owner commitments, and no imported shadow may have supply yet. Placeholders stand
+    in for unset prices, tuning, the Ethereum booked custody and the funding account; external outposts
+    refuse them.
     **(production: real exports and real values only.)**
 38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`

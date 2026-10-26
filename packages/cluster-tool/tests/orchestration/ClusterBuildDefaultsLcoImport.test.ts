@@ -123,6 +123,38 @@ describe("ClusterBuildDefaults — launch-data import", () => {
     ).toThrow(/exceed the T5 allotment/)
   })
 
+  it("refuses, before anything runs, claims that cannot fit the supply beside the T5 allotment and node-owner commitments", async () => {
+    // 1,000,000,000 WIRE − 375,000,000 (T5, pools included) − 341,500,000 (node owners).
+    const room =
+        Constants.WIRE_SUPPLY -
+        BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) -
+        Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS),
+      // The fixture's other Ethereum claim: the staker's 1.25 WIRE.
+      stakerClaim = 1_250_000_000n,
+      claiming = (claims: bigint) => {
+        const exported = ethereumSnapshot(),
+          pretokens = ((claims - stakerClaim) * 10n ** 9n).toString()
+        exported.purchasers[0].pretokens = pretokens
+        exported.purchasers[0].totalPretokens = pretokens
+        return ClusterBuildDefaults.create({
+          ...omit(baseOptions(), "solanaBootstrapJsonFile"),
+          ethereumBootstrapJsonFile: fixture.write(`claims-${claims}.json`, exported)
+        })
+      }
+    expect(room).toBe(283_500_000n * 10n ** 9n)
+    await expect(claiming(room)).resolves.toBeDefined()
+    await expect(claiming(room + 1n)).rejects.toThrow(
+      /the bootstrap commits 1000000000000000001 WIRE subunits .*, beyond the 1000000000000000000 supply/
+    )
+    // The pools sit inside the T5 allotment, so the earmark moves no budget.
+    expect(() =>
+      ClusterBuildDefaults.assertWireBudget(room, 80_000_000_000_000n)
+    ).not.toThrow()
+    expect(() => ClusterBuildDefaults.assertWireBudget(room + 1n, 0n)).toThrow(
+      /claims 283500000000000001, T5 distributable 375000000000000000, pools 0, node owners 341500000000000000/
+    )
+  })
+
   it("seeds the mock pool of a shadow only when the import seeds none for it", async () => {
     const ethereumOnly = omit(baseOptions(), "solanaBootstrapJsonFile"),
       bothImported = collectPhaseNames(

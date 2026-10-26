@@ -2,8 +2,15 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterFiles, type ClusterConfig } from "@wireio/cluster-tool-shared"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
-import { range, sortBy, sumBy, toLower, upperFirst } from "lodash"
+import { PublicKey, SlugName, SysioContracts } from "@wireio/sdk-core"
+import {
+  partition,
+  range,
+  sortBy,
+  sumBy,
+  toLower,
+  upperFirst
+} from "lodash"
 import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
@@ -105,6 +112,19 @@ export namespace LcoImportSteps {
     readonly amount: bigint
   }
 
+  /** A planned position and the `sysio.authex::links` key `importsynd` resolves it by. */
+  interface PlannedPosition {
+    readonly position: ImportedPosition
+    readonly linkKey: string
+  }
+
+  /** The shadow one linked account received from the import, in one token. */
+  interface LinkedHolding {
+    readonly account: string
+    readonly tokenCode: string
+    readonly amount: bigint
+  }
+
   /** One `sysio.dclaim::unmapped` claim as the reconcile compares it. */
   export interface UnmappedClaim {
     /** The depot chain code of the claim's chain; a row on a chain the plan lacks keeps its raw `chain_kind`. */
@@ -172,6 +192,12 @@ export namespace LcoImportSteps {
           Actor.Sysio,
           "verify-lco-funding",
           "the funding account covers the claims and the treasury keeps its T5 and node-owner commitments",
+          options
+        ),
+        planVerifyUnminted<C>(
+          Actor.Sysio,
+          "verify-lco-shadows-unminted",
+          "no imported shadow has supply yet, so every balance the reconcile reads is the import's",
           options
         ),
         planWriteRecord<C>(
@@ -433,6 +459,53 @@ export namespace LcoImportSteps {
     })
   }
 
+  /** Check no imported shadow is minted yet, before the import's first write. */
+  export function planVerifyUnminted<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runVerifyUnminted
+    )
+  }
+
+  /**
+   * Named runner — refuse the import unless each shadow it imports has no outstanding yet. The
+   * import is then each shadow's first mint, so the balance the syndication reconcile reads for
+   * a linked account is exactly what the import credited it.
+   */
+  export async function runVerifyUnminted<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const tokenCodes = WireLcoImportTool.chainPlans(
+      ctx.outputs.assert(LcoImportPlanKey)
+    ).map(chainPlan => chainPlan.pool.tokenCode)
+    await eachSeries(tokenCodes, async tokenCode => {
+      const outstanding = await WireSyndicationTool.readOutstanding(
+        ctx,
+        tokenCode
+      )
+      Assert.strictEqual(
+        outstanding,
+        0n,
+        `LcoImportSteps: ${tokenCode} already has ${outstanding} outstanding; the import must be its first mint`
+      )
+    })
+    StepExtraRecorder.note("imported shadows unminted", { tokenCodes })
+  }
+
   /**
    * The record's path in a cluster directory.
    *
@@ -681,11 +754,13 @@ export namespace LcoImportSteps {
 
   /**
    * Named runner — refuse the seals unless `sysio.synd` holds exactly the plan's positions.
-   * `importsynd` parks a position whose pubkey has no authex link and mints it to the linked
-   * account otherwise, so every `parked` row must be a planned position at its planned
-   * amount, and each shadow's outstanding must equal its booked custody: the pool's LCO liq
-   * plus every position, parked or minted. A batch pushed twice fails one or the other, and
-   * `importdone` would make it final.
+   * `importsynd` mints a position to the account its pubkey is linked to (the lowest-keyed
+   * `sysio.authex::links` row of that key) and parks it otherwise. So `parked` must hold
+   * exactly the unlinked positions, each linked account must hold exactly the positions linked
+   * to it (the import being each shadow's first mint, its balance is what it was credited),
+   * and each shadow's outstanding must equal its booked custody: the pool's LCO liq plus every
+   * position. A batch pushed twice or skipped fails one of these, and `importdone` would make
+   * it final.
    */
   export async function runReconcileSyndication<C extends ClusterBuildContext>(
     ctx: C,
@@ -696,12 +771,15 @@ export namespace LcoImportSteps {
     const chainPlans = WireLcoImportTool.chainPlans(
         ctx.outputs.assert(LcoImportPlanKey)
       ),
-      planned = chainPlans.flatMap(chainPlan =>
+      planned: PlannedPosition[] = chainPlans.flatMap(chainPlan =>
         chainPlan.syndications.map(spec => ({
-          chainCode: chainPlan.pool.chainCode,
-          tokenCode: chainPlan.pool.tokenCode,
-          pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
-          amount: spec.amount
+          position: {
+            chainCode: chainPlan.pool.chainCode,
+            tokenCode: chainPlan.pool.tokenCode,
+            pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
+            amount: spec.amount
+          },
+          linkKey: WireLcoImportTool.linkKey(chainPlan.chain, spec.pubkey)
         }))
       )
     Assert.strictEqual(
@@ -709,8 +787,9 @@ export namespace LcoImportSteps {
       input.positionCount,
       `LcoImportSteps: the plan holds ${planned.length} positions, not the ${input.positionCount} the seals were composed for`
     )
-    const plannedAmounts = new Map(
-        planned.map(position => [positionKey(position), position.amount])
+    const linkedAccounts = await readLinkedAccounts(ctx),
+      [linked, unlinked] = partition(planned, ({ linkKey }) =>
+        linkedAccounts.has(linkKey)
       ),
       parked = (
         await ctx.wire
@@ -725,14 +804,25 @@ export namespace LcoImportSteps {
         tokenCode: SlugName.toString(slugValue(row.token_code)),
         pubkey: row.pubkey,
         amount: BigInt(row.balance)
-      }))
+      })),
+      holdings = linkedHoldings(linked, linkedAccounts)
     Assert.deepStrictEqual(
-      parked.filter(
-        position => plannedAmounts.get(positionKey(position)) !== position.amount
-      ),
-      [],
-      "LcoImportSteps: sysio.synd::parked holds positions the plan does not; the syndication import stays unsealed"
+      sortPositions(parked),
+      sortPositions(unlinked.map(({ position }) => position)),
+      "LcoImportSteps: sysio.synd::parked differs from the planned positions of unlinked pubkeys; the syndication import stays unsealed"
     )
+    await eachSeries(holdings, async ({ account, tokenCode, amount }) => {
+      const balance = await WireSyndicationTool.readLiqBalance(
+        ctx,
+        account,
+        tokenCode
+      )
+      Assert.strictEqual(
+        balance,
+        amount,
+        `LcoImportSteps: ${account} holds ${balance} ${tokenCode}, not the ${amount} its linked positions import; the syndication import stays unsealed`
+      )
+    })
     await eachSeries(chainPlans, async ({ pool }) => {
       const outstanding = await WireSyndicationTool.readOutstanding(
         ctx,
@@ -746,13 +836,56 @@ export namespace LcoImportSteps {
     })
     StepExtraRecorder.note("launch-data positions reconciled", {
       positions: planned.length,
-      parked: parked.length
+      parked: parked.length,
+      linkedAccounts: holdings.length
     })
   }
 
-  /** The identity of a position: its token, chain and pubkey. */
-  function positionKey(position: ImportedPosition): string {
-    return `${position.tokenCode}/${position.chainCode}/${position.pubkey}`
+  /**
+   * Every `sysio.authex::links` key and the account `importsynd` credits it to: the lowest-keyed
+   * row of the key, as the contract's `bypubkey` lookup finds it.
+   */
+  async function readLinkedAccounts<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<Map<string, string>> {
+    const links = await ctx.wire
+      .getSysioContract(SysioContractName.authex)
+      .tables.links.queryAll({ limit: WireSyndicationTool.TableRowLimit })
+    // Highest key first, so the lowest-keyed row of a pubkey is the one the map keeps.
+    return new Map(
+      sortBy(links, link => BigInt(link.key))
+        .reverse()
+        .map(link => [PublicKey.from(link.pub_key).toString(), link.username])
+    )
+  }
+
+  /** The linked positions summed per account and token, ordered by account then token. */
+  function linkedHoldings(
+    linked: PlannedPosition[],
+    linkedAccounts: Map<string, string>
+  ): LinkedHolding[] {
+    const holdings = linked.reduce((byHolder, { position, linkKey }) => {
+      const account = linkedAccounts.get(linkKey),
+        holder = `${account}/${position.tokenCode}`
+      return byHolder.set(holder, {
+        account,
+        tokenCode: position.tokenCode,
+        amount: (byHolder.get(holder)?.amount ?? 0n) + position.amount
+      })
+    }, new Map<string, LinkedHolding>())
+    return sortBy(
+      [...holdings.values()],
+      [holding => holding.account, holding => holding.tokenCode]
+    )
+  }
+
+  /** `positions` ordered by token, chain, then pubkey — the order the reconcile compares. */
+  function sortPositions(positions: ImportedPosition[]): ImportedPosition[] {
+    return sortBy(positions, [
+      position => position.tokenCode,
+      position => position.chainCode,
+      position => position.pubkey
+    ])
   }
 
   /** Verify the import on the depot — the Report checkpoint closing it. */

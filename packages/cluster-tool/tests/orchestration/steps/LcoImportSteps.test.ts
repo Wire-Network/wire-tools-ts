@@ -24,8 +24,12 @@ import {
   withAllocationHash
 } from "../../tools/wire/lcoImportFixture.js"
 
-const { SysioContractName, SysioDclaimChainkind, SysioSyndChainkind } =
-  SysioContracts
+const {
+  SysioAuthexChainkind,
+  SysioContractName,
+  SysioDclaimChainkind,
+  SysioSyndChainkind
+} = SysioContracts
 const LcoImportSteps = Steps.lcoImport
 const signal = new AbortController().signal
 
@@ -81,10 +85,11 @@ describe("LcoImportSteps", () => {
         "LcoImportSolana",
         "LcoImportSeal"
       ])
-      expect(planPhase.steps.map(step => step.runner)).toEqual([
-        LcoImportSteps.runPublishPlan,
-        LcoImportSteps.runVerifyFunding,
-        LcoImportSteps.runWriteRecord
+      expect(planPhase.steps.map(step => [step.name, step.runner])).toEqual([
+        ["publish-lco-import-plan", LcoImportSteps.runPublishPlan],
+        ["verify-lco-funding", LcoImportSteps.runVerifyFunding],
+        ["verify-lco-shadows-unminted", LcoImportSteps.runVerifyUnminted],
+        ["write-lco-import-record", LcoImportSteps.runWriteRecord]
       ])
       expect(planPhase.steps[0].input).toEqual({
         kind: "LcoImportSteps.PublishPlanInput",
@@ -364,6 +369,37 @@ describe("LcoImportSteps", () => {
       })
     })
 
+    describe("runVerifyUnminted", () => {
+      /** A context whose shadows' outstanding is `outstanding`. */
+      function unminted(outstanding: Record<string, bigint>) {
+        const ctx = importContext()
+        jest
+          .spyOn(WireSyndicationTool, "readOutstanding")
+          .mockImplementation(async (_ctx, token) => outstanding[token])
+        return ctx
+      }
+
+      it("passes when no imported shadow has supply yet", async () => {
+        await expect(
+          LcoImportSteps.runVerifyUnminted(
+            unminted({ LIQETH: 0n, LIQSOL: 0n }),
+            null,
+            signal
+          )
+        ).resolves.toBeUndefined()
+      })
+
+      it("fails when an imported shadow was minted before the import", async () => {
+        await expect(
+          LcoImportSteps.runVerifyUnminted(
+            unminted({ LIQETH: 0n, LIQSOL: 1n }),
+            null,
+            signal
+          )
+        ).rejects.toThrow(/LIQSOL already has 1 outstanding; the import must be its first mint/)
+      })
+    })
+
     describe("runReconcileClaims", () => {
       /** The plan's claims as the `sysio.dclaim::unmapped` rows the import writes, the chain by name. */
       function plannedRows(): SysioContracts.SysioDclaimUnmappedTokenType[] {
@@ -533,18 +569,53 @@ describe("LcoImportSteps", () => {
         )
       }
 
-      /** A context whose `parked` read answers `rows`, and whose shadows' outstanding is `outstanding`. */
+      /** The plan's positions, in plan order: Ethereum's two, then Solana's one. */
+      const positions = WireLcoImportTool.chainPlans(plan).flatMap(chainPlan =>
+        chainPlan.syndications.map(spec => ({
+          chain: chainPlan.chain,
+          tokenCode: chainPlan.pool.tokenCode,
+          pubkey: spec.pubkey,
+          amount: spec.amount
+        }))
+      )
+
+      /** The `sysio.authex::links` row linking position `index`'s pubkey to `username`. */
+      function linkRow(
+        index: number,
+        username: string,
+        key = index + 1
+      ): SysioContracts.SysioAuthexLinksSType {
+        const { chain, pubkey } = positions[index]
+        return {
+          key,
+          username,
+          chain_kind: SysioAuthexChainkind[chain] as keyof typeof SysioAuthexChainkind,
+          pub_key: WireLcoImportTool.linkKey(chain, pubkey)
+        }
+      }
+
+      /**
+       * A context whose `parked` and `links` reads answer `parked` and `links`, whose accounts
+       * hold `balances` (`account/TOKEN` → subunits) and whose shadows' outstanding is
+       * `outstanding`.
+       */
       function reconcilable(
-        rows: SysioContracts.SysioSyndParkedRowType[],
-        outstanding: Record<string, bigint> = BookedCustody
+        parked: SysioContracts.SysioSyndParkedRowType[],
+        outstanding: Record<string, bigint> = BookedCustody,
+        links: SysioContracts.SysioAuthexLinksSType[] = [],
+        balances: Record<string, bigint> = {}
       ) {
         const ctx = importContext(),
+          tables: Record<string, object[]> = { parked, links },
           getTableRows = jest
             .spyOn(ctx.wire, "getTableRows")
-            .mockResolvedValue({ rows, more: false })
+            .mockImplementation(async ({ table }) => ({ rows: tables[table], more: false }))
         jest
           .spyOn(WireSyndicationTool, "readOutstanding")
           .mockImplementation(async (_ctx, token) => outstanding[token])
+        jest
+          .spyOn(WireSyndicationTool, "readLiqBalance")
+          .mockImplementation(async (_ctx, account, token) => balances[`${account}/${token}`] ?? 0n)
         return { ctx, getTableRows }
       }
 
@@ -570,14 +641,89 @@ describe("LcoImportSteps", () => {
         )
       })
 
-      it("passes when a linked pubkey's position was minted instead of parked", async () => {
+      it("passes when a linked pubkey's position was minted to its account instead of parked", async () => {
+        const { ctx, getTableRows } = reconcilable(
+          parkedRows().slice(1),
+          BookedCustody,
+          [linkRow(0, "lcoholder")],
+          { "lcoholder/LIQETH": positions[0].amount }
+        )
+        await expect(
+          LcoImportSteps.runReconcileSyndication(ctx, reconcileInput(), signal)
+        ).resolves.toBeUndefined()
+        expect(getTableRows).toHaveBeenCalledWith(
+          expect.objectContaining({ account: "sysio.authex", table: "links" })
+        )
+      })
+
+      it("fails when an unlinked position is missing from parked", async () => {
         await expect(
           LcoImportSteps.runReconcileSyndication(
             reconcilable(parkedRows().slice(1)).ctx,
             reconcileInput(),
             signal
           )
+        ).rejects.toThrow(/parked differs from the planned positions of unlinked pubkeys/)
+      })
+
+      it("fails when one linked position was skipped and another imported twice", async () => {
+        // Were the two equal-sized, the outstanding would still match, so only the accounts tell.
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(
+              parkedRows().slice(2),
+              BookedCustody,
+              [linkRow(0, "lcoholdera"), linkRow(1, "lcoholderb")],
+              { "lcoholderb/LIQETH": 2n * positions[1].amount }
+            ).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(
+          /lcoholdera holds 0 LIQETH, not the 3000000000 its linked positions import/
+        )
+      })
+
+      it("sums the positions of several keys linked to one account", async () => {
+        const both = positions[0].amount + positions[1].amount,
+          links = [linkRow(0, "lcoholder"), linkRow(1, "lcoholder")]
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows().slice(2), BookedCustody, links, {
+              "lcoholder/LIQETH": both
+            }).ctx,
+            reconcileInput(),
+            signal
+          )
         ).resolves.toBeUndefined()
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows().slice(2), BookedCustody, links, {
+              "lcoholder/LIQETH": positions[0].amount
+            }).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/lcoholder holds/)
+      })
+
+      it("credits a pubkey linked to several accounts to its lowest-keyed link, as importsynd does", async () => {
+        const links = [linkRow(0, "lcolater", 9), linkRow(0, "lcofirst", 4)],
+          minted = (account: string) => ({ [`${account}/LIQETH`]: positions[0].amount })
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows().slice(1), BookedCustody, links, minted("lcofirst")).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).resolves.toBeUndefined()
+        await expect(
+          LcoImportSteps.runReconcileSyndication(
+            reconcilable(parkedRows().slice(1), BookedCustody, links, minted("lcolater")).ctx,
+            reconcileInput(),
+            signal
+          )
+        ).rejects.toThrow(/lcofirst holds 0 LIQETH/)
       })
 
       it("fails when a batch was credited twice to an unlinked pubkey", async () => {
@@ -589,7 +735,7 @@ describe("LcoImportSteps", () => {
             reconcileInput(),
             signal
           )
-        ).rejects.toThrow(/parked holds positions the plan does not/)
+        ).rejects.toThrow(/parked differs from the planned positions of unlinked pubkeys/)
       })
 
       it("fails on a parked position the plan does not hold", async () => {
@@ -602,7 +748,7 @@ describe("LcoImportSteps", () => {
             reconcileInput(),
             signal
           )
-        ).rejects.toThrow(/parked holds positions the plan does not/)
+        ).rejects.toThrow(/parked differs from the planned positions of unlinked pubkeys/)
       })
 
       it("fails when a shadow's outstanding differs from its booked custody, as a linked batch credited twice leaves it", async () => {

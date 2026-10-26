@@ -149,17 +149,21 @@ depot inside the epoch-0 window, in the `LcoImport` phase group right after
   export's `initialChainAmount`, never the custody slack) → `sysio.liq::regliqpool`, its WIRE side
   `liq × native price ÷ highest tranche price`;
 - then `sysio.dclaim` is funded with every claim, the claims and positions are reconciled
-  against the plan, both imports are sealed (`sysio.synd` only when no mock import follows),
-  and the result is verified.
+  against the plan (`parked` holds exactly the unlinked positions, and each account an
+  authex link resolves to holds exactly its linked positions), both imports are sealed
+  (`sysio.synd` only when no mock import follows), and the result is verified.
 
 Each export is checked first: a Solana export must hash to its `allocationHash`, book exactly
 its wallets' purchased liqSOL as `initialChainAmount` and derive its `backingAvailable`; an
-Ethereum staker's pubkey must be its address's key; every declared total must add up; and each
-pool must meet `sysio.swap`'s limits (seeds below 10^15). Against external outposts the Solana
-export must also come from the targeted `programId`. Before the first import write,
-`verify-lco-funding` checks the funding account holds every claim and `sysio` keeps its T5
-allotment and node-owner commitments; the emission config's `t5_distributable` already excludes
-every seeded pool's WIRE.
+Ethereum staker's pubkey must be its address's key; no export list may name an address twice;
+every declared total must add up; and each pool must meet `sysio.swap`'s limits (seeds below
+10^15). Against external outposts the Solana export must also come from the targeted
+`programId`. The bootstrap is refused before anything runs when the claims, the T5 allotment
+(the pools' WIRE included) and the node-owner commitments exceed the 1,000,000,000 WIRE supply.
+Before the first import write, `verify-lco-funding` checks the funding account holds every
+claim and `sysio` keeps its T5 allotment and node-owner commitments, and
+`verify-lco-shadows-unminted` checks no imported shadow has supply yet; the emission config's
+`t5_distributable` already excludes every seeded pool's WIRE.
 
 The prices, pool tuning and claim funding account come from the flag-less `lcoImport`
 member of a `--cluster-build-options-file` document (or a flow's scenario defaults):
