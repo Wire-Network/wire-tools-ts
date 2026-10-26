@@ -256,7 +256,8 @@ export namespace ClusterBuildDefaults {
       // and never contact either outpost.
       isExternalOutpost = config.externalOutposts != null,
       // The launch-data import's plan, read from each outpost's export now so a bad export or
-      // (against external outposts) a placeholder fails the build before anything runs.
+      // (against external outposts) a placeholder or another outpost's export fails the
+      // build before anything runs.
       lcoImportPlan = WireLcoImportTool.createPlan(config.lcoImport),
       lcoPoolTokenCodes =
         lcoImportPlan == null
@@ -270,8 +271,13 @@ export namespace ClusterBuildDefaults {
       ),
       // Local outposts were deployed empty, so the imported shadow is backed like mock shadow.
       backLcoImport = lcoImportPlan != null && !isExternalOutpost
-    if (lcoImportPlan != null && isExternalOutpost)
+    if (lcoImportPlan != null && isExternalOutpost) {
       WireLcoImportTool.assertRealData(lcoImportPlan)
+      WireLcoImportTool.assertExportOutposts(
+        lcoImportPlan,
+        config.externalOutposts
+      )
+    }
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
         owner: Constants.BOOTSTRAP_NODE_OWNER,

@@ -148,8 +148,14 @@ depot inside the epoch-0 window, in the `LcoImport` phase group right after
 - the protocol-owned liq (booked custody less every staked position; on Solana exactly the
   export's `initialChainAmount`, never the custody slack) → `sysio.liq::regliqpool`, its WIRE side
   `liq × native price ÷ highest tranche price`;
-- then `sysio.dclaim` is funded with every claim, both imports are sealed (`sysio.synd` only
-  when no mock import follows), and the result is verified.
+- then `sysio.dclaim` is funded with every claim, the claims and positions are reconciled
+  against the plan, both imports are sealed (`sysio.synd` only when no mock import follows),
+  and the result is verified.
+
+Each export is checked first: a Solana export must hash to its `allocationHash` and book
+exactly its wallets' purchased liqSOL as `initialChainAmount`, and an Ethereum staker's pubkey
+must be its address's key. Against external outposts the Solana export must also come from the
+targeted `programId`.
 
 The prices, pool tuning and claim funding account come from the flag-less `lcoImport`
 member of a `--cluster-build-options-file` document (or a flow's scenario defaults):
@@ -165,10 +171,10 @@ member of a `--cluster-build-options-file` document (or a flow's scenario defaul
 }
 ```
 
-Prices are USD with 8 decimals. Any value nobody sets takes a named placeholder that the
-build logs and reports; `create` against external outposts refuses every placeholder. The
-mock pool of an imported shadow is skipped (a shadow has one pool), and against local
-outposts the imported shadow is backed in custody like mock shadow. The import's record,
+Prices are USD with 8 decimals, and a misspelled member is an error. Any value nobody sets
+takes a named placeholder that the build logs and reports; `create` against external outposts
+refuses every placeholder. The mock pool of an imported shadow is skipped (a shadow has one
+pool), and against local outposts the imported shadow is backed in custody like mock shadow. The import's record,
 every pool and position as a `BootstrapPlatformConfig`, is written to
 `<cluster>/lco-import-bootstrap-platform-config.json`.
 

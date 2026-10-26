@@ -6,6 +6,7 @@ import {
   LiqPoolSpec
 } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+import { fixtureExternalOutposts } from "../../config/resolveEnvironmentFixture.js"
 import {
   DoubleGeneratorPublicKey,
   GeneratorPublicKey,
@@ -16,7 +17,8 @@ import {
   StakerAddress,
   WeiPerEther,
   ethereumSnapshot,
-  solanaSnapshot
+  solanaSnapshot,
+  withAllocationHash
 } from "./lcoImportFixture.js"
 
 /** Raw-byte hex of a base58 Solana key. */
@@ -45,8 +47,8 @@ describe("WireLcoImportTool", () => {
         ["ETHEREUM", "LIQETH", DoubleGeneratorPublicKey, 1_500_000_000n]
       ])
       expect(ethereum.claims).toEqual([
-        { native_address: StakerAddress.slice(2), wire_atomic: "1250000000" },
-        { native_address: PurchaserAddress.slice(2), wire_atomic: "3000000000" }
+        { native_address: PurchaserAddress.slice(2), wire_atomic: "3000000000" },
+        { native_address: StakerAddress.slice(2), wire_atomic: "1250000000" }
       ])
       expect(ethereum.pool).toEqual(
         LiqPoolSpec.create({
@@ -177,6 +179,76 @@ describe("WireLcoImportTool", () => {
       ).toThrow(new RegExp(`no recovered pubkey.*${StakerAddress}`))
     })
 
+    it("refuses a staker whose pubkey is not its address's key", () => {
+      const exported = ethereumSnapshot()
+      exported.stakers[0].address = PurchaserAddress
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("mis-keyed.json", exported),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(new RegExp(`not their address's key: ${PurchaserAddress}`))
+    })
+
+    it("refuses a Solana export whose balances do not hash to its allocationHash", () => {
+      const altered = solanaSnapshot()
+      altered.balances[0].syndicatedLiqsol = "6000000000"
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("altered.json", altered),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(
+        new RegExp(`not the declared allocationHash ${altered.allocationHash}`)
+      )
+    })
+
+    it("refuses a Solana pool principal the wallets did not purchase", () => {
+      const inflated = solanaSnapshot()
+      inflated.accounting.initialChainAmount = "2000000000"
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: null,
+          solana: fixture.chain("inflated.json", inflated),
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/initialChainAmount 2000000000 is not the 1000000000 the wallets purchased/)
+    })
+
+    it("refuses a booked custody or a claim total beyond the asset range", () => {
+      const overbooked = ethereumSnapshot()
+      overbooked.metadata.lastPoolLiqBalance = (
+        (WireLcoImportTool.AssetMaxAmount + 1n) *
+        10n ** 9n
+      ).toString()
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: {
+            ...fixture.chain("huge-custody.json", overbooked),
+            nativePriceUsd: "1",
+            highestTranchePriceUsd: "1000000000"
+          },
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/LIQETH pool: its booked custody \d+ exceeds the asset range/)
+      const claimed = ethereumSnapshot(),
+        maxClaim = (WireLcoImportTool.AssetMaxAmount * 10n ** 9n).toString()
+      claimed.stakers[0].pretokenYield = "0"
+      claimed.purchasers.forEach(purchaser => {
+        purchaser.totalPretokens = maxClaim
+      })
+      expect(() =>
+        WireLcoImportTool.createPlan({
+          ethereum: fixture.chain("huge-claims.json", claimed),
+          solana: null,
+          dclaimFundingAccount: null
+        })
+      ).toThrow(/the claims total \d+ WIRE subunits, beyond the asset range/)
+    })
+
     it("refuses a configured tranche price the export contradicts", () => {
       const exported = ethereumSnapshot()
       exported.metadata.highestTranchePriceUsd = "20000000"
@@ -207,7 +279,9 @@ describe("WireLcoImportTool", () => {
     it("refuses a Solana export whose booked principal exceeds its backing, or reports issues", () => {
       const overbooked = solanaSnapshot(),
         troubled = solanaSnapshot()
+      overbooked.balances[1].purchasedLiqsol = "4000000000"
       overbooked.accounting.initialChainAmount = "4000000000"
+      withAllocationHash(overbooked)
       troubled.accounting.issues = ["ownerless shares"]
       expect(() =>
         WireLcoImportTool.createPlan({
@@ -278,6 +352,7 @@ describe("WireLcoImportTool", () => {
 
     it("merges the positions of one pubkey", () => {
       const exported = ethereumSnapshot()
+      exported.stakers[1].address = StakerAddress
       exported.stakers[1].pubkey = GeneratorPublicKey
       const { ethereum } = WireLcoImportTool.createPlan({
         ethereum: fixture.chain("merged.json", exported),
@@ -403,6 +478,62 @@ describe("WireLcoImportTool", () => {
       expect(() =>
         WireLcoImportTool.assertRealData({ ...plan, placeholders: [] })
       ).not.toThrow()
+    })
+
+    it("refuses a Solana export read from another program than the external outpost", () => {
+      const outposts = (programId: string) => ({
+        ...fixtureExternalOutposts(),
+        solana: { programId }
+      })
+      expect(plan.solana.programId).toBe(solanaSnapshot().programId)
+      expect(() =>
+        WireLcoImportTool.assertExportOutposts(
+          plan,
+          outposts(plan.solana.programId)
+        )
+      ).not.toThrow()
+      expect(() =>
+        WireLcoImportTool.assertExportOutposts(
+          plan,
+          outposts(SolanaPurchaserAddress)
+        )
+      ).toThrow(
+        new RegExp(`read from program ${plan.solana.programId}, not the outpost`)
+      )
+      expect(() =>
+        WireLcoImportTool.assertExportOutposts(
+          { ...plan, solana: null },
+          outposts(SolanaPurchaserAddress)
+        )
+      ).not.toThrow()
+    })
+
+    it("digests every allocation, so equal counts and totals still differ", () => {
+      const [first, second] = plan.solana.claims,
+        swapped = {
+          ...plan,
+          solana: {
+            ...plan.solana,
+            claims: [
+              { ...first, wire_atomic: second.wire_atomic },
+              { ...second, wire_atomic: first.wire_atomic }
+            ]
+          }
+        },
+        { digest, ...counts } = WireLcoImportTool.summarize(plan),
+        { digest: swappedDigest, ...swappedCounts } =
+          WireLcoImportTool.summarize(swapped)
+      expect(swappedCounts).toEqual(counts)
+      expect(swappedDigest).not.toBe(digest)
+      expect(digest).toBe(WireLcoImportTool.planDigest(plan))
+      expect(digest).toMatch(/^[a-f0-9]{64}$/)
+    })
+
+    it("hashes a Solana export as capital-index does, over its own key order", () => {
+      const exported = solanaSnapshot()
+      expect(
+        WireLcoImportTool.solanaAllocationHash(JSON.stringify(exported, null, 2))
+      ).toBe(exported.allocationHash)
     })
   })
 

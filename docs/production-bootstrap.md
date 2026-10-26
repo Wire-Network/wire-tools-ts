@@ -480,10 +480,14 @@ drops every `SYNDICATE_LIQ` of the pair).
       principal; custody slack is never minted, and the booked principal must not exceed `backingAvailable`),
       `liq × native price ÷ highest tranche price` as the WIRE side (drained from the `sysio` treasury), the
       caller's tuning.
-    Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account,
-    `sysio.dclaim::importdone` and (unless the mock import follows) `sysio.synd::importdone` seal the imports,
-    and a verify checks each imported shadow's outstanding equals its booked custody. Placeholders stand in for
-    unset prices, tuning, the Ethereum booked custody and the funding account; external outposts refuse them.
+    Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account, the
+    claims and positions on the depot are reconciled against the plan, `sysio.dclaim::importdone` and (unless
+    the mock import follows) `sysio.synd::importdone` seal the imports, and a verify checks each imported
+    shadow's outstanding equals its booked custody. Each export is checked before anything runs: a Solana
+    export must hash to its `allocationHash`, its `initialChainAmount` must equal its wallets' purchased
+    liqSOL, and against external outposts its `programId` must be the targeted program; an Ethereum staker's
+    pubkey must be its address's key. Placeholders stand in for unset prices, tuning, the Ethereum booked
+    custody and the funding account; external outposts refuse them.
     **(production: real exports and real values only.)**
 38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`

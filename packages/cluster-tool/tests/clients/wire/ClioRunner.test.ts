@@ -70,6 +70,76 @@ describe("ClioRunner", () => {
     })
   })
 
+  describe("transport retries", () => {
+    /** A clio that records each run in `runs` and fails with `stderr` until its `passOn`th run. */
+    const flakyClio = (stderr: string, passOn: number) => {
+      const runs = Path.join(dir, "runs")
+      return {
+        runs,
+        bin: makeScript(
+          "clio-flaky.sh",
+          [
+            `echo run >> '${runs}'`,
+            `if [ "$(wc -l < '${runs}')" -lt ${passOn} ]; then echo '${stderr}' >&2; exit 1; fi`,
+            `echo '{"transaction_id":"abc"}'`
+          ].join("\n")
+        )
+      }
+    }
+    const runCount = (runs: string) =>
+      Fs.readFileSync(runs, "utf-8").trim().split("\n").length
+
+    it("re-runs a command whose connection failed", async () => {
+      const { bin, runs } = flakyClio(
+        "Failed http request to nodeop at http://127.0.0.1:1; is nodeop running?",
+        2
+      )
+      await expect(
+        new ClioRunner(config(bin)).run(["push"], { json: true })
+      ).resolves.toEqual({ transaction_id: "abc" })
+      expect(runCount(runs)).toBe(2)
+    })
+
+    it("never re-runs a command whose request may have reached the node", async () => {
+      const { bin, runs } = flakyClio("Error 3200000: http exception", 2)
+      await expect(
+        new ClioRunner(config(bin)).run(["push"], { json: true })
+      ).rejects.toThrow(/Error 3200000/)
+      expect(runCount(runs)).toBe(1)
+    })
+
+    it("tells a failed connection from a push that may have been sent", () => {
+      const failure = (message: string, fields: object = {}) => ({
+        message,
+        ...fields
+      })
+      expect(
+        ClioRunner.isTransportFailure(
+          failure("couldn't connect to server: Connection refused")
+        )
+      ).toBe(true)
+      expect(
+        ClioRunner.isTransportFailure(failure("Error 3200000: http exception"))
+      ).toBe(false)
+      expect(
+        ClioRunner.isAmbiguousSubmission(
+          failure("Error 3200005: http request fail")
+        )
+      ).toBe(true)
+      expect(
+        ClioRunner.isAmbiguousSubmission(
+          failure("Command failed", { killed: true, signal: "SIGTERM" })
+        )
+      ).toBe(true)
+      expect(
+        ClioRunner.isAmbiguousSubmission(
+          failure("Error 3050003: assertion failure")
+        )
+      ).toBe(false)
+      expect(ClioRunner.isAmbiguousSubmission("not an error")).toBe(false)
+    })
+  })
+
   describe("enrichClioError", () => {
     it("folds stdout + stderr into the error message", () => {
       const err = new Error("Command failed")

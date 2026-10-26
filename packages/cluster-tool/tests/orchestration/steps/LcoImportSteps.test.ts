@@ -17,7 +17,11 @@ import {
 import { BootstrapPlatformConfig } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
-import { LcoImportFixture } from "../../tools/wire/lcoImportFixture.js"
+import {
+  LcoImportFixture,
+  solanaSnapshot,
+  withAllocationHash
+} from "../../tools/wire/lcoImportFixture.js"
 
 const { SysioContractName, SysioDclaimChainkind, SysioSyndChainkind } =
   SysioContracts
@@ -186,6 +190,35 @@ describe("LcoImportSteps", () => {
           {
             kind: "LcoImportSteps.PublishPlanInput",
             summary: { ...summary, dclaimFundingAccount: "someone.else" }
+          },
+          signal
+        )
+      ).rejects.toThrow(/the exports changed/)
+    })
+
+    it("refuses exports whose allocations moved, even with the same counts and totals", async () => {
+      const moved = solanaSnapshot(),
+        [staker, purchaser] = moved.balances,
+        stakerClaim = staker.totalPretokens
+      staker.totalPretokens = purchaser.totalPretokens
+      purchaser.totalPretokens = stakerClaim
+      withAllocationHash(moved)
+      const ctx = new ClusterBuildContext(
+        fixtureConfig({
+          clusterPath: fixture.path,
+          lcoImport: {
+            ...config.lcoImport,
+            solana: fixture.chain("moved-solana.json", moved)
+          }
+        }),
+        getLogger("lco-import-steps-test")
+      )
+      await expect(
+        LcoImportSteps.runPublishPlan(
+          ctx,
+          {
+            kind: "LcoImportSteps.PublishPlanInput",
+            summary: WireLcoImportTool.summarize(plan)
           },
           signal
         )

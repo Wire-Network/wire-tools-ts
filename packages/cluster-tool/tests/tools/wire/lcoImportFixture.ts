@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
@@ -18,10 +19,10 @@ export const GeneratorPublicKey =
 export const DoubleGeneratorPublicKey =
   "0x03c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 
-/** The first staker's address; it also bought pretokens. */
-export const StakerAddress = "0x1111111111111111111111111111111111111111"
-/** The second staker's address. */
-export const SecondStakerAddress = "0x3333333333333333333333333333333333333333"
+/** The first staker's address — {@link GeneratorPublicKey}'s; it also bought pretokens. */
+export const StakerAddress = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+/** The second staker's address — {@link DoubleGeneratorPublicKey}'s. */
+export const SecondStakerAddress = "0x92d48ff5523c9b04aa426191b4bd21e6080f074a"
 /** A purchaser that never staked. */
 export const PurchaserAddress = "0x2222222222222222222222222222222222222222"
 /** An address that unstaked everything and has no recovered key. */
@@ -109,11 +110,10 @@ export const SolanaPurchaserAddress = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5
  * 1. The 8 liqSOL backing also holds 2 of slack, which is not minted.
  */
 export function solanaSnapshot(): SolanaGenesisSnapshot {
-  return {
+  return withAllocationHash({
     schemaVersion: 1,
     programId: "5nBtmutzLgNKe8NxgTWE3uhPMm8u8T3ggTq2ApZRnbbq",
-    allocationHash:
-      "f19cd1b1385e75b7fd5c1950f9e53a2b47220de6e5366ba44defe5351550ff0f",
+    allocationHash: "",
     balances: [
       {
         address: SolanaStakerAddress,
@@ -167,7 +167,21 @@ export function solanaSnapshot(): SolanaGenesisSnapshot {
         indexScale: "1000000000000"
       }
     }
-  }
+  })
+}
+
+/**
+ * `snapshot` with the `allocationHash` capital-index declares for it: SHA-256 over the
+ * compact JSON of its `schemaVersion`, `programId` and `balances`.
+ */
+export function withAllocationHash(
+  snapshot: SolanaGenesisSnapshot
+): SolanaGenesisSnapshot {
+  const { schemaVersion, programId, balances } = snapshot
+  snapshot.allocationHash = createHash("sha256")
+    .update(JSON.stringify({ schemaVersion, programId, balances }))
+    .digest("hex")
+  return snapshot
 }
 
 /** A temp directory exports are written into, removed by {@link LcoImportFixture.remove}. */

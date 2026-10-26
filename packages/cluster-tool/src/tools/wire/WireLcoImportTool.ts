@@ -1,13 +1,16 @@
 import Assert from "node:assert"
+import { createHash } from "node:crypto"
 import Fs from "node:fs"
 import { asOption, Either } from "@3fv/prelude-ts"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
 import {
   EthereumGenesisSnapshotSchemaCodec,
   SolanaGenesisSnapshotSchemaCodec,
+  type ExternalOutpostConfig,
   type LcoImportChainConfig,
   type LcoImportConfig,
-  type SchemaCodec
+  type SchemaCodec,
+  type SolanaGenesisSnapshot
 } from "@wireio/cluster-tool-shared"
 import {
   BootstrapPlatformConfig,
@@ -16,7 +19,7 @@ import {
   SyndicationSpec
 } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
-import { NestedError } from "@wireio/shared"
+import { getValue, NestedError } from "@wireio/shared"
 import { ethers } from "ethers"
 import { sortBy } from "lodash"
 import { Constants } from "../../Constants.js"
@@ -109,6 +112,11 @@ export namespace WireLcoImportTool {
     readonly chain: ImportSeedChainKind
     /** The export it was derived from (absolute path). */
     readonly bootstrapJsonFile: string
+    /**
+     * The outpost program the export was read from: the Solana export's `programId`.
+     * Nothing for the Ethereum export, which names no contract.
+     */
+    readonly programId?: string
     /** Every syndicated position, one per pubkey in display form, sorted by pubkey. */
     readonly syndications: SyndicationSpec[]
     /** Every WIRE claim, one per native address, sorted by address. */
@@ -147,7 +155,7 @@ export namespace WireLcoImportTool {
     readonly poolWireAmount: string
   }
 
-  /** A plan's counts and totals plus its placeholders — compact enough for a Step input. */
+  /** A plan's counts, totals, placeholders and digest — compact enough for a Step input. */
   export interface Summary {
     /** The Ethereum outpost's import, or nothing. */
     readonly ethereum: ChainSummary
@@ -157,6 +165,14 @@ export namespace WireLcoImportTool {
     readonly dclaimFundingAccount: string
     /** Every value the plan took from a placeholder. */
     readonly placeholders: Placeholder[]
+    /** {@link planDigest}: every allocation the plan imports, so no change goes unseen. */
+    readonly digest: string
+  }
+
+  /** An export as read: its text and the validated document. */
+  interface ExportRead<T> {
+    readonly text: string
+    readonly snapshot: T
   }
 
   /** One chain's plan plus the placeholders its derivation used. */
@@ -219,7 +235,7 @@ export namespace WireLcoImportTool {
    * @returns The plan, or nothing when the cluster imports no export.
    * @throws When an export is unreadable or invalid, or a derived value breaks a launch
    *   invariant (a position with no pubkey, no LCO liq left for the pool, a pool parameter
-   *   out of range).
+   *   or a total out of range).
    */
   export function createPlan(config: LcoImportConfig): Plan {
     if (config == null) {
@@ -236,18 +252,68 @@ export namespace WireLcoImportTool {
                 value: PlaceholderDclaimFundingAccount
               }
             ]
-          : []
-    return {
-      ethereum: ethereum?.plan,
-      solana: solana?.plan,
-      dclaimFundingAccount:
-        config.dclaimFundingAccount ?? PlaceholderDclaimFundingAccount,
-      placeholders: [
-        ...(ethereum?.placeholders ?? []),
-        ...(solana?.placeholders ?? []),
-        ...fundingPlaceholders
-      ]
+          : [],
+      plan: Plan = {
+        ethereum: ethereum?.plan,
+        solana: solana?.plan,
+        dclaimFundingAccount:
+          config.dclaimFundingAccount ?? PlaceholderDclaimFundingAccount,
+        placeholders: [
+          ...(ethereum?.placeholders ?? []),
+          ...(solana?.placeholders ?? []),
+          ...fundingPlaceholders
+        ]
+      },
+      claims = planClaimTotal(plan)
+    // One transfer funds every claim, so the total must fit one asset.
+    Assert.ok(
+      claims <= AssetMaxAmount,
+      `WireLcoImportTool: the claims total ${claims} WIRE subunits, beyond the asset range`
+    )
+    return plan
+  }
+
+  /**
+   * Refuse an export read from another outpost than the external one the cluster targets:
+   * the Solana export's program must be `externalOutposts.solana.programId`.
+   *
+   * @param plan - The import's plan.
+   * @param externalOutposts - The deployed outposts the cluster targets.
+   * @throws When the programs differ.
+   */
+  export function assertExportOutposts(
+    plan: Plan,
+    externalOutposts: ExternalOutpostConfig
+  ): void {
+    const exported = plan.solana?.programId,
+      targeted = externalOutposts.solana.programId
+    Assert.ok(
+      exported == null || exported === targeted,
+      `WireLcoImportTool: the Solana export was read from program ${exported}, not the outpost ${targeted} the cluster targets`
+    )
+  }
+
+  /**
+   * A SHA-256 digest over every allocation of a plan — each chain's program, positions,
+   * claims and pool, and the claim funding account — in plan order.
+   *
+   * @param plan - The import's plan.
+   * @returns The lowercase hex digest.
+   */
+  export function planDigest(plan: Plan): string {
+    const allocations = {
+      dclaimFundingAccount: plan.dclaimFundingAccount,
+      chains: chainPlans(plan).map(chainPlan => ({
+        chain: chainPlan.chain,
+        programId: chainPlan.programId,
+        syndications: chainPlan.syndications.map(spec =>
+          SyndicationSpec.toJson(spec)
+        ),
+        claims: chainPlan.claims,
+        pool: LiqPoolSpec.toJson(chainPlan.pool)
+      }))
     }
+    return createHash("sha256").update(JSON.stringify(allocations)).digest("hex")
   }
 
   /**
@@ -420,7 +486,7 @@ export namespace WireLcoImportTool {
   }
 
   /**
-   * A plan's counts, totals and placeholders.
+   * A plan's counts, totals, placeholders and digest.
    *
    * @param plan - The import's plan.
    * @returns The summary.
@@ -430,7 +496,8 @@ export namespace WireLcoImportTool {
       ethereum: plan.ethereum == null ? null : summarizeChain(plan.ethereum),
       solana: plan.solana == null ? null : summarizeChain(plan.solana),
       dclaimFundingAccount: plan.dclaimFundingAccount,
-      placeholders: plan.placeholders
+      placeholders: plan.placeholders,
+      digest: planDigest(plan)
     }
   }
 
@@ -481,7 +548,7 @@ export namespace WireLcoImportTool {
     chainConfig: LcoImportChainConfig
   ): ChainDerivation {
     const file = chainConfig.bootstrapJsonFile,
-      snapshot = readExport(EthereumGenesisSnapshotSchemaCodec, file),
+      { snapshot } = readExport(EthereumGenesisSnapshotSchemaCodec, file),
       chainCode = Constants.ETHEREUM_CHAIN_CODENAME,
       tokenCode = Constants.liqTokenCode(chainCode),
       positions = snapshot.stakers
@@ -496,10 +563,22 @@ export namespace WireLcoImportTool {
         .filter(({ amount }) => amount > 0n),
       unkeyed = positions
         .filter(({ staker }) => staker.pubkey == null)
-        .map(({ staker }) => staker.address)
+        .map(({ staker }) => staker.address),
+      // The outpost syndicates only from the key of the staking address, so a key that
+      // is not would credit the position to someone else.
+      misKeyed = snapshot.stakers
+        .filter(
+          staker =>
+            staker.pubkey != null && !isKeyOf(staker.pubkey, staker.address)
+        )
+        .map(staker => staker.address)
     Assert.ok(
       unkeyed.length === 0,
       `WireLcoImportTool: ${file}: ${unkeyed.length} staker(s) hold liqETH with no recovered pubkey, which no import can credit: ${unkeyed.join(", ")}`
+    )
+    Assert.ok(
+      misKeyed.length === 0,
+      `WireLcoImportTool: ${file}: ${misKeyed.length} staker(s) carry a pubkey that is not their address's key: ${misKeyed.join(", ")}`
     )
     const syndications = mergeSyndications(
         positions.map(({ staker, amount }) =>
@@ -574,7 +653,7 @@ export namespace WireLcoImportTool {
   /** Derive the Solana outpost's plan from its genesis export. */
   function createSolanaPlan(chainConfig: LcoImportChainConfig): ChainDerivation {
     const file = chainConfig.bootstrapJsonFile,
-      snapshot = readExport(SolanaGenesisSnapshotSchemaCodec, file),
+      { text, snapshot } = readExport(SolanaGenesisSnapshotSchemaCodec, file),
       { accounting } = snapshot,
       { units } = accounting,
       chainCode = Constants.SOLANA_CHAIN_CODENAME,
@@ -585,9 +664,25 @@ export namespace WireLcoImportTool {
           units.liqsolDecimals,
           Constants.LIQ_TOKEN_PRECISION
         )
+    const allocationHash = solanaAllocationHash(text),
+      purchased = snapshot.balances.reduce(
+        (sum, balance) => sum + BigInt(balance.purchasedLiqsol),
+        0n
+      )
     Assert.ok(
       accounting.issues.length === 0,
       `WireLcoImportTool: ${file}: the export reports reconciliation issues: ${accounting.issues.join("; ")}`
+    )
+    Assert.strictEqual(
+      allocationHash,
+      snapshot.allocationHash,
+      `WireLcoImportTool: ${file}: the balances hash to ${allocationHash}, not the declared allocationHash ${snapshot.allocationHash}`
+    )
+    // The pool's principal is the wallets' purchased liqSOL, which the settlement ledger books.
+    Assert.strictEqual(
+      BigInt(accounting.initialChainAmount),
+      purchased,
+      `WireLcoImportTool: ${file}: accounting.initialChainAmount ${accounting.initialChainAmount} is not the ${purchased} the wallets purchased`
     )
     const syndications = mergeSyndications(
         snapshot.balances
@@ -631,6 +726,7 @@ export namespace WireLcoImportTool {
       plan: {
         chain: ChainKind.SVM,
         bootstrapJsonFile: file,
+        programId: snapshot.programId,
         syndications,
         claims,
         pool
@@ -776,6 +872,11 @@ export namespace WireLcoImportTool {
         pool.initialWireAmount <= AssetMaxAmount,
       `${label}: a seed exceeds the asset range`
     )
+    // The shadow's supply reaches the whole booked custody once every position is imported.
+    Assert.ok(
+      pool.custodyTotal <= AssetMaxAmount,
+      `${label}: its booked custody ${pool.custodyTotal} exceeds the asset range`
+    )
     Assert.ok(pool.fee <= MaxPoolFee, `${label}: fee ${pool.fee} exceeds ${MaxPoolFee}`)
     Assert.ok(
       pool.conversionHorizonSec > 0,
@@ -852,7 +953,7 @@ export namespace WireLcoImportTool {
   }
 
   /** Read and validate one export, naming the file in any failure. */
-  function readExport<T>(codec: SchemaCodec<T>, file: string): T {
+  function readExport<T>(codec: SchemaCodec<T>, file: string): ExportRead<T> {
     const text = Either.try(() => Fs.readFileSync(file, "utf-8"))
       .ifLeft(error => {
         throw new NestedError(`WireLcoImportTool: cannot read the export ${file}`, {
@@ -861,7 +962,7 @@ export namespace WireLcoImportTool {
         })
       })
       .getOrThrow()
-    return Either.try(() => codec.deserialize(text))
+    const snapshot = Either.try(() => codec.deserialize(text))
       .ifLeft(error => {
         throw new NestedError(`WireLcoImportTool: ${file} is not a valid export`, {
           cause: error,
@@ -869,6 +970,33 @@ export namespace WireLcoImportTool {
         })
       })
       .getOrThrow()
+    return { text, snapshot }
+  }
+
+  /**
+   * The `allocationHash` capital-index computes for a Solana genesis export: SHA-256 over the
+   * compact JSON of its `schemaVersion`, `programId` and `balances`, in the export's own
+   * key order (`SolanaOppBalanceService`).
+   *
+   * @param text - The export's JSON text.
+   * @returns The lowercase hex digest.
+   */
+  export function solanaAllocationHash(text: string): string {
+    const { schemaVersion, programId, balances } = JSON.parse(
+      text
+    ) as SolanaGenesisSnapshot
+    return createHash("sha256")
+      .update(JSON.stringify({ schemaVersion, programId, balances }))
+      .digest("hex")
+  }
+
+  /** Whether the compressed secp256k1 `pubkey` is the key of the EVM `address`. */
+  function isKeyOf(pubkey: string, address: string): boolean {
+    return getValue(
+      () =>
+        ethers.computeAddress(pubkey).toLowerCase() === address.toLowerCase(),
+      false
+    )
   }
 
   /** Batch `index` of `items`, refusing one past the last. */

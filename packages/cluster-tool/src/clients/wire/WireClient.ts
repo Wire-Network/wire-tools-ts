@@ -700,13 +700,22 @@ export class WireClient {
       ),
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
-          // Pre-inclusion retry ONLY — a throwing `send` produced no
-          // transaction id, so there is nothing to double-apply. Deliberately
-          // NOT fused with the finality wait; fusing them is the defect above.
+          // Pre-inclusion retry ONLY of a push the node rejected or never received.
+          // A push that may have reached it (`ClioRunner.isAmbiguousSubmission`) is
+          // never re-sent: clio would sign it again as a second transaction.
+          // Deliberately NOT fused with the finality wait; fusing them is the defect above.
           result = await retry(send, {
             maxAttempts: WireClient.PushMaxAttempts,
             delayMs: WireClient.FinalityRetryDelayMs,
-            label
+            label,
+            checkResult: ClioRunner.isAmbiguousSubmission
+          }).catch(error => {
+            throw ClioRunner.isAmbiguousSubmission(error)
+              ? new NestedError(
+                  `${label}: the push may have reached the node, so it is not re-sent; read its outcome on the chain before running it again`,
+                  { cause: error }
+                )
+              : error
           }),
           transactionId = WireClient.getTransactionId(result)
         // Nothing reached the chain: no id, or `setContract`'s settled-no-op
@@ -1242,9 +1251,10 @@ export namespace WireClient {
   }
 
   /**
-   * Attempts for a push that THREW — i.e. produced no transaction id, so there
-   * is nothing to double-apply. Separate from {@link FinalityMaxAttempts},
-   * which bounds proven-safe re-pushes; fusing the two is the original defect.
+   * Attempts for a push the node rejected or never received, so there is nothing to
+   * double-apply (an ambiguous failure is never re-sent). Separate from
+   * {@link FinalityMaxAttempts}, which bounds proven-safe re-pushes; fusing the two is
+   * the original defect.
    */
   export const PushMaxAttempts = 3
 

@@ -44,6 +44,10 @@ export interface ClioError {
   message?: string
   stdout?: string
   stderr?: string
+  /** Set by `execFile` when it killed the child (its timeout). */
+  killed?: boolean
+  /** The signal that ended the child, when one did. */
+  signal?: string
 }
 
 /**
@@ -98,28 +102,10 @@ export class ClioRunner {
       ...args
     ]
     log.debug("clio %s", fullArgs.join(" "))
-    // TRANSPORT retries only: a connection-level failure (refused / reset under
-    // host connection churn — the node itself keeps serving). A NON-transport
-    // error IS the result (rethrown).
-    //
-    // ⚠️ The safety argument here is NOT uniform across the patterns, and the
-    // claim this comment used to make — "a re-pushed duplicate surfaces as the
-    // benign `tx_duplicate`" — is FALSE for `clio push action`. clio re-SIGNS
-    // with fresh TAPOS, so a re-run is a NEW transaction with a NEW id, which
-    // the chain has no way to dedupe. Run-5 (2026-08-04) demonstrates it: one
-    // logical `newaccount` produced a400888817 → 8d8cfc45 → c5bc6523.
-    //
-    // The patterns split by WHEN they can occur:
-    //   pre-submission  `Connection refused` / `couldn't connect to server` —
-    //                   nothing reached the node; re-running is genuinely safe.
-    //   ambiguous       `Connection reset` / `Failed http request to nodeop` —
-    //                   the node may have ACCEPTED the transaction before the
-    //                   socket died, so a re-run can double-apply it.
-    // The ambiguous class belongs in the same "unknown → do not re-send" bucket
-    // as an unresolved finality wait (see WireClient.withFinality). Narrowing it
-    // is a behavioural change with its own blast radius and is NOT made here;
-    // this note exists so the next reader does not inherit the false premise.
-    // Every logical clio invocation — command line, outcome, duration — is
+    // Retries only a failed connection (`TransportFailurePattern`): nothing reached the
+    // node, so even a push may re-run. Any other error is the result; a push that may have
+    // been sent (`isAmbiguousSubmission`) must never re-run, as clio re-signs it into a new
+    // transaction. Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
       // MASKED, not raw: this array is serialized verbatim into the Report, and
@@ -206,11 +192,22 @@ export namespace ClioRunner {
   /** Delay between transport retries (ms). */
   export const TransportRetryDelayMs = 1_500
 
-  /** clio's connection-level failure signatures (transport, not chain rejection). */
+  /**
+   * clio's failed-connection signatures: its `connection_exception`, which its libcurl
+   * transport raises only for `CURLE_COULDNT_CONNECT` / `CURLE_URL_MALFORMAT`, so nothing
+   * reached the node.
+   */
   export const TransportFailurePattern =
-    /Failed http request to nodeop|Connection refused|Connection reset|couldn't connect to server/i
+    /Failed http request to nodeop|Connection refused|couldn't connect to server/i
 
-  /** True when `error` is a connection-level clio failure (safe to re-run). */
+  /**
+   * clio's `http_exception` family (`Error 3200000`–`3200006`): an HTTP failure after the
+   * connection opened, such as a reply that never arrived, so the request may have reached
+   * the node.
+   */
+  export const HttpExceptionPattern = /Error 3200\d{3}\b/
+
+  /** True when `error` is a failed clio connection (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {
     const candidate = error as ClioError
     return (
@@ -218,6 +215,23 @@ export namespace ClioRunner {
       typeof candidate === "object" &&
       typeof candidate.message === "string" &&
       TransportFailurePattern.test(candidate.message)
+    )
+  }
+
+  /**
+   * True when a failed clio push may still have reached the node: an `http_exception`, or
+   * a clio killed mid-run (`execFile`'s timeout). Such a push is never re-sent; its outcome
+   * is read from the chain instead.
+   */
+  export function isAmbiguousSubmission(error: unknown): boolean {
+    const candidate = error as ClioError
+    return (
+      candidate != null &&
+      typeof candidate === "object" &&
+      (candidate.killed === true ||
+        candidate.signal != null ||
+        (typeof candidate.message === "string" &&
+          HttpExceptionPattern.test(candidate.message)))
     )
   }
 

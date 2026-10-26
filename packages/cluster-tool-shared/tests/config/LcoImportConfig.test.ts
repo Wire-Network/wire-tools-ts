@@ -60,4 +60,21 @@ describe("LcoImportConfig", () => {
       }).success
     ).toBe(false)
   })
+
+  it("rejects a misspelled member at either level instead of dropping it", () => {
+    const unrecognized = (options: object) =>
+      LcoImportOptionsSchema.safeParse(options).error?.issues.map(issue => [
+        issue.code,
+        issue.path
+      ])
+    expect(unrecognized({ dclaimFundingAcount: "sysio" })).toEqual([
+      ["unrecognized_keys", []]
+    ])
+    expect(unrecognized({ solana: { nativePriceUSD: "20000000000" } })).toEqual(
+      [["unrecognized_keys", ["solana"]]]
+    )
+    expect(
+      unrecognized({ ethereum: { bootstrapJsonFile: "/inputs/ethereum.json" } })
+    ).toEqual([["unrecognized_keys", ["ethereum"]]])
+  })
 })

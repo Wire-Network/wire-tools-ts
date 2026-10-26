@@ -112,6 +112,57 @@ describe("WireClient", () => {
       expect(send).toHaveBeenCalledTimes(WireClient.FinalityMaxAttempts)
     })
 
+    /** A clio failure shaped like `execFile`'s rejection of a run that printed `stderr`. */
+    function clioFailure(stderr: string, fields: object = {}) {
+      return Object.assign(new Error(`Command failed: clio\n${stderr}`), {
+        stderr,
+        ...fields
+      })
+    }
+
+    it("does NOT re-send a push whose reply was lost (http_exception)", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3200000: http exception\nError Details:\nFailure when receiving data from the peer"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/may have reached the node, so it is not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("does NOT re-send a push whose clio was killed by its timeout", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure("", { killed: true, signal: "SIGTERM" }) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("re-sends a push the node rejected", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3050003: sysio_assert_message assertion failure"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/assertion failure/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
       const client = new WireClient(config),
         send = jest.spyOn(client["runner"], "run").mockResolvedValue({

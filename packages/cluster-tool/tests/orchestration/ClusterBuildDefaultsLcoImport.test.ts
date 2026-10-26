@@ -4,6 +4,7 @@ import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { omit } from "lodash"
 import {
+  ExternalOutpostProgramId,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -12,7 +13,8 @@ import {
   LcoImportFixture,
   WeiPerEther,
   ethereumSnapshot,
-  solanaSnapshot
+  solanaSnapshot,
+  withAllocationHash
 } from "../tools/wire/lcoImportFixture.js"
 import {
   collectPhaseNames,
@@ -106,7 +108,7 @@ describe("ClusterBuildDefaults — launch-data import", () => {
     ])
   })
 
-  it("refuses placeholders against external outposts and imports real values without backing them", async () => {
+  it("refuses placeholders and another program's export against external outposts, and imports real values without backing them", async () => {
     const externalOutpostConfig = fixtureExternalOutpostConfig(environment.rootPath)
     await expect(
       ClusterBuildDefaults.create({
@@ -125,26 +127,37 @@ describe("ClusterBuildDefaults — launch-data import", () => {
         clipFloor: 1_000n
       })
     exported.metadata.lastPoolLiqBalance = (7n * WeiPerEther).toString()
-    const cluster = await ClusterBuildDefaults.create({
-        ...baseOptions(),
-        ethereumBootstrapJsonFile: fixture.write("real-ethereum.json", exported),
-        solanaBootstrapJsonFile: fixture.write("real-solana.json", solanaExport),
-        lcoImport: {
-          ethereum: {
-            nativePriceUsd: "300000000000",
-            highestTranchePriceUsd: "20000000",
-            pool
-          },
-          solana: {
-            nativePriceUsd: "15000000000",
-            highestTranchePriceUsd: "20000000",
-            pool
-          },
-          dclaimFundingAccount: "sysio"
+    const realOptions = (solanaFile: string) => ({
+      ...baseOptions(),
+      ethereumBootstrapJsonFile: fixture.write("real-ethereum.json", exported),
+      solanaBootstrapJsonFile: solanaFile,
+      lcoImport: {
+        ethereum: {
+          nativePriceUsd: "300000000000",
+          highestTranchePriceUsd: "20000000",
+          pool
         },
-        underwriterCount: 0,
-        externalOutpostConfig
-      }),
+        solana: {
+          nativePriceUsd: "15000000000",
+          highestTranchePriceUsd: "20000000",
+          pool
+        },
+        dclaimFundingAccount: "sysio"
+      },
+      underwriterCount: 0,
+      externalOutpostConfig
+    })
+    await expect(
+      ClusterBuildDefaults.create(
+        realOptions(fixture.write("other-program.json", solanaExport))
+      )
+    ).rejects.toThrow(/the Solana export was read from program/)
+
+    solanaExport.programId = ExternalOutpostProgramId
+    withAllocationHash(solanaExport)
+    const cluster = await ClusterBuildDefaults.create(
+        realOptions(fixture.write("real-solana.json", solanaExport))
+      ),
       names = collectPhaseNames(cluster.children)
     expect(names).toContain("LcoImport")
     expect(names).not.toContain("MockShadowBackingSolana")

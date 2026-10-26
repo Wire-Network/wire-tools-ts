@@ -967,6 +967,13 @@ describe("--cluster-build-options-file", () => {
         writeDocument({ lcoImport: { ethereum: { nativePriceUsd: "4000.5" } } })
       )
     ).toThrow(/nativePriceUsd/)
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({
+          lcoImport: { ethereum: { nativePriceUSD: "400000000000" } }
+        })
+      )
+    ).toThrow(/nativePriceUSD/)
   })
 
   it("sizes the bind node-port arrays from the document's own counts", () => {

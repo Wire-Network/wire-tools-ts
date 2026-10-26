@@ -85,25 +85,33 @@ export const LcoImportConfigSchema = z.object({
 /** The cluster's launch-data import — the shape of {@link LcoImportConfigSchema}. */
 export type LcoImportConfig = z.infer<typeof LcoImportConfigSchema>
 
-/** Caller options for one chain: its pricing members, every one optional (the export rides its own flag). */
+/**
+ * Caller options for one chain: its pricing members, every one optional (the export rides
+ * its own flag). Strict, so a misspelled member fails instead of leaving a placeholder.
+ */
 export const LcoImportChainOptionsSchema = LcoImportChainConfigSchema.omit({
   bootstrapJsonFile: true
-}).partial()
+})
+  .partial()
+  .strict()
 /** Caller options for one chain — the shape of {@link LcoImportChainOptionsSchema}. */
 export type LcoImportChainOptions = z.infer<typeof LcoImportChainOptionsSchema>
 
 /**
  * Caller options for the launch-data import (flag-less: a build-options document or a
  * flow's scenario defaults sets them). The export files themselves are the
- * `--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file` flags.
+ * `--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file` flags. Strict, like
+ * the rest of the options document.
  */
-export const LcoImportOptionsSchema = z.object({
-  /** The Ethereum chain's pricing. */
-  ethereum: LcoImportChainOptionsSchema.optional(),
-  /** The Solana chain's pricing. */
-  solana: LcoImportChainOptionsSchema.optional(),
-  /** The account that funds `sysio.dclaim`. */
-  dclaimFundingAccount: z.string().optional()
-})
+export const LcoImportOptionsSchema = z
+  .object({
+    /** The Ethereum chain's pricing. */
+    ethereum: LcoImportChainOptionsSchema.optional(),
+    /** The Solana chain's pricing. */
+    solana: LcoImportChainOptionsSchema.optional(),
+    /** The account that funds `sysio.dclaim`. */
+    dclaimFundingAccount: z.string().optional()
+  })
+  .strict()
 /** Caller options for the launch-data import — the shape of {@link LcoImportOptionsSchema}. */
 export type LcoImportOptions = z.infer<typeof LcoImportOptionsSchema>
