@@ -6,6 +6,7 @@ import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
+  EthereumReadBlockTag,
   NodeopReadMode,
   QueryEngineReadModeSchema,
   SignatureProviderType
@@ -407,6 +408,25 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     ).toHaveLength(13)
   })
 
+  it("registers the Ethereum read confirmation as UNSEEDED leaves: a tag choice and two numbers", () => {
+    const options = register()
+    const blockTag = options.get("ethereum-read-block-tag")
+    expect(blockTag).toMatchObject({
+      type: "string",
+      choices: Object.values(EthereumReadBlockTag)
+    })
+    expect(blockTag?.default).toBeUndefined()
+    ;["ethereum-read-confirmations", "ethereum-read-max-finality-lag-sec"].forEach(
+      flag => {
+        expect(options.get(flag)).toMatchObject({ type: "number" })
+        expect(options.get(flag)?.default).toBeUndefined()
+      }
+    )
+    expect(
+      [...options.keys()].filter(flag => flag.startsWith("ethereum-read-"))
+    ).toHaveLength(3)
+  })
+
   it("seeds a query-engine leaf from a scenario's defaults", () => {
     expect(
       register({ queryEngine: { maxInFlight: 8 } }).get(
@@ -608,6 +628,21 @@ describe("toClusterBuildOptions reverse parse", () => {
       workerThreads: 4,
       maxResultRows: 500
     })
+  })
+
+  it("reverse-parses the Ethereum read leaves into options.ethereumRead, absent when none is given", () => {
+    expect(
+      toClusterBuildOptions({
+        "ethereum-read-block-tag": EthereumReadBlockTag.latest,
+        "ethereum-read-confirmations": 20,
+        "ethereum-read-max-finality-lag-sec": 600
+      }).ethereumRead
+    ).toEqual({
+      blockTag: EthereumReadBlockTag.latest,
+      confirmations: 20,
+      maxFinalityLagSec: 600
+    })
+    expect(toClusterBuildOptions({}).ethereumRead).toBeUndefined()
   })
 
   it("reads the camelCase alias yargs also emits", () => {

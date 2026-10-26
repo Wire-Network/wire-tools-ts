@@ -59,6 +59,7 @@ import type {
 // module-init, so whichever module loads first the other is complete by the
 // time a value is dereferenced.
 import { NodeConfig } from "./NodeConfig.js"
+import { EthereumReadConfirmationConfigProvider } from "./EthereumReadConfirmationConfigProvider.js"
 import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
@@ -254,6 +255,9 @@ export namespace ClusterConfigProvider {
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)
       ),
+      ethereumRead = EthereumReadConfirmationConfigProvider.resolve(
+        options.ethereumRead
+      ),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -329,6 +333,7 @@ export namespace ClusterConfigProvider {
       chainStateDbSizeMb:
         options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
       queryEngine,
+      ethereumRead,
       solanaSlotsPerEpoch:
         options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }

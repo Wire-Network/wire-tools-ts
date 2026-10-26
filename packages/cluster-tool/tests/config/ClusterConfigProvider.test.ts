@@ -5,8 +5,10 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  EthereumReadBlockTag,
   ExternalOutpostConfigSchemaCodec,
   NodeopReadMode,
+  createUnsetEthereumReadConfirmationConfig,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
@@ -706,6 +708,39 @@ describe("ClusterConfigProvider", () => {
       expect(config.queryEngine.timeoutMs).toBe(
         QueryEngineConfigProvider.DefaultTimeoutMs
       )
+    })
+
+    it("leaves the Ethereum read confirmation unset by default, so nodeop's defaults govern", async () => {
+      const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.ethereumRead).toEqual(
+        createUnsetEthereumReadConfirmationConfig()
+      )
+    })
+
+    it("persists a caller's Ethereum read confirmation", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        ethereumRead: { blockTag: EthereumReadBlockTag.safe }
+      })
+      expect(config.ethereumRead).toEqual({
+        blockTag: EthereumReadBlockTag.safe,
+        confirmations: null,
+        maxFinalityLagSec: null
+      })
+    })
+
+    it("rejects a confirmation depth beside a non-latest tag before any port is claimed", async () => {
+      const bindResolve = jest.spyOn(BindConfigProvider, "resolve")
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.finalized,
+            confirmations: 12
+          }
+        })
+      ).rejects.toThrow(/applies only to the latest block tag/)
+      expect(bindResolve).not.toHaveBeenCalled()
     })
 
     it("rejects a caller query deadline when no API node is planned", async () => {

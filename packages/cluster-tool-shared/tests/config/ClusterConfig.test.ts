@@ -6,7 +6,9 @@ import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
+  EthereumReadBlockTag,
   SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -97,6 +99,7 @@ describe("ClusterConfig shape", () => {
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
+    ethereumRead: createUnsetEthereumReadConfirmationConfig(),
     solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
   }
 
@@ -193,6 +196,30 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("loads a config without ethereumRead as all-unset, leaving nodeop's read defaults in force", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.ethereumRead
+    expect(
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).ethereumRead
+    ).toEqual(createUnsetEthereumReadConfirmationConfig())
+  })
+
+  it("round-trips a set ethereumRead", () => {
+    const tuned: ClusterConfig = {
+        ...config,
+        ethereumRead: {
+          blockTag: EthereumReadBlockTag.safe,
+          confirmations: null,
+          maxFinalityLagSec: null
+        }
+      },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(tuned)
+      )
+    expect(rehydrated.ethereumRead.blockTag).toBe(EthereumReadBlockTag.safe)
+    expect(rehydrated).toEqual(tuned)
   })
 
   it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {
