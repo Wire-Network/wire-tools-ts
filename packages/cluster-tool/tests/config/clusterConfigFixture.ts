@@ -3,6 +3,7 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
@@ -126,6 +127,7 @@ export const PersistedFixture: ClusterConfig = {
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
   // Nothing set: nodeop's read mode, the plugin's limits.
   queryEngine: QueryEngineConfigProvider.createDefaultOptions(),
+  ethereumRead: createUnsetEthereumReadConfirmationConfig(),
   solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
 }
 

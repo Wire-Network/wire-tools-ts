@@ -10,6 +10,7 @@ import {
   type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
+  EthereumReadBlockTag,
   LcoImportOptionsSchema,
   NodeopReadMode,
   QueryEngineReadModeSchema,
@@ -471,6 +472,29 @@ function buildQueryEngineShape(): OptionShapeObject {
 }
 
 /**
+ * The `ethereumRead` sub-tree: the operator daemons' Ethereum read confirmation —
+ * the block tag (an UNSEEDED choice), the confirmation depth and the
+ * finality-lag limit (UNSEEDED numbers). Never seeded: nodeop is the one author
+ * of the defaults, and an unset member renders nothing.
+ */
+function buildEthereumReadShape(): OptionShapeObject {
+  return {
+    blockTag: optionalChoicesLeaf(
+      Object.values(EthereumReadBlockTag),
+      `block tag the operator daemons read what the Ethereum outpost emitted at — ${Object.values(EthereumReadBlockTag).join(" | ")}; omit for nodeop's default (${EthereumReadBlockTag.latest}); applies to every operator daemon`
+    ),
+    confirmations: optionalLeaf(
+      OptionLeafType.number,
+      `with ${EthereumReadBlockTag.latest}: how many blocks deep the read is, the head counting as one; omit for nodeop's default`
+    ),
+    maxFinalityLagSec: optionalLeaf(
+      OptionLeafType.number,
+      `with ${EthereumReadBlockTag.latest}: seconds the finalized block may trail the head before reads fall back to it; omit for nodeop's default`
+    )
+  }
+}
+
+/**
  * The canonical {@link ClusterBuildOptions} descriptor — one {@link
  * OptionLeafSpec} per leaf, at every depth. TS interfaces have no runtime shape,
  * so this concrete object IS the source the flag tree is derived from. Node-port
@@ -547,6 +571,8 @@ export function buildOptionShape(
     ),
     // ── query engine (API nodes; every leaf unseeded — see buildQueryEngineShape) ──
     [QueryEngineOptionKey]: buildQueryEngineShape(),
+    // ── Ethereum read confirmation (operator daemons; every leaf unseeded — see buildEthereumReadShape) ──
+    ethereumRead: buildEthereumReadShape(),
     // ── solana-test-validator tuning ──
     // optionalLeaf for the same reason as above: omitting the flag has to mean
     // "resolve the default", not "write 100 here", so the fallback stays in

@@ -96,7 +96,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `EthereumReadConfirmationConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
 | `flow-*` (15 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -339,7 +339,12 @@ kind, and never `producer_api_plugin`), and
 `query-timeout-ms` defaults to 30000 (`QueryEngineConfigProvider.DefaultTimeoutMs`
 — the plugin's own 1000 ms would reject every client `timeout_ms` above it) and
 is always rendered, every other member only when set, so nodeop and the plugin
-own those defaults; any member the caller sets requires `--api-count` ≥ 1); `package` writes
+own those defaults; any member the caller sets requires `--api-count` ≥ 1),
+`--ethereum-read-block-tag <finalized|safe|latest>` / `--ethereum-read-confirmations <n>` /
+`--ethereum-read-max-finality-lag-sec <s>` (the operator daemons' Ethereum read
+confirmation, persisted as `ClusterConfig.ethereumRead`; each member rendered as
+nodeop's `--outpost-ethereum-read-*` only when set, so nodeop owns the defaults:
+`latest`, 12 confirmations, 1152 s); `package` writes
 one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
 a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
 other, loosely coupled).
