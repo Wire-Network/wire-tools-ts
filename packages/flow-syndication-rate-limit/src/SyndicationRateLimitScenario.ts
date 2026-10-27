@@ -476,7 +476,8 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
         SyndicationScenario.WriteOptions,
         {
           holder: Constants.UserA.account,
-          quantity: SyndicationScenario.quantity(Constants.DesyndicationAmount)
+          quantity: SyndicationScenario.quantity(Constants.DesyndicationAmount),
+          max_fee: Constants.Config.desynd_fee_flat
         }
       ),
       verifyStep(

@@ -213,7 +213,8 @@ describe("syndication scenario accounting", () => {
       window_sec: 60,
       bounty: 5,
       challenge_extra: 6,
-      min_desyndicate: 1
+      min_desyndicate: 1,
+      desynd_fee_flat: 0
     }
     ctx.outputs.set(SyndicationScenario.OriginalConfigKey, config)
     await step.runner(ctx, step.input, signal)

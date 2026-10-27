@@ -49,7 +49,8 @@ export namespace SyndicationRateLimitScenarioConstants {
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
     challenge_extra: "1000000000",
-    min_desyndicate: Steps.registry.MinimumDesyndication
+    min_desyndicate: Steps.registry.MinimumDesyndication,
+    desynd_fee_flat: Steps.registry.DesyndicationFeeFlat
   }
   /** A's envelope epoch. */
   export const Epoch = outputKey<number>("rate.epoch", "burst envelope epoch")

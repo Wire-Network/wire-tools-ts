@@ -192,7 +192,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
         write,
         {
           holder: Constants.User.account,
-          quantity: SyndicationScenario.quantity(Constants.Payout)
+          quantity: SyndicationScenario.quantity(Constants.Payout),
+          max_fee: Steps.registry.DesyndicationFeeFlat
         }
       ),
       verifyStep(
@@ -1038,7 +1039,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
           quantity: SyndicationScenario.quantity(Constants.Payout).replace(
             SyndicationScenario.Token,
             Constants.EthereumToken
-          )
+          ),
+          max_fee: Steps.registry.DesyndicationFeeFlat
         }
       ),
       verifyStep(

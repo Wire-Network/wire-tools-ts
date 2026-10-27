@@ -789,7 +789,8 @@ export class LIQYieldScenario extends FlowScenario {
               SyndicationScenario.feeOf(
                 Constants.SyndicateAmount,
                 config.desynd_fee_bps
-              )
+              ) -
+              BigInt(config.desynd_fee_flat)
           )
           ctx.outputs.set(
             LIQYieldScenario.LiqsolBalanceBeforeKey,
@@ -810,7 +811,8 @@ export class LIQYieldScenario extends FlowScenario {
           quantity: Asset.fromUnits(
             Constants.SyndicateAmount.toString(),
             Constants.ShadowSymbol
-          ).toString()
+          ).toString(),
+          max_fee: Steps.registry.DesyndicationFeeFlat
         }
       ),
       verifyStep(

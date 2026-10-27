@@ -15,7 +15,11 @@ import {
 import { Report } from "@wireio/cluster-tool/report"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
-import { bondRequestRow, bondRow, syndEnvelopeRow } from "../../tools/wire/syndicationRowFixture.js"
+import {
+  bondRequestRow,
+  bondRow,
+  syndEnvelopeRow
+} from "../../tools/wire/syndicationRowFixture.js"
 
 /** A context of three batch operators, `funded` of them funded, under a `cap`. */
 function underwritingContext(funded: number, cap = 10_000_000_000n) {
@@ -183,6 +187,7 @@ describe("BatchOperatorUnderwritingSteps plan and shared phases", () => {
       chain_code: SyndicationScenario.Chain,
       token_code: SyndicationScenario.Token,
       synd_fee_bps: 100,
+      desynd_fee_flat: 0,
       window_sec: 60,
       bounty: 0
     })
@@ -231,9 +236,16 @@ describe("BatchOperatorUnderwritingSteps plan and shared phases", () => {
 
 describe("BatchOperatorUnderwritingSteps.shortestRetainingEpochSec", () => {
   /** Seconds the statement outlives the later bond at `epochSec`, less the headroom. */
-  function marginSec(epochSec: number, windowFixedSec: number, trailingSec: number, headroomEpochs: number): number {
+  function marginSec(
+    epochSec: number,
+    windowFixedSec: number,
+    trailingSec: number,
+    headroomEpochs: number
+  ): number {
     return (
-      (BatchOperatorUnderwritingSteps.SolanaRetainedEnvelopeEpochs - headroomEpochs) * epochSec -
+      (BatchOperatorUnderwritingSteps.SolanaRetainedEnvelopeEpochs -
+        headroomEpochs) *
+        epochSec -
       (epochSec + windowFixedSec + trailingSec)
     )
   }
@@ -243,19 +255,37 @@ describe("BatchOperatorUnderwritingSteps.shortestRetainingEpochSec", () => {
     [529, 45, 0, 64],
     [100, 0, 1, 13],
     [0, 0, 1, 0]
-  ])("window less one epoch %ss, %ss of passes, %s epoch(s) of headroom: %ss", (windowFixedSec, trailingSec, headroomEpochs, expected) => {
-    const epochSec = BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(windowFixedSec, trailingSec, headroomEpochs)
-    expect(epochSec).toBe(expected)
-    expect(marginSec(epochSec, windowFixedSec, trailingSec, headroomEpochs)).toBeGreaterThanOrEqual(0)
-    if (epochSec > 0) expect(marginSec(epochSec - 1, windowFixedSec, trailingSec, headroomEpochs)).toBeLessThan(0)
-  })
+  ])(
+    "window less one epoch %ss, %ss of passes, %s epoch(s) of headroom: %ss",
+    (windowFixedSec, trailingSec, headroomEpochs, expected) => {
+      const epochSec = BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(
+        windowFixedSec,
+        trailingSec,
+        headroomEpochs
+      )
+      expect(epochSec).toBe(expected)
+      expect(
+        marginSec(epochSec, windowFixedSec, trailingSec, headroomEpochs)
+      ).toBeGreaterThanOrEqual(0)
+      if (epochSec > 0)
+        expect(
+          marginSec(epochSec - 1, windowFixedSec, trailingSec, headroomEpochs)
+        ).toBeLessThan(0)
+    }
+  )
 
   it("refuses the shortest depot epoch for a window about the log's own depth", () => {
     const windowFixedSec = 529
-    expect(marginSec(SyndicationScenario.EpochDurationSec, windowFixedSec, 45, 1)).toBeLessThan(0)
-    expect(BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(windowFixedSec, 45, 1)).toBeGreaterThan(
-      SyndicationScenario.EpochDurationSec
-    )
+    expect(
+      marginSec(SyndicationScenario.EpochDurationSec, windowFixedSec, 45, 1)
+    ).toBeLessThan(0)
+    expect(
+      BatchOperatorUnderwritingSteps.shortestRetainingEpochSec(
+        windowFixedSec,
+        45,
+        1
+      )
+    ).toBeGreaterThan(SyndicationScenario.EpochDurationSec)
   })
 })
 
@@ -281,7 +311,10 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
   }
 
   /** Run a verify Step. */
-  function run(step: ClusterBuildStep, ctx: ReturnType<typeof fixtureContext>): Promise<void> {
+  function run(
+    step: ClusterBuildStep,
+    ctx: ReturnType<typeof fixtureContext>
+  ): Promise<void> {
     return step.runner(ctx, step.input, signal)
   }
 
@@ -303,11 +336,18 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
       jest
         .spyOn(WireSyndicationTool, "readRequest")
         .mockResolvedValue(
-          bondRequestRow(covered.toString(), covered.toString(), SysioContracts.SysioBondRequestState.BONDED, 1)
+          bondRequestRow(
+            covered.toString(),
+            covered.toString(),
+            SysioContracts.SysioBondRequestState.BONDED,
+            1
+          )
         )
       jest
         .spyOn(WireSyndicationTool, "readBonds")
-        .mockImplementation(async (_ctx, requestId) => (Number(requestId) === 1 ? first : second))
+        .mockImplementation(async (_ctx, requestId) =>
+          Number(requestId) === 1 ? first : second
+        )
     }
 
     it("passes when the funded operator alone bonds the whole coverage", async () => {
@@ -317,12 +357,19 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
 
     it("refuses a bond by an operator that is not funded", async () => {
       serveBonds([bondRow(1, "wireno.op1", covered.toString())])
-      await expect(run(step, settlementContext())).rejects.toThrow(/not a funded batch operator/)
+      await expect(run(step, settlementContext())).rejects.toThrow(
+        /not a funded batch operator/
+      )
     })
 
     it("refuses unpaid bonds that together exceed the operator's cap", async () => {
-      serveBonds([bondRow(1, funded, covered.toString())], [bondRow(2, funded, "1")])
-      await expect(run(step, settlementContext())).rejects.toThrow(/above its \d+ cap/)
+      serveBonds(
+        [bondRow(1, funded, covered.toString())],
+        [bondRow(2, funded, "1")]
+      )
+      await expect(run(step, settlementContext())).rejects.toThrow(
+        /above its \d+ cap/
+      )
     })
   })
 
@@ -339,33 +386,50 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
     function serveRelease(secondReleased: bigint): void {
       const firstFee = SyndicationScenario.feeOf(plan.amount, plan.feeBps),
         secondFee = SyndicationScenario.feeOf(secondReleased, plan.feeBps),
-        released = (amount: bigint, released: bigint): SysioContracts.SysioSyndEnvelopeRowType => ({
-          ...syndEnvelopeRow(SyndicationScenario.Chain, SyndicationScenario.Token, 0, SysioContracts.SysioSyndEnvelopeState.DONE),
+        released = (
+          amount: bigint,
+          released: bigint
+        ): SysioContracts.SysioSyndEnvelopeRowType => ({
+          ...syndEnvelopeRow(
+            SyndicationScenario.Chain,
+            SyndicationScenario.Token,
+            0,
+            SysioContracts.SysioSyndEnvelopeState.DONE
+          ),
           synd_total: amount.toString(),
           released: released.toString()
         })
       jest
         .spyOn(SyndicationScenario, "readEnvelope")
         .mockImplementation(async (_ctx, key) =>
-          key === plan.firstEpoch ? released(plan.amount, plan.amount) : released(plan.laterAmount, secondReleased)
+          key === plan.firstEpoch
+            ? released(plan.amount, plan.amount)
+            : released(plan.laterAmount, secondReleased)
         )
       jest
         .spyOn(SyndicationScenario, "readBalance")
         .mockResolvedValue(plan.amount - firstFee + secondReleased - secondFee)
-      jest.spyOn(SyndicationScenario, "readFees").mockResolvedValue(firstFee + secondFee)
+      jest
+        .spyOn(SyndicationScenario, "readFees")
+        .mockResolvedValue(firstFee + secondFee)
     }
 
     it.each([
       ["nothing", 0n],
       ["all of it", plan.laterAmount]
-    ])("accepts a second envelope that released %s alongside the first", async (_label, secondReleased) => {
-      serveRelease(secondReleased)
-      await run(step, settlementContext())
-    })
+    ])(
+      "accepts a second envelope that released %s alongside the first",
+      async (_label, secondReleased) => {
+        serveRelease(secondReleased)
+        await run(step, settlementContext())
+      }
+    )
 
     it("refuses a second envelope released in part", async () => {
       serveRelease(1n)
-      await expect(run(step, settlementContext())).rejects.toThrow(/neither nothing nor all/)
+      await expect(run(step, settlementContext())).rejects.toThrow(
+        /neither nothing nor all/
+      )
     })
   })
 })

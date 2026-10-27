@@ -92,6 +92,8 @@ export namespace RegistrySteps {
   export const SyndicationFeeBps = 0
   /** Fee on each desyndication (bps); see {@link SyndicationFeeBps}. */
   export const DesyndicationFeeBps = 0
+  /** Flat fee on each bootstrap desyndication, in shadow base units: none. */
+  export const DesyndicationFeeFlat = 0
   /**
    * Size and per-epoch refill of each pair's syndication and desyndication buckets
    * (shadow base units): one million tokens at the depot's 9 decimals, far above any
@@ -732,7 +734,9 @@ export namespace RegistrySteps {
     Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
-      pair_symbol: Constants.liqSymbol(Constants.liqPoolPairCode(tokenCodename)),
+      pair_symbol: Constants.liqSymbol(
+        Constants.liqPoolPairCode(tokenCodename)
+      ),
       initial_chain_amount: MockLiqPoolShadowSeed,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
@@ -762,7 +766,8 @@ export namespace RegistrySteps {
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
-      min_desyndicate: MinimumDesyndication
+      min_desyndicate: MinimumDesyndication,
+      desynd_fee_flat: DesyndicationFeeFlat
     }))
 
   /** Seed chains + tokens + chain-token bindings. */
@@ -874,8 +879,8 @@ export namespace RegistrySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
-      ([, tokenCodename], index) =>
+    const steps: ClusterBuildStep.Any<C>[] =
+      Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename], index) =>
         LiqContractSteps.planCreate<C>(
           Report.Actor.Sysio,
           `create-shadow-${tokenCodename.toLowerCase()}`,
@@ -883,7 +888,7 @@ export namespace RegistrySteps {
           options,
           ShadowLiqTokenRegistrations[index]
         )
-    )
+      )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
   }
 
@@ -919,31 +924,35 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename], index) =>
-        SyndContractSteps.planSetconfig<C>(
-          Report.Actor.Sysio,
-          `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `set the ${chainCodename}/${tokenCodename} syndication rules on sysio.synd`,
-          options,
-          SyndicationConfigRegistrations[index]
-        )
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
+        ([chainCodename, tokenCodename], index) =>
+          SyndContractSteps.planSetconfig<C>(
+            Report.Actor.Sysio,
+            `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+            `set the ${chainCodename}/${tokenCodename} syndication rules on sysio.synd`,
+            options,
+            SyndicationConfigRegistrations[index]
+          )
       ),
       WireSyndicationTool.planVerifyShadowPrecision<C>(
         Report.Actor.Sysio,
         "verify-shadow-precision",
         "every shadow symbol is at the depot frame's precision, which sysio.bond can bond",
         options,
-        Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) => tokenCodename)
-      ),
-      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) =>
-        WireSyndicationTool.planVerifyLiqTokenActive<C>(
-          Report.Actor.Sysio,
-          `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `${chainCodename}/${tokenCodename} is an active liq token with an active binding`,
-          options,
-          chainCodename,
-          tokenCodename
+        Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
+          ([, tokenCodename]) => tokenCodename
         )
+      ),
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
+        ([chainCodename, tokenCodename]) =>
+          WireSyndicationTool.planVerifyLiqTokenActive<C>(
+            Report.Actor.Sysio,
+            `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+            `${chainCodename}/${tokenCodename} is an active liq token with an active binding`,
+            options,
+            chainCodename,
+            tokenCodename
+          )
       )
     ]
     return ClusterBuildPhase.create<C>(parent, name, description, steps)

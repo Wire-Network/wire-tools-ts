@@ -38,7 +38,8 @@ export namespace SyndicationRateLimitSteps {
           holder: Constants.UserA.account,
           quantity: SyndicationScenario.quantity(
             Constants.DesyndicationBurst + 1n
-          )
+          ),
+          max_fee: Constants.Config.desynd_fee_flat
         }
       },
       runRefusedDesyndication

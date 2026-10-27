@@ -148,6 +148,7 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       rows.forEach(row => {
         expect(row.synd_fee_bps).toBe(0)
         expect(row.desynd_fee_bps).toBe(0)
+        expect(row.desynd_fee_flat).toBe(0)
         expect(row.bounty).toBe(0)
       })
     })

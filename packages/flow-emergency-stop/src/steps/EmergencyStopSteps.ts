@@ -160,7 +160,8 @@ export namespace EmergencyStopSteps {
               kind: "SyndContractSteps.DesyndicateInput",
               data: {
                 holder: Constants.User.account,
-                quantity: SyndicationScenario.quantity(Constants.Payout)
+                quantity: SyndicationScenario.quantity(Constants.Payout),
+                max_fee: Steps.registry.DesyndicationFeeFlat
               }
             },
             signal

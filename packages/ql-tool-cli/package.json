@@ -58,7 +58,7 @@
     "@types/source-map-support": "^0.5.10",
     "@types/yargs": "^17.0.35",
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.102",
+    "@wireio/sdk-core": "^1.0.104",
     "esbuild": "^0.28.2",
     "react-test-renderer": "^19.3.0",
     "ts-jest": "^29.4.6",
