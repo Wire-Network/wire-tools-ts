@@ -6,6 +6,7 @@ import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import {
   SolanaFundingTool,
+  SolanaFixedPriceOracleTool,
   SolanaOutpostProgramTool
 } from "@wireio/cluster-tool/tools/solana"
 import { fixtureConfig } from "../../../config/clusterConfigFixture.js"
@@ -64,6 +65,22 @@ describe("Steps.processes.solanaValidator", () => {
           SolanaOutpostProgramTool.assertProgramId(solanaPath, name).toBase58()
         )
       })
+    })
+
+    it("adds the immutable oracle only for opted-in local clusters", () => {
+      const config = fixtureConfig({
+        solanaPath,
+        dataPath,
+        enableSolanaFixedPriceOracle: true
+      })
+      const programs = Steps.processes.solanaValidator.resolvePrograms(config)
+      expect(programs).toHaveLength(
+        SolanaOutpostProgramTool.GenesisAnchorPrograms.length + 1
+      )
+      expect(programs.at(-1)).toEqual(
+        SolanaFixedPriceOracleTool.program(config)
+      )
+      expect(programs.at(-1).upgradeAuthority).toBeUndefined()
     })
 
     it("throws with the build remediation when a program keypair is absent", () => {

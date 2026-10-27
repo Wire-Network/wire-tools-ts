@@ -674,6 +674,23 @@ describe("toClusterBuildOptions reverse parse", () => {
 })
 
 describe("register → parse round-trip", () => {
+  it("carries the fixed-price oracle scenario default and explicit CLI opt-out", () => {
+    const registered = register({ enableSolanaFixedPriceOracle: true })
+    const flag = "enable-solana-fixed-price-oracle"
+    expect(registered.get(flag)).toMatchObject({
+      type: "boolean",
+      default: true
+    })
+    expect(
+      toClusterBuildOptions({ [flag]: registered.get(flag)?.default })
+        .enableSolanaFixedPriceOracle
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ [flag]: false }).enableSolanaFixedPriceOracle
+    ).toBe(false)
+    expect(register().get(flag)?.default).toBe(false)
+  })
+
   it("every non-required leaf's default survives a parse of the defaulted argv", () => {
     // Simulate yargs producing an argv from ONLY the registered defaults (no
     // user flags): each option's `default` under its flag key.

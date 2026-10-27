@@ -55,3 +55,6 @@ yarn-error.log*
 
 # JUnit test-result output (CI artifact)
 /reports/
+
+# Native/SBF oracle-fixture build caches (deployable output is cluster-local).
+/packages/cluster-tool/resources/fixed-price-oracle/target/
