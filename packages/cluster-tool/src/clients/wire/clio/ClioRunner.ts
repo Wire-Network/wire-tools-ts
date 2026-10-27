@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+
 import { asOption } from "@3fv/prelude-ts"
-import { getLogger } from "@wireio/shared"
 import { negate } from "lodash"
+import { match, P } from "ts-pattern"
+
+import { getLogger, getValue } from "@wireio/shared"
+
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
@@ -29,7 +33,9 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends object> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<
+  T extends object
+> extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
 }
 
@@ -88,7 +94,10 @@ export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
   /** Run a clio command, returning parsed JSON. */
-  run<T extends object>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
+  run<T extends object>(
+    args: string[],
+    options: ClioRunOptionsJson<T>
+  ): Promise<T>
   /** Run a clio command, returning raw stdout. */
   run(args: string[], options?: ClioRunOptions): Promise<string>
   async run(
@@ -149,10 +158,14 @@ export class ClioRunner {
     options: ClioRunOptions | ClioRunOptionsJson<any>
   ): Promise<any> {
     try {
-      const { stdout, stderr } = await execFileAsync(this.config.binary, fullArgs, {
-        maxBuffer: ClioRunner.MaxBuffer,
-        timeout: ClioRunner.CommandTimeoutMs
-      })
+      const { stdout, stderr } = await execFileAsync(
+        this.config.binary,
+        fullArgs,
+        {
+          maxBuffer: ClioRunner.MaxBuffer,
+          timeout: ClioRunner.CommandTimeoutMs
+        }
+      )
       asOption(stderr)
         .filter(isNotEmpty)
         .match({
@@ -203,6 +216,15 @@ export namespace ClioRunner {
   /** The chain error code clio prints for a failed command (`Error 3050003: …`). */
   export const ChainErrorCodePattern = /Error (3\d{6}):/
 
+  /** Lower bound of the chain exception family accepted as rejection evidence. */
+  const MinimumChainErrorCode = 3_000_000
+  /** Upper bound of the chain exception family accepted as rejection evidence. */
+  const MaximumChainErrorCode = 3_999_999
+  /** clio's text-mode prefix, used to apply the same HTTP exclusion to JSON codes. */
+  const ChainErrorCodePrefix = "Error "
+  /** JSON-looking stdout must never be scanned as text-mode rejection evidence. */
+  const JsonResponsePrefixPattern = /^\s*[[{]/
+
   /**
    * clio's `http_exception` family (`Error 3200000`–`3200006`): an HTTP failure after the
    * connection opened, such as a reply that never arrived, so the request may have reached
@@ -226,7 +248,7 @@ export namespace ClioRunner {
 
   /**
    * True only when a failed clio push provably did not apply, so it may be sent again: its
-   * connection failed, or clio printed a chain error code for a rejection — not an HTTP
+   * connection failed, or clio returned a chain rejection in text or JSON — not an HTTP
    * failure after connecting, and not `Duplicate transaction`. Anything else, a killed clio
    * included, may have reached the node; its outcome is read from the chain instead.
    */
@@ -241,15 +263,56 @@ export namespace ClioRunner {
     ) {
       return false
     }
-    const code = asOption(ChainErrorCodePattern.exec(candidate.message))
-      .map(([, digits]) => Number(digits))
-      .getOrUndefined()
+    const code = getChainErrorCode(candidate)
     return (
       isTransportFailure(candidate) ||
       (code != null &&
         code !== DuplicateTransactionCode &&
-        !HttpExceptionPattern.test(candidate.message))
+        !HttpExceptionPattern.test(candidate.message) &&
+        !HttpExceptionPattern.test(`${ChainErrorCodePrefix}${code}:`))
     )
+  }
+
+  /**
+   * Read a rejection code from clio's captured response, not a nested action trace or
+   * console message. A JSON failure must identify the same transaction at both levels,
+   * have no receipt, and not be scheduled. Successful or incomplete JSON never falls
+   * back to scanning its embedded text as if it were a text-mode chain error.
+   */
+  function getChainErrorCode(error: ClioError): number {
+    const response: unknown = getValue(() => JSON.parse(error.stdout), null)
+    return match(response)
+      .with(
+        {
+          transaction_id: P.string,
+          processed: {
+            id: P.string,
+            receipt: null,
+            scheduled: P.optional(false),
+            except: {
+              code: P.number
+                .int()
+                .between(MinimumChainErrorCode, MaximumChainErrorCode)
+            }
+          }
+        },
+        ({ transaction_id, processed }) =>
+          transaction_id.length > 0 && transaction_id === processed.id
+            ? processed.except.code
+            : null
+      )
+      .with(P.nullish, () =>
+        asOption(error.stdout)
+          .filter(stdout => JsonResponsePrefixPattern.test(stdout))
+          .match({
+            Some: () => null,
+            None: () =>
+              asOption(ChainErrorCodePattern.exec(error.message))
+                .map(([, digits]) => Number(digits))
+                .getOrUndefined()
+          })
+      )
+      .otherwise(() => null)
   }
 
   /**

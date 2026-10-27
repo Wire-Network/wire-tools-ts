@@ -1,5 +1,6 @@
 import Os from "node:os"
 import Path from "node:path"
+
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
@@ -9,6 +10,8 @@ import {
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
 import { toURL } from "@wireio/cluster-tool/utils"
+
+import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
 
 describe("WireClient", () => {
   let config: WireClientConfig
@@ -180,6 +183,39 @@ describe("WireClient", () => {
       ).rejects.toThrow(/assertion failure/)
       expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
     })
+
+    it("preserves a JSON contract rejection instead of masking it as an ambiguous push", async () => {
+      const client = new WireClient(config),
+        stdout = JSON.stringify(TransactionRejection),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/Tier level must be between 1 and 3/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
+    it.each([ClioRunner.DuplicateTransactionCode, 3200000])(
+      "never re-sends an ambiguous JSON error %s",
+      async code => {
+        const client = new WireClient(config),
+          stdout = JSON.stringify({
+            ...TransactionRejection,
+            processed: {
+              ...TransactionRejection.processed,
+              except: { ...TransactionRejection.processed.except, code }
+            }
+          }),
+          send = jest
+            .spyOn(client["runner"], "run")
+            .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+        await expect(
+          client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+        ).rejects.toThrow(/not re-sent/)
+        expect(send).toHaveBeenCalledTimes(1)
+      }
+    )
 
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
       const client = new WireClient(config),

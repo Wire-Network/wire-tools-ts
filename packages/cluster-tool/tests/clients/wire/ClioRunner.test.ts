@@ -1,12 +1,16 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
+import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import {
   ClioRunner,
   enrichClioError
 } from "@wireio/cluster-tool/clients/wire/clio"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
+
+import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
 
 describe("ClioRunner", () => {
   let dir: string
@@ -157,6 +161,134 @@ describe("ClioRunner", () => {
     it("returns non-message values untouched", () => {
       expect(enrichClioError("just a string", "a", "b")).toBe("just a string")
       expect(enrichClioError(null, "a", "b")).toBeNull()
+    })
+  })
+
+  describe("JSON transaction rejections", () => {
+    /** Model execFile's separate stdout without inventing a text-mode chain error. */
+    const failure = (response: object, fields: object = {}) =>
+      Object.assign(new Error("Command failed: clio"), {
+        stdout: JSON.stringify(response),
+        ...fields
+      })
+
+    it("recognizes the failed transaction trace emitted by clio -j", () => {
+      expect(ClioRunner.isProvenUnapplied(failure(TransactionRejection))).toBe(
+        true
+      )
+    })
+
+    it.each([3000000, 3999999])(
+      "recognizes chain exception boundary %s",
+      code => {
+        expect(
+          ClioRunner.isProvenUnapplied(
+            failure({
+              ...TransactionRejection,
+              processed: {
+                ...TransactionRejection.processed,
+                scheduled: false,
+                except: { ...TransactionRejection.processed.except, code }
+              }
+            })
+          )
+        ).toBe(true)
+      }
+    )
+
+    it.each([
+      ClioRunner.DuplicateTransactionCode,
+      3200000,
+      3200005,
+      3200006,
+      42,
+      2999999,
+      4000000,
+      3050003.5,
+      "3050003"
+    ])("does not prove rejection from excluded or invalid code %s", code => {
+      expect(
+        ClioRunner.isProvenUnapplied(
+          failure({
+            ...TransactionRejection,
+            processed: {
+              ...TransactionRejection.processed,
+              except: { ...TransactionRejection.processed.except, code }
+            }
+          })
+        )
+      ).toBe(false)
+    })
+
+    it.each(["executed", "soft_fail", "hard_fail"])(
+      "does not treat a transaction with a %s receipt as unapplied",
+      status => {
+        expect(
+          ClioRunner.isProvenUnapplied(
+            failure({
+              ...TransactionRejection,
+              processed: {
+                ...TransactionRejection.processed,
+                receipt: { status }
+              }
+            })
+          )
+        ).toBe(false)
+      }
+    )
+
+    it.each([
+      { ...TransactionRejection, transaction_id: "different" },
+      { ...TransactionRejection, transaction_id: "" },
+      {
+        ...TransactionRejection,
+        processed: { ...TransactionRejection.processed, scheduled: true }
+      },
+      {
+        ...TransactionRejection,
+        processed: { except: TransactionRejection.processed.except }
+      },
+      { error: TransactionRejection.processed.except },
+      { processed: { console: "Error 3050003: not a rejection envelope" } }
+    ])(
+      "fails closed on incomplete, unrelated, or scheduled responses",
+      response => {
+        expect(ClioRunner.isProvenUnapplied(failure(response))).toBe(false)
+      }
+    )
+
+    it("does not override a killed subprocess or incomplete output", () => {
+      expect(
+        ClioRunner.isProvenUnapplied(
+          failure(TransactionRejection, {
+            killed: true,
+            signal: ProcessSignalName.SIGTERM
+          })
+        )
+      ).toBe(false)
+      expect(
+        ClioRunner.isProvenUnapplied(
+          failure(TransactionRejection, {
+            stdout: '{"transaction_id":'
+          })
+        )
+      ).toBe(false)
+      const stdout = '{"console":"Error 3050003: not a complete response"'
+      expect(
+        ClioRunner.isProvenUnapplied(
+          failure(TransactionRejection, {
+            stdout,
+            message: `Command failed: clio\n${stdout}`
+          })
+        )
+      ).toBe(false)
+      expect(
+        ClioRunner.isProvenUnapplied(
+          failure(TransactionRejection, {
+            message: "Error 3200000: http exception"
+          })
+        )
+      ).toBe(false)
     })
   })
 
