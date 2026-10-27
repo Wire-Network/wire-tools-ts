@@ -458,13 +458,19 @@ contract/mint addresses via the same shapes.
 
 | Field | Value | Notes |
 |---|---|---|
-| `synd_fee_bps` / `desynd_fee_bps` | `0` / `0` | **(cluster; production: real fees)** |
+| `synd_fee_bps` / `desynd_fee_bps` | `0` / `5` | Syndication is always free. Desyndication takes floor(quantity × 5 / 10000) + desynd_fee_flat to recover external-chain gas for BOTH round-trip legs. A lone Ethereum round trip measured ≈507k gas; Solana measured 9k–104k lamports. Break-even sizing assumes a syndication of min_desyndicate. |
 | `synd_burst` / `synd_refill` | `1000000000000000` / same | one million tokens at 9 decimals per bucket and per-epoch refill **(cluster)** |
 | `desynd_burst` / `desynd_refill` | `1000000000000000` / same | likewise |
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |
-| `min_desyndicate` | `1000000` | required gross return floor: 0.001 at nine decimals, shared by both pairs; an arbitrary launch choice based on 0.001 SOL |
+| `min_desyndicate` | LIQETH: `100000000`; LIQSOL: `50000000` | Gross return floor, 0.1 ETH / 0.05 SOL at depot precision (9 decimals). |
+| `desynd_fee_flat` | LIQETH: `5000000`; LIQSOL: `100000` | Flat charge, 0.005 ETH / 0.0001 SOL; must be strictly below min_desyndicate. |
+
+Outpost minimum syndications are configured separately: 0.005 liqETH (5,000,000 depot units)
+and 0.0025 liqSOL (2,500,000 base units), each 1/20 of the pair’s gross return floor.
+`desyndicate(holder, quantity, max_fee)` caps the charge before funds move; callers derive
+the cap from `quotedesynd` or the live pair row.
 
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`

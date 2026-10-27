@@ -138,9 +138,57 @@ export namespace EthereumSyndicationTool {
     authority(): Promise<string>
   }
 
-  /** The liqETH token reads this tool makes. */
+  /**
+   * `SyndicationPool` events this tool reads, by ABI name.
+   */
+  export enum PoolEvent {
+    Desyndicated = "Desyndicated"
+  }
+
+  /** The first block an event scan covers — the whole cluster chain. */
+  export const EventScanFromBlock = 0
+
+  /**
+   * The liqETH token reads this tool makes. Each takes optional ethers
+   * overrides so a read can be pinned to a `blockTag`.
+   */
   export interface LiqEthTokenView {
-    balanceOf(account: string): Promise<bigint>
+    balanceOf(account: string, overrides?: ethers.Overrides): Promise<bigint>
+    /** The rebasing index (`RewardsERC20.index`). */
+    index(overrides?: ethers.Overrides): Promise<bigint>
+    /** The index's fixed-point unit (`RewardsERC20.unit`). */
+    unit(overrides?: ethers.Overrides): Promise<bigint>
+  }
+
+  /**
+   * One `SyndicationPool.Desyndicated` event — a depot release the pool PAID,
+   * with the block position that pins the pre-payment state.
+   */
+  export interface DesyndicationPayment {
+    /** The payout address. */
+    recipient: string
+    /** liqETH wei the pool transferred. */
+    nativeAmount: bigint
+    /** The depot units (9 decimals) the release carried. */
+    depotAmount: bigint
+    /** The depot request id. */
+    requestId: bigint
+    /** The block the payment landed in. */
+    blockNumber: number
+    /** The payment transaction's index inside that block. */
+    transactionIndex: number
+  }
+
+  /**
+   * liqETH's share rate at one block: `balance = floor(shares · index / unit)`
+   * and a transfer of `value` moves `ceil(value · unit / index)` shares
+   * (`RewardsERC20._shareToToken` / `previewShares`).
+   */
+  export interface LiqEthRate {
+    /** `RewardsERC20.index()`. */
+    index: bigint
+    /** `RewardsERC20.unit()`. */
+    unit: bigint
   }
 
   /** The access-manager read the configuration check makes. */
@@ -533,13 +581,114 @@ export namespace EthereumSyndicationTool {
    *
    * @param ctx - The build context.
    * @param account - The address to read.
+   * @param blockTag - The block to read at; the latest when omitted.
    * @returns The balance.
    */
   export async function readLiqEthBalance<C extends ClusterBuildContext>(
     ctx: C,
-    account: string
+    account: string,
+    blockTag?: ethers.BlockTag
   ): Promise<bigint> {
-    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account)
+    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account, { blockTag })
+  }
+
+  /**
+   * liqETH's share rate at `blockTag`. A READ.
+   *
+   * @param ctx - The build context.
+   * @param blockTag - The block to read at.
+   * @returns The index and its unit.
+   */
+  export async function readLiqEthRate<C extends ClusterBuildContext>(
+    ctx: C,
+    blockTag: ethers.BlockTag
+  ): Promise<LiqEthRate> {
+    const token = loadLiqEthToken(ctx, ctx.ethereum.provider)
+    return {
+      index: await token.index({ blockTag }),
+      unit: await token.unit({ blockTag })
+    }
+  }
+
+  /**
+   * The ONE `Desyndicated` event the pool emitted for `requestId`. A READ.
+   *
+   * @param ctx - The build context.
+   * @param requestId - The depot request id.
+   * @returns The payment and its block position.
+   * @throws If the pool paid `requestId` zero times or more than once.
+   */
+  export async function readDesyndicationPayment<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint
+  ): Promise<DesyndicationPayment> {
+    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+      events = await pool.queryFilter(
+        pool.getEvent(PoolEvent.Desyndicated),
+        EventScanFromBlock
+      ),
+      payments = events
+        .map(event => {
+          Assert.ok(
+            event instanceof ethers.EventLog,
+            `EthereumSyndicationTool: an undecoded ${PoolEvent.Desyndicated} log in tx ${event.transactionHash}`
+          )
+          return event
+        })
+        .filter(event => BigInt(event.args.requestId) === requestId)
+    Assert.strictEqual(
+      payments.length,
+      1,
+      `EthereumSyndicationTool: expected exactly one ${PoolEvent.Desyndicated} event for request ` +
+        `${requestId}, found ${payments.length}`
+    )
+    const [payment] = payments
+    return {
+      recipient: payment.args.recipient,
+      nativeAmount: BigInt(payment.args.nativeAmount),
+      depotAmount: BigInt(payment.args.depotAmount),
+      requestId: BigInt(payment.args.requestId),
+      blockNumber: payment.blockNumber,
+      transactionIndex: payment.transactionIndex
+    }
+  }
+
+  /**
+   * The balance a liqETH holder ends with after receiving `value` wei, by the
+   * token's own share arithmetic: the holder's shares are recovered from its
+   * balance, `ceil(value · unit / index)` shares are added, and the result is
+   * `floor(shares · index / unit)`. A pure value helper — the exact figure a
+   * rebasing token makes of a transfer, which can exceed `balance + value`.
+   *
+   * @param balance - The holder's balance before the transfer.
+   * @param value - The wei transferred.
+   * @param rate - The share rate the transfer ran at.
+   * @returns The balance after the transfer.
+   * @throws If `index < unit` (a share is then worth under one wei, so a
+   *   balance no longer determines its share count).
+   */
+  export function liqEthBalanceAfterTransfer(
+    balance: bigint,
+    value: bigint,
+    rate: LiqEthRate
+  ): bigint {
+    const { index, unit } = rate
+    Assert.ok(
+      index >= unit,
+      `EthereumSyndicationTool: liqETH index ${index} below its unit ${unit} — shares are not recoverable from a balance`
+    )
+    const shares = ceilDiv(balance * unit, index)
+    Assert.strictEqual(
+      (shares * index) / unit,
+      balance,
+      `EthereumSyndicationTool: no share count yields balance ${balance} at index ${index}/${unit}`
+    )
+    return ((shares + ceilDiv(value * unit, index)) * index) / unit
+  }
+
+  /** `ceil(numerator / denominator)` for non-negative bigints. */
+  function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+    return (numerator + denominator - 1n) / denominator
   }
 
   /**

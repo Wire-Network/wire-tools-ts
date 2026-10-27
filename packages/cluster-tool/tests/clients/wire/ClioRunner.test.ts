@@ -108,6 +108,34 @@ describe("ClioRunner", () => {
       expect(runCount(runs)).toBe(1)
     })
 
+    it("recognizes a JSON failed transaction trace without treating ambiguous output as rejection", () => {
+      const stdout = JSON.stringify({
+          transaction_id: "failed-transaction",
+          processed: {
+            receipt: null,
+            except: { code: 3050003, message: "sysio_assert_message assertion failure" }
+          }
+        }),
+        failure = { message: "Command failed: clio", stdout, stderr: "" },
+        traceWithCode = (code: number | string) => ({
+          ...failure,
+          stdout: JSON.stringify({ processed: { except: { code } } })
+        })
+      expect(ClioRunner.isProvenUnapplied(failure)).toBe(true)
+      expect([
+        { ...failure, killed: true },
+        { ...failure, signal: "SIGTERM" },
+        { ...failure, message: "Error 3200000: http exception" },
+        traceWithCode(3040008),
+        traceWithCode(3200000),
+        traceWithCode(1),
+        traceWithCode("3050003"),
+        { ...failure, stdout: '{"processed":' },
+        { ...failure, stdout: JSON.stringify({ processed: { receipt: { status: "executed" } } }) },
+        { ...failure, stdout: JSON.stringify({ processed: { action_traces: [{ except: { code: 3050003 } }] } }) }
+      ].map(ClioRunner.isProvenUnapplied)).toEqual(Array(10).fill(false))
+    })
+
     it("proves a push unapplied only by a failed connection or a chain rejection", () => {
       const failure = (message: string, fields: object = {}) => ({
         message,

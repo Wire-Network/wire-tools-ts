@@ -172,7 +172,8 @@ export namespace BatchOperatorUnderwritingSteps {
       window_sec: windowSec,
       bounty: 0,
       challenge_extra: ConfigChallengeExtra,
-      min_desyndicate: Steps.registry.MinimumDesyndication
+      min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+      desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token]
     }
   }
 

@@ -183,6 +183,8 @@ describe("BatchOperatorUnderwritingSteps plan and shared phases", () => {
       chain_code: SyndicationScenario.Chain,
       token_code: SyndicationScenario.Token,
       synd_fee_bps: 100,
+      desynd_fee_flat: 100_000,
+      min_desyndicate: 50_000_000,
       window_sec: 60,
       bounty: 0
     })
