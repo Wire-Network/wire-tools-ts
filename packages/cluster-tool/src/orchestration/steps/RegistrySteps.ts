@@ -60,18 +60,6 @@ const {
  */
 export namespace RegistrySteps {
   /**
-   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
-   * tokenCodename]`, one per liq token {@link runSeedRegistry} registers. Private
-   * source both {@link ShadowLiqTokenRegistrations} and
-   * {@link MockLiqPoolRegistrations} derive from, in this order.
-   */
-  const ShadowLiqTokenPairs = [
-    ["ETHEREUM", "LIQETH"],
-    ["SOLANA", Constants.LIQSOL_CODENAME]
-  ] as const
-  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
-  const LiqPoolPairSuffix = "P"
-  /**
    * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
    * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
    * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
@@ -97,13 +85,29 @@ export namespace RegistrySteps {
    */
   export const BondHoldBps = 1000
   /**
-   * Fee on each released syndication tranche and on each desyndication (bps). The
-   * bootstrap charges none; a flow that exercises the fee path sets its own through
-   * `sysio.synd::setconfig` in its scenario and restores this.
+   * Fee on each released syndication tranche (bps). The bootstrap charges none: the
+   * only fee planned is on desyndication. A flow that exercises the syndication fee
+   * path sets its own through `sysio.synd::setconfig` in its scenario and restores this.
    */
   export const SyndicationFeeBps = 0
-  /** Fee on each desyndication (bps); see {@link SyndicationFeeBps}. */
-  export const DesyndicationFeeBps = 0
+  /**
+   * Syndication is free. Desyndication takes floor(quantity * 5 / 10000) plus
+   * the pair's flat fee to recover external-chain gas for BOTH round-trip legs.
+   * A lone Ethereum round trip measured about 507k gas; Solana measured
+   * 9k–104k lamports. Break-even sizing assumes syndicating min_desyndicate.
+   * Each flat fee must remain strictly below its pair's min_desyndicate.
+   */
+  export const DesyndicationFeeBps = 5
+  /** Flat return charge in depot base units (9 decimals), by shadow token. */
+  export const DesyndicationFlatFees = {
+    LIQETH: 5_000_000,
+    LIQSOL: 100_000
+  } as const
+  /** Gross return floors in depot base units (9 decimals), by shadow token. */
+  export const MinimumDesyndications = {
+    LIQETH: 100_000_000,
+    LIQSOL: 50_000_000
+  } as const
   /**
    * Size and per-epoch refill of each pair's syndication and desyndication buckets
    * (shadow base units): one million tokens at the depot's 9 decimals, far above any
@@ -117,8 +121,6 @@ export namespace RegistrySteps {
    * contract refuses a challenge whose charge is zero, so this is never 0.
    */
   export const SyndicationChallengeExtra = 1_000_000_000
-  /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
-  export const MinimumDesyndication = 1_000_000
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -142,14 +144,14 @@ export namespace RegistrySteps {
   export const MockSyndicationImportCredits: MockSyndicationImportInput[] = [
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "SOLANA",
+      chain_code: Constants.SOLANA_CHAIN_CODENAME,
       token_code: Constants.LIQSOL_CODENAME,
       keyType: KeyType.ED,
       amount: MockSyndicationImportAmount
     },
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "ETHEREUM",
+      chain_code: Constants.ETHEREUM_CHAIN_CODENAME,
       token_code: "LIQETH",
       keyType: KeyType.EM,
       amount: MockSyndicationImportAmount
@@ -728,7 +730,7 @@ export namespace RegistrySteps {
    * (one Report step per row) and its unit test.
    */
   export const ShadowLiqTokenRegistrations: SysioContracts.SysioLiqCreateAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       sym: Constants.liqSymbol(tokenCodename),
       chain_code: chainCodename,
       token_code: tokenCodename
@@ -741,10 +743,10 @@ export namespace RegistrySteps {
    * window (epoch 0), so these seed ONLY during bootstrap — never from a flow phase.
    */
   export const MockLiqPoolRegistrations: SysioContracts.SysioLiqRegliqpoolAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
-      pair_symbol: Constants.liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
+      pair_symbol: Constants.liqSymbol(Constants.liqPoolPairCode(tokenCodename)),
       initial_chain_amount: MockLiqPoolShadowSeed,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
@@ -756,13 +758,13 @@ export namespace RegistrySteps {
 
   /**
    * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
-   * {@link runSeedRegistry} registers, in {@link ShadowLiqTokenPairs} order. A pair with no
+   * {@link runSeedRegistry} registers, in {@link Constants.SHADOW_LIQ_TOKEN_PAIRS} order. A pair with no
    * row releases no syndication and accepts no desyndication, so a real depot configures
    * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
    * that phase (one Report step per row) and its unit test.
    */
   export const SyndicationConfigRegistrations: SysioContracts.SysioSyndSetconfigAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
       synd_fee_bps: SyndicationFeeBps,
@@ -774,7 +776,8 @@ export namespace RegistrySteps {
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
-      min_desyndicate: MinimumDesyndication
+      min_desyndicate: MinimumDesyndications[tokenCodename],
+      desynd_fee_flat: DesyndicationFlatFees[tokenCodename]
     }))
 
   /** Seed chains + tokens + chain-token bindings. */
@@ -845,7 +848,7 @@ export namespace RegistrySteps {
       }
 
     await chains.actions.setoutpost.invoke({
-      code: "ETHEREUM",
+      code: Constants.ETHEREUM_CHAIN_CODENAME,
       outpost: {
         opp_addr: ethAddress("OPP"),
         opp_inbound_addr: ethAddress("OPPInbound")
@@ -855,7 +858,7 @@ export namespace RegistrySteps {
     // goes in `opp_addr` alone — `sysio.chains` rejects an SVM row that sets
     // `opp_inbound_addr`.
     await chains.actions.setoutpost.invoke({
-      code: "SOLANA",
+      code: Constants.SOLANA_CHAIN_CODENAME,
       outpost: {
         opp_addr: artifacts.solanaProgramId,
         opp_inbound_addr: ""
@@ -886,7 +889,7 @@ export namespace RegistrySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+    const steps: ClusterBuildStep.Any<C>[] = Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
       ([, tokenCodename], index) =>
         LiqContractSteps.planCreate<C>(
           Report.Actor.Sysio,
@@ -931,7 +934,7 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename], index) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename], index) =>
         SyndContractSteps.planSetconfig<C>(
           Report.Actor.Sysio,
           `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -945,9 +948,9 @@ export namespace RegistrySteps {
         "verify-shadow-precision",
         "every shadow symbol is at the depot frame's precision, which sysio.bond can bond",
         options,
-        ShadowLiqTokenPairs.map(([, tokenCodename]) => tokenCodename)
+        Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) => tokenCodename)
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) =>
         WireSyndicationTool.planVerifyLiqTokenActive<C>(
           Report.Actor.Sysio,
           `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -973,6 +976,8 @@ export namespace RegistrySteps {
    * @param name - Short phase name.
    * @param description - Human-readable phase description.
    * @param options - Step option overrides threaded to every pool step.
+   * @param registrations - The pools to seed: {@link MockLiqPoolRegistrations} less any shadow
+   *   whose one pool the launch-data import seeds instead.
    * @returns The self-registered pool-seeding phase.
    */
   export function planMockLiqPools<
@@ -981,17 +986,17 @@ export namespace RegistrySteps {
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    registrations: readonly SysioContracts.SysioLiqRegliqpoolAction[] = MockLiqPoolRegistrations
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
-      ([chainCodename, tokenCodename], index) =>
-        LiqContractSteps.planRegliqpool<C>(
-          Report.Actor.Sysio,
-          `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
-          options,
-          MockLiqPoolRegistrations[index]
-        )
+    const steps: ClusterBuildStep.Any<C>[] = registrations.map(registration =>
+      LiqContractSteps.planRegliqpool<C>(
+        Report.Actor.Sysio,
+        `seed-liq-pool-${registration.chain_code.toLowerCase()}-${registration.token_code.toLowerCase()}`,
+        `seed the ${registration.token_code}/WIRE yield pool on sysio.swap`,
+        options,
+        registration
+      )
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
   }
@@ -1061,7 +1066,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
-        code: "ETHEREUM",
+        code: Constants.ETHEREUM_CHAIN_CODENAME,
         // External-outpost mode registers the REAL remote chain id so the
         // depot's chains row matches what the daemons dial (networkFromConfig).
         external_chain_id:
@@ -1073,7 +1078,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_SVM,
-        code: "SOLANA",
+        code: Constants.SOLANA_CHAIN_CODENAME,
         external_chain_id: 0,
         name: "Solana (test-validator)",
         description: "Local solana-test-validator (test cluster)",
@@ -1133,34 +1138,44 @@ export namespace RegistrySteps {
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
-      chainToken("ETHEREUM", "ETH", "", true),
+      chainToken(Constants.ETHEREUM_CHAIN_CODENAME, "ETH", "", true),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "LIQETH",
         nullableStrip(liqEthAddresses.LiqEthToken, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDC",
         nullableStrip(ethereumAddresses.MockUsdc, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDT",
         nullableStrip(ethereumAddresses.MockUsdt, strip0x),
         false
       ),
-      chainToken("SOLANA", "SOL", "", true),
+      chainToken(Constants.SOLANA_CHAIN_CODENAME, "SOL", "", true),
       chainToken(
-        "SOLANA",
+        Constants.SOLANA_CHAIN_CODENAME,
         Constants.LIQSOL_CODENAME,
         nullableMintHex(solanaMints.LIQSOL),
         false
       ),
-      chainToken("SOLANA", "USDCSOL", nullableMintHex(solanaMints.USDC), false),
-      chainToken("SOLANA", "USDTSOL", nullableMintHex(solanaMints.USDT), false)
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDCSOL",
+        nullableMintHex(solanaMints.USDC),
+        false
+      ),
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDTSOL",
+        nullableMintHex(solanaMints.USDT),
+        false
+      )
     ]
     await eachSeries(chainTokenBindings, data =>
       tokens.actions.regctok.invoke(data)

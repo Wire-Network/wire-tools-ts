@@ -4,6 +4,7 @@ import {
   ClusterBuildStep,
   Steps,
   SyndicationScenario,
+  WireSyndicationTool,
   type ClusterBuildContext,
   type StepInput,
   type Report,
@@ -18,7 +19,7 @@ export namespace SyndicationRateLimitSteps {
   /** Exact attempted redemption. */
   export interface RefusedDesyndicationInput extends StepInput {
     readonly kind: "SyndicationRateLimitSteps.RefusedDesyndicationInput"
-    readonly data: SysioContracts.SysioSyndDesyndicateAction
+    readonly data: Omit<SysioContracts.SysioSyndDesyndicateAction, "max_fee">
   }
   /** Plan one redemption that exceeds even a full desyndication bucket. */
   export function planRefusedDesyndication(
@@ -54,7 +55,16 @@ export namespace SyndicationRateLimitSteps {
     try {
       await Steps.contracts.sysio.synd.runDesyndicate(
         ctx,
-        { kind: "SyndContractSteps.DesyndicateInput", data: input.data },
+        {
+          kind: "SyndContractSteps.DesyndicateInput",
+          data: {
+            ...input.data,
+            max_fee: await WireSyndicationTool.readDesyndicationFee(
+              ctx,
+              input.data.quantity
+            )
+          }
+        },
         signal
       )
       ctx.outputs.set(Constants.Refusal, "")

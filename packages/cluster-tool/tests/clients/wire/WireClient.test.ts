@@ -8,6 +8,7 @@ import {
   WireClient,
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
+import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("WireClient", () => {
@@ -110,6 +111,115 @@ describe("WireClient", () => {
       ).rejects.toThrow(/can never apply/)
       expect(send.mock.calls.length).toBeGreaterThan(1)
       expect(send).toHaveBeenCalledTimes(WireClient.FinalityMaxAttempts)
+    })
+
+    /** A clio failure shaped like `execFile`'s rejection of a run that printed `stderr`. */
+    function clioFailure(stderr: string, fields: object = {}) {
+      return Object.assign(new Error(`Command failed: clio\n${stderr}`), {
+        stderr,
+        ...fields
+      })
+    }
+
+    it("does NOT re-send a push whose reply was lost (http_exception)", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3200000: http exception\nError Details:\nFailure when receiving data from the peer"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/may have reached the node, so it is not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("does NOT re-send a push whose clio was killed by its timeout", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure("", { killed: true, signal: "SIGTERM" }) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ["the node already has", "Error 3040008: Duplicate transaction", {}],
+      [
+        "failed unrecognizably",
+        "",
+        { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }
+      ]
+    ])("does NOT re-send a push that %s", async (_case, stderr, fields) => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stderr, fields) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("re-sends a push the node rejected", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3050003: sysio_assert_message assertion failure"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/assertion failure/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
+    it("preserves a JSON assertion refusal from a typed desyndicate with max_fee", async () => {
+      const client = new WireClient(config),
+        refusal = "the andon cord is pulled: funds cannot leave custody",
+        amount = 500_000_000n,
+        feeBps = 5n,
+        flatFee = 100_000n,
+        data: SysioContracts.SysioSyndDesyndicateAction = {
+          holder: "andon.user",
+          quantity: "0.500000000 LIQSOL",
+          max_fee: String(amount * feeBps / 10_000n + flatFee)
+        },
+        stdout = JSON.stringify({
+          transaction_id: TransactionId,
+          processed: {
+            receipt: null,
+            except: {
+              code: 3050003,
+              name: "sysio_assert_message_exception",
+              message: "sysio_assert_message assertion failure",
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        }),
+        error = enrichClioError(
+          clioFailure("", { stdout, code: 19, killed: false, signal: null }),
+          stdout,
+          ""
+        ),
+        send = jest.spyOn(client["runner"], "run").mockRejectedValue(error),
+        wait = jest.spyOn(client, "waitForTransactionInBlock"),
+        result = client.getSysioContract(SysioContracts.SysioContractName.synd)
+          .actions.desyndicate.invoke(data, {
+            authorization: WireClient.activeAuthorization(data.holder)
+          })
+      await expect(result).rejects.toBe(error)
+      await expect(result).rejects.toThrow(refusal)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+      expect(wait).not.toHaveBeenCalled()
     })
 
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
@@ -418,6 +528,84 @@ describe("WireClient", () => {
         })
       expect(payload.authorization).toEqual(
         WireClient.activeAuthorization("sysio")
+      )
+    })
+  })
+
+  describe("paged table reads", () => {
+    const query: WireClient.TableRowsQuery = {
+        account: "sysio.dclaim",
+        scope: "sysio.dclaim",
+        table: "unmapped",
+        limit: 2
+      },
+      kvRow = (id: number) => ({ key: { id }, value: { id } }),
+      page = (ids: number[], nextKey: string) => ({
+        rows: ids.map(kvRow),
+        more: nextKey != null,
+        next_key: nextKey
+      })
+
+    it("getTableRows passes the node's next_key through as the next page's bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([1, 2], `{"id":3}`) as never)
+      expect(await client.getTableRows(query)).toEqual({
+        rows: [{ id: 1 }, { id: 2 }],
+        more: true,
+        nextKey: `{"id":3}`
+      })
+    })
+
+    it("getAllTableRows resumes each page at the previous page's next_key", async () => {
+      const client = new WireClient(config),
+        read = jest
+          .spyOn(client.api.v1.chain, "get_table_rows")
+          .mockResolvedValueOnce(page([1, 2], `{"id":3}`) as never)
+          .mockResolvedValueOnce(page([3, 4], `{"id":5}`) as never)
+          .mockResolvedValueOnce(page([5], undefined) as never)
+      expect(await client.getAllTableRows(query)).toEqual(
+        [1, 2, 3, 4, 5].map(id => ({ id }))
+      )
+      expect(
+        read.mock.calls.map(([params]: any[]) => params.lower_bound)
+      ).toEqual([undefined, `{"id":3}`, `{"id":5}`])
+    })
+
+    it("getAllTableRows refuses a page with more rows but no resume key", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue({ rows: [kvRow(1)], more: true } as never)
+      await expect(client.getAllTableRows(query)).rejects.toThrow(
+        /sysio\.dclaim::unmapped reported more rows but no resume key/
+      )
+    })
+
+    it("getAllTableRows refuses a resume key that does not move past its own bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([3], `{"id":3}`) as never)
+      await expect(
+        client.getAllTableRows({ ...query, lowerBound: `{"id":3}` })
+      ).rejects.toThrow(/no resume key past \{"id":3\}/)
+    })
+
+    it("queryAll reads the contract's table in its own scope through getAllTableRows", async () => {
+      const client = new WireClient(config),
+        all = jest.spyOn(client, "getAllTableRows").mockResolvedValue([])
+      await client
+        .getSysioContract(SysioContracts.SysioContractName.dclaim)
+        .tables.unmapped.queryAll({ limit: 500 })
+      expect(all).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account: "sysio.dclaim",
+          scope: "sysio.dclaim",
+          table: "unmapped",
+          limit: 500
+        })
       )
     })
   })

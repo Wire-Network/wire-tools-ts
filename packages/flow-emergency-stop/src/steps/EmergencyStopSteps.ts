@@ -20,6 +20,7 @@ import {
   Steps,
   SyndicationScenario,
   WireClient,
+  WireSyndicationTool,
   getLogger,
   clearNonceCache,
   matchesProtoEnum,
@@ -153,14 +154,18 @@ export namespace EmergencyStopSteps {
             signal
           )
         )
-        .with(Action.desyndicate, () =>
+        .with(Action.desyndicate, async () =>
           Steps.contracts.sysio.synd.runDesyndicate(
             ctx,
             {
               kind: "SyndContractSteps.DesyndicateInput",
               data: {
                 holder: Constants.User.account,
-                quantity: SyndicationScenario.quantity(Constants.Payout)
+                quantity: SyndicationScenario.quantity(Constants.Payout),
+                max_fee: await WireSyndicationTool.readDesyndicationFee(
+                  ctx,
+                  SyndicationScenario.quantity(Constants.Payout)
+                )
               }
             },
             signal

@@ -436,10 +436,10 @@ describe("OperatorDaemonTool", () => {
 
     it("declares the client ids as the chain codes", () => {
       expect(OperatorDaemonTool.EthereumClientId).toBe(
-        OperatorDaemonTool.EthereumChainCodename
+        Constants.ETHEREUM_CHAIN_CODENAME
       )
       expect(OperatorDaemonTool.SolanaClientId).toBe(
-        OperatorDaemonTool.SolanaChainCodename
+        Constants.SOLANA_CHAIN_CODENAME
       )
     })
 

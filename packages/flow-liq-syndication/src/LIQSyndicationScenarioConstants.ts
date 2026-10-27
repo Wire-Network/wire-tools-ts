@@ -2,8 +2,7 @@ import { SlugName } from "@wireio/sdk-core"
 import {
   Constants as HarnessConstants,
   ProtocolTiming,
-  SolanaLiqSyndicationTool,
-  SolanaOutpostBootstrapper
+  SolanaLiqSyndicationTool
 } from "@wireio/cluster-tool"
 
 /**
@@ -25,7 +24,7 @@ export namespace LIQSyndicationScenarioConstants {
 
   /** Registered chain slug code of the Solana outpost — what `OutpostConfig.chain_code` stamps. */
   export const SolanaChainCode: bigint = BigInt(
-    SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
+    SlugName.from(HarnessConstants.SOLANA_CHAIN_CODENAME)
   )
 
   /** Depot token codename used by typed syndication table reads. */

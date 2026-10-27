@@ -143,10 +143,6 @@ export namespace OperatorDaemonTool {
   export const UnderwriterIdleCrankIntervalMs = 300_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 30_000
-  /** The `sysio.chains` codename identifying the ETH outpost. */
-  export const EthereumChainCodename = "ETHEREUM"
-  /** The `sysio.chains` codename identifying the SOL outpost. */
-  export const SolanaChainCodename = "SOLANA"
   /**
    * Outpost RPC client ids ARE the chain codes.
    *
@@ -156,9 +152,9 @@ export namespace OperatorDaemonTool {
    * id is invisible to them, and a batch operator that cannot reach an active
    * chain shuts down rather than relaying a partial epoch.
    */
-  export const EthereumClientId = EthereumChainCodename
+  export const EthereumClientId = Constants.ETHEREUM_CHAIN_CODENAME
   /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
-  export const SolanaClientId = SolanaChainCodename
+  export const SolanaClientId = Constants.SOLANA_CHAIN_CODENAME
   /** SOL inbound-delivery instruction the batch operator invokes. */
   export const SolanaEpochInInstruction = "epoch_in"
   /**

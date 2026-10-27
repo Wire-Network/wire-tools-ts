@@ -11,6 +11,7 @@ import {
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
   EthereumReadBlockTag,
+  LcoImportOptionsSchema,
   NodeopReadMode,
   QueryEngineReadModeSchema,
   SchemaCodec,
@@ -19,6 +20,7 @@ import {
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
+  type LcoImportOptions,
   type QueryEngineConfig
 } from "@wireio/cluster-tool-shared"
 import { camelCase, defaultsDeep, identity, isPlainObject, range } from "lodash"
@@ -96,6 +98,9 @@ const batchOperatorUnderwritingCodec =
   SchemaCodec.create<BatchOperatorUnderwritingOptions>(
     BatchOperatorUnderwritingConfigSchema.partial()
   )
+
+/** Validated codec for the flag-less `lcoImport` member (every field optional). */
+const lcoImportCodec = SchemaCodec.create<LcoImportOptions>(LcoImportOptionsSchema)
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -614,6 +619,15 @@ export function buildOptionShape(
       OptionLeafType.string,
       "path to an ExternalOutpostConfig JSON (ETH + SOL outposts already run on real chains)"
     ),
+    // ── launch-data (LCO) import: each outpost's frozen pre-launch export ──
+    ethereumBootstrapJsonFile: optionalLeaf(
+      OptionLeafType.string,
+      "path to the frozen Ethereum outpost's pre-launch export (EthereumGenesisSnapshot): imports its staked liqETH, WIRE claims and LIQETH yield pool during epoch zero"
+    ),
+    solanaBootstrapJsonFile: optionalLeaf(
+      OptionLeafType.string,
+      "path to the Solana outpost's genesis export (SolanaGenesisSnapshot): imports its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero"
+    ),
     // ── signature provider (how the cluster's own signing keys are handled) ──
     signatureProvider: {
       type: choicesLeaf(
@@ -629,6 +643,8 @@ export function buildOptionShape(
     underwriterCollateral: [],
     // ── batch-operator underwriting tuning (flag-less object → no flags) ──
     batchOperatorUnderwriting: {},
+    // ── launch-data import pricing + pool tuning (flag-less object → no flags) ──
+    lcoImport: {},
     // ── outputs ──
     logging: buildLoggingShape(),
     report: buildReportShape()
@@ -991,12 +1007,15 @@ export function toClusterBuildOptions(
 /** The one non-flag member whose element type is `ChainTokenAmount[]`, not `CollateralRequirement`. */
 const UnderwriterCollateralKey = "underwriterCollateral" as const
 
-/** The one non-flag member that is an object (`BatchOperatorUnderwritingOptions`), not an array. */
+/** The non-flag member that is a `BatchOperatorUnderwritingOptions` object, not an array. */
 const BatchOperatorUnderwritingKey = "batchOperatorUnderwriting" as const
 
+/** The non-flag member that is an `LcoImportOptions` object, not an array. */
+const LcoImportKey = "lcoImport" as const
+
 /**
- * `ClusterBuildOptions` members with NO flag representation (object-arrays —
- * `buildOptionShape` declares them empty). They flow from a caller's `defaults`
+ * `ClusterBuildOptions` members with NO flag representation (object-arrays and
+ * objects — `buildOptionShape` declares them empty). They flow from a caller's `defaults`
  * (e.g. a `FlowScenario.defaults`, or a `--cluster-build-options-file`
  * document) straight into the resolved options.
  */
@@ -1005,7 +1024,8 @@ const NonFlagOptionKeys = [
   "requiredBatchOperatorCollateral",
   "requiredUnderwriterCollateral",
   UnderwriterCollateralKey,
-  BatchOperatorUnderwritingKey
+  BatchOperatorUnderwritingKey,
+  LcoImportKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A `ClusterBuildOptions` member with no flag representation. */
@@ -1053,7 +1073,7 @@ function documentPathLabel(path: string[]): string {
   return path.length === 0 ? "(root)" : path.join(".")
 }
 
-/** True when `key` is one of the flag-less object-array members. */
+/** True when `key` is one of the flag-less members. */
 function isNonFlagOptionKey(key: string): key is NonFlagOptionKey {
   return (NonFlagOptionKeys as ReadonlyArray<string>).includes(key)
 }
@@ -1094,14 +1114,15 @@ function assertDocumentLeafValue(
   return scalar
 }
 
-/** Decode one flag-less object-array member through its shared-schema codec. */
+/** Decode one flag-less member through its shared-schema codec. */
 function decodeNonFlagOption(
   key: NonFlagOptionKey,
   value: unknown
 ):
   | CollateralRequirement[]
   | ChainTokenAmount[][]
-  | BatchOperatorUnderwritingOptions {
+  | BatchOperatorUnderwritingOptions
+  | LcoImportOptions {
   const text = JSON.stringify(value)
   return match(key)
     .with(UnderwriterCollateralKey, () =>
@@ -1110,12 +1131,13 @@ function decodeNonFlagOption(
     .with(BatchOperatorUnderwritingKey, () =>
       batchOperatorUnderwritingCodec.deserialize(text)
     )
+    .with(LcoImportKey, () => lcoImportCodec.deserialize(text))
     .otherwise(() => collateralRequirementsCodec.deserialize(text))
 }
 
 /**
- * Decode + assign one flag-less object-array member. The two codecs mirror the
- * two member shapes exactly, but TS cannot correlate the runtime dispatch inside
+ * Decode + assign one flag-less member. Each codec mirrors its member's shape
+ * exactly, but TS cannot correlate the runtime dispatch inside
  * {@link decodeNonFlagOption} with `K` — so the ONE cast lives here, at the
  * dispatch boundary.
  */

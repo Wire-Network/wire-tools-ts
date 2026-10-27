@@ -40,7 +40,15 @@ for (const fault of ["none", "clear", "reason"]) {
   })
 }
 
-for (const fault of ["none", "clear", "missing-sequence", "wrong-sequence", "wrong-token"]) {
+/** A pool custody change as `readSyndicationCustody` reports it. */
+function custodyChange(signature, instructions, before, after) {
+  return { signature, slot: 1, instructions, logs: [], before, after }
+}
+
+for (const fault of [
+  "none", "clear", "missing-sequence", "wrong-sequence", "wrong-token",
+  "syndication-snapshot", "foreign-custody-change", "broken-custody-chain", "live-custody-drift"
+]) {
   test(`automatic pull identifies the custody incident: ${fault}`, async () => {
     const ctx = {
       outputs: new OutputStore(),
@@ -57,7 +65,22 @@ for (const fault of ["none", "clear", "missing-sequence", "wrong-sequence", "wro
     }
     ctx.outputs.set(Constants.ProbeEpoch, 3)
     mock.method(WireSyndicationTool, "readMismatches", async () => [mismatch])
-    mock.method(SolanaLiqSyndicationTool, "readPoolBalance", async () => 1000n)
+    // The shortfall syndication leaves 1000 in the pool; the per-epoch
+    // report_liq_yield crank then claims +1, so the live balance is 1001.
+    const yieldClaim = custodyChange(
+      "yield", [SolanaLiqSyndicationTool.ReportLiqYieldInstructionName],
+      fault === "broken-custody-chain" ? 999n : 1000n, 1001n
+    )
+    mock.method(SolanaLiqSyndicationTool, "readSyndicationCustody", async (_ctx, sequence) => {
+      Assert.strictEqual(sequence, 7n)
+      return {
+        syndication: custodyChange("synd", ["Synd"], 900n, fault === "syndication-snapshot" ? 999n : 1000n),
+        laterChanges: fault === "foreign-custody-change"
+          ? [yieldClaim, custodyChange("donate", ["DonateToPool"], 1001n, 1002n)]
+          : [yieldClaim]
+      }
+    })
+    mock.method(SolanaLiqSyndicationTool, "readPoolBalance", async () => fault === "live-custody-drift" ? 1002n : 1001n)
     mock.method(WireSyndicationTool, "readOutstanding", async () => 1001n)
     const token = fault === "wrong-token" ? "LIQETH" : SyndicationScenario.Token
     const suffix = fault === "missing-sequence" ? "" : ` seq ${fault === "wrong-sequence" ? 8 : 7}`

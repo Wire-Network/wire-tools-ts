@@ -1,6 +1,9 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  Constants as HarnessConstants,
   outputKey,
+  Steps,
+  SyndicationScenario,
   type EthereumSyndicationTool,
   type SolanaLiqSyndicationTool
 } from "@wireio/cluster-tool"
@@ -19,6 +22,23 @@ export namespace EmergencyStopScenarioConstants {
   export const HeldAmount = 1_000_000_000n
   /** Each deferred payout. */
   export const Payout = 500_000_000n
+  /**
+   * What an outpost pays for one {@link Payout}: the requested quantity less the bootstrap's
+   * flat plus floor-rounded desyndication fee, derived from the configured fee.
+   */
+  export const Redemption =
+    Payout -
+    SyndicationScenario.feeOf(
+      Payout,
+      Steps.registry.DesyndicationFeeBps,
+      BigInt(Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token])
+    )
+  /** Ethereum return after its pair-specific flat plus proportional charge. */
+  export const EthereumRedemption = Payout - SyndicationScenario.feeOf(
+    Payout,
+    Steps.registry.DesyndicationFeeBps,
+    BigInt(Steps.registry.DesyndicationFlatFees.LIQETH)
+  )
   /** Deliberate shortfall beyond measured custody slack. */
   export const Deficit = 10_000_000n
   /** Distinct later message amounts identify admitted attestations. */
@@ -29,7 +49,7 @@ export namespace EmergencyStopScenarioConstants {
   export const EthereumDonor = 32
   /** Ethereum pair token and chain. */
   export const EthereumToken = "LIQETH"
-  export const EthereumChain = "ETHEREUM"
+  export const EthereumChain = HarnessConstants.ETHEREUM_CHAIN_CODENAME
   /** Saved envelope identities. */
   export const FirstEpoch = outputKey<number>(
     "emergency.firstEpoch",
@@ -110,6 +130,11 @@ export namespace EmergencyStopScenarioConstants {
   export const EthereumBefore = outputKey<bigint>(
     "emergency.ethereumBefore",
     "native liqETH balance"
+  )
+  /** The holder's liqETH balance right after the pool paid the payout. */
+  export const EthereumPaid = outputKey<bigint>(
+    "emergency.ethereumPaid",
+    "native liqETH balance after payout"
   )
   /** Last request before each redemption. */
   export const LastRequest = outputKey<bigint>(

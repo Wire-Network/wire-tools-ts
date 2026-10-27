@@ -341,6 +341,31 @@ Rules of the road (binding for sessions/automation; see
   collision-proof via `BindConfig`, so parallelism is bounded only by host
   resources.
 
+### Service ports and automatic client ports
+
+`BindConfigProvider` selects automatic service ports outside the host's actual
+automatic client-port ranges, including both ports of the Solana RPC/PubSub pair
+and every port of its dynamic window. Fallback services use available ports from
+10001 through 65535 with a randomized starting point, excluding those ranges,
+the reserved Agave band, and live registry claims. Every candidate still passes
+the existing IPv4/IPv6 and transport-specific availability checks.
+
+Host observations are read-only: Linux uses
+`/proc/sys/net/ipv4/ip_local_port_range`; macOS reads the ordinary, high and low
+`net.inet.ip.portrange` bounds; Windows queries IPv4/IPv6 TCP/UDP ranges with
+`netsh`. Unreadable or unsupported settings and exhausted safe pools fail
+automatic allocation. A fully pinned plan does not require these observations.
+Keep these host settings stable while clusters are running. Explicit
+pinned ports/ranges retain their availability-checked behavior; an operator who
+pins inside an automatic client range accepts the source-port collision risk.
+Ports resolved on one machine must be reviewed against the destination machine's
+settings before external deployment.
+
+During Solana startup the harness observes `validator.log` every 100 ms and
+records the first bind error's assigned-port socket states/owners with
+`ss -tuapn` where available. That snapshot is retained in startup diagnostics
+even if the conflicting client exits before readiness times out.
+
 ## Launching a persistent test cluster
 
 For interactive work — poking the chains with `clio` or the debugging TUI —
@@ -442,7 +467,13 @@ depot needs them too:
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
-| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: free syndication and desyndication charged at floor(quantity × 5 / 10000) plus a pair-specific flat fee, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and flat fees / gross minima of 5,000,000 / 100,000,000 for LIQETH and 100,000 / 50,000,000 for LIQSOL (9 decimals; flat < minimum; both round-trip legs’ gas: Ethereum ≈507k gas, Solana 9k–104k lamports)), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+
+Break-even sizing assumes a syndication of the pair's `min_desyndicate`.
+Outposts separately configure minimum syndications of 0.005 liqETH (5,000,000
+depot units) and 0.0025 liqSOL (2,500,000 base units), each 1/20 of the return
+minimum. Return Steps derive `max_fee` from the live pair immediately before
+submission; the contract refuses a higher charge before moving funds.
 
 Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
 

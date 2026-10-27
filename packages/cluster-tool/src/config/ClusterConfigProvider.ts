@@ -23,6 +23,9 @@ import {
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
   type ExternalOutpostConfig,
+  type LcoImportChainConfig,
+  type LcoImportChainOptions,
+  type LcoImportConfig,
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
@@ -231,6 +234,70 @@ export namespace ClusterConfigProvider {
     )
     return { fundedOperatorCount, maxExposure }
   }
+  /**
+   * Resolve the launch-data (LCO) import: `null` without an export file, else each exported
+   * chain's absolute export path plus its pricing and pool tuning (`null` where unset — the
+   * import then takes a placeholder), and the claim funding account.
+   *
+   * @param options - The caller's options.
+   * @return The import configuration, or `null` when no export was given.
+   * @throws If `lcoImport` sets a chain whose export file is missing, or is set with no
+   *   export at all.
+   */
+  export function resolveLcoImport(
+    options: ClusterBuildOptions
+  ): LcoImportConfig {
+    const {
+      ethereumBootstrapJsonFile: ethereumFile,
+      solanaBootstrapJsonFile: solanaFile,
+      lcoImport = {}
+    } = options
+    Assert.ok(
+      lcoImport.ethereum == null || ethereumFile != null,
+      "ClusterConfigProvider: lcoImport.ethereum is set but ethereumBootstrapJsonFile is not"
+    )
+    Assert.ok(
+      lcoImport.solana == null || solanaFile != null,
+      "ClusterConfigProvider: lcoImport.solana is set but solanaBootstrapJsonFile is not"
+    )
+    if (ethereumFile == null && solanaFile == null) {
+      Assert.ok(
+        lcoImport.dclaimFundingAccount == null,
+        "ClusterConfigProvider: lcoImport is set but no bootstrap JSON file is"
+      )
+      return null
+    }
+    return {
+      ethereum: resolveLcoImportChain(ethereumFile, lcoImport.ethereum),
+      solana: resolveLcoImportChain(solanaFile, lcoImport.solana),
+      dclaimFundingAccount: lcoImport.dclaimFundingAccount ?? null
+    }
+  }
+
+  /**
+   * One chain's import: its export resolved absolute and its unset values `null` — explicit
+   * `null` because the slot is persisted to `cluster-config.json`.
+   */
+  function resolveLcoImportChain(
+    bootstrapJsonFile: string,
+    options: LcoImportChainOptions = {}
+  ): LcoImportChainConfig {
+    if (bootstrapJsonFile == null) {
+      return null
+    }
+    const {
+      nativePriceUsd = null,
+      highestTranchePriceUsd = null,
+      pool = null
+    } = options
+    return {
+      bootstrapJsonFile: Path.resolve(bootstrapJsonFile),
+      nativePriceUsd,
+      highestTranchePriceUsd,
+      pool
+    }
+  }
+
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
@@ -250,7 +317,8 @@ export namespace ClusterConfigProvider {
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
     assertExternalOutpostMockData(options)
-    const batchOperatorCount = assertBatchOperatorSchedule(options),
+    const lcoImport = resolveLcoImport(options),
+      batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)
@@ -327,6 +395,7 @@ export namespace ClusterConfigProvider {
         options,
         batchOperatorCount
       ),
+      lcoImport,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,

@@ -70,6 +70,109 @@ describe("ClioRunner", () => {
     })
   })
 
+  describe("transport retries", () => {
+    /** A clio that records each run in `runs` and fails with `stderr` until its `passOn`th run. */
+    const flakyClio = (stderr: string, passOn: number) => {
+      const runs = Path.join(dir, "runs")
+      return {
+        runs,
+        bin: makeScript(
+          "clio-flaky.sh",
+          [
+            `echo run >> '${runs}'`,
+            `if [ "$(wc -l < '${runs}')" -lt ${passOn} ]; then echo '${stderr}' >&2; exit 1; fi`,
+            `echo '{"transaction_id":"abc"}'`
+          ].join("\n")
+        )
+      }
+    }
+    const runCount = (runs: string) =>
+      Fs.readFileSync(runs, "utf-8").trim().split("\n").length
+
+    it("re-runs a command whose connection failed", async () => {
+      const { bin, runs } = flakyClio(
+        "Failed http request to nodeop at http://127.0.0.1:1; is nodeop running?",
+        2
+      )
+      await expect(
+        new ClioRunner(config(bin)).run(["push"], { json: true })
+      ).resolves.toEqual({ transaction_id: "abc" })
+      expect(runCount(runs)).toBe(2)
+    })
+
+    it("never re-runs a command whose request may have reached the node", async () => {
+      const { bin, runs } = flakyClio("Error 3200000: http exception", 2)
+      await expect(
+        new ClioRunner(config(bin)).run(["push"], { json: true })
+      ).rejects.toThrow(/Error 3200000/)
+      expect(runCount(runs)).toBe(1)
+    })
+
+    it("recognizes a JSON failed transaction trace without treating ambiguous output as rejection", () => {
+      const stdout = JSON.stringify({
+          transaction_id: "failed-transaction",
+          processed: {
+            receipt: null,
+            except: { code: 3050003, message: "sysio_assert_message assertion failure" }
+          }
+        }),
+        failure = { message: "Command failed: clio", stdout, stderr: "" },
+        traceWithCode = (code: number | string) => ({
+          ...failure,
+          stdout: JSON.stringify({ processed: { except: { code } } })
+        })
+      expect(ClioRunner.isProvenUnapplied(failure)).toBe(true)
+      expect([
+        { ...failure, killed: true },
+        { ...failure, signal: "SIGTERM" },
+        { ...failure, message: "Error 3200000: http exception" },
+        traceWithCode(3040008),
+        traceWithCode(3200000),
+        traceWithCode(1),
+        traceWithCode("3050003"),
+        { ...failure, stdout: '{"processed":' },
+        { ...failure, stdout: JSON.stringify({ processed: { receipt: { status: "executed" } } }) },
+        { ...failure, stdout: JSON.stringify({ processed: { action_traces: [{ except: { code: 3050003 } }] } }) }
+      ].map(ClioRunner.isProvenUnapplied)).toEqual(Array(10).fill(false))
+    })
+
+    it("proves a push unapplied only by a failed connection or a chain rejection", () => {
+      const failure = (message: string, fields: object = {}) => ({
+        message,
+        ...fields
+      })
+      expect(
+        ClioRunner.isTransportFailure(
+          failure("couldn't connect to server: Connection refused")
+        )
+      ).toBe(true)
+      expect(
+        ClioRunner.isTransportFailure(failure("Error 3200000: http exception"))
+      ).toBe(false)
+      expect(
+        [
+          "Failed http request to nodeop at http://127.0.0.1:1; is nodeop running?",
+          "\u001b[31mError 3050003: sysio_assert_message assertion failure\u001b[0m",
+          "Error 3040005: Expired Transaction"
+        ].map(message => ClioRunner.isProvenUnapplied(failure(message)))
+      ).toEqual([true, true, true])
+      expect(
+        [
+          failure("Error 3200005: http request fail"),
+          failure("Error 3040008: Duplicate transaction"),
+          failure("Command failed: clio", {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+          }),
+          failure("Error 3050003: assertion failure", {
+            killed: true,
+            signal: "SIGTERM"
+          })
+        ].map(ClioRunner.isProvenUnapplied)
+      ).toEqual([false, false, false, false])
+      expect(ClioRunner.isProvenUnapplied("not an error")).toBe(false)
+    })
+  })
+
   describe("enrichClioError", () => {
     it("folds stdout + stderr into the error message", () => {
       const err = new Error("Command failed")

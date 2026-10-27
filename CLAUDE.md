@@ -206,12 +206,14 @@ The resulting failures do not look like port collisions — a validator's UDP
 double-bind silently swallows forwarded transactions, and a daemon that resolves now
 but spawns minutes later collides with whoever took its port in between.
 
-**It is not a "does anything bind it?" question.** A port obtained off-registry is an
-OS *ephemeral* port (32768+ per `/proc/sys/net/ipv4/ip_local_port_range`), and the
-kernel can hand that same number to one of `resolve`'s own UNPINNED draws partway
-through the same resolve — the pin then lands in `claimed` and its pinned draw is
-correctly refused. That is an intermittent failure whose rate is just the odds of
-kernel reuse, so it survives a green test run and surfaces later as a flake.
+**It is not a "does anything bind it?" question.** A raw port-0 allocation uses
+the host's automatic client-port range (`/proc/sys/net/ipv4/ip_local_port_range`
+on Linux). Registry coordination cannot stop the kernel from assigning a planned
+but not-yet-bound port to an unrelated outbound connection. `BindConfigProvider`
+therefore excludes the observed automatic ranges from its UNPINNED service
+draws, including Solana's implicit WebSocket companion and dynamic windows.
+Explicit pins still require availability checks and can accept that collision
+risk; obtaining one off-provider also bypasses the registry's exclusion set.
 
 **The find-then-pin trap.** Every picker LOCKS what it hands back in `get-port`'s
 in-process cache (its collision avoidance). So obtaining a port via `findAvailable`
@@ -452,7 +454,15 @@ unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: t
 panic account `Constants.PANIC_ACCOUNT`, funded native `pull`/`clear` permissions
 and action links) and `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
-`Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
+`Steps.registry.SyndicationConfigRegistrations`: free syndication;
+desyndication = floor(quantity × 5 / 10000) + flat fee, recovering gas for both
+round-trip legs (Ethereum ≈507k gas; Solana 9k–104k lamports). At 9 decimals,
+LIQETH flat/minimum = 5,000,000/100,000,000 and LIQSOL = 100,000/50,000,000;
+flat < minimum). Break-even sizing assumes a syndication of min_desyndicate.
+Outpost syndication minima are separately configured at 0.005 liqETH and
+0.0025 liqSOL (1/20 of the depot return minima). `runQuotedDesyndicate` derives
+`max_fee` from the live pair before the write; a governance increase between
+read and submission is refused on chain. A flow that needs a
 fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not
 bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
