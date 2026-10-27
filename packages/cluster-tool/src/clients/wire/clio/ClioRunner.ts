@@ -217,9 +217,9 @@ export namespace ClioRunner {
   export const ChainErrorCodePattern = /Error (3\d{6}):/
 
   /** Lower bound of the chain exception family accepted as rejection evidence. */
-  const MinimumChainErrorCode = 3_000_000
+  const ChainErrorCodeMinimum = 3_000_000
   /** Upper bound of the chain exception family accepted as rejection evidence. */
-  const MaximumChainErrorCode = 3_999_999
+  const ChainErrorCodeMaximum = 3_999_999
   /** clio's text-mode prefix, used to apply the same HTTP exclusion to JSON codes. */
   const ChainErrorCodePrefix = "Error "
   /** JSON-looking stdout must never be scanned as text-mode rejection evidence. */
@@ -296,7 +296,7 @@ export namespace ClioRunner {
             except: {
               code: P.number
                 .int()
-                .between(MinimumChainErrorCode, MaximumChainErrorCode)
+                .between(ChainErrorCodeMinimum, ChainErrorCodeMaximum)
             }
           }
         },
