@@ -485,6 +485,13 @@ are `SolanaLiqSyndicationTool` (`planSetFrozen`, `planDonateToPool`,
 PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
 `planSetPaused`, `planPayPendingDesyndication`).
 
+Emergency-stop payout evidence uses the successful Ethereum receipt's matching
+liqETH `Transfer` from the pool to the recipient; a payment may occupy any
+transaction position in its block. Solana custody changes qualify as yield
+claims only when every top-level instruction referencing the pool ATA calls
+the actual liqsol-core program with the IDL-encoded `reportLiqYield` data.
+Anchor log names alone are diagnostic, not custody attribution.
+
 **Removed functionality.** The eight reserve/swap flow packages and their bootstrap
 flags have been deleted. Only batch operators run OPP daemons. Syndication bond
 providers act through `sysio.bond`; they do not run swap-underwriter daemons.

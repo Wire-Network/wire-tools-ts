@@ -308,9 +308,7 @@ export namespace SyndicationScenario {
    * @param flatFee - Flat base-unit charge, zero for syndication.
    * @return The fee in base units.
    */
-  export function feeOf(amount: bigint, feeBps: number, flatFee = 0n): bigint {
-    return WireSyndicationTool.feeOf(amount, feeBps, flatFee)
-  }
+  export import feeOf = WireSyndicationTool.feeOf
   /** Shortest supported depot epoch. */
   export const EpochDurationSec = 60
   /** Wallet funding including transaction headroom. */
@@ -320,7 +318,7 @@ export namespace SyndicationScenario {
   /** Base-unit precision of shadow LIQSOL. */
   export const Precision = 9
   /** Contract basis-point denominator. */
-  export const BasisPoints = WireSyndicationTool.BasisPoints
+  export import BasisPoints = WireSyndicationTool.BasisPoints
   /** Contract bond increment at nine decimal places. */
   export const Increment = 10_000_000n
   /**

@@ -38,6 +38,22 @@ const run = async (action, ctx = context(), refusal) => {
 }
 afterEach(() => mock.restoreAll())
 
+test("desyndication delegates its uncapped intent to the shared quote runner", async () => {
+  const ctx = context(),
+    stub = mock.method(Steps.contracts.sysio.synd, "runQuotedDesyndicate", async (_ctx, input) => {
+      Assert.equal(_ctx, ctx)
+      Assert.deepEqual(input, {
+        kind: "SyndContractSteps.QuotedDesyndicateInput",
+        data: { holder: Constants.User.account, quantity: SyndicationScenario.quantity(Constants.Payout) }
+      })
+    })
+  await run(Action.desyndicate, ctx)
+  Assert.equal(stub.mock.calls.length, 1)
+  stub.mock.mockImplementation(async () => { throw new Error("the andon cord is pulled") })
+  await run(Action.desyndicate, ctx, "the andon cord is pulled")
+  await Assert.rejects(run(Action.desyndicate, ctx), /Unexpected emergency-stop action refusal/)
+})
+
 test("expected refusal is accepted, unexpected refusal and success are rejected", async () => {
   const stub = mock.method(SolanaLiqSyndicationTool, "runSynd", async () => {
     throw new Error("custom program error: 0x17c7")
