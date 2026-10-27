@@ -247,7 +247,12 @@ describe("ClioRunner", () => {
       )
     })
 
-    it.each([Buffer.from(JSON.stringify(TransactionRejection)), {}, 1])(
+    it.each([
+      Buffer.from(JSON.stringify(TransactionRejection)),
+      Object(JSON.stringify(TransactionRejection)),
+      {},
+      1
+    ])(
       "does not coerce non-string stdout into delivery evidence: %p",
       stdout => {
         const error = {
