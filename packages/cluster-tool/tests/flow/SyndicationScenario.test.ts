@@ -588,6 +588,8 @@ describe("syndication bond provider and fee arithmetic", () => {
     ])
   })
   it("rounds fees down and coverage up to the increment", () => {
+    expect(SyndicationScenario.feeOf).toBe(WireSyndicationTool.feeOf)
+    expect(SyndicationScenario.BasisPoints).toBe(WireSyndicationTool.BasisPoints)
     expect(SyndicationScenario.feeOf(2_000_000_001n, 100)).toBe(20_000_000n)
     expect(SyndicationScenario.feeOf(99n, 100)).toBe(0n)
     expect(SyndicationScenario.feeOf(99n, 100, 100_000n)).toBe(100_000n)

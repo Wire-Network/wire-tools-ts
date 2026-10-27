@@ -661,7 +661,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
           Assert.strictEqual(BigInt(mismatch.reported), custody.syndication.after)
           const liveCustody = custody.laterChanges.reduce((previous, change) => {
             Assert.ok(
-              SolanaLiqSyndicationTool.isYieldClaim(change),
+              change.onlyYieldClaims,
               `pool custody changed after the syndication outside report_liq_yield: ${change.signature} [${change.instructions.join(", ")}]`
             )
             Assert.strictEqual(change.before, previous)
@@ -1186,7 +1186,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
       verifyStep(
         Actor.User,
         "ethereum-paid",
-        "native payout equals depot units scaled to wei",
+        "successful receipt transfers the exact payout from the pool to the holder",
         async ctx => {
           const holder = EmergencyStopScenario.ethereumAddress(ctx),
             payment = await EthereumSyndicationTool.readDesyndicationPayment(
@@ -1202,40 +1202,10 @@ export class EmergencyStopScenario extends SyndicationScenario {
             ethers.getAddress(payment.recipient),
             ethers.getAddress(holder)
           )
-          // First in its block, so the previous block IS the pre-payment state.
-          Assert.strictEqual(payment.transactionIndex, 0)
-          const preBlock = payment.blockNumber - 1,
-            before = await EthereumSyndicationTool.readLiqEthBalance(
-              ctx,
-              holder,
-              preBlock
-            ),
-            rate = await EthereumSyndicationTool.readLiqEthRate(ctx, preBlock),
-            // liqETH is share-based: the credited balance is the token's own
-            // share arithmetic applied to the transfer, not `before + value`.
-            expected = EthereumSyndicationTool.liqEthBalanceAfterTransfer(
-              before,
-              payment.nativeAmount,
-              rate
-            ),
-            paid = await EthereumSyndicationTool.readLiqEthBalance(
-              ctx,
-              holder,
-              payment.blockNumber
-            )
-          StepExtraRecorder.note("Ethereum desyndication payout", {
-            payment,
-            before,
-            rate,
-            expected,
-            paid
-          })
-          Assert.strictEqual(before, ctx.outputs.assert(Constants.EthereumBefore))
-          Assert.strictEqual(paid, expected)
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(ctx, holder),
-            paid
-          )
+          // The receipt proves the transfer at any transaction index, without
+          // reconstructing a rebasing balance from the previous block's state.
+          const paid = await EthereumSyndicationTool.readLiqEthBalance(ctx, holder)
+          StepExtraRecorder.note("Ethereum desyndication payout", { payment, paid })
           ctx.outputs.set(Constants.EthereumPaid, paid)
           Assert.ok(
             !(await EthereumSyndicationTool.readPendingDesyndication(

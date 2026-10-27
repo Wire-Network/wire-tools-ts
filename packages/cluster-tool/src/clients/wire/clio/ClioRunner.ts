@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
-import { getLogger } from "@wireio/shared"
+import { getLogger, getValue, isString } from "@wireio/shared"
 import { negate } from "lodash"
+import { match, P } from "ts-pattern"
 import type { API } from "@wireio/sdk-core"
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
@@ -210,20 +211,18 @@ export namespace ClioRunner {
 
   /** Read only the transaction-level rejection in clio -j's failed stdout trace. */
   function failedTraceCode(stdout: ClioError["stdout"]): number {
-    if (typeof stdout !== "string") return null
-    try {
+    if (!isString(stdout)) return null
+    return getValue(() => {
       const response = JSON.parse(stdout) as API.v1.SendTransactionResponse,
         code = response?.processed?.except?.code
-      return typeof code === "number" &&
-        Number.isInteger(code) &&
-        code >= ChainErrorCodeMinimum &&
-        code < ChainErrorCodeLimit
-        ? code
-        : null
-    } catch {
-      // An incomplete/non-JSON reply proves nothing about transaction delivery.
-      return null
-    }
+      return match(code)
+        .with(P.number, value =>
+          Number.isInteger(value) &&
+          value >= ChainErrorCodeMinimum &&
+          value < ChainErrorCodeLimit ? value : null
+        )
+        .otherwise(() => null)
+    }, null)
   }
 
   /**
