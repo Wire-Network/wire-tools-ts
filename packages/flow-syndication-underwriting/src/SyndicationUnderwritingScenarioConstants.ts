@@ -41,8 +41,8 @@ export namespace SyndicationUnderwritingScenarioConstants {
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
     challenge_extra: "1000000000",
-    min_desyndicate: Steps.registry.MinimumDesyndication,
-    desynd_fee_flat: Steps.registry.DesyndicationFeeFlat
+    min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token]
   }
   /** Initial ledger and custody balances. */
   export const Before = outputKey<SyndicationUnderwritingSnapshot>(

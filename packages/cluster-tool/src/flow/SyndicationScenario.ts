@@ -300,14 +300,16 @@ export namespace SyndicationScenario {
     role: "bonder"
   }
   /**
-   * The syndication fee `sysio.synd` takes from `amount` at `feeBps`, rounded down.
+   * The fee `sysio.synd` takes: floor(amount * feeBps / 10000) plus flatFee.
+   * Syndication has no flat charge; returns use the pair’s desynd_fee_flat.
    *
-   * @param amount - Gross syndicated base units.
-   * @param feeBps - The pair's `synd_fee_bps`.
+   * @param amount - Gross base units the fee is taken from (syndicated or desyndicated).
+   * @param feeBps - The pair's `synd_fee_bps` or `desynd_fee_bps`.
+   * @param flatFee - Flat base-unit charge, zero for syndication.
    * @return The fee in base units.
    */
-  export function feeOf(amount: bigint, feeBps: number): bigint {
-    return (amount * BigInt(feeBps)) / BasisPoints
+  export function feeOf(amount: bigint, feeBps: number, flatFee = 0n): bigint {
+    return WireSyndicationTool.feeOf(amount, feeBps, flatFee)
   }
   /** Shortest supported depot epoch. */
   export const EpochDurationSec = 60
@@ -318,7 +320,7 @@ export namespace SyndicationScenario {
   /** Base-unit precision of shadow LIQSOL. */
   export const Precision = 9
   /** Contract basis-point denominator. */
-  export const BasisPoints = 10_000n
+  export const BasisPoints = WireSyndicationTool.BasisPoints
   /** Contract bond increment at nine decimal places. */
   export const Increment = 10_000_000n
   /**

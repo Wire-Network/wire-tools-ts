@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 
+import { ethers } from "ethers"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
   AttestationType,
@@ -192,8 +193,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
         write,
         {
           holder: Constants.User.account,
-          quantity: SyndicationScenario.quantity(Constants.Payout),
-          max_fee: Steps.registry.DesyndicationFeeFlat
+          quantity: SyndicationScenario.quantity(Constants.Payout)
         }
       ),
       verifyStep(
@@ -230,8 +230,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
               value => value.requestId === record.requestId
             )
           Assert.ok(message, "missing decoded DESYNDICATE_LIQ")
-          Assert.strictEqual(message.amount.amount, Constants.Payout)
-          Assert.strictEqual(record.amount, Constants.Payout)
+          Assert.strictEqual(message.amount.amount, Constants.Redemption)
+          Assert.strictEqual(record.amount, Constants.Redemption)
           Assert.strictEqual(record.reason, PendingPayoutReason.outpostFrozen)
           Assert.strictEqual(record.tokenCode, SyndicationScenario.TokenCode)
           Assert.strictEqual(
@@ -505,7 +505,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               Constants.User.keypairName
             ),
-            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Payout
+            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Redemption
           )
           Assert.ok(
             !(await SolanaLiqSyndicationTool.readPendingPayout(
@@ -550,7 +550,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               Constants.User.keypairName
             ),
-            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Payout
+            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Redemption
           )
         }
       )
@@ -646,8 +646,29 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           Assert.strictEqual(BigInt(mismatch.sequence), message.sequence)
           Assert.strictEqual(BigInt(mismatch.reported), message.totalSyndicated)
+          // `reported` is the pool custody AT the syndication. The permissionless
+          // per-epoch `report_liq_yield` crank may claim pool rewards into the
+          // ATA afterwards, so tie the snapshot to the live balance through
+          // every later custody change, each of which must be that crank.
+          const custody = await SolanaLiqSyndicationTool.readSyndicationCustody(
+            ctx,
+            message.sequence
+          )
+          StepExtraRecorder.note(
+            "Pool custody at and after the shortfall syndication",
+            { custody }
+          )
+          Assert.strictEqual(BigInt(mismatch.reported), custody.syndication.after)
+          const liveCustody = custody.laterChanges.reduce((previous, change) => {
+            Assert.ok(
+              SolanaLiqSyndicationTool.isYieldClaim(change),
+              `pool custody changed after the syndication outside report_liq_yield: ${change.signature} [${change.instructions.join(", ")}]`
+            )
+            Assert.strictEqual(change.before, previous)
+            return change.after
+          }, custody.syndication.after)
           Assert.strictEqual(
-            BigInt(mismatch.reported),
+            liveCustody,
             await SolanaLiqSyndicationTool.readPoolBalance(ctx)
           )
           Assert.strictEqual(
@@ -1039,8 +1060,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
           quantity: SyndicationScenario.quantity(Constants.Payout).replace(
             SyndicationScenario.Token,
             Constants.EthereumToken
-          ),
-          max_fee: Steps.registry.DesyndicationFeeFlat
+          )
         }
       ),
       verifyStep(
@@ -1073,7 +1093,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               if (!pending) return false
               ctx.outputs.set(Constants.EthereumRequest, requestId)
               ctx.outputs.set(Constants.EthereumPending, pending)
-              Assert.strictEqual(pending.depotAmount, Constants.Payout)
+              Assert.strictEqual(pending.depotAmount, Constants.EthereumRedemption)
               Assert.strictEqual(
                 pending.recipient.toLowerCase(),
                 EmergencyStopScenario.ethereumAddress(ctx).toLowerCase()
@@ -1168,14 +1188,55 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "ethereum-paid",
         "native payout equals depot units scaled to wei",
         async ctx => {
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(
+          const holder = EmergencyStopScenario.ethereumAddress(ctx),
+            payment = await EthereumSyndicationTool.readDesyndicationPayment(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
-            ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+              ctx.outputs.assert(Constants.EthereumRequest)
+            )
+          Assert.strictEqual(payment.depotAmount, Constants.EthereumRedemption)
+          Assert.strictEqual(
+            payment.nativeAmount,
+            Constants.EthereumRedemption * Constants.EthereumScale
           )
+          Assert.strictEqual(
+            ethers.getAddress(payment.recipient),
+            ethers.getAddress(holder)
+          )
+          // First in its block, so the previous block IS the pre-payment state.
+          Assert.strictEqual(payment.transactionIndex, 0)
+          const preBlock = payment.blockNumber - 1,
+            before = await EthereumSyndicationTool.readLiqEthBalance(
+              ctx,
+              holder,
+              preBlock
+            ),
+            rate = await EthereumSyndicationTool.readLiqEthRate(ctx, preBlock),
+            // liqETH is share-based: the credited balance is the token's own
+            // share arithmetic applied to the transfer, not `before + value`.
+            expected = EthereumSyndicationTool.liqEthBalanceAfterTransfer(
+              before,
+              payment.nativeAmount,
+              rate
+            ),
+            paid = await EthereumSyndicationTool.readLiqEthBalance(
+              ctx,
+              holder,
+              payment.blockNumber
+            )
+          StepExtraRecorder.note("Ethereum desyndication payout", {
+            payment,
+            before,
+            rate,
+            expected,
+            paid
+          })
+          Assert.strictEqual(before, ctx.outputs.assert(Constants.EthereumBefore))
+          Assert.strictEqual(paid, expected)
+          Assert.strictEqual(
+            await EthereumSyndicationTool.readLiqEthBalance(ctx, holder),
+            paid
+          )
+          ctx.outputs.set(Constants.EthereumPaid, paid)
           Assert.ok(
             !(await EthereumSyndicationTool.readPendingDesyndication(
               ctx,
@@ -1202,8 +1263,12 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               EmergencyStopScenario.ethereumAddress(ctx)
             ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+            ctx.outputs.assert(Constants.EthereumPaid)
+          )
+          // Still exactly one payment for the request (throws otherwise).
+          await EthereumSyndicationTool.readDesyndicationPayment(
+            ctx,
+            ctx.outputs.assert(Constants.EthereumRequest)
           )
         }
       )

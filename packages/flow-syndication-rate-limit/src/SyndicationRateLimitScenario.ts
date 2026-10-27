@@ -476,8 +476,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
         SyndicationScenario.WriteOptions,
         {
           holder: Constants.UserA.account,
-          quantity: SyndicationScenario.quantity(Constants.DesyndicationAmount),
-          max_fee: Constants.Config.desynd_fee_flat
+          quantity: SyndicationScenario.quantity(Constants.DesyndicationAmount)
         }
       ),
       verifyStep(
@@ -501,7 +500,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
           Assert.strictEqual(rows.length, before.returns + 1)
           Assert.strictEqual(
             BigInt(rows[rows.length - 1].amount),
-            Constants.DesyndicationAmount
+            Constants.DesyndicationNet
           )
           Assert.strictEqual(
             await SyndicationScenario.readBalance(ctx, Constants.UserA.account),
@@ -516,7 +515,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
                 )
               ).supply
             ),
-            before.supply - Constants.DesyndicationAmount
+            before.supply - Constants.DesyndicationNet
           )
           Assert.strictEqual(
             rows[rows.length - 1].holder,
@@ -559,7 +558,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
                 Constants.UserA.keypairName
               )) ===
               ctx.outputs.assert(Constants.ExternalBalanceBefore) +
-                Constants.DesyndicationAmount,
+                Constants.DesyndicationNet,
             ProtocolTiming.SingleHopBudgetMs,
             SyndicationScenario.PollMs
           )

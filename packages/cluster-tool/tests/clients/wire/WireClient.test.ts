@@ -10,6 +10,7 @@ import {
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
 import { toURL } from "@wireio/cluster-tool/utils"
+import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 
 import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
 
@@ -216,6 +217,48 @@ describe("WireClient", () => {
         expect(send).toHaveBeenCalledTimes(1)
       }
     )
+
+    it("preserves a JSON assertion refusal from a typed desyndicate with max_fee", async () => {
+      const client = new WireClient(config),
+        refusal = "the andon cord is pulled: funds cannot leave custody",
+        amount = 500_000_000n,
+        feeBps = 5n,
+        flatFee = 100_000n,
+        data: SysioContracts.SysioSyndDesyndicateAction = {
+          holder: "andon.user",
+          quantity: "0.500000000 LIQSOL",
+          max_fee: String((amount * feeBps) / 10_000n + flatFee)
+        },
+        stdout = JSON.stringify({
+          transaction_id: TransactionId,
+          processed: {
+            id: TransactionId,
+            receipt: null,
+            except: {
+              code: 3050003,
+              name: "sysio_assert_message_exception",
+              message: "sysio_assert_message assertion failure",
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        }),
+        error = enrichClioError(
+          clioFailure("", { stdout, code: 19, killed: false, signal: null }),
+          stdout,
+          ""
+        ),
+        send = jest.spyOn(client["runner"], "run").mockRejectedValue(error),
+        wait = jest.spyOn(client, "waitForTransactionInBlock"),
+        result = client
+          .getSysioContract(SysioContracts.SysioContractName.synd)
+          .actions.desyndicate.invoke(data, {
+            authorization: WireClient.activeAuthorization(data.holder)
+          })
+      await expect(result).rejects.toBe(error)
+      await expect(result).rejects.toThrow(refusal)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+      expect(wait).not.toHaveBeenCalled()
+    })
 
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
       const client = new WireClient(config),

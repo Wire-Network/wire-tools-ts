@@ -1,4 +1,6 @@
 import { SysioContracts } from "@wireio/sdk-core"
+
+import { WireSyndicationTool } from "../../../../tools/wire/WireSyndicationTool.js"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -34,9 +36,7 @@ export namespace SyndContractSteps {
    * fees, both buckets, the challenge window, the bounty and the challenge
    * charge. Signed by the system account.
    */
-  export function planSetconfig<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -81,9 +81,7 @@ export namespace SyndContractSteps {
    * `sysio.synd::crank` — run one step of the release queue with a budget of
    * `limit`. Permissionless and never throwing: `signer` only foots the CPU.
    */
-  export function planCrank<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCrank<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -126,9 +124,7 @@ export namespace SyndContractSteps {
    * paying the hold bond plus the pair's `challenge_extra`. Signed by the
    * challenger.
    */
-  export function planChallenge<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planChallenge<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -169,9 +165,7 @@ export namespace SyndContractSteps {
    * `sysio.synd::dropenv` — burn and close an OPEN or WAITING envelope with no
    * request issued. Signed by the system account.
    */
-  export function planDropenv<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDropenv<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -204,39 +198,71 @@ export namespace SyndContractSteps {
       })
   }
 
-  /** Input for {@link planDesyndicate} — the generated `sysio.synd::desyndicate` data. */
+  /** Gross return intent; the runner derives max_fee from the live pair immediately before submission. */
+  export type DesyndicateData = Omit<
+    SysioContracts.SysioSyndDesyndicateAction,
+    "max_fee"
+  >
+
+  /** Full action data, including the caller's derived fee cap. */
   export interface DesyndicateInput extends StepInput {
     readonly kind: "SyndContractSteps.DesyndicateInput"
     readonly data: SysioContracts.SysioSyndDesyndicateAction
+  }
+
+  /** Serializable planned return; the fee cap is resolved when its Step executes. */
+  export interface QuotedDesyndicateInput extends StepInput {
+    readonly kind: "SyndContractSteps.QuotedDesyndicateInput"
+    readonly data: DesyndicateData
   }
 
   /**
    * `sysio.synd::desyndicate` — take shadow from the holder's own row, keep the
    * fee, burn the rest and queue `DESYNDICATE_LIQ` for the outpost to pay the
    * holder's linked key. Signed by the holder, who must be AuthX-linked for the
-   * token's chain. The caller's `max_fee` caps the complete fee (basis points plus
-   * the configured flat part), in shadow base units; zero permits only a free return.
+   * token's chain.
    */
-  export function planDesyndicate<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDesyndicate<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioSyndDesyndicateAction
-  ): ClusterBuildStep<C, DesyndicateInput> {
-    return ClusterBuildStep.create<C, DesyndicateInput>(
+    data: DesyndicateData
+  ): ClusterBuildStep<C, QuotedDesyndicateInput> {
+    return ClusterBuildStep.create<C, QuotedDesyndicateInput>(
       actor,
       name,
       description,
       options,
-      { kind: "SyndContractSteps.DesyndicateInput", data },
-      runDesyndicate
+      { kind: "SyndContractSteps.QuotedDesyndicateInput", data },
+      runQuotedDesyndicate
     )
   }
 
-  /** Named runner — `sysio.synd::desyndicate`, signed by the holder. */
+  /** Named runner — resolve the live fee cap, then submit exactly one return. */
+  export async function runQuotedDesyndicate<C extends ClusterBuildContext>(
+    ctx: C,
+    input: QuotedDesyndicateInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await runDesyndicate(
+      ctx,
+      {
+        kind: "SyndContractSteps.DesyndicateInput",
+        data: {
+          ...input.data,
+          max_fee: await WireSyndicationTool.readDesyndicationFee(
+            ctx,
+            input.data.quantity
+          )
+        }
+      },
+      signal
+    )
+  }
+
+  /** Named runner — `sysio.synd::desyndicate` with the caller's fee cap, signed by the holder. */
   export async function runDesyndicate<C extends ClusterBuildContext>(
     ctx: C,
     input: DesyndicateInput,
@@ -262,9 +288,7 @@ export namespace SyndContractSteps {
    * `sysio.synd::sweep` — deliver the shadow parked against an account's link
    * for a chain family. Permissionless: `signer` only foots the CPU.
    */
-  export function planSweep<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSweep<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -306,9 +330,7 @@ export namespace SyndContractSteps {
    * `sysio.synd::importsynd` — credit pre-launch syndicated positions, by
    * pubkey, in the bootstrap window only. Signed by the contract.
    */
-  export function planImportsynd<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planImportsynd<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -347,9 +369,7 @@ export namespace SyndContractSteps {
    * `sysio.synd::importdone` — close the launch import for good. Signed by the
    * contract.
    */
-  export function planImportdone<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planImportdone<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -391,9 +411,7 @@ export namespace SyndContractSteps {
    * into the token's yield pool, and pay the fee pot's share to `sysio`.
    * Permissionless: `signer` only foots the CPU.
    */
-  export function planSweepyield<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSweepyield<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

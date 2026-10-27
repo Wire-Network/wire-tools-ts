@@ -30,20 +30,23 @@
 
 import Assert from "node:assert"
 
-import { Either } from "@3fv/prelude-ts"
+import { Either, asOption } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
 import {
   type AccountMeta,
   type Commitment,
   ComputeBudgetProgram,
   Keypair,
+  MessageAccountKeys,
   PublicKey,
   StakeProgram,
   SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SYSVAR_RENT_PUBKEY,
-  SYSVAR_STAKE_HISTORY_PUBKEY
+  SYSVAR_STAKE_HISTORY_PUBKEY,
+  type TokenBalance,
+  type VersionedTransactionResponse
 } from "@solana/web3.js"
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -75,6 +78,8 @@ import { SolanaOutpostBootstrapper } from "../../orchestration/solana/SolanaOutp
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { pollUntil } from "../../orchestration/StepTools.js"
 import { Report } from "../../report/Report.js"
+import { SolanaClient } from "../../clients/solana/SolanaClient.js"
+import { mapSeries } from "../../utils/asyncUtils.js"
 
 const log = getLogger(__filename)
 
@@ -667,6 +672,150 @@ export namespace SolanaLiqSyndicationTool {
         TOKEN_2022_PROGRAM_ID
       )
     ).amount
+  }
+
+  /**
+   * Most recent pool-ATA signatures {@link readSyndicationCustody} inspects —
+   * a flow's pool sees a handful of transactions per epoch, so this covers the
+   * syndication and every later change by a wide margin.
+   */
+  export const PoolSignatureScanLimit = 100
+
+  /** Log line `syndicate_liq` emits when it queues a syndication (`syndicate_liqsol.rs`). */
+  export const SyndicationQueuedLogPrefix = "Program log: syndicate_liq: queued "
+
+  /** Field of the queued log line that carries the syndication's sequence. */
+  export const SyndicationSequenceLogField = "sequence="
+
+  /** Prefix of the log line Anchor emits for every dispatched instruction. */
+  export const AnchorInstructionLogPrefix = "Program log: Instruction: "
+
+  /**
+   * Anchor instruction name of the permissionless per-epoch yield crank,
+   * which claims pool rewards and syncs yield into the pool ATA.
+   */
+  export const ReportLiqYieldInstructionName = "ReportLiqYield"
+
+  /** One confirmed transaction's effect on the pool ATA's liqSOL custody. */
+  export interface PoolCustodyChange {
+    /** Transaction signature. */
+    signature: string
+    /** Slot the transaction landed in. */
+    slot: number
+    /** Anchor instruction names the transaction dispatched, in log order. */
+    instructions: string[]
+    /** The transaction's program log lines. */
+    logs: string[]
+    /** Pool ATA balance before the transaction (raw liqSOL). */
+    before: bigint
+    /** Pool ATA balance after the transaction (raw liqSOL). */
+    after: bigint
+  }
+
+  /**
+   * The pool's custody at a syndication and every balance change after it —
+   * what lets a verify tie a historical syndication snapshot to the live
+   * pool balance transaction by transaction.
+   */
+  export interface SyndicationCustody {
+    /** The transaction that queued the syndication. */
+    syndication: PoolCustodyChange
+    /** Every later transaction that changed the pool balance, oldest first. */
+    laterChanges: PoolCustodyChange[]
+  }
+
+  /**
+   * Whether a pool custody change came from the per-epoch `report_liq_yield`
+   * crank.
+   *
+   * @param change - A pool custody change.
+   * @returns `true` when the transaction dispatched `ReportLiqYield`.
+   */
+  export function isYieldClaim(change: PoolCustodyChange): boolean {
+    return change.instructions.includes(ReportLiqYieldInstructionName)
+  }
+
+  /**
+   * The pool ATA's custody at the syndication carrying `sequence`, plus every
+   * later transaction that moved the pool balance. A READ over confirmed
+   * transaction history.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param sequence - The syndication's sequence, as `syndicate_liq` logs it.
+   * @returns The syndication's custody change and every later change.
+   * @throws When a signature's transaction is unavailable, or no recent pool
+   *   transaction queued that sequence.
+   */
+  export async function readSyndicationCustody<C extends ClusterBuildContext>(
+    ctx: C,
+    sequence: bigint
+  ): Promise<SyndicationCustody> {
+    const { liqsolPoolAta } = deriveBasePdas(ctx.config.solanaPath)
+    const signatures = (
+      await ctx.solana.connection.getSignaturesForAddress(
+        liqsolPoolAta,
+        { limit: PoolSignatureScanLimit },
+        SolanaClient.ConfirmationStatus.confirmed
+      )
+    )
+      .filter(info => info.err == null)
+      .reverse()
+    const changes = await mapSeries(signatures, async info => {
+      const response = await ctx.solana.connection.getTransaction(info.signature, {
+        commitment: SolanaClient.ConfirmationStatus.confirmed,
+        maxSupportedTransactionVersion: 0
+      })
+      Assert.ok(response != null, `pool transaction ${info.signature} is unavailable`)
+      return toPoolCustodyChange(info.signature, response, liqsolPoolAta)
+    })
+    const sequenceMarker = ` ${SyndicationSequenceLogField}${sequence} `
+    const index = changes.findIndex(change =>
+      change.logs.some(
+        line => line.startsWith(SyndicationQueuedLogPrefix) && line.includes(sequenceMarker)
+      )
+    )
+    Assert.ok(
+      index >= 0,
+      `no pool transaction among the last ${PoolSignatureScanLimit} queued syndication sequence ${sequence}`
+    )
+    return {
+      syndication: changes[index],
+      laterChanges: changes.slice(index + 1).filter(change => change.after !== change.before)
+    }
+  }
+
+  /**
+   * One transaction's pool custody change, read from its token-balance meta.
+   *
+   * @param signature - The transaction signature.
+   * @param response - The confirmed transaction.
+   * @param poolAta - The pool ATA whose balance to read.
+   * @returns The custody change (`0n` when the ATA is absent from a side).
+   */
+  function toPoolCustodyChange(
+    signature: string,
+    response: VersionedTransactionResponse,
+    poolAta: PublicKey
+  ): PoolCustodyChange {
+    const keys = new MessageAccountKeys(
+      response.transaction.message.staticAccountKeys,
+      response.meta.loadedAddresses
+    )
+    const poolAmount = (balances: TokenBalance[]): bigint =>
+      asOption(balances?.find(balance => keys.get(balance.accountIndex)?.equals(poolAta)))
+        .map(balance => BigInt(balance.uiTokenAmount.amount))
+        .getOrElse(0n)
+    const { logMessages: logs = [] } = response.meta
+    return {
+      signature,
+      slot: response.slot,
+      instructions: logs
+        .filter(line => line.startsWith(AnchorInstructionLogPrefix))
+        .map(line => line.slice(AnchorInstructionLogPrefix.length)),
+      logs,
+      before: poolAmount(response.meta.preTokenBalances),
+      after: poolAmount(response.meta.postTokenBalances)
+    }
   }
 
   /** Name of the `PendingPayout` account as the camelCased Anchor coder keys it. */

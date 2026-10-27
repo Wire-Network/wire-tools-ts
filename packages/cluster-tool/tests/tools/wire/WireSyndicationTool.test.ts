@@ -92,6 +92,31 @@ function newBuild(): ClusterBuild {
 afterEach(() => jest.restoreAllMocks())
 
 describe("WireSyndicationTool — sysio.synd reads", () => {
+  it("derives a floored fee plus flat charge from the live pair, including a changed charge", async () => {
+    const { ctx, clients } = stubbedContext(),
+      config = Steps.registry.SyndicationConfigRegistrations.find(row => row.token_code === Liqsol)
+    serve(clients.liq.tables.stat, [stat("2.000000001 LIQSOL")])
+    const query = jest.spyOn(clients.synd.tables.syndconfig, "query")
+      .mockResolvedValue({ rows: [config], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000001 LIQSOL"))
+      .resolves.toBe("1100000")
+    query.mockResolvedValue({ rows: [{ ...config, desynd_fee_flat: 200_000 }], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000001 LIQSOL"))
+      .resolves.toBe("1200000")
+  })
+
+  it("refuses missing and truncated live fee configuration", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.stat, [stat("2.000000000 LIQSOL")])
+    const query = jest.spyOn(clients.synd.tables.syndconfig, "query")
+      .mockResolvedValue({ rows: [], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000000 LIQSOL"))
+      .rejects.toThrow("missing syndication configuration")
+    query.mockResolvedValue({ rows: [], more: true })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000000 LIQSOL"))
+      .rejects.toThrow(/truncated/)
+  })
+
   it("readEnvelopes keeps only the pair's rows, whatever the other pairs hold", async () => {
     const { ctx, clients } = stubbedContext()
     serve(clients.synd.tables.envelopes, [

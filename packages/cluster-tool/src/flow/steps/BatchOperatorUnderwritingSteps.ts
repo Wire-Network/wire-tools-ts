@@ -172,8 +172,8 @@ export namespace BatchOperatorUnderwritingSteps {
       window_sec: windowSec,
       bounty: 0,
       challenge_extra: ConfigChallengeExtra,
-      min_desyndicate: Steps.registry.MinimumDesyndication,
-      desynd_fee_flat: Steps.registry.DesyndicationFeeFlat
+      min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+      desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token]
     }
   }
 
@@ -245,8 +245,7 @@ export namespace BatchOperatorUnderwritingSteps {
     headroomEpochs: number
   ): number {
     return Math.ceil(
-      (windowFixedSec + trailingSec) /
-        (SolanaRetainedEnvelopeEpochs - 1 - headroomEpochs)
+      (windowFixedSec + trailingSec) / (SolanaRetainedEnvelopeEpochs - 1 - headroomEpochs)
     )
   }
   /** Step ceiling above {@link UnderwriterRequestIssuedBudgetMs}, by the poll deadline margin. */
