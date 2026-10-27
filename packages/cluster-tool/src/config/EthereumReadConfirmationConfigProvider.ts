@@ -3,7 +3,6 @@ import Assert from "node:assert"
 import { defaults } from "lodash"
 
 import {
-  EthereumReadBlockTag,
   EthereumReadConfirmationConfigSchema,
   createUnsetEthereumReadConfirmationConfig,
   type EthereumReadConfirmationConfig,
@@ -37,15 +36,11 @@ export namespace EthereumReadConfirmationConfigProvider {
     }
   ]
 
-  /** The members that apply only to {@link EthereumReadBlockTag.latest}: nodeop refuses them beside another tag. */
-  export const LatestOnlyMembers: readonly (keyof EthereumReadConfirmationConfig)[] =
-    ["confirmations", "maxFinalityLagSec"]
-
   /**
-   * Merge caller options over the all-unset config and validate: every SET
-   * member satisfies the shared schema (a known tag, positive integers), and a
-   * depth or lag is set only with no tag (nodeop's `latest`) or with `latest`.
-   * An explicit `null` member stays unset, leaving nodeop's default.
+   * Merge caller options over the all-unset config and validate it against the
+   * shared schema: a known tag, positive `uint32`s, and a depth or lag only
+   * with no tag (nodeop's `latest`) or with `latest`. An explicit `null` member
+   * stays unset, leaving nodeop's default.
    *
    * @param options - Caller options (any subset).
    * @returns The resolved config.
@@ -62,14 +57,6 @@ export namespace EthereumReadConfirmationConfigProvider {
       parsed.success,
       `EthereumReadConfirmationConfig: ${parsed.error?.message}`
     )
-    const readsLatest =
-      config.blockTag == null || config.blockTag === EthereumReadBlockTag.latest
-    LatestOnlyMembers.forEach(member =>
-      Assert.ok(
-        readsLatest || config[member] == null,
-        `EthereumReadConfirmationConfig: ${optionOf(member)} applies only to the ${EthereumReadBlockTag.latest} block tag, not ${config.blockTag}`
-      )
-    )
     return config
   }
 
@@ -84,10 +71,5 @@ export namespace EthereumReadConfirmationConfigProvider {
     return MemberOptions.flatMap(({ member, option }) =>
       config[member] != null ? [option, String(config[member])] : []
     )
-  }
-
-  /** The nodeop flag a member renders as, read off the one option table. */
-  function optionOf(member: keyof EthereumReadConfirmationConfig): string {
-    return MemberOptions.find(entry => entry.member === member).option
   }
 }

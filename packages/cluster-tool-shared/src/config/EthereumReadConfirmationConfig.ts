@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { Uint32Schema } from "../types/unsignedIntegers.js"
+
 /**
  * The block tags `outpost_ethereum_client_plugin` reads what an outpost emitted
  * at (`--outpost-ethereum-read-block-tag`); the values are nodeop's own
@@ -21,20 +23,65 @@ export enum EthereumReadBlockTag {
  * than its group risks a slash across a deep reorg, and one reading stronger
  * delivers after consensus, a no-op recorded as a miss.
  */
-export const EthereumReadConfirmationConfigSchema = z.object({
+const EthereumReadConfirmationConfigShape = z.object({
   /** `--outpost-ethereum-read-block-tag`. */
   blockTag: z.enum(EthereumReadBlockTag).nullable(),
   /**
    * `--outpost-ethereum-read-confirmations`: how deep a `latest` read is, the
-   * head counting as one.
+   * head counting as one. nodeop parses it as a `uint32`.
    */
-  confirmations: z.number().int().positive().nullable(),
+  confirmations: Uint32Schema.positive().nullable(),
   /**
    * `--outpost-ethereum-read-max-finality-lag-sec`: how far the finalized block
-   * may trail the head before a `latest` read falls back to it.
+   * may trail the head before a `latest` read falls back to it. nodeop parses
+   * it as a `uint32`.
    */
-  maxFinalityLagSec: z.number().int().positive().nullable()
+  maxFinalityLagSec: Uint32Schema.positive().nullable()
 })
+
+/** The decoded fields {@link addLatestOnlyIssues} checks. */
+type EthereumReadConfirmationFields = z.infer<
+  typeof EthereumReadConfirmationConfigShape
+>
+
+/** The refinement context of {@link EthereumReadConfirmationConfigShape}. */
+type EthereumReadConfirmationRefinementContext =
+  z.core.$RefinementCtx<EthereumReadConfirmationFields>
+
+/** The members that apply only to {@link EthereumReadBlockTag.latest}: nodeop refuses them beside another tag. */
+const LatestOnlyMembers: readonly (keyof EthereumReadConfirmationFields)[] = [
+  "confirmations",
+  "maxFinalityLagSec"
+]
+
+/**
+ * One issue per depth or lag set beside a tag other than `latest` (an unset
+ * tag is nodeop's `latest`), as nodeop refuses the pair at startup.
+ */
+function addLatestOnlyIssues(
+  value: EthereumReadConfirmationFields,
+  ctx: EthereumReadConfirmationRefinementContext
+): void {
+  const readsLatest =
+    value.blockTag == null || value.blockTag === EthereumReadBlockTag.latest
+  LatestOnlyMembers.filter(
+    member => !readsLatest && value[member] != null
+  ).forEach(member =>
+    ctx.addIssue({
+      code: "custom",
+      message: `${member} applies only to the ${EthereumReadBlockTag.latest} block tag, not ${value.blockTag}`,
+      path: [member]
+    })
+  )
+}
+
+/**
+ * THE read-confirmation schema: the members above, with a depth or lag
+ * refused beside a tag other than `latest` — on resolve and on every load of a
+ * persisted `ClusterConfig`, so nothing nodeop would refuse reaches its argv.
+ */
+export const EthereumReadConfirmationConfigSchema =
+  EthereumReadConfirmationConfigShape.superRefine(addLatestOnlyIssues)
 /** The resolved read confirmation — the shape of {@link EthereumReadConfirmationConfigSchema}. */
 export type EthereumReadConfirmationConfig = z.infer<
   typeof EthereumReadConfirmationConfigSchema

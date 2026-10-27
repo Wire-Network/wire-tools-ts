@@ -291,6 +291,28 @@ describe("ClusterConfigProvider", () => {
       expect(reloaded.clusterPath).toBe(dir)
       expect(reloaded.bind.nodeop.ports.batch).toHaveLength(3)
     })
+
+    it("refuses to load a read confirmation nodeop would refuse, a depth beside a non-latest tag", async () => {
+      const file = Path.join(dir, ClusterConfigProvider.ConfigFilename)
+      Fs.writeFileSync(
+        file,
+        JSON.stringify({
+          ...PersistedFixture,
+          clusterPath: dir,
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.safe,
+            confirmations: 12,
+            maxFinalityLagSec: null
+          }
+        })
+      )
+      expect(() => ClusterConfigProvider.loadSync(file)).toThrow(
+        /applies only to the latest block tag/
+      )
+      await expect(ClusterConfigProvider.load(file)).rejects.toThrow(
+        /applies only to the latest block tag/
+      )
+    })
   })
 
   describe("toSecretId", () => {

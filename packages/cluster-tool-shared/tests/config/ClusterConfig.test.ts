@@ -7,10 +7,12 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   EthereumReadBlockTag,
+  MaximumUint32,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
-  type ClusterConfig
+  type ClusterConfig,
+  type EthereumReadConfirmationConfig
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { Level } from "@wireio/shared"
@@ -267,6 +269,30 @@ describe("ClusterConfig shape", () => {
       )
     expect(rehydrated.ethereumRead.blockTag).toBe(EthereumReadBlockTag.safe)
     expect(rehydrated).toEqual(tuned)
+  })
+
+  it("refuses to load a persisted ethereumRead nodeop would refuse: a depth beside a non-latest tag, or past uint32", () => {
+    const persisted = JSON.parse(ClusterConfigSchemaCodec.serialize(config)),
+      withEthereumRead = (ethereumRead: EthereumReadConfirmationConfig) =>
+        JSON.stringify({ ...persisted, ethereumRead })
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(
+        withEthereumRead({
+          blockTag: EthereumReadBlockTag.safe,
+          confirmations: 12,
+          maxFinalityLagSec: null
+        })
+      )
+    ).toThrow(/applies only to the latest block tag/)
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(
+        withEthereumRead({
+          blockTag: null,
+          confirmations: null,
+          maxFinalityLagSec: MaximumUint32 + 1
+        })
+      )
+    ).toThrow(/maxFinalityLagSec/)
   })
 
   it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {

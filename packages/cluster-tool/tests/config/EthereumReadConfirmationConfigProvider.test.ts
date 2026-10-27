@@ -1,6 +1,7 @@
 import {
   createUnsetEthereumReadConfirmationConfig,
   EthereumReadBlockTag,
+  MaximumUint32,
   type EthereumReadConfirmationOptions
 } from "@wireio/cluster-tool-shared"
 
@@ -52,10 +53,25 @@ describe("EthereumReadConfirmationConfigProvider", () => {
       }
     )
 
+    it("keeps the largest uint32 nodeop parses", () => {
+      expect(
+        EthereumReadConfirmationConfigProvider.resolve({
+          confirmations: MaximumUint32,
+          maxFinalityLagSec: MaximumUint32
+        })
+      ).toEqual({
+        blockTag: null,
+        confirmations: MaximumUint32,
+        maxFinalityLagSec: MaximumUint32
+      })
+    })
+
     it.each([
       { confirmations: 0 },
       { maxFinalityLagSec: -5 },
-      { confirmations: 2.5 }
+      { confirmations: 2.5 },
+      { confirmations: MaximumUint32 + 1 },
+      { maxFinalityLagSec: MaximumUint32 + 1 }
     ] as EthereumReadConfirmationOptions[])("refuses %o", member => {
       expect(() =>
         EthereumReadConfirmationConfigProvider.resolve(member)
