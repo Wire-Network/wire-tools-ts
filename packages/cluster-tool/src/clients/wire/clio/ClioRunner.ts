@@ -242,6 +242,10 @@ export namespace ClioRunner {
       candidate != null &&
       typeof candidate === "object" &&
       typeof candidate.message === "string" &&
+      !(
+        typeof candidate.stdout === "string" &&
+        JsonResponsePrefixPattern.test(candidate.stdout)
+      ) &&
       TransportFailurePattern.test(candidate.message)
     )
   }

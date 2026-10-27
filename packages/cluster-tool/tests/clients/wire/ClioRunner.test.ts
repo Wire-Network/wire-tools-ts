@@ -216,6 +216,27 @@ describe("ClioRunner", () => {
         ...fields
       })
 
+    it.each([
+      "Error 3050003: not a rejection",
+      "Connection refused",
+      "Failed http request to nodeop"
+    ])("does not infer delivery from JSON console text: %s", console => {
+      const response = {
+          transaction_id: TransactionRejection.transaction_id,
+          processed: {
+            id: TransactionRejection.processed.id,
+            receipt: { status: "executed" },
+            action_traces: [{ console }]
+          }
+        },
+        stdout = JSON.stringify(response),
+        error = failure(response, {
+          message: `Command failed: clio\n${stdout}`
+        })
+      expect(ClioRunner.isTransportFailure(error)).toBe(false)
+      expect(ClioRunner.isProvenUnapplied(error)).toBe(false)
+    })
+
     it("recognizes the failed transaction trace emitted by clio -j", () => {
       expect(ClioRunner.isProvenUnapplied(failure(TransactionRejection))).toBe(
         true
