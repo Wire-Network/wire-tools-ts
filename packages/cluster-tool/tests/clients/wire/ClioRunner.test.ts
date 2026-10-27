@@ -139,6 +139,10 @@ describe("ClioRunner", () => {
           traceWithCode(3200000),
           traceWithCode(1),
           traceWithCode("3050003"),
+          traceWithCode(3050003.5),
+          traceWithCode(4000000),
+          { ...failure, stdout: Buffer.from(stdout) },
+          { ...failure, stdout: "null" },
           { ...failure, stdout: '{"processed":' },
           {
             ...failure,
@@ -153,7 +157,7 @@ describe("ClioRunner", () => {
             })
           }
         ].map(ClioRunner.isProvenUnapplied)
-      ).toEqual(Array(10).fill(false))
+      ).toEqual(Array(14).fill(false))
     })
 
     it("proves a push unapplied only by a failed connection or a chain rejection", () => {

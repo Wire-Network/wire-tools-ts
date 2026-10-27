@@ -327,7 +327,7 @@ export namespace SolanaLiqSyndicationTool {
         accounts: injectBonusSyndYieldAccounts(base, placeholder)
       },
       {
-        instruction: "reportLiqYield",
+        instruction: ReportLiqYieldMethodName,
         accounts: reportLiqYieldAccounts(base, placeholder)
       },
       {
@@ -696,6 +696,9 @@ export namespace SolanaLiqSyndicationTool {
    */
   export const ReportLiqYieldInstructionName = "ReportLiqYield"
 
+  /** Camel-cased IDL method for the permissionless yield claim. */
+  export const ReportLiqYieldMethodName = "reportLiqYield"
+
   /** One confirmed transaction's effect on the pool ATA's liqSOL custody. */
   export interface PoolCustodyChange {
     /** Transaction signature. */
@@ -704,6 +707,8 @@ export namespace SolanaLiqSyndicationTool {
     slot: number
     /** Anchor instruction names the transaction dispatched, in log order. */
     instructions: string[]
+    /** Every top-level instruction touching the pool is the real yield crank. */
+    onlyYieldClaims: boolean
     /** The transaction's program log lines. */
     logs: string[]
     /** Pool ATA balance before the transaction (raw liqSOL). */
@@ -725,17 +730,6 @@ export namespace SolanaLiqSyndicationTool {
   }
 
   /**
-   * Whether a pool custody change came from the per-epoch `report_liq_yield`
-   * crank.
-   *
-   * @param change - A pool custody change.
-   * @returns `true` when the transaction dispatched `ReportLiqYield`.
-   */
-  export function isYieldClaim(change: PoolCustodyChange): boolean {
-    return change.instructions.includes(ReportLiqYieldInstructionName)
-  }
-
-  /**
    * The pool ATA's custody at the syndication carrying `sequence`, plus every
    * later transaction that moved the pool balance. A READ over confirmed
    * transaction history.
@@ -750,10 +744,17 @@ export namespace SolanaLiqSyndicationTool {
     ctx: C,
     sequence: bigint
   ): Promise<SyndicationCustody> {
-    const { liqsolPoolAta } = deriveBasePdas(ctx.config.solanaPath)
+    const pdas = deriveBasePdas(ctx.config.solanaPath),
+      program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+        ctx.solana.connection,
+        ctx.config.solanaPath
+      ),
+      yieldInstructionData = program.coder.instruction.encode(
+        ReportLiqYieldMethodName, {}
+      )
     const signatures = (
       await ctx.solana.connection.getSignaturesForAddress(
-        liqsolPoolAta,
+        pdas.liqsolPoolAta,
         { limit: PoolSignatureScanLimit },
         SolanaClient.ConfirmationStatus.confirmed
       )
@@ -766,7 +767,9 @@ export namespace SolanaLiqSyndicationTool {
         maxSupportedTransactionVersion: 0
       })
       Assert.ok(response != null, `pool transaction ${info.signature} is unavailable`)
-      return toPoolCustodyChange(info.signature, response, liqsolPoolAta)
+      return toPoolCustodyChange(
+        info.signature, response, pdas, yieldInstructionData
+      )
     })
     const sequenceMarker = ` ${SyndicationSequenceLogField}${sequence} `
     const index = changes.findIndex(change =>
@@ -789,20 +792,29 @@ export namespace SolanaLiqSyndicationTool {
    *
    * @param signature - The transaction signature.
    * @param response - The confirmed transaction.
-   * @param poolAta - The pool ATA whose balance to read.
+   * @param pdas - The pool and its authoritative program id.
+   * @param yieldInstructionData - The yield instruction encoded by the deployed IDL.
    * @returns The custody change (`0n` when the ATA is absent from a side).
    */
   function toPoolCustodyChange(
     signature: string,
     response: VersionedTransactionResponse,
-    poolAta: PublicKey
+    pdas: BasePdas,
+    yieldInstructionData: Buffer
   ): PoolCustodyChange {
-    const keys = new MessageAccountKeys(
-      response.transaction.message.staticAccountKeys,
-      response.meta.loadedAddresses
-    )
+    const { message } = response.transaction,
+      keys = new MessageAccountKeys(
+        message.staticAccountKeys, response.meta.loadedAddresses
+      ),
+      poolInstructions = message.compiledInstructions.filter(instruction =>
+        instruction.accountKeyIndexes.some(index =>
+          keys.get(index)?.equals(pdas.liqsolPoolAta)
+        )
+      )
     const poolAmount = (balances: TokenBalance[]): bigint =>
-      asOption(balances?.find(balance => keys.get(balance.accountIndex)?.equals(poolAta)))
+      asOption(balances?.find(balance =>
+        keys.get(balance.accountIndex)?.equals(pdas.liqsolPoolAta)
+      ))
         .map(balance => BigInt(balance.uiTokenAmount.amount))
         .getOrElse(0n)
     const { logMessages: logs = [] } = response.meta
@@ -812,6 +824,11 @@ export namespace SolanaLiqSyndicationTool {
       instructions: logs
         .filter(line => line.startsWith(AnchorInstructionLogPrefix))
         .map(line => line.slice(AnchorInstructionLogPrefix.length)),
+      onlyYieldClaims: poolInstructions.length > 0 &&
+        poolInstructions.every(instruction =>
+          keys.get(instruction.programIdIndex)?.equals(pdas.liqsolCoreProgram) &&
+          Buffer.from(instruction.data).equals(yieldInstructionData)
+        ),
       logs,
       before: poolAmount(response.meta.preTokenBalances),
       after: poolAmount(response.meta.postTokenBalances)

@@ -402,17 +402,64 @@ describe("EthereumSyndicationTool", () => {
       /** A runner whose provider answers `getLogs` with `logs`, recording each filter. */
       function loggingRunner(
         logs: ReadonlyArray<ethers.Log>,
-        filters: ethers.Filter[] = []
+        filters: ethers.Filter[] = [],
+        receiptLogs: ReadonlyArray<ethers.Log> = [transferLog()],
+        status = 1
       ): ethers.ContractRunner {
-        return {
-          provider: {
-            getLogs: async (filter: ethers.Filter) => {
-              filters.push(filter)
-              return logs
-            }
-          }
-        } as unknown as ethers.ContractRunner
+        const provider = {
+          getLogs: async (filter: ethers.Filter) => {
+            filters.push(filter)
+            return logs.map(log => new ethers.Log(log, provider as unknown as ethers.Provider))
+          },
+          getTransactionReceipt: async () => ({ status, blockHash: ethers.ZeroHash, logs: receiptLogs })
+        }
+        return { provider } as unknown as ethers.ContractRunner
       }
+
+      /** A real ABI-encoded token transfer, independent of the pool event. */
+      function transferLog(
+        from = PoolAddress,
+        to = holder,
+        value = NetReturn * 10n ** 9n,
+        address = LiqEthAddress
+      ): ethers.Log {
+        const { data, topics } = liqEthInterface.encodeEventLog(
+          EthereumSyndicationTool.LiqEthEvent.Transfer, [from, to, value]
+        )
+        return new ethers.Log({
+          address: ethers.getAddress(address), data, topics,
+          blockHash: ethers.ZeroHash, blockNumber: 120,
+          transactionHash: ethers.ZeroHash, transactionIndex: 1, index: 0,
+          removed: false
+        }, null)
+      }
+
+      it("verifies a transfer in a later transaction of a shared block", async () => {
+        const payment = await EthereumSyndicationTool.readDesyndicationPayment(
+          context(loggingRunner([desyndicatedLog(7n, 120, 3)])), 7n
+        )
+        expect(payment.transactionIndex).toBe(3)
+        expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
+      })
+
+      it.each([
+        ["missing", []],
+        ["duplicate", [transferLog(), transferLog()]],
+        ["wrong sender", [transferLog(holder)]],
+        ["wrong recipient", [transferLog(PoolAddress, PoolAddress)]],
+        ["wrong amount", [transferLog(PoolAddress, holder, 1n)]],
+        ["wrong token", [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n, PoolAddress)]]
+      ])("refuses a %s receipt transfer", async (_label, receiptLogs) => {
+        await expect(EthereumSyndicationTool.readDesyndicationPayment(
+          context(loggingRunner([desyndicatedLog(7n, 120, 1)], [], receiptLogs)), 7n
+        )).rejects.toThrow(/expected exactly one matching liqETH transfer/)
+      })
+
+      it("refuses an unsuccessful payment receipt", async () => {
+        await expect(EthereumSyndicationTool.readDesyndicationPayment(
+          context(loggingRunner([desyndicatedLog(7n, 120, 1)], [], [transferLog()], 0)), 7n
+        )).rejects.toThrow(/no successful receipt/)
+      })
 
       it("returns the one payment for the request, scanning the pool from genesis", async () => {
         const filters: ethers.Filter[] = []

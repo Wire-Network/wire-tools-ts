@@ -145,6 +145,11 @@ export namespace EthereumSyndicationTool {
     Desyndicated = "Desyndicated"
   }
 
+  /** ERC-20 events used to verify a pool payment's receipt. */
+  export enum LiqEthEvent {
+    Transfer = "Transfer"
+  }
+
   /** The first block an event scan covers — the whole cluster chain. */
   export const EventScanFromBlock = 0
 
@@ -162,7 +167,7 @@ export namespace EthereumSyndicationTool {
 
   /**
    * One `SyndicationPool.Desyndicated` event — a depot release the pool PAID,
-   * with the block position that pins the pre-payment state.
+   * verified against the liqETH transfer in its successful receipt.
    */
   export interface DesyndicationPayment {
     /** The payout address. */
@@ -611,12 +616,13 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The ONE `Desyndicated` event the pool emitted for `requestId`. A READ.
+   * The ONE `Desyndicated` event for `requestId`, backed by exactly one matching
+   * liqETH transfer in its successful receipt. A READ, independent of block position.
    *
    * @param ctx - The build context.
    * @param requestId - The depot request id.
    * @returns The payment and its block position.
-   * @throws If the pool paid `requestId` zero times or more than once.
+   * @throws If the payment or its matching token transfer is missing or duplicated.
    */
   export async function readDesyndicationPayment<C extends ClusterBuildContext>(
     ctx: C,
@@ -643,6 +649,7 @@ export namespace EthereumSyndicationTool {
         `${requestId}, found ${payments.length}`
     )
     const [payment] = payments
+    await assertDesyndicationTransfer(ctx, pool, payment)
     return {
       recipient: payment.args.recipient,
       nativeAmount: BigInt(payment.args.nativeAmount),
@@ -651,6 +658,40 @@ export namespace EthereumSyndicationTool {
       blockNumber: payment.blockNumber,
       transactionIndex: payment.transactionIndex
     }
+  }
+
+  /** Verify the pool's payment against the actual token transfer in its receipt. */
+  async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
+    ctx: C,
+    pool: ReturnType<typeof loadSyndicationPool>,
+    payment: ethers.EventLog
+  ): Promise<void> {
+    const receipt = await payment.getTransactionReceipt()
+    Assert.ok(
+      receipt?.status,
+      `EthereumSyndicationTool: payment ${payment.transactionHash} has no successful receipt`
+    )
+    Assert.strictEqual(receipt.blockHash, payment.blockHash)
+    const token = loadLiqEthToken(ctx, ctx.ethereum.provider),
+      tokenAddress = ethers.getAddress(await token.getAddress()),
+      poolAddress = ethers.getAddress(await pool.getAddress()),
+      transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
+      transfers = receipt.logs
+        .filter(event =>
+          ethers.getAddress(event.address) === tokenAddress &&
+          event.topics[0] === transferTopic
+        )
+        .map(event => token.interface.parseLog(event))
+        .filter(event =>
+          ethers.getAddress(event.args.from) === poolAddress &&
+          ethers.getAddress(event.args.to) === ethers.getAddress(payment.args.recipient) &&
+          BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+        )
+    Assert.strictEqual(
+      transfers.length, 1,
+      `EthereumSyndicationTool: expected exactly one matching liqETH transfer for request ` +
+        `${payment.args.requestId}, found ${transfers.length}`
+    )
   }
 
   /**

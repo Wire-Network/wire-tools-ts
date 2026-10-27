@@ -41,13 +41,13 @@ for (const fault of ["none", "clear", "reason"]) {
 }
 
 /** A pool custody change as `readSyndicationCustody` reports it. */
-function custodyChange(signature, instructions, before, after) {
-  return { signature, slot: 1, instructions, logs: [], before, after }
+function custodyChange(signature, instructions, before, after, onlyYieldClaims = false) {
+  return { signature, slot: 1, instructions, logs: [], before, after, onlyYieldClaims }
 }
 
 for (const fault of [
   "none", "clear", "missing-sequence", "wrong-sequence", "wrong-token",
-  "syndication-snapshot", "foreign-custody-change", "broken-custody-chain", "live-custody-drift"
+  "syndication-snapshot", "foreign-custody-change", "mixed-custody-change", "broken-custody-chain", "live-custody-drift"
 ]) {
   test(`automatic pull identifies the custody incident: ${fault}`, async () => {
     const ctx = {
@@ -68,8 +68,11 @@ for (const fault of [
     // The shortfall syndication leaves 1000 in the pool; the per-epoch
     // report_liq_yield crank then claims +1, so the live balance is 1001.
     const yieldClaim = custodyChange(
-      "yield", [SolanaLiqSyndicationTool.ReportLiqYieldInstructionName],
-      fault === "broken-custody-chain" ? 999n : 1000n, 1001n
+      "yield", fault === "mixed-custody-change"
+        ? [SolanaLiqSyndicationTool.ReportLiqYieldInstructionName, "DonateToPool"]
+        : [SolanaLiqSyndicationTool.ReportLiqYieldInstructionName],
+      fault === "broken-custody-chain" ? 999n : 1000n, 1001n,
+      fault !== "mixed-custody-change"
     )
     mock.method(SolanaLiqSyndicationTool, "readSyndicationCustody", async (_ctx, sequence) => {
       Assert.strictEqual(sequence, 7n)
