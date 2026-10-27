@@ -18,6 +18,7 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { WireLcoImportTool } from "../../tools/wire/WireLcoImportTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { formatWireAsset } from "../../tools/wire/WireUserTool.js"
+import { assetUnits } from "../../utils/assetUtils.js"
 import { eachSeries } from "../../utils/asyncUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -712,7 +713,7 @@ export namespace LcoImportSteps {
           SysioDclaimChainkind
         ),
         nativeAddress: row.native_pubkey,
-        amount: WireSyndicationTool.assetUnits(row.balance)
+        amount: assetUnits(row.balance)
       }))
     Assert.deepStrictEqual(
       sortClaims(imported),

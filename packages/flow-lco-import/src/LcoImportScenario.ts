@@ -15,6 +15,7 @@ import {
   WireLcoImportTool,
   WireSyndicationTool,
   eachSeries,
+  assetUnits,
   formatWireAsset,
   verifyStep,
   type ClusterBuild,
@@ -141,7 +142,7 @@ async function readUnmappedClaims(
         ),
         row.native_pubkey
       ),
-      WireSyndicationTool.assetUnits(row.balance)
+      assetUnits(row.balance)
     ])
   )
 }
@@ -156,7 +157,7 @@ async function readPendingClaims(
   return new Map(
     rows.map(row => [
       row.wire_account,
-      WireSyndicationTool.assetUnits(row.balance)
+      assetUnits(row.balance)
     ])
   )
 }
@@ -299,8 +300,8 @@ export class LcoImportScenario extends FlowScenario {
               const stat = await readPool(ctx, pool.pairSymbol)
               Assert.deepStrictEqual(
                 [
-                  WireSyndicationTool.assetUnits(stat.pool1.quantity),
-                  WireSyndicationTool.assetUnits(stat.pool2.quantity),
+                  assetUnits(stat.pool1.quantity),
+                  assetUnits(stat.pool2.quantity),
                   stat.fee,
                   stat.yield_leg?.sym
                 ],
@@ -491,8 +492,8 @@ export class LcoImportScenario extends FlowScenario {
                 SolanaStaker.account,
                 pool.tokenCode
               )) - positionOf(plan, SolanaStaker),
-            poolLiq = WireSyndicationTool.assetUnits(stat.pool1.quantity),
-            poolWire = WireSyndicationTool.assetUnits(stat.pool2.quantity)
+            poolLiq = assetUnits(stat.pool1.quantity),
+            poolWire = assetUnits(stat.pool2.quantity)
           Assert.strictEqual(
             await ctx.wire.getWireBalance(SolanaStaker.account),
             claimOf(plan, SolanaStaker) - Constants.TradeWireAmount,
