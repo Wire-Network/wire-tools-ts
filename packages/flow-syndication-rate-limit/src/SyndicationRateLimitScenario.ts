@@ -2,6 +2,7 @@ import Assert from "node:assert"
 
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  assetUnits,
   ClusterBuildPhase,
   ProtocolTiming,
   Report,
@@ -406,7 +407,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               ctx,
               Constants.UserA.account
             ),
-            supply: WireSyndicationTool.assetUnits(
+            supply: assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -442,7 +443,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             before.balance
           )
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(
+            assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -507,7 +508,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             before.balance - Constants.DesyndicationAmount
           )
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(
+            assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,

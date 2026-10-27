@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "test:unit": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.cjs --runInBand"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",

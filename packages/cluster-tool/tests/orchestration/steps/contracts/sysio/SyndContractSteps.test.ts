@@ -1,12 +1,13 @@
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { assetUnits } from "@wireio/cluster-tool/utils"
 import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 
 /** Fee computed from the live-row fixture used by the runner test. */
 function syndicationScenarioFee(quantity: string): string {
-  return WireSyndicationTool.feeOf(WireSyndicationTool.assetUnits(quantity), 5, 100_000n).toString()
+  return WireSyndicationTool.feeOf(assetUnits(quantity), 5, 100_000n).toString()
 }
 
 const { SysioContractName } = SysioContracts

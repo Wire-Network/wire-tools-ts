@@ -15,6 +15,7 @@ import {
   WireLcoImportTool,
   WireSyndicationTool
 } from "@wireio/cluster-tool/tools/wire"
+import { assetUnits } from "@wireio/cluster-tool/utils"
 import { BootstrapPlatformConfig, ChainKind } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { ethers } from "ethers"
@@ -476,7 +477,7 @@ describe("LcoImportSteps", () => {
         const [first, ...rest] = plannedRows(),
           raised = {
             ...first,
-            balance: formatWireAsset(WireSyndicationTool.assetUnits(first.balance) + 1n)
+            balance: formatWireAsset(assetUnits(first.balance) + 1n)
           }
         await expect(
           LcoImportSteps.runReconcileClaims(

@@ -15,8 +15,10 @@ import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
 import {
   AWSAccountName,
+  EthereumReadBlockTag,
   NodeopReadMode,
-  SignatureProviderType
+  SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig
 } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
@@ -87,6 +89,7 @@ const artifacts: OperatorDaemonArtifacts = {
 const network: OperatorDaemonTool.OperatorDaemonNetwork = {
   ethereumRpcUrl: "http://127.0.0.1:8545",
   ethereumChainId: 31_337,
+  ethereumRead: createUnsetEthereumReadConfirmationConfig(),
   solanaRpcUrl: "http://127.0.0.1:8899",
   debuggingServerUrl: "http://127.0.0.1:9901",
   debuggingServerEnabled: true
@@ -218,6 +221,18 @@ describe("OperatorDaemonTool", () => {
           fixtureConfig({ externalOutposts: externalOutposts() })
         ).ethereumChainId
       ).toBe(ExternalChainId)
+    })
+
+    it("carries the cluster's Ethereum read confirmation", () => {
+      const ethereumRead = {
+        blockTag: EthereumReadBlockTag.latest,
+        confirmations: 20,
+        maxFinalityLagSec: null
+      }
+      expect(
+        OperatorDaemonTool.networkFromConfig(fixtureConfig({ ethereumRead }))
+          .ethereumRead
+      ).toEqual(ethereumRead)
     })
 
     it("carries the resolved endpoints into the daemon argv (batch)", () => {
@@ -388,6 +403,35 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
         SolanaOutpostProgramTool.ProgramName
       ])
+    })
+
+    it("renders no Ethereum read flag when the cluster sets none, leaving nodeop's defaults", () => {
+      expect(
+        args.filter(arg => arg.startsWith("--outpost-ethereum-read-"))
+      ).toEqual([])
+    })
+
+    it("renders each set Ethereum read member beside the Ethereum client", () => {
+      const readArgs = OperatorDaemonTool.batchOperatorArgs(
+        operator,
+        artifacts,
+        {
+          ...network,
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.safe,
+            confirmations: null,
+            maxFinalityLagSec: null
+          }
+        },
+        keySourceFor,
+        OperatorDaemonTool.NoBatchUnderwriting
+      )
+      expect(valuesOf(readArgs, "--outpost-ethereum-read-block-tag")).toEqual([
+        EthereumReadBlockTag.safe
+      ])
+      expect(valuesOf(readArgs, "--outpost-ethereum-read-confirmations")).toEqual(
+        []
+      )
     })
 
     it("declares the client ids as the chain codes", () => {

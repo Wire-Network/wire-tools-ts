@@ -9,6 +9,7 @@ import {
 } from "@wireio/opp-typescript-models"
 import { Asset, SysioContracts } from "@wireio/sdk-core"
 import {
+  assetUnits,
   ClusterBuildPhase,
   Constants as HarnessConstants,
   FlowScenario,
@@ -121,7 +122,7 @@ async function readPendingYield(ctx: ClusterBuildContext): Promise<bigint> {
     })
   return rows.length === 0
     ? 0n
-    : WireSyndicationTool.assetUnits(rows[0].quantity)
+    : assetUnits(rows[0].quantity)
 }
 
 /** The shadow's circulating supply (base units). */
@@ -139,7 +140,7 @@ async function readShadowSupply(ctx: ClusterBuildContext): Promise<bigint> {
     rows.length === 1,
     `sysio.liq::stat has no ${Constants.LIQTokenCodename} row — the shadow was never opened`
   )
-  return WireSyndicationTool.assetUnits(rows[0].supply)
+  return assetUnits(rows[0].supply)
 }
 
 /** The user's WIRE balance on `sysio.token` (base units; `0n` before any transfer reaches them). */
@@ -153,7 +154,7 @@ async function readWireBalance(ctx: ClusterBuildContext): Promise<bigint> {
   const row = rows.find(
     account => Asset.from(account.balance).symbol.name === WireSymbolCode
   )
-  return row == null ? 0n : WireSyndicationTool.assetUnits(row.balance)
+  return row == null ? 0n : assetUnits(row.balance)
 }
 
 /** The symbol code of the WIRE token the yield is paid in. */
@@ -169,7 +170,7 @@ function owedWire(
   index: bigint
 ): bigint {
   const accrued =
-    (WireSyndicationTool.assetUnits(holding.balance) *
+    (assetUnits(holding.balance) *
       (index - BigInt(holding.index_checkpoint))) /
     Constants.YieldIndexScale
   return BigInt(holding.owed_wire) + accrued
@@ -343,7 +344,7 @@ export class LIQYieldScenario extends FlowScenario {
           )
           Assert.ok(holding != null, "bonder import was not delivered")
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(holding.balance),
+            assetUnits(holding.balance),
             BigInt(Steps.registry.MockSyndicationImportAmount)
           )
         }
@@ -532,7 +533,7 @@ export class LIQYieldScenario extends FlowScenario {
             "createlink's sweep opened no shadow row for the user"
           )
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(holding.balance),
+            assetUnits(holding.balance),
             Constants.SyndicateAmount
           )
           Assert.strictEqual(await readParkedShadow(ctx), 0n)
@@ -821,7 +822,7 @@ export class LIQYieldScenario extends FlowScenario {
         async ctx => {
           const holding = await readHolding(ctx)
           Assert.strictEqual(
-            WireSyndicationTool.assetUnits(holding.balance),
+            assetUnits(holding.balance),
             0n
           )
         }
@@ -932,7 +933,7 @@ async function readReservoirQueued(ctx: ClusterBuildContext): Promise<bigint> {
     )
     .reduce(
       (sum, reservoir) =>
-        sum + WireSyndicationTool.assetUnits(reservoir.balance.quantity),
+        sum + assetUnits(reservoir.balance.quantity),
       0n
     )
 }

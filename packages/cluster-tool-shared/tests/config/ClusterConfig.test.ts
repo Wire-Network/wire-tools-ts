@@ -6,9 +6,13 @@ import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
+  EthereumReadBlockTag,
+  MaximumUint32,
   SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
-  type ClusterConfig
+  type ClusterConfig,
+  type EthereumReadConfirmationConfig
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { Level } from "@wireio/shared"
@@ -99,6 +103,7 @@ describe("ClusterConfig shape", () => {
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
     queryEngine: createUnsetQueryEngineConfig(),
+    ethereumRead: createUnsetEthereumReadConfirmationConfig(),
     solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
   }
 
@@ -240,6 +245,54 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("loads a config without ethereumRead as all-unset, leaving nodeop's read defaults in force", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.ethereumRead
+    expect(
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).ethereumRead
+    ).toEqual(createUnsetEthereumReadConfirmationConfig())
+  })
+
+  it("round-trips a set ethereumRead", () => {
+    const tuned: ClusterConfig = {
+        ...config,
+        ethereumRead: {
+          blockTag: EthereumReadBlockTag.safe,
+          confirmations: null,
+          maxFinalityLagSec: null
+        }
+      },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(tuned)
+      )
+    expect(rehydrated.ethereumRead.blockTag).toBe(EthereumReadBlockTag.safe)
+    expect(rehydrated).toEqual(tuned)
+  })
+
+  it("refuses to load a persisted ethereumRead nodeop would refuse: a depth beside a non-latest tag, or past uint32", () => {
+    const persisted = JSON.parse(ClusterConfigSchemaCodec.serialize(config)),
+      withEthereumRead = (ethereumRead: EthereumReadConfirmationConfig) =>
+        JSON.stringify({ ...persisted, ethereumRead })
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(
+        withEthereumRead({
+          blockTag: EthereumReadBlockTag.safe,
+          confirmations: 12,
+          maxFinalityLagSec: null
+        })
+      )
+    ).toThrow(/applies only to the latest block tag/)
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(
+        withEthereumRead({
+          blockTag: null,
+          confirmations: null,
+          maxFinalityLagSec: MaximumUint32 + 1
+        })
+      )
+    ).toThrow(/maxFinalityLagSec/)
   })
 
   it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {

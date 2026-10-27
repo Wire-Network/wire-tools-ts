@@ -8,6 +8,10 @@ import { BatchOperatorUnderwritingConfigSchema } from "./BatchOperatorUnderwriti
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
+import {
+  EthereumReadConfirmationConfigSchema,
+  createUnsetEthereumReadConfirmationConfig
+} from "./EthereumReadConfirmationConfig.js"
 import { LcoImportConfigSchema } from "./LcoImportConfig.js"
 import { QueryEngineConfigSchema } from "./QueryEngineConfig.js"
 
@@ -325,6 +329,16 @@ export const ClusterConfigSchema = z.object({
    * only when set. Cluster-wide, like `chainStateDbSizeMb`.
    */
   queryEngine: QueryEngineConfigSchema,
+  /**
+   * The read confirmation every operator daemon's Ethereum client reads what the
+   * outpost emitted at (`--ethereum-read-*`), each member rendered only when set.
+   * Cluster-wide, so every operator the harness starts reads alike.
+   * Schema-defaulted to all-unset: a config that sets nothing leaves nodeop's
+   * defaults in force.
+   */
+  ethereumRead: EthereumReadConfirmationConfigSchema.default(
+    createUnsetEthereumReadConfirmationConfig
+  ),
   /**
    * `solana-test-validator --slots-per-epoch` for this cluster, on every start
    * path — see {@link DefaultSolanaSlotsPerEpoch} for why the agave default is

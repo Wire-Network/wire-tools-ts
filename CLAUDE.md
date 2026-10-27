@@ -96,7 +96,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `EthereumReadConfirmationConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
 | `flow-*` (15 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -339,7 +339,12 @@ kind, and never `producer_api_plugin`), and
 `query-timeout-ms` defaults to 30000 (`QueryEngineConfigProvider.DefaultTimeoutMs`
 — the plugin's own 1000 ms would reject every client `timeout_ms` above it) and
 is always rendered, every other member only when set, so nodeop and the plugin
-own those defaults; any member the caller sets requires `--api-count` ≥ 1); `package` writes
+own those defaults; any member the caller sets requires `--api-count` ≥ 1),
+`--ethereum-read-block-tag <finalized|safe|latest>` / `--ethereum-read-confirmations <n>` /
+`--ethereum-read-max-finality-lag-sec <s>` (the operator daemons' Ethereum read
+confirmation, persisted as `ClusterConfig.ethereumRead`; each member rendered as
+nodeop's `--outpost-ethereum-read-*` only when set, so nodeop owns the defaults:
+`latest`, 12 confirmations, 1152 s); `package` writes
 one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
 a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
 other, loosely coupled).
@@ -424,7 +429,13 @@ daemon args (`resolveOperatorDaemonArgs`).
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
 `setconfig` and the kicker are registry setup a real depot performs too, so the
-bootstrap does those unconditionally. A flow needing the first bonder sets
+bootstrap does those unconditionally (`Kicker`: privileged `sysio.kicker` deploy, a
+read-back of its privilege and `setconfig` with a 60 s interval, 86,400 s TWAP window and 5,000 bps spot guard). `addpool` needs a token's yield pool, so
+`KickerPools` runs only with `enableMockLiqPools`; at the mock pools' supply no kick
+meets the default one-WIRE `min_gift`, so a flow that needs a payment lowers it with
+`sysio.kicker::setpool` and restores it. Every pool also needs a positive daily cap
+from its minimum through 1,000 WIRE. A payment requires a mature TWAP observation
+window, and catch-up is bounded to 72 hours. A flow needing the first bonder sets
 `enableMockSyndicationImport: true` in `Scenario.defaults`, never `plan()`:
 `importsynd` is epoch-zero only. Reload the unlinked bonder with
 `Steps.registry.readMockSyndicationBonder(ctx)` (durable label

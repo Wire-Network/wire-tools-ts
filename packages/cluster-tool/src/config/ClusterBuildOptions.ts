@@ -7,6 +7,7 @@ import type {
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
   CollateralRequirement,
+  EthereumReadConfirmationOptions,
   LcoImportOptions,
   QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
@@ -105,6 +106,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  /**
+   * The read confirmation every operator daemon's Ethereum client reads what the
+   * outpost emitted at (`--ethereum-read-block-tag`, `--ethereum-read-confirmations`,
+   * `--ethereum-read-max-finality-lag-sec`): every member optional; an omitted one
+   * leaves nodeop's default in force (`latest`, 12 confirmations, 1152 s). A depth
+   * or lag beside a tag other than `latest` is rejected.
+   */
+  ethereumRead?: EthereumReadConfirmationOptions
   // solana-test-validator tuning
   /**
    * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
