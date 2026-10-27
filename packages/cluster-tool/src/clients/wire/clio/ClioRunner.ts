@@ -5,7 +5,7 @@ import { asOption } from "@3fv/prelude-ts"
 import { negate } from "lodash"
 import { match, P } from "ts-pattern"
 
-import { getLogger, getValue } from "@wireio/shared"
+import { getLogger, getValue, isString } from "@wireio/shared"
 
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
@@ -242,10 +242,9 @@ export namespace ClioRunner {
       candidate != null &&
       typeof candidate === "object" &&
       typeof candidate.message === "string" &&
-      !(
-        typeof candidate.stdout === "string" &&
-        JsonResponsePrefixPattern.test(candidate.stdout)
-      ) &&
+      (candidate.stdout == null ||
+        (isString(candidate.stdout) &&
+          !JsonResponsePrefixPattern.test(candidate.stdout))) &&
       TransportFailurePattern.test(candidate.message)
     )
   }
@@ -262,6 +261,7 @@ export namespace ClioRunner {
       candidate == null ||
       typeof candidate !== "object" ||
       typeof candidate.message !== "string" ||
+      (candidate.stdout != null && !isString(candidate.stdout)) ||
       candidate.killed === true ||
       candidate.signal != null
     ) {

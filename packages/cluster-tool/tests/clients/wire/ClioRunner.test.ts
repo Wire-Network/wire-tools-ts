@@ -247,6 +247,18 @@ describe("ClioRunner", () => {
       )
     })
 
+    it.each([Buffer.from(JSON.stringify(TransactionRejection)), {}, 1])(
+      "does not coerce non-string stdout into delivery evidence: %p",
+      stdout => {
+        const error = {
+          message: "Error 3050003: Connection refused",
+          stdout
+        }
+        expect(ClioRunner.isTransportFailure(error)).toBe(false)
+        expect(ClioRunner.isProvenUnapplied(error)).toBe(false)
+      }
+    )
+
     it.each([3000000, 3999999])(
       "recognizes chain exception boundary %s",
       code => {
