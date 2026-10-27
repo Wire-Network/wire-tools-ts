@@ -341,6 +341,31 @@ Rules of the road (binding for sessions/automation; see
   collision-proof via `BindConfig`, so parallelism is bounded only by host
   resources.
 
+### Service ports and automatic client ports
+
+`BindConfigProvider` selects automatic service ports outside the host's actual
+automatic client-port ranges, including both ports of the Solana RPC/PubSub pair
+and every port of its dynamic window. Fallback services use available ports from
+10001 through 65535 with a randomized starting point, excluding those ranges,
+the reserved Agave band, and live registry claims. Every candidate still passes
+the existing IPv4/IPv6 and transport-specific availability checks.
+
+Host observations are read-only: Linux uses
+`/proc/sys/net/ipv4/ip_local_port_range`; macOS reads the ordinary, high and low
+`net.inet.ip.portrange` bounds; Windows queries IPv4/IPv6 TCP/UDP ranges with
+`netsh`. Unreadable or unsupported settings and exhausted safe pools fail
+automatic allocation. A fully pinned plan does not require these observations.
+Keep these host settings stable while clusters are running. Explicit
+pinned ports/ranges retain their availability-checked behavior; an operator who
+pins inside an automatic client range accepts the source-port collision risk.
+Ports resolved on one machine must be reviewed against the destination machine's
+settings before external deployment.
+
+During Solana startup the harness observes `validator.log` every 100 ms and
+records the first bind error's assigned-port socket states/owners with
+`ss -tuapn` where available. That snapshot is retained in startup diagnostics
+even if the conflicting client exits before readiness times out.
+
 ## Launching a persistent test cluster
 
 For interactive work — poking the chains with `clio` or the debugging TUI —

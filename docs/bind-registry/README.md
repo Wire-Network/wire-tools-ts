@@ -169,11 +169,15 @@ IP literals, or their ports are checked and registered here.
   sockets in this range whatever their flags say. Node seeds every exclusion set with it, so it is
   never handed out by any path.
 
-Node does not exclude the kernel's ephemeral range. Its `findAvailable` and `resolve` can fall
-back to a port the kernel chose, in that range. A client that picks its own ports should still
-avoid `/proc/sys/net/ipv4/ip_local_port_range`, because any socket bound to port 0 on the host
-can receive one of those ports while the client is not yet listening on it. That is client
-policy, not part of the protocol.
+Node's automatic service allocation excludes the host's observed automatic client-port ranges,
+including the implicit Solana RPC WebSocket companion and validator dynamic windows. It fails
+closed if those ranges cannot be read or the safe pool is exhausted, rather than accepting a
+kernel-assigned fallback. Explicit caller pins and persisted bindings are still honored subject
+to availability and registry checks; they do not promise automatic client-port isolation.
+A client that picks its own ports should likewise avoid the host's automatic client-port ranges
+(`/proc/sys/net/ipv4/ip_local_port_range` on Linux), because any socket bound to port 0 on the
+host can receive one of those ports while the client is not yet listening on it. That is client
+policy, not a change to the registration protocol.
 
 Before writing a port into its file, a client should check that the port binds: TCP on the IPv4
 and IPv6 wildcards, and UDP as well for a port a UDP socket will use. That is what Node does.
