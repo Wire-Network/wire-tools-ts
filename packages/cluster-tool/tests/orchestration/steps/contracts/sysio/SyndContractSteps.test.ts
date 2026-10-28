@@ -49,7 +49,8 @@ describe("Steps.contracts.sysio.synd", () => {
       bounty: 0,
       challenge_extra: 1_000_000_000,
       min_desyndicate: 50_000_000,
-      desynd_fee_flat: 100_000
+      desynd_fee_flat: 100_000,
+      custody_shortfall_bps: 0
     }
     const step = Steps.contracts.sysio.synd.planSetconfig(
       Report.Actor.Sysio,
@@ -79,7 +80,8 @@ describe("Steps.contracts.sysio.synd", () => {
       bounty: 0,
       challenge_extra: 1_000_000_000,
       min_desyndicate: 50_000_000,
-      desynd_fee_flat: 100_000
+      desynd_fee_flat: 100_000,
+      custody_shortfall_bps: 0
     }
     await Steps.contracts.sysio.synd.runSetconfig(
       ctx,
@@ -363,7 +365,8 @@ describe("Steps.contracts.sysio.synd", () => {
       bounty: 0,
       challenge_extra: 1_000_000_000,
       min_desyndicate: 50_000_000,
-      desynd_fee_flat: 100_000
+      desynd_fee_flat: 100_000,
+      custody_shortfall_bps: 0
     }
     controller.abort()
     await expect(
