@@ -362,10 +362,7 @@ describe("decoded syndication intake", () => {
       burned: 0,
       outcome: SysioContracts.SysioSyndRequestOutcome.PENDING,
       forfeit: 0,
-      bounty_returned: 0,
-      hold_share: 0,
-      hold_beneficiary: "",
-      share_pending: false
+      bounty_returned: 0
     }
   }
 
