@@ -20,7 +20,11 @@ export class EthereumClient {
     // Recording provider: every tx submission / anvil admin call made through
     // this client (or any signer/contract bound to it) lands in the running
     // step's `Report.StepResult.extra`.
-    this.provider = new RecordingJsonRpcProvider(rpcUrl)
+    // Local chains can mine between identical requests in the same event loop.
+    // Even a rejected gas estimate must observe the new state after a receipt.
+    this.provider = new RecordingJsonRpcProvider(rpcUrl, undefined, {
+      cacheTimeout: EthereumClient.ProviderCacheTimeoutMs
+    })
     this.wallet = new EthereumWallet(
       this.provider,
       privateKey ?? EthereumClient.DefaultPrivateKey
@@ -95,6 +99,8 @@ export class EthereumClient {
 }
 
 export namespace EthereumClient {
+  /** Disable ethers' request cache so local mined state is visible immediately. */
+  export const ProviderCacheTimeoutMs = -1
   /** anvil account #0 private key — deterministic; only used when none is supplied. */
   export const DefaultPrivateKey =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
