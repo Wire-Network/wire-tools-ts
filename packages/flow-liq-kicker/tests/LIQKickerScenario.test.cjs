@@ -3,7 +3,8 @@ const Fs = require("node:fs")
 const Os = require("node:os")
 const Path = require("node:path")
 const { cloneDeep } = require("lodash")
-const { ClusterBuild, OutputStore, StepExtraRecorder } = require("@wireio/cluster-tool")
+const { Deferred, Level } = require("@wireio/shared")
+const { ClusterBuild, LogFileAppender, OutputStore, ProcessManager, StepExtraRecorder } = require("@wireio/cluster-tool")
 const { LIQKickerScenario, kickReceipt, readWireHoldings, expectedGiftAtBlock, cumulativeAtBlock } = require("../lib/LIQKickerScenario.js")
 
 const LastKickBefore = "2026-10-10T12:00:00.000"
@@ -93,6 +94,12 @@ async function runManualVerifies(holder, receipt) {
   await run(byName("last-kick-advanced"))
   await run(byName("gift-reaches-holders"))
 }
+
+test("the flow requests successful transaction traces without enabling global debug", () => {
+  Assert.deepEqual(new LIQKickerScenario().defaults.logging, {
+    levels: { transactionTraceSuccess: Level.debug }
+  })
+})
 
 test("planning never spawns nodeop; the Report carries a runtime capability probe", async () => {
   const { ctx, build } = planned("/does/not/exist"),
@@ -420,16 +427,18 @@ for (const wait of [LIQKickerScenario.runWaitWindow, LIQKickerScenario.runWaitCh
   await Assert.rejects(wait(ctx, controller.signal), /abort/i)
 })
 
-test("one irreversible crank payment advances a partial clock and every ledger by one unit", async () => {
+for (const format of Object.values(LogFileAppender.Format)) test(`one irreversible crank payment advances a partial clock and every ledger by one unit (${format})`, async () => {
   const directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "kicker-crank-")), logs = Path.join(directory, "logs")
   Fs.mkdirSync(logs)
   const trace = { id: "crank-id", block_time: LastKickAfter, action_traces: [
     { receiver: "sysio.kicker", act: { account: "sysio.kicker", name: "kick", data: { sym: "LIQETH" } } },
     { receiver: "sysio.token", act: { account: "sysio.token", name: "transfer", data: { from: "sysio", to: "sysio.kicker", quantity: "0.000000001 WIRE" } } }
   ] }
+  // ProcessManager's heartbeat aggregate is raw text even when structured logs use JSONL.
   Fs.writeFileSync(Path.join(logs, "cluster_test.log"), `[TRX_TRACE] ${JSON.stringify(trace)}\n`)
   const state = cloneDeep(before), { ctx, holder } = validationContext(state)
   ctx.config.clusterPath = directory
+  ctx.config.logging = { ...new LIQKickerScenario().defaults.logging, fileFormat: format }
   ctx.outputs.set(LIQKickerScenario.CapabilityKey, true)
   ctx.outputs.set(LIQKickerScenario.CrankBaselineKey, {
     config: { ...before.config, budget_remaining: "1" }, pool: before.pool,
@@ -458,6 +467,51 @@ test("one irreversible crank payment advances a partial clock and every ledger b
     )
   }
   finally { Fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test("the actual process aggregate writer feeds the text trace parser", async () => {
+  const directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "kicker-writer-")),
+    trace = { id: "payment", action_traces: [{ act: { account: "sysio.kicker" } }] },
+    streams = [], createWriteStream = Fs.createWriteStream,
+    spy = jest.spyOn(Fs, "createWriteStream").mockImplementation((...args) => {
+      const stream = createWriteStream(...args)
+      streams.push(stream)
+      return stream
+    })
+  try {
+    ProcessManager.setClusterPath(directory).get().writeRaw("producer", `[TRX_TRACE] ${JSON.stringify(trace)}`)
+    await Promise.all(streams.map(stream => Deferred.useCallback(deferred => stream.end(() => deferred.resolve())).promise))
+    const [file] = Fs.readdirSync(Path.join(directory, "logs")),
+      text = Fs.readFileSync(Path.join(directory, "logs", file), "utf8")
+    Assert.deepEqual(LIQKickerScenario.parseCrankTraces(text, LogFileAppender.Format.text), [trace])
+  } finally {
+    spy.mockRestore()
+    streams.forEach(stream => stream.destroy())
+    Fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("crank traces decode complete JSONL messages and arguments but never an incomplete record", () => {
+  const trace = { id: "crank-id", action_traces: [{ act: { account: "sysio.kicker" } }] },
+    message = `[TRX_TRACE] ${JSON.stringify(trace)}`,
+    records = [
+      JSON.stringify({ message }),
+      JSON.stringify({ message: "node_01: %s", args: [message, 7, { unrelated: true }] })
+    ]
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(records.join("\n") + "\n" + '{"message":', LogFileAppender.Format.jsonl), [trace, trace])
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(message, LogFileAppender.Format.text), [])
+  Assert.throws(() => LIQKickerScenario.parseCrankTraces('{"broken":\n', LogFileAppender.Format.jsonl), /JSON/)
+  Assert.throws(() => LIQKickerScenario.parseCrankTraces('{"message":42}\n', LogFileAppender.Format.jsonl), /Malformed cluster log/)
+})
+
+for (const format of Object.values(LogFileAppender.Format)) test(`crank trace framing preserves escaped payloads and strips console ANSI (${format})`, () => {
+  const trace = { id: "payment", action_traces: [{ act: { account: "sysio.kicker", data: { memo: 'brace } and "quotes"\\n' } } }] },
+    message = `\x1b[33m[TRX_TRACE] ${JSON.stringify(trace)}\x1b[0m`,
+    record = format === LogFileAppender.Format.text ? message : JSON.stringify({ message })
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(record + "\n", format), [trace])
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(record, format), [])
+  const malformed = '[TRX_TRACE] {"id":"bad","sysio.kicker":'
+  Assert.throws(() => LIQKickerScenario.parseCrankTraces((format === LogFileAppender.Format.text ? malformed : JSON.stringify({ message: malformed })) + "\n", format), SyntaxError)
 })
 
 test("the cumulative price at a block extends swap's accumulator at spot, modulo 2^256", () => {

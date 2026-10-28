@@ -38,14 +38,16 @@ export const ClusterConfigReportSchema = z.object({
 /** The resolved report write target — the shape of {@link ClusterConfigReportSchema}. */
 export type ClusterConfigReport = z.infer<typeof ClusterConfigReportSchema>
 
-/** Per-sink log levels (`@wireio/shared`'s `Level` identity string enum). */
+/** Sink levels and an optional targeted nodeop trace level. */
 export const ClusterConfigLoggingLevelsSchema = z.object({
   /** Console sink level. */
   console: z.enum(Level),
   /** File sink level. */
-  file: z.enum(Level)
+  file: z.enum(Level),
+  /** Override only nodeop's full successful-transaction traces. */
+  transactionTraceSuccess: z.enum(Level).optional()
 })
-/** Per-sink log levels — the shape of {@link ClusterConfigLoggingLevelsSchema}. */
+/** Sink and targeted trace levels — the shape of {@link ClusterConfigLoggingLevelsSchema}. */
 export type ClusterConfigLoggingLevels = z.infer<
   typeof ClusterConfigLoggingLevelsSchema
 >

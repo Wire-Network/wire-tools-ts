@@ -100,7 +100,9 @@ const batchOperatorUnderwritingCodec =
   )
 
 /** Validated codec for the flag-less `lcoImport` member (every field optional). */
-const lcoImportCodec = SchemaCodec.create<LcoImportOptions>(LcoImportOptionsSchema)
+const lcoImportCodec = SchemaCodec.create<LcoImportOptions>(
+  LcoImportOptionsSchema
+)
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -421,12 +423,16 @@ function buildBindShape(options: ClusterBuildOptions): OptionShapeObject {
   }
 }
 
-/** The `logging` sub-tree — per-sink levels + the file format (enum-string leaves). */
+/** Sink levels, an opt-in nodeop transaction-trace override and file format. */
 function buildLoggingShape(): OptionShapeObject {
   return {
     levels: {
       console: leaf(Level.info, "console log level"),
-      file: leaf(Level.debug, "file log level")
+      file: leaf(Level.debug, "file log level"),
+      transactionTraceSuccess: optionalChoicesLeaf(
+        Object.values(Level),
+        "nodeop successful transaction trace level (otherwise uses console level)"
+      )
     },
     fileFormat: leaf(
       LogFileAppender.Format.jsonl,

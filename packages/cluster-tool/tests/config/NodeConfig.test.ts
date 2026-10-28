@@ -755,6 +755,27 @@ describe("NodeConfig", () => {
       )
     })
 
+    it("enables only successful transaction traces when explicitly requested", () => {
+      const node = NodeConfig.plan(
+        fixtureConfig({
+          logging: {
+            ...PersistedFixture.logging,
+            levels: {
+              console: Level.info,
+              file: Level.debug,
+              transactionTraceSuccess: Level.debug
+            }
+          }
+        })
+      )[0]
+      const { loggers } = JSON.parse(node.logging.render())
+      loggers.forEach((logger: RenderedLogger) =>
+        expect(logger.level).toBe(
+          logger.name === "transaction_trace_success" ? "debug" : "info"
+        )
+      )
+    })
+
     // The regression pin for the 2026-08-04 log flood: `net_plugin_impl` at
     // `debug` on a 43-identity mesh logs every block send/receive/vote/nack
     // from every node. It was HARDCODED to debug regardless of config, which
@@ -1016,7 +1037,9 @@ describe("NodeConfig — ad-hoc nodes", () => {
   describe("producerPublicationLabel", () => {
     /** The planned producer nodes of `config`, in plan order. */
     function producerNodes(config: typeof cluster): NodeConfig[] {
-      return NodeConfig.plan(config).filter(node => node.role === NodeRole.producer)
+      return NodeConfig.plan(config).filter(
+        node => node.role === NodeRole.producer
+      )
     }
 
     it("is the NODE's name for a planned node's sole hosted producer", () => {
@@ -1031,7 +1054,9 @@ describe("NodeConfig — ad-hoc nodes", () => {
       const [node] = producerNodes(fixtureProducerTopology(1, 2))
       expect(node.producers).toEqual([producerName(0), producerName(1)])
       node.producers.forEach(producer =>
-        expect(NodeConfig.producerPublicationLabel(node, producer)).toBe(producer)
+        expect(NodeConfig.producerPublicationLabel(node, producer)).toBe(
+          producer
+        )
       )
     })
 
@@ -1060,13 +1085,15 @@ describe("NodeConfig — ad-hoc nodes", () => {
         fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod"),
         ports
       )
-      expect(() => NodeConfig.producerPublicationLabel(node, "flowprod")).toThrow(
-        /is not a planned producer node/
-      )
+      expect(() =>
+        NodeConfig.producerPublicationLabel(node, "flowprod")
+      ).toThrow(/is not a planned producer node/)
     })
 
     it("refuses a non-producer node", () => {
-      const bios = NodeConfig.plan(cluster).find(node => node.role === NodeRole.bios)
+      const bios = NodeConfig.plan(cluster).find(
+        node => node.role === NodeRole.bios
+      )
       expect(() =>
         NodeConfig.producerPublicationLabel(bios, NodeConfig.BiosProducer)
       ).toThrow(/is not a planned producer node/)

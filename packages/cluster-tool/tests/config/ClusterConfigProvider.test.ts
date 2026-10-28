@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { Level } from "@wireio/shared"
 import {
   AWSAccountName,
   ClusterDeploymentKind,
@@ -178,7 +179,9 @@ describe("ClusterConfigProvider", () => {
 
     it("is null without an export", () => {
       expect(ClusterConfigProvider.resolveLcoImport({})).toBeNull()
-      expect(ClusterConfigProvider.resolveLcoImport({ lcoImport: {} })).toBeNull()
+      expect(
+        ClusterConfigProvider.resolveLcoImport({ lcoImport: {} })
+      ).toBeNull()
     })
 
     it("resolves each export absolute and leaves every unset value null", () => {
@@ -208,7 +211,9 @@ describe("ClusterConfigProvider", () => {
           solanaBootstrapJsonFile: "/exports/solana.json",
           lcoImport: { ethereum: { nativePriceUsd: "1" } }
         })
-      ).toThrow(/lcoImport\.ethereum is set but ethereumBootstrapJsonFile is not/)
+      ).toThrow(
+        /lcoImport\.ethereum is set but ethereumBootstrapJsonFile is not/
+      )
       expect(() =>
         ClusterConfigProvider.resolveLcoImport({
           lcoImport: { dclaimFundingAccount: "sysio" }
@@ -732,6 +737,29 @@ describe("ClusterConfigProvider", () => {
       expect(DefaultChainStateDbSizeMb).toBe(1_024)
     })
 
+    it("preserves targeted transaction traces without changing other log levels", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        logging: { levels: { transactionTraceSuccess: Level.debug } }
+      })
+      expect(config.logging.levels).toEqual({
+        console: Level.info,
+        file: Level.debug,
+        transactionTraceSuccess: Level.debug
+      })
+      const node = NodeConfig.plan(config)[0],
+        { loggers } = JSON.parse(node.logging.render())
+      expect(loggers).toContainEqual(
+        expect.objectContaining({
+          name: "transaction_trace_success",
+          level: "debug"
+        })
+      )
+      expect(loggers).toContainEqual(
+        expect.objectContaining({ name: "net_plugin_impl", level: "info" })
+      )
+    })
+
     it("lets an explicit chainStateDbSizeMb override win", async () => {
       const config = await ClusterConfigProvider.resolve({
         ...baseOptions(),
@@ -1088,7 +1116,9 @@ describe("ClusterConfigProvider", () => {
     })
 
     /** Base options for a LOCAL-outpost resolve over the sandbox. */
-    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+    function localOptions(
+      extra: ClusterBuildOptions = {}
+    ): ClusterBuildOptions {
       return {
         clusterPath: Path.join(environment.rootPath, "cluster"),
         buildPath: environment.buildPath,
@@ -1103,7 +1133,9 @@ describe("ClusterConfigProvider", () => {
       extra: ClusterBuildOptions = {}
     ): ClusterBuildOptions {
       return localOptions({
-        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        externalOutpostConfig: fixtureExternalOutpostConfig(
+          environment.rootPath
+        ),
         ...extra
       })
     }

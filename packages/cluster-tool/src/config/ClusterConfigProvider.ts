@@ -884,7 +884,10 @@ export namespace ClusterConfigProvider {
     return {
       levels: {
         console: options?.levels?.console ?? Level.info,
-        file: options?.levels?.file ?? Level.debug
+        file: options?.levels?.file ?? Level.debug,
+        ...(options?.levels?.transactionTraceSuccess != null
+          ? { transactionTraceSuccess: options.levels.transactionTraceSuccess }
+          : {})
       },
       fileFormat: options?.fileFormat ?? LogFileAppender.Format.jsonl
     }

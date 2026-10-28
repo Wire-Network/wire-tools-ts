@@ -1,7 +1,10 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import type { Argv } from "yargs"
+
+import { Level } from "@wireio/shared"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import {
@@ -416,12 +419,13 @@ describe("applyClusterBuildOptionsArgs registration", () => {
       choices: Object.values(EthereumReadBlockTag)
     })
     expect(blockTag?.default).toBeUndefined()
-    ;["ethereum-read-confirmations", "ethereum-read-max-finality-lag-sec"].forEach(
-      flag => {
-        expect(options.get(flag)).toMatchObject({ type: "number" })
-        expect(options.get(flag)?.default).toBeUndefined()
-      }
-    )
+    ;[
+      "ethereum-read-confirmations",
+      "ethereum-read-max-finality-lag-sec"
+    ].forEach(flag => {
+      expect(options.get(flag)).toMatchObject({ type: "number" })
+      expect(options.get(flag)?.default).toBeUndefined()
+    })
     expect(
       [...options.keys()].filter(flag => flag.startsWith("ethereum-read-"))
     ).toHaveLength(3)
@@ -698,6 +702,37 @@ describe("register → parse round-trip", () => {
     expect(options.apiCount).toBe(0)
     // nothing seeded, nothing materializes: nodeop / the plugin own every default
     expect(options.queryEngine).toBeUndefined()
+  })
+
+  it("leaves the successful-transaction trace override unset by default", () => {
+    const option = register(RequiredPaths).get(
+      "logging-levels-transaction-trace-success"
+    )
+    expect(option).toMatchObject({ choices: Object.values(Level) })
+    expect(option.default).toBeUndefined()
+  })
+
+  it("round-trips a flow's targeted successful-transaction trace level", () => {
+    const registered = register({
+        ...RequiredPaths,
+        logging: { levels: { transactionTraceSuccess: Level.debug } }
+      }),
+      argv: Record<string, unknown> = {}
+    registered.forEach((config, flag) => {
+      argv[flag] = config.default
+    })
+    expect(
+      registered.get("logging-levels-transaction-trace-success")?.default
+    ).toBe(Level.debug)
+    expect(toClusterBuildOptions(argv).logging?.levels).toEqual({
+      console: Level.info,
+      file: Level.debug,
+      transactionTraceSuccess: Level.debug
+    })
+    argv["logging-levels-transaction-trace-success"] = Level.warn
+    expect(
+      toClusterBuildOptions(argv).logging?.levels?.transactionTraceSuccess
+    ).toBe(Level.warn)
   })
 
   it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {

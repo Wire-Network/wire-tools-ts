@@ -1,6 +1,7 @@
 import {
   BatchOperatorUnderwritingConfigSchema,
   ClusterConfigLoggingFileFormat,
+  ClusterConfigLoggingLevelsSchema,
   ClusterConfigReportFormat,
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
@@ -18,6 +19,23 @@ import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { Level } from "@wireio/shared"
 
 describe("ClusterConfig shape", () => {
+  it("validates the optional successful-transaction level without changing sink defaults", () => {
+    const levels = { console: Level.info, file: Level.debug }
+    expect(ClusterConfigLoggingLevelsSchema.parse(levels)).toEqual(levels)
+    expect(
+      ClusterConfigLoggingLevelsSchema.parse({
+        ...levels,
+        transactionTraceSuccess: Level.debug
+      })
+    ).toEqual({ ...levels, transactionTraceSuccess: Level.debug })
+    expect(
+      ClusterConfigLoggingLevelsSchema.safeParse({
+        ...levels,
+        transactionTraceSuccess: "verbose"
+      }).success
+    ).toBe(false)
+  })
+
   const config: ClusterConfig = {
     buildPath: "/build",
     clusterPath: "/cluster",
@@ -184,7 +202,10 @@ describe("ClusterConfig shape", () => {
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).lcoImport
     ).toBeNull()
     parsed.lcoImport = {
-      solana: { bootstrapJsonFile: "/inputs/solana.json", nativePriceUsd: "2.5" }
+      solana: {
+        bootstrapJsonFile: "/inputs/solana.json",
+        nativePriceUsd: "2.5"
+      }
     }
     expect(() =>
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))

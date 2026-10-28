@@ -3,8 +3,9 @@ import ChildProcess from "node:child_process"
 import Fs from "node:fs/promises"
 import Path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
+import { stripVTControlCharacters } from "node:util"
 
-import { match } from "ts-pattern"
+import { match, P } from "ts-pattern"
 
 import { API, Asset, SysioContracts } from "@wireio/sdk-core"
 import {
@@ -13,6 +14,7 @@ import {
   ClusterBuildPhase,
   ClusterBuildStep,
   FlowScenario,
+  LogFileAppender,
   ProtocolTiming,
   Report,
   Steps,
@@ -27,7 +29,7 @@ import {
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
-import { Deferred, getLogger } from "@wireio/shared"
+import { Deferred, getLogger, isString, Level } from "@wireio/shared"
 import { LIQKickerAccrual } from "./LIQKickerAccrual.js"
 import { LIQKickerScenarioConstants as Constants } from "./LIQKickerScenarioConstants.js"
 
@@ -574,7 +576,10 @@ export class LIQKickerScenario extends FlowScenario {
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
-    underwriterCount: Constants.UnderwriterCount
+    underwriterCount: Constants.UnderwriterCount,
+    // Crank verification reads full traces, emitted at debug by this logger.
+    // Keep the noisy network/consensus loggers at the normal console level.
+    logging: { levels: { transactionTraceSuccess: Level.debug } }
   }
 
   plan(cluster: ClusterBuild): void {
@@ -1210,7 +1215,7 @@ export namespace LIQKickerScenario {
     return null
   }
 
-  /** Read candidate structured log traces; their inclusion is checked separately against LIB. */
+  /** Read raw process traces; their inclusion is checked separately against LIB. */
   async function readCrankTraces(
     ctx: ClusterBuildContext
   ): Promise<CrankTrace[]> {
@@ -1221,8 +1226,42 @@ export namespace LIQKickerScenario {
       logs = await Promise.all(
         files.map(file => Fs.readFile(Path.join(directory, file), "utf8"))
       )
-    return logs
-      .flatMap(text => text.split("\n"))
+    // ProcessManager.writeRaw owns this heartbeat artifact. It always writes
+    // text, independently of the structured logger's configured file format.
+    return logs.flatMap(text =>
+      parseCrankTraces(text, LogFileAppender.Format.text)
+    )
+  }
+
+  /**
+   * Decode complete harness records, leaving an active writer's final line unread.
+   * @param text - Current file contents, including any unfinished final record.
+   * @param format - Persisted harness log format.
+   * @returns Candidate traces; irreversible inclusion is verified separately.
+   */
+  export function parseCrankTraces(
+    text: string,
+    format: LogFileAppender.Format
+  ): CrankTrace[] {
+    return text
+      .split("\n")
+      .slice(0, -1)
+      .flatMap(line =>
+        match(format)
+          .with(LogFileAppender.Format.text, () => [line])
+          .with(LogFileAppender.Format.jsonl, () =>
+            match(JSON.parse(line) as unknown)
+              .with(
+                { message: P.string, args: P.optional(P.array(P.unknown)) },
+                ({ message, args = [] }) => [message, ...args.filter(isString)]
+              )
+              .otherwise(() => {
+                throw new Error("Malformed cluster log record")
+              })
+          )
+          .exhaustive()
+      )
+      .map(stripVTControlCharacters)
       .filter(
         line =>
           line.includes("[TRX_TRACE]") && line.includes(Constants.KickerAccount)

@@ -9,8 +9,8 @@ import type { NodeConfig } from "../NodeConfig.js"
  * `cluster/generateLoggingConfig.ts`): a colored stderr sink plus a daily jsonl
  * file sink under the node's `logs/` directory.
  *
- * The logger level comes from the cluster's `logging.levels.console` — it is
- * NOT hardcoded, and the sink it governs is why. libfc filters at the LOGGER,
+ * Logger levels follow `logging.levels.console`, except an explicit successful
+ * transaction-trace override. libfc filters at the LOGGER,
  * never at the sink: `FC_REFLECT(fc::sink::console_sink_config,
  * (color)(level_colors)(output_type))` declares no `level` field, so one level
  * necessarily drives BOTH sinks and the console — the stream the harness
@@ -77,7 +77,10 @@ export class NodeConfigLoggingRenderer implements Renderer {
         loggers: NodeConfigLoggingRenderer.Loggers.map(name => ({
           name,
           level: NodeConfigLoggingRenderer.toNodeopLevel(
-            this.node.cluster.logging.levels.console
+            name === NodeConfigLoggingRenderer.TransactionTraceSuccessLoggerName
+              ? (this.node.cluster.logging.levels.transactionTraceSuccess ??
+                  this.node.cluster.logging.levels.console)
+              : this.node.cluster.logging.levels.console
           ),
           enabled: true,
           sinks: ["stderr_color", "json_daily_file"]
@@ -129,6 +132,9 @@ export namespace NodeConfigLoggingRenderer {
       .exhaustive()
   }
 
+  /** Full successful-transaction traces used by irreversible-payment checks. */
+  export const TransactionTraceSuccessLoggerName = "transaction_trace_success"
+
   /** The loggers wired to both sinks. */
   export const Loggers = [
     "default",
@@ -138,7 +144,7 @@ export namespace NodeConfigLoggingRenderer {
     "transaction_success_tracing",
     "transaction_failure_tracing",
     "trace_api",
-    "transaction_trace_success",
+    TransactionTraceSuccessLoggerName,
     "transaction_trace_failure",
     "transient_trx_success_tracing",
     "transient_trx_failure_tracing",
