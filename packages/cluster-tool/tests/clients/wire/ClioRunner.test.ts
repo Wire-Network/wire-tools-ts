@@ -2,12 +2,15 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 
+import { identity } from "lodash"
+
 import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import {
   ClioRunner,
   enrichClioError
 } from "@wireio/cluster-tool/clients/wire/clio"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { StepExtraRecorder } from "@wireio/cluster-tool/report/tools"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
@@ -71,6 +74,145 @@ describe("ClioRunner", () => {
       await expect(new ClioRunner(config(bin)).run(["push"])).rejects.toThrow(
         /assertion failure with message: boom/
       )
+    })
+  })
+
+  describe("zero-exit JSON transaction results", () => {
+    /** A successful child exit does not establish that the transaction executed. */
+    function createJsonScript(response: unknown, stderr = "") {
+      const stdout = JSON.stringify(response),
+        runsFile = Path.join(dir, "json-runs"),
+        binary = makeScript(
+          "clio-json-result.sh",
+          [
+            `printf 'run\\n' >> '${runsFile}'`,
+            `printf '%s\\n' '${stdout.replaceAll("'", "'\\''")}'`,
+            `printf '%s\\n' '${stderr}' >&2`
+          ].join("\n")
+        )
+      return { binary, stdout: `${stdout}\n`, runsFile }
+    }
+
+    it("throws a definitive rejection, preserves its streams and records failure without a transport retry", async () => {
+      const { binary, stdout, runsFile } = createJsonScript(
+          TransactionRejection,
+          "chain diagnostic"
+        ),
+        recorder = new StepExtraRecorder(),
+        result = StepExtraRecorder.runWith(recorder, () =>
+          new ClioRunner(config(binary)).run(["push", "transaction"], {
+            json: true
+          })
+        )
+      await expect(result).rejects.toMatchObject({
+        stdout,
+        stderr: "chain diagnostic\n"
+      })
+      await expect(result).rejects.toThrow("Tier level must be between 1 and 3")
+      const error = await result.catch(identity)
+      expect(ClioRunner.isProvenUnapplied(error)).toBe(true)
+      expect(ClioRunner.isTransportFailure(error)).toBe(false)
+      expect(Fs.readFileSync(runsFile, "utf8").trim()).toBe("run")
+      expect(recorder.calls).toContainEqual(
+        expect.objectContaining({ client: "clio", kind: "cli", ok: false })
+      )
+    })
+
+    it.each([
+      {
+        ...TransactionRejection,
+        processed: { ...TransactionRejection.processed, scheduled: false }
+      },
+      {
+        ...TransactionRejection,
+        processed: {
+          ...TransactionRejection.processed,
+          except: { code: TransactionRejection.processed.except.code }
+        }
+      }
+    ])(
+      "does not need an optional schedule flag or exception message to reject",
+      async response => {
+        const { binary, stdout } = createJsonScript(response)
+        await expect(
+          new ClioRunner(config(binary)).run(["push", "transaction"], {
+            json: true
+          })
+        ).rejects.toMatchObject({ stdout })
+      }
+    )
+
+    it.each([
+      null,
+      false,
+      0,
+      "Error 3050003: not a transaction",
+      { transaction_id: TransactionRejection.transaction_id },
+      { ...TransactionRejection, transaction_id: "different" },
+      { ...TransactionRejection, transaction_id: "" },
+      {
+        ...TransactionRejection,
+        processed: { ...TransactionRejection.processed, scheduled: true }
+      },
+      {
+        ...TransactionRejection,
+        processed: { except: TransactionRejection.processed.except }
+      },
+      { error: TransactionRejection.processed.except },
+      {
+        transaction_id: TransactionRejection.transaction_id,
+        processed: {
+          id: TransactionRejection.processed.id,
+          receipt: { status: "executed" },
+          action_traces: [{ console: "Error 3050003: Connection refused" }]
+        }
+      },
+      ...["executed", "soft_fail", "hard_fail"].map(status => ({
+        ...TransactionRejection,
+        processed: { ...TransactionRejection.processed, receipt: { status } }
+      })),
+      ...[ClioRunner.DuplicateTransactionCode, 3200000, "3050003", 42].map(
+        code => ({
+          ...TransactionRejection,
+          processed: {
+            ...TransactionRejection.processed,
+            except: { ...TransactionRejection.processed.except, code }
+          }
+        })
+      )
+    ])(
+      "preserves success or ambiguous JSON without inventing safe rejection: %p",
+      async response => {
+        const { binary, runsFile } = createJsonScript(response)
+        await expect(
+          new ClioRunner(config(binary)).run(["push", "transaction"], {
+            json: true
+          })
+        ).resolves.toEqual(response)
+        expect(Fs.readFileSync(runsFile, "utf8").trim()).toBe("run")
+      }
+    )
+
+    it("does not override a conflicting HTTP failure diagnostic", async () => {
+      const { binary } = createJsonScript(
+        TransactionRejection,
+        "Error 3200000: http exception"
+      )
+      await expect(
+        new ClioRunner(config(binary)).run(["push", "transaction"], {
+          json: true
+        })
+      ).resolves.toEqual(TransactionRejection)
+    })
+
+    it("preserves non-JSON output even when stderr looks like a chain error", async () => {
+      const binary = makeScript(
+        "clio-text-result.sh",
+        "printf 'plain output'; printf 'Error 3050003: diagnostic' >&2"
+      )
+      await expect(
+        new ClioRunner(config(binary)).run(["push"], { json: true })
+      ).resolves.toBe("plain output")
     })
   })
 

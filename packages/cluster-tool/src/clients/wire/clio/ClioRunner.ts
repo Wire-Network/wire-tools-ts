@@ -2,7 +2,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
 import { asOption } from "@3fv/prelude-ts"
-import { negate } from "lodash"
+import { isObject, negate } from "lodash"
 import { match, P } from "ts-pattern"
 
 import { getLogger, getValue } from "@wireio/shared"
@@ -173,11 +173,28 @@ export class ClioRunner {
           None: () => null
         })
       if (options.json) {
+        let result: unknown
         try {
-          return JSON.parse(stdout)
+          result = JSON.parse(stdout)
         } catch {
           return stdout.trim()
         }
+        // clio can exit zero while returning a rejected transaction trace.
+        // Apply the same fail-closed proof as nonzero exits before finality;
+        // an id alone does not establish submission or execution.
+        if (
+          isObject(result) &&
+          ClioRunner.isProvenUnapplied({ message: stderr, stdout })
+        ) {
+          throw Object.assign(
+            new Error("clio returned a rejected transaction"),
+            {
+              stdout,
+              stderr
+            }
+          )
+        }
+        return result
       }
       return stdout.trim()
     } catch (error) {
