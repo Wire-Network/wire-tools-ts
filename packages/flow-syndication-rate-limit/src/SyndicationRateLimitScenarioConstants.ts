@@ -50,7 +50,8 @@ export namespace SyndicationRateLimitScenarioConstants {
     bounty: 0,
     challenge_extra: "1000000000",
     min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
-    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token]
+    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token],
+    custody_shortfall_bps: 0
   }
   /** Accepted payout after the configured proportional and flat charges. */
   export const DesyndicationNet = DesyndicationAmount - SyndicationScenario.feeOf(
