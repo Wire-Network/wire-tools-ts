@@ -68,12 +68,12 @@ describe("Steps.registry", () => {
 
   describe("planMockLiqPools", () => {
     const LiqsolCode = "LIQSOL"
-    // The dev-config seeds; the horizon is the dev cluster's own, and the clip cap
-    // is the fee, the widest sysio.swap::setyield accepts.
+    // The dev-config seeds; the horizon and fee are the dev cluster's own, and the
+    // clip cap is the fee, the widest sysio.swap::setyield accepts.
     const PoolSeed = 10_000_000_000
-    const PoolFee = 30
+    const PoolFee = 500
     const HorizonSec = 30
-    const DepthCapBps = 30
+    const DepthCapBps = 500
     const ClipFloor = 1000
 
     it("returns a Phase of one Sysio regliqpool step per shadow", () => {
