@@ -68,10 +68,9 @@ export namespace RegistrySteps {
   export const LiqEthCustodyShortfallBps = 100
   /**
    * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
-   * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
-   * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
-   * reported yield in ONE tick, so a scenario observes one index bump and then a
-   * stable ledger instead of a day-long drip.
+   * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the 30 s horizon
+   * is the dev cluster's own, so a flow's reported yield sells within minutes
+   * instead of a day-long drip.
    */
   const MockLiqPoolShadowSeed = 10_000_000_000
   /** WIRE (9-dec base units) the system account seeds each mock pool with. */
@@ -82,8 +81,12 @@ export namespace RegistrySteps {
   const MockLiqPoolLockedShares = 0
   /** Seconds over which a mock pool's reservoir is time-shared into clips. */
   const MockLiqPoolConversionHorizonSec = 30
-  /** Ceiling of one clip as bps of the pool's shadow depth. */
-  const MockLiqPoolDepthCapBps = 3000
+  /**
+   * Ceiling of one clip as bps of the pool's shadow depth: the fee, the widest
+   * `sysio.swap::setyield` accepts, since a clip wider than the fee is worth
+   * sandwiching. A flow's yield sells over several ticks of 0.30 % of the pool.
+   */
+  const MockLiqPoolDepthCapBps = MockLiqPoolFee
   /** Smallest clip (shadow base units) a mock pool sells. */
   const MockLiqPoolClipFloor = 1000
   /**

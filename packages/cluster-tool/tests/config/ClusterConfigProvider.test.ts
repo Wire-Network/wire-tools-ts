@@ -172,7 +172,7 @@ describe("ClusterConfigProvider", () => {
     const pool = LiqPoolSpec.create({
       fee: 25,
       conversionHorizonSec: 3_600,
-      depthCapBps: 40,
+      depthCapBps: 20,
       clipFloor: 10n
     })
 
