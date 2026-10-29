@@ -235,6 +235,24 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       })
     })
 
+    /** Validator slashing is tolerated for LIQETH; other shadow tokens keep strict backing. */
+    it("configures a 1% shortfall allowance for LIQETH and zero for LIQSOL", () => {
+      const onePercentBps = 100
+      expect(Steps.registry.LiqEthCustodyShortfallBps).toBe(onePercentBps)
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            token_code: "LIQETH",
+            custody_shortfall_bps: onePercentBps
+          }),
+          expect.objectContaining({
+            token_code: "LIQSOL",
+            custody_shortfall_bps: 0
+          })
+        ])
+      )
+    })
+
     it("sets both buckets far above any flow's amount, refilling in full each epoch", () => {
       rows.forEach(row => {
         expect(row.synd_burst).toBe(Steps.registry.SyndicationBucketSize)
