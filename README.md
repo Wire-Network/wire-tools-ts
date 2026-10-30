@@ -609,17 +609,29 @@ values only — the outposts' real-world deployed addresses and public keys:
 ```json
 {
   "ethereum": {
+    "oppProtocol": { "emit": [1], "receive": [1] },
     "chainId": 560048,
     "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
     "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
     "liqEthAddresses": { "LiqEthToken": "0x…" }
   },
   "solana": {
+    "oppProtocol": { "emit": [1], "receive": [1] },
     "rpcUrl": "https://api.testnet.solana.com",
     "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
   }
 }
 ```
+
+`oppProtocol` is required for each remote outpost. Declare the capabilities of its
+deployed implementation using the reviewed `opp-compatibility.json` matrix in
+the platform manifest as the V1 reference. Before either outpost is activated,
+every emitted version must be supported by its receiver in both directions.
+Missing declarations, zero/reserved versions, and incompatible pairs fail closed.
+Exported external configs preserve the declaration. Validation uses this trusted
+metadata without contacting either outpost; operators remain responsible for
+matching it to the deployed code. See the platform manifest's
+`docs/opp-compatibility.md` for receiver-first upgrade and rollback order.
 
 - `outpostAddresses` is the outpost deploy record (`outpost-addrs-<network>.json`)
   and must carry `OPP`, `OPPInbound` and `BAR`. `liqEthAddresses` (the liqEth

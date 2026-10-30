@@ -364,11 +364,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   function authoritativeExternalOutposts(): ExternalOutpostConfig {
     return {
       ethereum: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         chainId: ExternalChainId,
         rpcUrl: ExternalEthereumRpcUrl,
         outpostAddresses: { ...OutpostAddresses }
       },
       solana: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         rpcUrl: ExternalSolanaRpcUrl,
         programId: programKeypair().publicKey.toBase58()
       }
@@ -741,6 +743,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       Fs.readFileSync(externalConfigFile(), "utf-8")
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
+    expect(emitted.ethereum.oppProtocol).toEqual({ emit: [1], receive: [1] })
+    expect(emitted.solana.oppProtocol).toEqual({ emit: [1], receive: [1] })
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
     // `accountName` is the operator's ON-CHAIN name (`account`), never the
     // durable handle the node config and the SSM secret id are keyed by.
@@ -1113,6 +1117,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // The Rebind carries the trusted, value-only config through UNCHANGED —
     // `rpcUrl` included; nothing in it points at a file.
     expect(merged.externalOutposts).toEqual(authoritativeExternalOutposts())
+    const emittedProtocolConfig = ExternalClusterConfigSchemaCodec.deserialize(
+      Fs.readFileSync(externalConfigFile(), "utf-8")
+    )
+    expect(emittedProtocolConfig.ethereum.oppProtocol).toEqual(merged.externalOutposts.ethereum.oppProtocol)
+    expect(emittedProtocolConfig.solana.oppProtocol).toEqual(merged.externalOutposts.solana.oppProtocol)
 
     // The 4-field ETH client spec: id, provider, the AUTHORITATIVE endpoint,
     // and the config's REAL chain id (never the anvil default).

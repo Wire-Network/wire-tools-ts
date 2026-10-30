@@ -134,8 +134,8 @@ export namespace SlashingScenarioConstants {
   export const EnvelopeEpochEnvelopeIndex = 1
   /** Envelope fixture: `epoch_timestamp` (mirrors `sysio.dispute_tests.cpp::encode_envelope`). */
   export const EnvelopeEpochTimestampMs = 1_775_612_516_983n
-  /** Envelope fixture: message payload version. */
-  export const EnvelopeVersion = 0
+  /** V1 fixture accepted by depot admission before the dispute checks. */
+  export const EnvelopeVersion = 1
 
   /** Row ceiling for `sysio.opreg::operators` reads (bootstrap ops + underwriters + dispute ops). */
   export const OperatorTableReadLimit = 100

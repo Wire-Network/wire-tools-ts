@@ -22,12 +22,21 @@ const OutpostAddresses = {
 /** The minimal valid config: chain id, the required addresses, the program id. */
 function minimalConfig(): ExternalOutpostConfig {
   return {
-    ethereum: { chainId: ChainId, outpostAddresses: { ...OutpostAddresses } },
-    solana: { programId: ProgramId }
+    ethereum: { oppProtocol: { emit: [1], receive: [1, 2] }, chainId: ChainId, outpostAddresses: { ...OutpostAddresses } },
+    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, programId: ProgramId }
   }
 }
 
 describe("ExternalOutpostConfig", () => {
+  it.each(["ethereum", "solana"] as const)(
+    "requires explicit protocol capabilities for %s",
+    chain => {
+      const missing = JSON.parse(JSON.stringify(minimalConfig()))
+      delete missing[chain].oppProtocol
+      expect(() => ExternalOutpostConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
+    }
+  )
+
   it("round-trips the minimal value-only config through the codec", () => {
     const config = minimalConfig()
     expect(
@@ -40,6 +49,7 @@ describe("ExternalOutpostConfig", () => {
   it("round-trips every optional value: rpcUrl, liqEth addresses and SPL mints", () => {
     const full: ExternalOutpostConfig = {
       ethereum: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         chainId: ChainId,
         rpcUrl: EthereumRpcUrl,
         outpostAddresses: { ...OutpostAddresses, Pool: OutpostAddresses.OPP },
@@ -48,6 +58,7 @@ describe("ExternalOutpostConfig", () => {
         }
       },
       solana: {
+        oppProtocol: { emit: [1], receive: [1, 2] },
         rpcUrl: SolanaRpcUrl,
         programId: ProgramId,
         mints: [{ code: 1_234, mint: ProgramId, decimals: 9 }]
