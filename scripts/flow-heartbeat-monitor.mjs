@@ -49,7 +49,8 @@
  *   (run `--help` for the full option list and a pairing example)
  * Options:
  *   --expect-freeze   only for flow-emergency-stop: classify exact OutpostFrozen
- *                     (0x17c7) / EnforcedPause refusals as NOISE. Default: FATAL.
+ *                     (0x17c7), EnforcedPause and NoPendingDesyndication
+ *                     recovery refusals as NOISE. Default: FATAL.
  *                     Does not disable any liveness bail.
  */
 
@@ -208,8 +209,10 @@ const RegistrySyncLagPattern =
 const NegativeTestRevertPattern =
   "MockYieldEmitter: externalEpochRef not monotonic"
 
-/** Exact freeze reasons; a longer hex code or a containing identifier is not a match. */
-const FreezeRefusalSource = String.raw`custom program error: 0x17c7(?![0-9a-fA-F])|\bEnforcedPause\b(?:\(\))?`
+/** Exact freeze/recovery reasons, including raw Ethereum selectors. Longer
+ * hex codes and containing identifiers do not match. These are only noise
+ * under --expect-freeze; independent failures on the same line remain fatal. */
+const FreezeRefusalSource = String.raw`custom program error: 0x17c7(?![0-9a-fA-F])|\b(?:EnforcedPause|WIRE_NoPendingDesyndication)\b(?:\(\))?|custom error 0x(?:d93c0665|287022ed)(?![0-9a-fA-F])`
 const FreezeRefusalPattern = new RegExp(FreezeRefusalSource)
 
 /**
@@ -785,7 +788,8 @@ ${chalk.bold("Options:")}
                                  scales the bootstrap-deadline bail and labels
                                  the epoch-stall bail
   --expect-freeze                ONLY flow-emergency-stop: exact OutpostFrozen
-                                 (0x17c7) / EnforcedPause refusals become NOISE.
+                                 (0x17c7), EnforcedPause and NoPendingDesyndication
+                                 recovery refusals become NOISE.
                                  Default FATAL. All liveness bails remain enabled.
   --expect-epoch-freeze          the flow INTENTIONALLY freezes the epoch as its
                                  mechanism (flow-batch-operator-slashing holds the

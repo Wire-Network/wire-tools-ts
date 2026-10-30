@@ -6,28 +6,26 @@ const { EmergencyStopScenarioConstants: Constants } = require("../lib/EmergencyS
 
 afterEach(() => mock.restoreAll())
 
-function steps(node) {
-  return node.steps ? [...node.steps] : node.children.flatMap(steps)
-}
-
-for (const fault of ["none", "later transaction", "wrong amount", "wrong recipient", "pending remains"]) {
-  test(`Ethereum payment verifies receipt-backed settlement: ${fault}`, async () => {
+for (const lane of ["EthereumPause", "EthereumWithinAllowance", "EthereumShortfall"])
+for (const fault of ["none", "later transaction", "wrong amount", "wrong depot amount", "wrong request", "wrong recipient", "pending remains"]) {
+  test(`${lane} verifies receipt-backed settlement: ${fault}`, async () => {
     const ctx = { outputs: new OutputStore(), config: { dataPath: "/tmp/unused-unit-wallet" } },
       build = ClusterBuild.forContext(ctx),
       holder = "0x0000000000000000000000000000000000000001",
       paid = 123456n
     ctx.outputs.set(Constants.EthereumRequest, 7n)
     new EmergencyStopScenario().plan(build)
-    const step = steps(build).find(value => value.name === "ethereum-paid")
+    const phase = build.children.find(value => value.name === lane)
+    const step = phase.steps.find(value => value.name === "ethereum-paid")
     Assert.ok(step)
     mock.method(Steps.registry, "readMockSyndicationBonder", () => ({ ethereum: { address: holder } }))
     mock.method(EthereumSyndicationTool, "readDesyndicationPayment", async (_ctx, request) => {
       Assert.equal(request, 7n)
       return {
         recipient: fault === "wrong recipient" ? "0x0000000000000000000000000000000000000002" : holder,
-        depotAmount: Constants.EthereumRedemption,
+        depotAmount: Constants.EthereumRedemption + (fault === "wrong depot amount" ? 1n : 0n),
         nativeAmount: Constants.EthereumRedemption * Constants.EthereumScale + (fault === "wrong amount" ? 1n : 0n),
-        requestId: request, blockNumber: 120, transactionIndex: fault === "later transaction" ? 3 : 0
+        requestId: request + (fault === "wrong request" ? 1n : 0n), blockNumber: 120, transactionIndex: fault === "later transaction" ? 3 : 0
       }
     })
     mock.method(EthereumSyndicationTool, "readLiqEthBalance", async () => paid)
