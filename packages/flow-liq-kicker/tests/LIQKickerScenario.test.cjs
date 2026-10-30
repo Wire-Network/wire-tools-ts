@@ -496,7 +496,7 @@ test("the actual process aggregate writer feeds the text trace parser", async ()
     await Promise.all(streams.map(stream => Deferred.useCallback(deferred => stream.end(() => deferred.resolve())).promise))
     const [file] = Fs.readdirSync(Path.join(directory, "logs")),
       text = Fs.readFileSync(Path.join(directory, "logs", file), "utf8")
-    Assert.deepEqual(LIQKickerScenario.parseCrankTraces(text, LogFileAppender.Format.text), [trace])
+    Assert.deepEqual(LIQKickerScenario.parseCrankTraces(text), [trace])
   } finally {
     spy.mockRestore()
     streams.forEach(stream => stream.destroy())
@@ -504,27 +504,14 @@ test("the actual process aggregate writer feeds the text trace parser", async ()
   }
 })
 
-test("crank traces decode complete JSONL messages and arguments but never an incomplete record", () => {
-  const trace = { id: "crank-id", action_traces: [{ act: { account: "sysio.kicker" } }] },
-    message = `[TRX_TRACE] ${JSON.stringify(trace)}`,
-    records = [
-      JSON.stringify({ message }),
-      JSON.stringify({ message: "node_01: %s", args: [message, 7, { unrelated: true }] })
-    ]
-  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(records.join("\n") + "\n" + '{"message":', LogFileAppender.Format.jsonl), [trace, trace])
-  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(message, LogFileAppender.Format.text), [])
-  Assert.throws(() => LIQKickerScenario.parseCrankTraces('{"broken":\n', LogFileAppender.Format.jsonl), /JSON/)
-  Assert.throws(() => LIQKickerScenario.parseCrankTraces('{"message":42}\n', LogFileAppender.Format.jsonl), /Malformed cluster log/)
-})
-
-for (const format of Object.values(LogFileAppender.Format)) test(`crank trace framing preserves escaped payloads and strips console ANSI (${format})`, () => {
+test("crank trace framing preserves escaped payloads and strips console ANSI", () => {
   const trace = { id: "payment", action_traces: [{ act: { account: "sysio.kicker", data: { memo: 'brace } and "quotes"\\n' } } }] },
-    message = `\x1b[33m[TRX_TRACE] ${JSON.stringify(trace)}\x1b[0m`,
-    record = format === LogFileAppender.Format.text ? message : JSON.stringify({ message })
-  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(record + "\n", format), [trace])
-  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(record, format), [])
+    message = `\x1b[33m[TRX_TRACE] ${JSON.stringify(trace)}\x1b[0m`
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(message + "\n"), [trace])
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(message), [])
   const malformed = '[TRX_TRACE] {"id":"bad","sysio.kicker":'
-  Assert.throws(() => LIQKickerScenario.parseCrankTraces((format === LogFileAppender.Format.text ? malformed : JSON.stringify({ message: malformed })) + "\n", format), SyntaxError)
+  Assert.deepEqual(LIQKickerScenario.parseCrankTraces(message + "\n" + malformed), [trace])
+  Assert.throws(() => LIQKickerScenario.parseCrankTraces(malformed + "\n"), SyntaxError)
 })
 
 test("the cumulative price at a block extends swap's accumulator at spot, modulo 2^256", () => {

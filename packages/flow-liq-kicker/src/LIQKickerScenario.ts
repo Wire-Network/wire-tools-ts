@@ -5,7 +5,7 @@ import Path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { stripVTControlCharacters } from "node:util"
 
-import { match, P } from "ts-pattern"
+import { match } from "ts-pattern"
 
 import { API, Asset, SysioContracts } from "@wireio/sdk-core"
 import {
@@ -14,7 +14,6 @@ import {
   ClusterBuildPhase,
   ClusterBuildStep,
   FlowScenario,
-  LogFileAppender,
   ProtocolTiming,
   Report,
   Steps,
@@ -29,7 +28,7 @@ import {
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
-import { Deferred, getLogger, isString, Level } from "@wireio/shared"
+import { Deferred, getLogger, Level } from "@wireio/shared"
 import { LIQKickerAccrual } from "./LIQKickerAccrual.js"
 import { LIQKickerScenarioConstants as Constants } from "./LIQKickerScenarioConstants.js"
 
@@ -1236,39 +1235,18 @@ export namespace LIQKickerScenario {
       )
     // ProcessManager.writeRaw owns this heartbeat artifact. It always writes
     // text, independently of the structured logger's configured file format.
-    return logs.flatMap(text =>
-      parseCrankTraces(text, LogFileAppender.Format.text)
-    )
+    return logs.flatMap(parseCrankTraces)
   }
 
   /**
-   * Decode complete harness records, leaving an active writer's final line unread.
+   * Decode complete raw process lines, leaving an active writer's final line unread.
    * @param text - Current file contents, including any unfinished final record.
-   * @param format - Persisted harness log format.
    * @returns Candidate traces; irreversible inclusion is verified separately.
    */
-  export function parseCrankTraces(
-    text: string,
-    format: LogFileAppender.Format
-  ): CrankTrace[] {
+  export function parseCrankTraces(text: string): CrankTrace[] {
     return text
       .split("\n")
       .slice(0, -1)
-      .flatMap(line =>
-        match(format)
-          .with(LogFileAppender.Format.text, () => [line])
-          .with(LogFileAppender.Format.jsonl, () =>
-            match(JSON.parse(line) as unknown)
-              .with(
-                { message: P.string, args: P.optional(P.array(P.unknown)) },
-                ({ message, args = [] }) => [message, ...args.filter(isString)]
-              )
-              .otherwise(() => {
-                throw new Error("Malformed cluster log record")
-              })
-          )
-          .exhaustive()
-      )
       .map(stripVTControlCharacters)
       .filter(
         line =>
