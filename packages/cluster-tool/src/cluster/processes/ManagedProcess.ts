@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
+import { createInterface } from "node:readline"
 import Assert from "node:assert"
 import { isEmpty } from "lodash"
 import treeKill from "tree-kill"
@@ -259,19 +260,17 @@ export abstract class ManagedProcess {
   ): void {
     if (!stream) return
     stream.setEncoding("utf8")
-    stream.on("data", (chunk: string) =>
-      chunk
-        .split("\n")
-        .filter(Boolean)
-        .forEach(line => {
-          this.recentLines.push(line)
-          if (this.recentLines.length > ManagedProcess.RecentOutputCap)
-            this.recentLines.shift()
-          this.manager.writeRaw(this.label, line)
-          if (isErr) this.log.warn(line)
-          else this.log.info(line)
-        })
-    )
+    // Pipe chunks can split a transaction trace anywhere, including inside JSON.
+    // Frame complete child lines before the structured appender serializes them.
+    createInterface({ input: stream, crlfDelay: Infinity }).on("line", line => {
+      if (!line) return
+      this.recentLines.push(line)
+      if (this.recentLines.length > ManagedProcess.RecentOutputCap)
+        this.recentLines.shift()
+      this.manager.writeRaw(this.label, line)
+      if (isErr) this.log.warn(line)
+      else this.log.info(line)
+    })
   }
 
   /**

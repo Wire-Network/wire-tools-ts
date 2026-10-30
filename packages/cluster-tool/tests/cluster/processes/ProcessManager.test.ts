@@ -6,7 +6,7 @@ import {
   type ChildProcess,
   type ChildProcessWithoutNullStreams
 } from "node:child_process"
-import { Readable } from "node:stream"
+import { PassThrough, Readable } from "node:stream"
 import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
 import {
@@ -155,8 +155,8 @@ class FakeProcess extends ManagedProcess {
     return 10
   }
   /** Public wrapper so the test can drive the protected captureOutput. */
-  capture(stream: NodeJS.ReadableStream): void {
-    this.captureOutput(stream)
+  capture(stream: NodeJS.ReadableStream, isErr = false): void {
+    this.captureOutput(stream, isErr)
   }
 }
 
@@ -382,6 +382,30 @@ describe("ProcessManager + ManagedProcess", () => {
     expect(writeSpy).toHaveBeenCalledWith("cap", "line2")
     writeSpy.mockRestore()
   })
+
+  it.each([false, true])(
+    "frames transaction traces across pipe chunks (stderr=%s)",
+    async isErr => {
+      const process = new FakeProcess(manager, "trace-chunks"),
+        stream = new PassThrough(),
+        writeSpy = jest.spyOn(manager, "writeRaw"),
+        trace = '[TRX_TRACE] {"id":"payment","action_traces":[]}'
+      process.capture(stream, isErr)
+      stream.write(trace.slice(0, 20))
+      expect(writeSpy).not.toHaveBeenCalled()
+      stream.write(trace.slice(20) + "\r")
+      stream.end("\n\nfinal diagnostic")
+      await Deferred.useCallback<void>(deferred =>
+        stream.once("end", () => deferred.resolve())
+      ).promise
+      expect(writeSpy.mock.calls).toEqual([
+        ["trace-chunks", trace],
+        ["trace-chunks", "final diagnostic"]
+      ])
+      expect(process.recentOutput).toEqual([trace, "final diagnostic"])
+      writeSpy.mockRestore()
+    }
+  )
 
   describe("recentOutput", () => {
     it("retains captured lines in order", async () => {
