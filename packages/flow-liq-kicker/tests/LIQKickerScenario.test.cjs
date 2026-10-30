@@ -35,14 +35,14 @@ function planned(nodeop) {
   return { ctx, build }
 }
 
-/** One chain state the flow's reads see, in base units. */
+/** One chain state the flow's reads see, in base units. The chain's JSON spells an ABI `bool` as `0` / `1`. */
 function chainState({ lastKick, giftedTotal, budget, index, pot, carry, treasury, buckets, minGift }) {
   return {
     config: { budget_remaining: String(budget), min_interval_sec: 60, twap_window_sec: 60, max_spot_deviation_bps: 5000 },
     pool: {
       sym: "LIQETH", rate_bps: 200, min_gift: minGift ?? 1_000_000_000, last_kick: lastKick,
       gifted_total: String(giftedTotal), shortfall_amount: 0, shortfall_time: "1970-01-01T00:00:00.000",
-      gift_overflow: false, spot_deviation: false, price_time: lastKick, price_snapshot: { hi: "0", lo: String((BigInt(Date.parse(lastKick + "Z") - Date.parse(LastKickBefore + "Z")) * 1000n) << 64n) }, max_gift_per_day: 1_000_000_000_000, day: 0, spent_today: "0", supply_snapshot: "10000000000"
+      gift_overflow: 0, spot_deviation: 0, price_time: lastKick, price_snapshot: { hi: "0", lo: String((BigInt(Date.parse(lastKick + "Z") - Date.parse(LastKickBefore + "Z")) * 1000n) << 64n) }, max_gift_per_day: 1_000_000_000_000, day: 0, spent_today: "0", supply_snapshot: "10000000000"
     },
     supply: "10.000000000 LIQETH",
     pair: { pool1: { quantity: "10.000000000 LIQETH" }, pool2: { quantity: "10.000000000 WIRE" } },
@@ -189,7 +189,7 @@ for (const [fault, patch, receipt, message] of [
   ["yield index not credited", { yieldIndex: null }, null, /yieldidx is not the index/],
   ["treasury not debited", { balances: { ...before.balances } }, null, /treasury \(net of the category buckets\) did not fall/],
   ["minimum not restored", { pool: { ...after.pool, min_gift: 1 } }, null, /did not restore the one-WIRE minimum/],
-  ["spot deviation flagged", { pool: { ...after.pool, spot_deviation: true } }, null, /flagged a spot deviation/]
+  ["spot deviation flagged", { pool: { ...after.pool, spot_deviation: 1 } }, null, /flagged a spot deviation/]
 ]) {
   test(`the manual-kick verifies fail when ${fault}`, async () => {
     await Assert.rejects(
@@ -419,6 +419,19 @@ for (const testCase of ["warmupSetup", "zeroSupply", "zeroSnapshot"]) {
   })
 }
 
+test("zeroSnapshot fails when the chain flags gift_overflow as 1", async () => {
+  const { ctx, holder } = validationContext(), step = LIQKickerScenario.planValidationCase(LIQKickerScenario.ValidationCase.zeroSnapshot)
+  holder.state.pool.supply_snapshot = "0"
+  ctx.outputs.set(LIQKickerScenario.ZeroSupplyConfigKey, cloneDeep(before.config))
+  holder.state.config.min_interval_sec = 4_294_967_295
+  ctx.wire.invokeTransaction = async () => {
+    holder.state.config = cloneDeep(before.config)
+    Object.assign(holder.state.pool, { last_kick: LastKickAfter, supply_snapshot: "10000000000", gift_overflow: 1 })
+    return { processed: { block_time: LastKickAfter, action_traces: [] } }
+  }
+  await Assert.rejects(step.runner(ctx, step.input, new AbortController().signal), /true !== false/)
+})
+
 for (const wait of [LIQKickerScenario.runWaitWindow, LIQKickerScenario.runWaitCheckpoint]) test(`the ${wait.name} wait uses the chain clock and respects cancellation`, async () => {
   const { ctx } = validationContext(), controller = new AbortController()
   ctx.wire.getInfo = async () => ({ head_block_time: LastKickAfter })
@@ -550,9 +563,9 @@ test("bootstrap readback verifies the one-day TWAP window and mandatory cap", as
   holder.state.config.max_spot_deviation_bps = 10000
   await Assert.rejects(step.runner(ctx, step.input, signal))
   holder.state.config.max_spot_deviation_bps = 5000
-  holder.state.pool.spot_deviation = true
-  await Assert.rejects(step.runner(ctx, step.input, signal))
-  holder.state.pool.spot_deviation = false
+  holder.state.pool.spot_deviation = 1
+  await Assert.rejects(step.runner(ctx, step.input, signal), /true !== false/)
+  holder.state.pool.spot_deviation = 0
   holder.state.pool.max_gift_per_day = 0
   await Assert.rejects(step.runner(ctx, step.input, signal))
 })

@@ -1,3 +1,4 @@
+import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { SysioContracts } from "@wireio/sdk-core"
@@ -260,6 +261,56 @@ describe("WireClient", () => {
       await expect(result).rejects.toThrow(refusal)
       expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
       expect(wait).not.toHaveBeenCalled()
+    })
+
+    it("rejects a failed trace clio push transaction printed with exit 0, without waiting for it", async () => {
+      const refusal = "TWAP window must be at least 60 seconds",
+        stdout = JSON.stringify({
+          transaction_id: TransactionId,
+          processed: {
+            id: TransactionId,
+            receipt: null,
+            scheduled: false,
+            except: {
+              code: 3050003,
+              name: "sysio_assert_message_exception",
+              message: "sysio_assert_message assertion failure",
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        }),
+        dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wireclient-trace-")),
+        runs = Path.join(dir, "runs"),
+        binary = Path.join(dir, "clio")
+      Fs.writeFileSync(
+        binary,
+        `#!/usr/bin/env bash\necho run >> '${runs}'\necho '${stdout}'\n`,
+        { mode: 0o755 }
+      )
+      try {
+        const client = new WireClient({ ...config, binary }),
+          wait = jest.spyOn(client, "waitForTransactionInBlock"),
+          data: SysioContracts.SysioKickerSetconfigAction = {
+            cfg: {
+              budget_remaining: "1000000000000000",
+              min_interval_sec: 60,
+              twap_window_sec: 59,
+              max_spot_deviation_bps: 5000
+            }
+          },
+          setconfig = client
+            .getSysioContract(SysioContracts.SysioContractName.kicker)
+            .actions.setconfig.prepare(data, {
+              authorization: WireClient.activeAuthorization("sysio")
+            })
+        await expect(client.invokeTransaction(setconfig)).rejects.toThrow(refusal)
+        expect(wait).not.toHaveBeenCalled()
+        expect(
+          Fs.readFileSync(runs, "utf-8").trim().split("\n")
+        ).toHaveLength(WireClient.PushMaxAttempts)
+      } finally {
+        Fs.rmSync(dir, { recursive: true, force: true })
+      }
     })
 
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
