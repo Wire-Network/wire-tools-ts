@@ -4,7 +4,7 @@ const Os = require("node:os")
 const Path = require("node:path")
 const { cloneDeep } = require("lodash")
 const { ClusterBuild, OutputStore, StepExtraRecorder } = require("@wireio/cluster-tool")
-const { LIQKickerScenario, kickReceipt, readWireHoldings, expectedGiftAtBlock, cumulativeAtBlock } = require("../lib/LIQKickerScenario.js")
+const { LIQKickerScenario, crankReceipt, kickReceipt, readWireHoldings, expectedGiftAtBlock, cumulativeAtBlock } = require("../lib/LIQKickerScenario.js")
 
 const LastKickBefore = "2026-10-10T12:00:00.000"
 const LastKickAfter = "2026-10-10T12:10:00.500"
@@ -13,6 +13,16 @@ const Budget = 1_000_000_000_000_000n
 
 function steps(node) {
   return node.steps ? [...node.steps] : node.children.flatMap(steps)
+}
+
+const TracedKick = { receiver: "sysio.kicker", account: "sysio.kicker", name: "kick", params: { sym: "LIQETH" } }
+const TracedDraw = { receiver: "sysio.token", account: "sysio.token", name: "transfer", params: { from: "sysio", to: "sysio.kicker", quantity: "0.000000001 WIRE" } }
+
+/** A trace-API block whose transactions execute `transactions`, one action list each. */
+function tracedBlock(number, transactions, status = "irreversible") {
+  return { number, status, transactions: transactions.map((actions, index) => ({
+    id: `trx-${number}-${index}`, block_num: number, block_time: LastKickAfter, actions
+  })) }
 }
 
 function phaseNames(build) {
@@ -222,24 +232,66 @@ test("all validation cases are named report steps, including removal and warm-up
   Assert.ok(cases.every(step => step.options.timeoutMs > 0))
 })
 
-test("crank finality requires LIB and actual inclusion; reversible, orphaned and failed traces cannot pass", async () => {
-  const signal = new AbortController().signal,
-    state = { pool: before.pool },
-    trace = { id: "crank-id", block_time: LastKickAfter, action_traces: [
-      { receiver: "sysio.kicker", act: { account: "sysio.kicker", name: "kick", data: { sym: "LIQETH" } } },
-      { receiver: "sysio.token", act: { account: "sysio.token", name: "transfer", data: { from: "sysio", to: "sysio.kicker", quantity: "0.000000001 WIRE" } } }
-    ] },
+test("crankReceipt finds the paying kick among the operators' no-op pushes", () => {
+  const notification = { ...TracedDraw, receiver: "sysio" },
+    block = tracedBlock(10, [[TracedKick], [TracedKick, TracedDraw, notification], [TracedKick]])
+  Assert.deepEqual(crankReceipt(block), { paid: 1n, blockTime: LastKickAfter })
+})
+
+test("crankReceipt finds nothing in a block without a paying flow-token kick", () => {
+  const otherToken = { ...TracedKick, params: { sym: "LIQSOL" } },
+    otherDraw = { ...TracedDraw, params: { ...TracedDraw.params, to: "alice" } }
+  for (const transactions of [[], [[TracedKick]], [[TracedDraw]], [[otherToken, TracedDraw]], [[TracedKick, otherDraw]], [[TracedKick, TracedDraw, TracedDraw]]])
+    Assert.equal(crankReceipt(tracedBlock(10, transactions)), null)
+})
+
+test("crankReceipt rejects a paying kick that mutated system emissions", () => {
+  const issue = { receiver: "sysio.token", account: "sysio.token", name: "issue", params: {} }
+  Assert.throws(() => crankReceipt(tracedBlock(10, [[TracedKick, TracedDraw, issue]])), /issued WIRE/)
+})
+
+test("the crank scan stops at LIB and at unconfirmed blocks, and reads each settled block once", async () => {
+  const signal = new AbortController().signal, reads = [], scan = { nextBlock: 10 },
+    blocks = { 10: tracedBlock(10, [[TracedKick]]), 11: null, 12: tracedBlock(12, [[TracedKick, TracedDraw]], "pending") },
     ctx = { wire: {
-      getInfo: async () => ({ last_irreversible_block_num: 10 }),
-      getTransaction: async () => ({ block_num: 11, block_time: LastKickAfter }),
-      getBlock: async () => ({ transactions: [{ trx: { id: "crank-id" } }] })
+      getInfo: async () => ({ last_irreversible_block_num: 12 }),
+      getBlockTrace: async number => { reads.push(number); return blocks[number] }
     } }
-  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, [trace], state, signal), null)
-  ctx.wire.getTransaction = async () => ({ block_num: 10, block_time: LastKickAfter })
-  Assert.deepEqual(await LIQKickerScenario.irreversibleCrank(ctx, [trace], state, signal), { paid: 1n, blockTime: LastKickAfter })
-  ctx.wire.getBlock = async () => ({ transactions: [] })
-  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, [trace], state, signal), null)
-  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, [{ ...trace, except: {} }], state, signal), null)
+  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, scan, signal), null)
+  Assert.deepEqual(reads, [10, 11])
+  Assert.equal(scan.nextBlock, 11)
+
+  blocks[11] = tracedBlock(11, [])
+  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, scan, signal), null)
+  Assert.deepEqual(reads, [10, 11, 11, 12])
+  Assert.equal(scan.nextBlock, 12)
+
+  blocks[12].status = "irreversible"
+  Assert.deepEqual(await LIQKickerScenario.irreversibleCrank(ctx, scan, signal), { paid: 1n, blockTime: LastKickAfter })
+  Assert.equal(scan.nextBlock, 13)
+
+  reads.length = 0
+  Assert.equal(await LIQKickerScenario.irreversibleCrank(ctx, scan, signal), null)
+  Assert.deepEqual(reads, [])
+})
+
+test("the crank scan honours cancellation", async () => {
+  const controller = new AbortController(),
+    ctx = { wire: { getInfo: async () => { controller.abort(); return { last_irreversible_block_num: 12 } } } }
+  await Assert.rejects(LIQKickerScenario.irreversibleCrank(ctx, { nextBlock: 10 }, controller.signal), /abort/i)
+})
+
+test("the crank baseline records the head block before its snapshot", async () => {
+  const { ctx } = validationContext(), { build } = planned(null),
+    step = steps(build).find(step => step.name === "crank-baseline"), signal = new AbortController().signal
+  ctx.wire.getHead = async () => 42
+  ctx.outputs.set(LIQKickerScenario.CapabilityKey, false)
+  await step.runner(ctx, step.input, signal)
+  Assert.equal(ctx.outputs.get(LIQKickerScenario.CrankBaselineBlockKey), null)
+  ctx.outputs.set(LIQKickerScenario.CapabilityKey, true)
+  await step.runner(ctx, step.input, signal)
+  Assert.equal(ctx.outputs.assert(LIQKickerScenario.CrankBaselineBlockKey), 42)
+  Assert.ok(ctx.outputs.assert(LIQKickerScenario.CrankBaselineKey).pool)
 })
 
 
@@ -434,16 +486,9 @@ for (const wait of [LIQKickerScenario.runWaitWindow, LIQKickerScenario.runWaitCh
 })
 
 test("one irreversible crank payment advances a partial clock and every ledger by one unit", async () => {
-  const directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "kicker-crank-")), logs = Path.join(directory, "logs")
-  Fs.mkdirSync(logs)
-  const trace = { id: "crank-id", block_time: LastKickAfter, action_traces: [
-    { receiver: "sysio.kicker", act: { account: "sysio.kicker", name: "kick", data: { sym: "LIQETH" } } },
-    { receiver: "sysio.token", act: { account: "sysio.token", name: "transfer", data: { from: "sysio", to: "sysio.kicker", quantity: "0.000000001 WIRE" } } }
-  ] }
-  Fs.writeFileSync(Path.join(logs, "cluster_test.log"), `[TRX_TRACE] ${JSON.stringify(trace)}\n`)
   const state = cloneDeep(before), { ctx, holder } = validationContext(state)
-  ctx.config.clusterPath = directory
   ctx.outputs.set(LIQKickerScenario.CapabilityKey, true)
+  ctx.outputs.set(LIQKickerScenario.CrankBaselineBlockKey, 9)
   ctx.outputs.set(LIQKickerScenario.CrankBaselineKey, {
     config: { ...before.config, budget_remaining: "1" }, pool: before.pool,
     supply: 10_000_000_000n, poolWire: 10_000_000_000n, poolShadow: 10_000_000_000n,
@@ -459,18 +504,14 @@ test("one irreversible crank payment advances a partial clock and every ledger b
   holder.state.yieldIndex = { index: "100", pot: "1", carry: "0" }
   holder.state.balances.sysio -= 1n
   ctx.wire.getInfo = async () => ({ last_irreversible_block_num: 10 })
-  ctx.wire.getTransaction = async () => ({ block_num: 10, block_time: LastKickAfter })
-  ctx.wire.getBlock = async () => ({ transactions: [{ trx: { id: "crank-id" } }] })
-  try {
-    await LIQKickerScenario.runVerifyCrank(ctx, new AbortController().signal)
-    holder.state.pool.price_snapshot = before.pool.price_snapshot
-    holder.state.pool.price_time = LastKickBefore
-    await Assert.rejects(
-      LIQKickerScenario.runVerifyCrank(ctx, new AbortController().signal),
-      /settles the TWAP baseline at its own block/
-    )
-  }
-  finally { Fs.rmSync(directory, { recursive: true, force: true }) }
+  ctx.wire.getBlockTrace = async number => tracedBlock(number, [[TracedKick, TracedDraw]])
+  await LIQKickerScenario.runVerifyCrank(ctx, new AbortController().signal)
+  holder.state.pool.price_snapshot = before.pool.price_snapshot
+  holder.state.pool.price_time = LastKickBefore
+  await Assert.rejects(
+    LIQKickerScenario.runVerifyCrank(ctx, new AbortController().signal),
+    /settles the TWAP baseline at its own block/
+  )
 })
 
 test("the cumulative price at a block extends swap's accumulator at spot, modulo 2^256", () => {
