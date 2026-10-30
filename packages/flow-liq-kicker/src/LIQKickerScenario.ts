@@ -59,7 +59,10 @@ async function readKickerConfig(
   return rows[0]
 }
 
-/** The flow token's `sysio.kicker::kickpools` row (a read). */
+/**
+ * The flow token's `sysio.kicker::kickpools` row (a read). The chain's JSON spells an
+ * ABI `bool` as `0` / `1`, so the row's flags are normalized to `boolean` here.
+ */
 async function readKickerPool(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioKickerKickPoolType> {
@@ -70,7 +73,12 @@ async function readKickerPool(
     rows.length === 1,
     `sysio.kicker::kickpools has no ${Constants.LIQTokenCodename} row — did the bootstrap's KickerPools phase run?`
   )
-  return rows[0]
+  const [pool] = rows
+  return {
+    ...pool,
+    gift_overflow: Boolean(pool.gift_overflow),
+    spot_deviation: Boolean(pool.spot_deviation)
+  }
 }
 
 /** The flow token's shadow supply on `sysio.liq` (base units). */
