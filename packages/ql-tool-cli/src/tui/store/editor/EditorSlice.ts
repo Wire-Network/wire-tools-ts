@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import type { Key } from "ink"
 
 import { TextBuffer, type CursorMove, type TextBufferState } from "../../editor/index.js"
@@ -27,31 +27,31 @@ export const EditorSlice = createSlice({
   initialState: initialEditorState,
   reducers: {
     /** Replace the text (an undo point). */
-    textReplaced(state, action: PayloadAction<string>) {
+    textReplaced(state: Draft<EditorState>, action: PayloadAction<string>) {
       state.buffer = TextBuffer.replace(state.buffer, action.payload)
     },
     /** Insert at the cursor. */
-    textInserted(state, action: PayloadAction<string>) {
+    textInserted(state: Draft<EditorState>, action: PayloadAction<string>) {
       state.buffer = TextBuffer.insert(state.buffer, action.payload)
     },
     /** Delete before the cursor. */
-    backspaced(state) {
+    backspaced(state: Draft<EditorState>) {
       state.buffer = TextBuffer.backspace(state.buffer)
     },
     /** Delete after the cursor. */
-    deletedForward(state) {
+    deletedForward(state: Draft<EditorState>) {
       state.buffer = TextBuffer.deleteForward(state.buffer)
     },
     /** Move the cursor. */
-    cursorMoved(state, action: PayloadAction<CursorMove>) {
+    cursorMoved(state: Draft<EditorState>, action: PayloadAction<CursorMove>) {
       state.buffer = TextBuffer.move(state.buffer, action.payload)
     },
     /** Apply a raw keypress (text entry, deletion, movement, undo — multi-line). */
-    keyApplied(state, action: PayloadAction<EditorKeyPress>) {
+    keyApplied(state: Draft<EditorState>, action: PayloadAction<EditorKeyPress>) {
       state.buffer = TextBuffer.applyKey(state.buffer, action.payload.input, action.payload.key, true)
     },
     /** Undo the last edit. */
-    undone(state) {
+    undone(state: Draft<EditorState>) {
       state.buffer = TextBuffer.undo(state.buffer)
     }
   }
