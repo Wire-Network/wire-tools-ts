@@ -643,20 +643,47 @@ export class WireClient {
 
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
   async getTransaction(id: string): Promise<WireClient.GetTransactionResponse> {
-    const resp = await fetch(
-      `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id })
-      }
+    return this.postTraceApi<WireClient.GetTransactionResponse>(
+      "/v1/trace_api/get_transaction_trace",
+      { id },
+      `get_transaction(${id})`
     )
+  }
+
+  /**
+   * Fetch a block's executed transactions, inline actions included, via
+   * /v1/trace_api/get_block.
+   *
+   * @param blockNum - The block's height.
+   * @return The traced block, or `null` while the node has not traced it.
+   */
+  async getBlockTrace(
+    blockNum: number
+  ): Promise<WireClient.GetBlockTraceResponse> {
+    return this.postTraceApi<WireClient.GetBlockTraceResponse>(
+      "/v1/trace_api/get_block",
+      { block_num: blockNum },
+      `get_block_trace(${blockNum})`
+    )
+  }
+
+  /** POST to a trace-API route, whose 404 means the node holds no such trace (`null`). */
+  private async postTraceApi<T>(
+    route: string,
+    body: object,
+    label: string
+  ): Promise<T> {
+    const resp = await fetch(`${this.config.nodeopUrl}${route}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
     return (await match(resp)
       .with({ ok: true }, r => r.json())
       .with({ status: 404 }, () => Promise.resolve(null))
       .otherwise(() => {
-        throw new Error(`get_transaction(${id}) failed: HTTP ${resp.status}`)
-      })) as WireClient.GetTransactionResponse | null
+        throw new Error(`${label} failed: HTTP ${resp.status}`)
+      })) as T
   }
 
   /** Wait for head to advance past the current head. */
@@ -1380,6 +1407,29 @@ export namespace WireClient {
     id: string
     block_num: number
     block_time: string
+  }
+  /** One executed action in a trace-API response, inline actions and notifications included. */
+  export interface TraceAction {
+    receiver: string
+    account: string
+    name: string
+    /** The action data, decoded with the ABI in effect when it ran; each action has its own type. */
+    params?: unknown
+  }
+  /** One transaction in a traced block; failed transactions are never traced. */
+  export interface TraceTransaction extends GetTransactionResponse {
+    actions: TraceAction[]
+  }
+  /** Whether the trace API holds a block as final. */
+  export enum BlockTraceStatus {
+    irreversible = "irreversible",
+    pending = "pending"
+  }
+  /** The `/v1/trace_api/get_block` response. */
+  export interface GetBlockTraceResponse {
+    number: number
+    status: BlockTraceStatus
+    transactions: TraceTransaction[]
   }
 
   /**
