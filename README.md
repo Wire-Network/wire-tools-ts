@@ -134,6 +134,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
+| [`flow-solana-genesis-snapshot`](packages/flow-solana-genesis-snapshot/README.md) | `@wireio/test-flow-solana-genesis-snapshot` | Real prelaunch positions and pretoken yield match capital-index's immediate deterministic Launching export |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
