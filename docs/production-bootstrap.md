@@ -507,7 +507,7 @@ drops every `SYNDICATE_LIQ` of the pair).
 38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`
       yield pool per shadow on `sysio.swap`, each seeded with `10000000000` shadow and `10000000000` WIRE base
-      units, fee `30`, 30 s conversion horizon, 3000 bps depth cap, clip floor `1000`.
+      units, fee `500` (5 %), 30 s conversion horizon, 500 bps depth cap (`sysio.swap::setyield` refuses a cap above the fee, and 5 % sells a flow's reported yield in one tick), clip floor `1000`.
     - `--enable-mock-syndication-import`: `sysio.synd::importsynd` × 2 — one parked `100000000000` (100-token)
       position each of LIQSOL (ED key) and LIQETH (EM key) for an unlinked mock bonder — then
       `sysio.synd::importdone`, and a verify that both are parked with no custody mismatch.

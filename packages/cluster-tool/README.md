@@ -160,7 +160,7 @@ Each export is checked first: a Solana export must hash to its `allocationHash`,
 its wallets' purchased liqSOL as `initialChainAmount` and derive its `backingAvailable`; an
 Ethereum staker's pubkey must be its address's key; no export list may name an address twice;
 every declared total must add up; and each pool must meet `sysio.swap`'s limits (seeds below
-10^15). Against external outposts the Solana export must also come from the targeted
+10^15, a clip cap of at most the fee). Against external outposts the Solana export must also come from the targeted
 `programId`. The bootstrap is refused before anything runs when the claims, the T5 allotment
 (the pools' WIRE included) and the node-owner commitments exceed the 1,000,000,000 WIRE supply.
 Before the first import write, `verify-lco-funding` checks the funding account holds every
@@ -175,7 +175,7 @@ member of a `--cluster-build-options-file` document (or a flow's scenario defaul
 {
   "lcoImport": {
     "ethereum": { "nativePriceUsd": "400000000000", "highestTranchePriceUsd": "10000000",
-                  "pool": { "fee": 30, "conversion_horizon_sec": 86400, "depth_cap_bps": 50, "clip_floor": "1000" } },
+                  "pool": { "fee": 30, "conversion_horizon_sec": 86400, "depth_cap_bps": 30, "clip_floor": "1000" } },
     "solana": { "nativePriceUsd": "20000000000" },
     "dclaimFundingAccount": "sysio"
   }

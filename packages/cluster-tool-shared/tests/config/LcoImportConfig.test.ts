@@ -29,14 +29,14 @@ describe("LcoImportConfig", () => {
     const pool = LiqPoolSpecCodec.parse({
       fee: 30,
       conversion_horizon_sec: 86_400,
-      depthCapBps: 50,
+      depthCapBps: 30,
       clipFloor: "1000"
     })
     expect(pool).toEqual(
       LiqPoolSpec.create({
         fee: 30,
         conversionHorizonSec: 86_400,
-        depthCapBps: 50,
+        depthCapBps: 30,
         clipFloor: 1_000n
       })
     )

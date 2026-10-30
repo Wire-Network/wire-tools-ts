@@ -67,23 +67,30 @@ export namespace RegistrySteps {
   /** LIQETH's inclusive temporary custody-loss allowance (1%); all other pairs require full backing. */
   export const LiqEthCustodyShortfallBps = 100
   /**
-   * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
-   * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
-   * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
-   * reported yield in ONE tick, so a scenario observes one index bump and then a
-   * stable ledger instead of a day-long drip.
+   * Mock yield-pool parameters, per pool. The two seeds mirror the dev bootstrap
+   * config (`etc/config/dex/dex-config.dev.json`); the 30 s horizon and the fee
+   * are the dev cluster's own, so a flow's reported yield sells in ONE tick
+   * instead of a day-long drip.
    */
   const MockLiqPoolShadowSeed = 10_000_000_000
   /** WIRE (9-dec base units) the system account seeds each mock pool with. */
   const MockLiqPoolWireSeed = 10_000_000_000
-  /** Swap fee of each mock pool, per ten-thousand (0.30 %). */
-  const MockLiqPoolFee = 30
+  /**
+   * Swap fee of each mock pool, per ten-thousand (5 %), well above the dev config's
+   * 0.30 % because it also bounds the clip cap: 5 % of the 10-token shadow side
+   * sells a flow's reported yield (a 0.3-token donation plus staking yield) at once.
+   */
+  const MockLiqPoolFee = 500
   /** Pair-token shares locked at each mock pool's creation. */
   const MockLiqPoolLockedShares = 0
   /** Seconds over which a mock pool's reservoir is time-shared into clips. */
   const MockLiqPoolConversionHorizonSec = 30
-  /** Ceiling of one clip as bps of the pool's shadow depth. */
-  const MockLiqPoolDepthCapBps = 3000
+  /**
+   * Ceiling of one clip as bps of the pool's shadow depth: the fee, the widest
+   * `sysio.swap::setyield` accepts, since a clip wider than the fee is worth
+   * sandwiching.
+   */
+  const MockLiqPoolDepthCapBps = MockLiqPoolFee
   /** Smallest clip (shadow base units) a mock pool sells. */
   const MockLiqPoolClipFloor = 1000
   /**

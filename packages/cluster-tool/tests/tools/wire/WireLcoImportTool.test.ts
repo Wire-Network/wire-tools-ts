@@ -73,7 +73,7 @@ describe("WireLcoImportTool", () => {
           fee: 30,
           lockedShares: 0n,
           conversionHorizonSec: 86_400,
-          depthCapBps: 50,
+          depthCapBps: 30,
           clipFloor: 1_000n,
           custodyTotal: 6_500_000_000n
         })
@@ -117,7 +117,7 @@ describe("WireLcoImportTool", () => {
         tuning = LiqPoolSpec.create({
           fee: 25,
           conversionHorizonSec: 3_600,
-          depthCapBps: 40,
+          depthCapBps: 20,
           clipFloor: 10n,
           name: "launch pool"
         })
@@ -419,7 +419,29 @@ describe("WireLcoImportTool", () => {
             })
           )
         )
-      ).toThrow(/depthCapBps 0 must be 1\.\.10000/)
+      ).toThrow(/depthCapBps 0 must be 1\.\.30, the pool's fee/)
+      // A clip cap above the fee is refused by sysio.swap::setyield: such a clip is worth sandwiching.
+      expect(() =>
+        WireLcoImportTool.createPlan(
+          withPool(
+            LiqPoolSpec.create({
+              ...WireLcoImportTool.PlaceholderPoolTuning,
+              depthCapBps: WireLcoImportTool.PlaceholderPoolTuning.fee + 1
+            })
+          )
+        )
+      ).toThrow(/depthCapBps 31 must be 1\.\.30, the pool's fee/)
+      // A zero fee admits no cap at all.
+      expect(() =>
+        WireLcoImportTool.createPlan(
+          withPool(
+            LiqPoolSpec.create({
+              ...WireLcoImportTool.PlaceholderPoolTuning,
+              fee: 0
+            })
+          )
+        )
+      ).toThrow(/depthCapBps 30 must be 1\.\.0, the pool's fee/)
     })
 
     it("holds a pool to sysio.swap's own limits: seeds below 10^15, a share for the creator", () => {
@@ -616,7 +638,7 @@ describe("WireLcoImportTool", () => {
         fee: 30,
         locked_shares: "0",
         conversion_horizon_sec: 86_400,
-        depth_cap_bps: 50,
+        depth_cap_bps: 30,
         clip_floor: "1000"
       })
     })
