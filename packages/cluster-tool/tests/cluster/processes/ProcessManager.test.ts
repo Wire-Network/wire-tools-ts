@@ -407,6 +407,25 @@ describe("ProcessManager + ManagedProcess", () => {
     }
   )
 
+  it.each([
+    ["U+2028", " "],
+    ["U+2029", " "],
+    ["a bare CR", "\r"]
+  ])("keeps %s inside a captured line", async (_name, separator) => {
+    const process = new FakeProcess(manager, "trace-separator"),
+      stream = new PassThrough(),
+      writeSpy = jest.spyOn(manager, "writeRaw"),
+      line = `[TRX_TRACE] {"console":"before${separator}after"}`
+    process.capture(stream)
+    stream.end(`${line}\n`)
+    await Deferred.useCallback<void>(deferred =>
+      stream.once("end", () => deferred.resolve())
+    ).promise
+    expect(writeSpy.mock.calls).toEqual([["trace-separator", line]])
+    expect(process.recentOutput).toEqual([line])
+    writeSpy.mockRestore()
+  })
+
   describe("recentOutput", () => {
     it("retains captured lines in order", async () => {
       const process = new FakeProcess(manager, "recent-order")

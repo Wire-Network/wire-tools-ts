@@ -1,9 +1,8 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
-import { createInterface } from "node:readline"
 import Assert from "node:assert"
-import { isEmpty } from "lodash"
+import { isEmpty, trimEnd } from "lodash"
 import treeKill from "tree-kill"
 import { ProcessSignalName } from "@wireio/cluster-tool-shared"
 import { Deferred, getValue } from "@wireio/shared"
@@ -261,16 +260,27 @@ export abstract class ManagedProcess {
     if (!stream) return
     stream.setEncoding("utf8")
     // Pipe chunks can split a transaction trace anywhere, including inside JSON.
-    // Frame complete child lines before the structured appender serializes them.
-    createInterface({ input: stream, crlfDelay: Infinity }).on("line", line => {
-      if (!line) return
-      this.recentLines.push(line)
-      if (this.recentLines.length > ManagedProcess.RecentOutputCap)
-        this.recentLines.shift()
-      this.manager.writeRaw(this.label, line)
-      if (isErr) this.log.warn(line)
-      else this.log.info(line)
+    // Frame on LF only: readline also breaks at U+2028 and U+2029, which JSON
+    // strings carry unescaped.
+    let partialLine = ""
+    stream.on("data", (chunk: string) => {
+      const lines = (partialLine + chunk).split("\n")
+      partialLine = lines.pop()
+      lines.forEach(line => this.captureLine(line, isErr))
     })
+    stream.on("end", () => this.captureLine(partialLine, isErr))
+  }
+
+  /** Record one complete child line, dropping a CRLF ending's carriage return. */
+  private captureLine(terminatedLine: string, isErr: boolean): void {
+    const line = trimEnd(terminatedLine, "\r")
+    if (!line) return
+    this.recentLines.push(line)
+    if (this.recentLines.length > ManagedProcess.RecentOutputCap)
+      this.recentLines.shift()
+    this.manager.writeRaw(this.label, line)
+    if (isErr) this.log.warn(line)
+    else this.log.info(line)
   }
 
   /**
