@@ -303,7 +303,7 @@ describe("ClioRunner", () => {
   })
 
   describe("transport retries", () => {
-    it.each([{ killed: true }, { signal: "SIGTERM" }])(
+    it.each([{ killed: true }, { signal: ProcessSignalName.SIGTERM }])(
       "does not retry an interrupted child despite connection-looking output: %p",
       fields => {
         const error = { message: "Connection refused", ...fields }
