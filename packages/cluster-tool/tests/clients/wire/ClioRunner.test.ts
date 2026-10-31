@@ -303,6 +303,15 @@ describe("ClioRunner", () => {
   })
 
   describe("transport retries", () => {
+    it.each([{ killed: true }, { signal: "SIGTERM" }])(
+      "does not retry an interrupted child despite connection-looking output: %p",
+      fields => {
+        const error = { message: "Connection refused", ...fields }
+        expect(ClioRunner.isTransportFailure(error)).toBe(false)
+        expect(ClioRunner.isProvenUnapplied(error)).toBe(false)
+      }
+    )
+
     /** A clio that records each run in `runs` and fails with `stderr` until its `passOn`th run. */
     const flakyClio = (stderr: string, passOn: number) => {
       const runs = Path.join(dir, "runs")
