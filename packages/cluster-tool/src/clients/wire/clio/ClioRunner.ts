@@ -274,6 +274,8 @@ export namespace ClioRunner {
       candidate != null &&
       typeof candidate === "object" &&
       typeof candidate.message === "string" &&
+      candidate.killed !== true &&
+      candidate.signal == null &&
       (candidate.stdout == null ||
         (typeof candidate.stdout === "string" &&
           !JsonResponsePrefixPattern.test(candidate.stdout))) &&

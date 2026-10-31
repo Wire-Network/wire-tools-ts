@@ -4,7 +4,7 @@ const Os = require("node:os")
 const Path = require("node:path")
 const { cloneDeep } = require("lodash")
 const { SysioContracts } = require("@wireio/sdk-core")
-const { BindConfigProvider, ClusterBuild, OutputStore, StepExtraRecorder, Steps, WireClient } = require("@wireio/cluster-tool")
+const { BindConfigProvider, ClusterBuild, OutputStore, StepExtraRecorder, Steps, WireClient, toURL } = require("@wireio/cluster-tool")
 const { LIQKickerScenario, kickReceipt, readWireHoldings, expectedGiftAtBlock, cumulativeAtBlock } = require("../lib/LIQKickerScenario.js")
 
 const LastKickBefore = "2026-10-10T12:00:00.000"
@@ -210,7 +210,7 @@ for (const field of ["spot_deviation", "gift_overflow"]) {
 
 test("SDK table JSON reaches snapshots with only the two safety flags normalized", async () => {
   const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp),
-    client = new WireClient({ clusterPath: Os.tmpdir(), binary: Path.join(Os.tmpdir(), "clio"), nodeopUrl: `http://127.0.0.1:${port}`, kiodUrl: null }),
+    client = new WireClient({ clusterPath: Os.tmpdir(), binary: Path.join(Os.tmpdir(), "clio"), nodeopUrl: toURL(port), kiodUrl: null }),
     holder = { state: cloneDeep(before) }, reads = fakeWire(holder),
     { ctx, build } = planned(null), step = steps(build).find(step => step.name === "snapshot-before-kick"),
     getSysioContract = client.getSysioContract.bind(client)
