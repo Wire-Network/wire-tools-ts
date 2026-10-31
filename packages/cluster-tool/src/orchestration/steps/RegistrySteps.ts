@@ -62,6 +62,10 @@ const {
  * bootstrap epoch-0 window, so the phase only ever runs pre-EpochBootstrap).
  */
 export namespace RegistrySteps {
+  /** Registry identity of Ethereum's liquid token, whose rebases can temporarily reduce custody. */
+  const LiqEthCodename = "LIQETH"
+  /** LIQETH's inclusive temporary custody-loss allowance (1%); all other pairs require full backing. */
+  export const LiqEthCustodyShortfallBps = 100
   /**
    * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
    * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
@@ -845,7 +849,8 @@ export namespace RegistrySteps {
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
       min_desyndicate: MinimumDesyndications[tokenCodename],
-      desynd_fee_flat: DesyndicationFlatFees[tokenCodename]
+      desynd_fee_flat: DesyndicationFlatFees[tokenCodename],
+      custody_shortfall_bps: tokenCodename === LiqEthCodename ? LiqEthCustodyShortfallBps : 0
     }))
 
   /** Seed chains + tokens + chain-token bindings. */

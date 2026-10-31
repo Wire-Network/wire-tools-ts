@@ -2,11 +2,9 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
 import { asOption } from "@3fv/prelude-ts"
-import { isObject, negate } from "lodash"
-import { match, P } from "ts-pattern"
-
 import { getLogger, getValue } from "@wireio/shared"
-
+import { isPlainObject, negate } from "lodash"
+import { isMatching, match, P } from "ts-pattern"
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
@@ -83,6 +81,15 @@ export function enrichClioError(
       .join("\n")
   }
   return error
+}
+
+/** Parse clio `-j` stdout, or return it trimmed when it is not JSON. */
+function parseJsonOutput(stdout: string): unknown {
+  try {
+    return JSON.parse(stdout)
+  } catch {
+    return stdout.trim()
+  }
 }
 
 /**
@@ -173,27 +180,17 @@ export class ClioRunner {
           None: () => null
         })
       if (options.json) {
-        let result: unknown
-        try {
-          result = JSON.parse(stdout)
-        } catch {
-          return stdout.trim()
-        }
-        // clio can exit zero while returning a rejected transaction trace.
-        // Apply the same fail-closed proof as nonzero exits before finality;
-        // an id alone does not establish submission or execution.
-        if (
-          isObject(result) &&
-          ClioRunner.isProvenUnapplied({ message: stderr, stdout })
-        ) {
+        const result = parseJsonOutput(stdout)
+        // `clio push transaction` prints a failed trace and still exits 0; fail it as
+        // `push action` does, so the catch below reports it like any failed command.
+        if (ClioRunner.isFailedTransactionTrace(result))
           throw Object.assign(
-            new Error("clio returned a rejected transaction"),
+            new Error(ClioRunner.FailedTransactionTraceMessage),
             {
               stdout,
               stderr
             }
           )
-        }
         return result
       }
       return stdout.trim()
@@ -251,6 +248,22 @@ export namespace ClioRunner {
 
   /** `tx_duplicate`: the node already has the transaction. */
   export const DuplicateTransactionCode = 3040008
+
+  /** The message of the error {@link ClioRunner.run} throws for a failed trace clio printed with exit 0. */
+  export const FailedTransactionTraceMessage =
+    "clio printed a failed transaction trace"
+
+  /**
+   * True when `result` is a transaction trace the chain failed: its `processed.except` is
+   * an object. `clio push action` exits non-zero on one; `clio push transaction` prints it
+   * and exits 0, so the runner fails that command itself.
+   *
+   * @param result - A clio `-j` result, parsed or raw.
+   * @returns True for a failed transaction trace.
+   */
+  export function isFailedTransactionTrace(result: unknown): boolean {
+    return isMatching({ processed: { except: P.when(isPlainObject) } }, result)
+  }
 
   /** True when `error` is a failed clio connection (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {

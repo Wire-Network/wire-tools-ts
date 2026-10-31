@@ -42,6 +42,22 @@ describe("ClioRunner", () => {
     nodeopUrl,
     kiodUrl: null
   })
+  /** The `send_transaction2` failed trace `clio push transaction -j` prints with exit 0. */
+  const refusal = "TWAP window must be at least 60 seconds",
+    failedTrace = {
+      transaction_id: "38c3cdd9",
+      processed: {
+        id: "38c3cdd9",
+        receipt: null,
+        scheduled: false,
+        except: {
+          code: 3050003,
+          name: "sysio_assert_message_exception",
+          message: "sysio_assert_message assertion failure",
+          stack: [{ msg: `assertion failure with message: ${refusal}` }]
+        }
+      }
+    }
 
   describe("run", () => {
     it("returns parsed JSON in json mode", async () => {
@@ -74,6 +90,58 @@ describe("ClioRunner", () => {
       await expect(new ClioRunner(config(bin)).run(["push"])).rejects.toThrow(
         /assertion failure with message: boom/
       )
+    })
+
+    it("fails a failed trace clio printed with exit 0, as a proven rejection carrying the chain's message", async () => {
+      const bin = makeScript(
+          "clio-failed-trace.sh",
+          `echo '${JSON.stringify(failedTrace)}'`
+        ),
+        run = new ClioRunner(config(bin)).run(["push", "transaction"], {
+          json: true
+        })
+      await expect(run).rejects.toThrow(
+        ClioRunner.FailedTransactionTraceMessage
+      )
+      await expect(run).rejects.toThrow(refusal)
+      await expect(run.catch(ClioRunner.isProvenUnapplied)).resolves.toBe(true)
+    })
+
+    it("returns an executed transaction trace", async () => {
+      const executed = {
+          transaction_id: "abc",
+          processed: {
+            id: "abc",
+            receipt: { status: "executed" },
+            except: null
+          }
+        },
+        bin = makeScript(
+          "clio-executed.sh",
+          `echo '${JSON.stringify(executed)}'`
+        )
+      await expect(
+        new ClioRunner(config(bin)).run(["push", "transaction"], { json: true })
+      ).resolves.toEqual(executed)
+    })
+  })
+
+  describe("isFailedTransactionTrace", () => {
+    it("recognizes only a trace whose processed.except is an object", () => {
+      expect(ClioRunner.isFailedTransactionTrace(failedTrace)).toBe(true)
+      expect(
+        [
+          {
+            ...failedTrace,
+            processed: { ...failedTrace.processed, except: null }
+          },
+          { processed: { receipt: { status: "executed" } } },
+          { processed: { except: "sysio_assert_message assertion failure" } },
+          { transaction_id: "abc" },
+          JSON.stringify(failedTrace),
+          null
+        ].map(ClioRunner.isFailedTransactionTrace)
+      ).toEqual(Array(6).fill(false))
     })
   })
 
@@ -181,28 +249,46 @@ describe("ClioRunner", () => {
         })
       )
     ])(
-      "preserves success or ambiguous JSON without inventing safe rejection: %p",
+      "never invents safe rejection for successful or ambiguous JSON: %p",
       async response => {
         const { binary, runsFile } = createJsonScript(response)
-        await expect(
-          new ClioRunner(config(binary)).run(["push", "transaction"], {
+        const result = new ClioRunner(config(binary)).run(
+          ["push", "transaction"],
+          {
             json: true
-          })
-        ).resolves.toEqual(response)
+          }
+        )
+        if (ClioRunner.isFailedTransactionTrace(response)) {
+          await expect(result).rejects.toThrow(
+            ClioRunner.FailedTransactionTraceMessage
+          )
+          const error = await result.catch(identity)
+          expect(ClioRunner.isProvenUnapplied(error)).toBe(false)
+          expect(ClioRunner.isTransportFailure(error)).toBe(false)
+        } else {
+          await expect(result).resolves.toEqual(response)
+        }
         expect(Fs.readFileSync(runsFile, "utf8").trim()).toBe("run")
       }
     )
 
-    it("does not override a conflicting HTTP failure diagnostic", async () => {
+    it("surfaces a failed trace without treating a conflicting HTTP diagnostic as safe to retry", async () => {
       const { binary } = createJsonScript(
         TransactionRejection,
         "Error 3200000: http exception"
       )
-      await expect(
-        new ClioRunner(config(binary)).run(["push", "transaction"], {
+      const result = new ClioRunner(config(binary)).run(
+        ["push", "transaction"],
+        {
           json: true
-        })
-      ).resolves.toEqual(TransactionRejection)
+        }
+      )
+      await expect(result).rejects.toThrow(
+        ClioRunner.FailedTransactionTraceMessage
+      )
+      await expect(result.catch(ClioRunner.isProvenUnapplied)).resolves.toBe(
+        false
+      )
     })
 
     it("preserves non-JSON output even when stderr looks like a chain error", async () => {

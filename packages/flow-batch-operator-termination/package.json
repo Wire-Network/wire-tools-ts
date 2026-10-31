@@ -13,9 +13,9 @@
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.104",
-    "@wireio/opp-typescript-models": "^1.0.54",
-    "@wireio/shared": "^1.0.102"
+    "@wireio/sdk-core": "^1.0.105",
+    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/shared": "^1.0.105"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

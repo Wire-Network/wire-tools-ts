@@ -34,8 +34,8 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.42",
     "@wireio/cluster-tool-shared": "workspace:*",
-    "@wireio/sdk-core": "^1.0.104",
-    "@wireio/shared": "^1.0.102",
+    "@wireio/sdk-core": "^1.0.105",
+    "@wireio/shared": "^1.0.105",
     "antlr4ng": "3.0.16",
     "lodash": "^4.18.1",
     "simple-wcswidth": "^1.1.2",

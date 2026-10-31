@@ -186,7 +186,8 @@ describe("BatchOperatorUnderwritingSteps plan and shared phases", () => {
       desynd_fee_flat: 100_000,
       min_desyndicate: 50_000_000,
       window_sec: 60,
-      bounty: 0
+      bounty: 0,
+      custody_shortfall_bps: 0
     })
     expect(Steps.configOf(plan, 240).window_sec).toBe(240)
     expect(Steps.laterNetOf(plan)).toBe(495_000_000n)
