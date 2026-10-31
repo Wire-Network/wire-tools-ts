@@ -2,9 +2,11 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
 import { asOption } from "@3fv/prelude-ts"
-import { getLogger, getValue } from "@wireio/shared"
 import { isPlainObject, negate } from "lodash"
 import { isMatching, match, P } from "ts-pattern"
+
+import { getLogger, getValue } from "@wireio/shared"
+
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
