@@ -1,7 +1,5 @@
 import Assert from "node:assert"
 import ChildProcess from "node:child_process"
-import Fs from "node:fs/promises"
-import Path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 
 import { match } from "ts-pattern"
@@ -19,6 +17,7 @@ import {
   StepExtraRecorder,
   WireClient,
   outputKey,
+  pollFor,
   pollUntil,
   verifyStep,
   type ClusterBuild,
@@ -502,12 +501,39 @@ function assertNoEmissionsMutation(
   )
 }
 
+/** The `sysio` → `sysio.kicker` draws among `traces`: their executions on `sysio.token` itself, not the notifications. */
+function treasuryDraws(traces: ReadonlyArray<ActionTraceView>): TransferData[] {
+  return flattenTraces(traces)
+    .filter(
+      trace =>
+        trace.receiver === Constants.TokenAccount &&
+        trace.act?.account === Constants.TokenAccount &&
+        trace.act.name === Constants.TransferActionName
+    )
+    .map(trace => trace.act.data as TransferData)
+    .filter(
+      data =>
+        data.from === Constants.TreasuryAccount &&
+        data.to === Constants.KickerAccount
+    )
+}
+
 /** What one paid kick's transaction shows. */
 export interface KickReceipt {
   /** The treasury draw's `sysio.token::transfer` amount (WIRE base units). */
   readonly paid: bigint
   /** The block time the kick executed at — `current_time_point()` in the contract. */
   readonly blockTime: string
+}
+
+/** A trace-API action in the shape the receipt checks read. */
+function toActionTraceView({
+  receiver,
+  account,
+  name,
+  params
+}: WireClient.TraceAction): ActionTraceView {
+  return { receiver, act: { account, name, data: params } }
 }
 
 /**
@@ -521,24 +547,9 @@ export interface KickReceipt {
 export function kickReceipt(
   response: API.v1.SendTransactionResponse
 ): KickReceipt {
-  assertNoEmissionsMutation(
-    response.processed.action_traces as ActionTraceView[]
-  )
-  const draws = flattenTraces(
-    response.processed.action_traces as ActionTraceView[]
-  )
-    .filter(
-      trace =>
-        trace.receiver === Constants.TokenAccount &&
-        trace.act?.account === Constants.TokenAccount &&
-        trace.act.name === Constants.TransferActionName
-    )
-    .map(trace => trace.act.data as TransferData)
-    .filter(
-      data =>
-        data.from === Constants.TreasuryAccount &&
-        data.to === Constants.KickerAccount
-    )
+  const traces = response.processed.action_traces as ActionTraceView[]
+  assertNoEmissionsMutation(traces)
+  const draws = treasuryDraws(traces)
   Assert.strictEqual(
     draws.length,
     1,
@@ -548,6 +559,38 @@ export function kickReceipt(
     paid: assetUnits(draws[0].quantity),
     blockTime: response.processed.block_time
   }
+}
+
+/**
+ * The flow token's paying kick in a traced block: a transaction of one `kick` and one
+ * treasury draw. A kick that pays nothing draws nothing, so the other operators' pushes
+ * of the same kick never match.
+ *
+ * @param block - The traced block.
+ * @returns The draw and the block time, or `null` when no kick in the block paid.
+ */
+export function crankReceipt(
+  block: WireClient.GetBlockTraceResponse
+): KickReceipt {
+  for (const transaction of block.transactions) {
+    const traces = transaction.actions.map(toActionTraceView),
+      kicks = traces.filter(
+        trace =>
+          trace.receiver === Constants.KickerAccount &&
+          trace.act.account === Constants.KickerAccount &&
+          trace.act.name === Constants.KickActionName &&
+          (trace.act.data as SysioContracts.SysioKickerKickAction).sym ===
+            Constants.LIQTokenCodename
+      ),
+      draws = treasuryDraws(traces)
+    if (kicks.length !== 1 || draws.length !== 1) continue
+    assertNoEmissionsMutation(traces)
+    return {
+      paid: assetUnits(draws[0].quantity),
+      blockTime: transaction.block_time
+    }
+  }
+  return null
 }
 
 /** The `setpool` data for the flow token at `minGift`, keeping the bootstrap's rate and ceiling. */
@@ -837,6 +880,10 @@ export class LIQKickerScenario extends FlowScenario {
         "Record the new observation clock and ledgers",
         async (ctx, signal) => {
           if (!ctx.outputs.assert(LIQKickerScenario.CapabilityKey)) return
+          ctx.outputs.set(
+            LIQKickerScenario.CrankBaselineBlockKey,
+            await ctx.wire.getHead()
+          )
           ctx.outputs.set(
             LIQKickerScenario.CrankBaselineKey,
             await readSnapshot(ctx, signal)
@@ -1173,93 +1220,37 @@ export namespace LIQKickerScenario {
       await Steps.contracts.sysio.kicker.runSetpool(ctx, input, signal)
   }
 
-  /** Nodeop's structured log trace, using the existing action-trace view. */
-  export interface CrankTrace {
-    readonly id: WireClient.GetTransactionResponse["id"]
-    readonly block_time: WireClient.GetTransactionResponse["block_time"]
-    readonly except?: unknown
-    readonly action_traces: ActionTraceView[]
+  /** Where the crank-payment scan resumes across polls. */
+  export interface CrankScan {
+    nextBlock: number
   }
 
-  /** Confirm a logged payment in its actual irreversible block; a reversible or forked trace cannot pass. */
+  /**
+   * Read the blocks from `scan.nextBlock` up to LIB for the crank's payment. The scan stops
+   * at a block the trace API does not hold as irreversible yet, so a reversible or forked
+   * trace cannot pass, and it advances `scan` past every block it has read.
+   *
+   * @param ctx - The cluster context.
+   * @param scan - The next block to read.
+   * @param signal - The step's cancellation.
+   * @returns The payment's receipt, or `null` when no block read so far holds one.
+   */
   export async function irreversibleCrank(
     ctx: ClusterBuildContext,
-    traces: CrankTrace[],
-    before: KickerSnapshot,
+    scan: CrankScan,
     signal: AbortSignal
   ): Promise<KickReceipt> {
+    signal.throwIfAborted()
     const lib = (await ctx.wire.getInfo()).last_irreversible_block_num
-    for (const trace of traces) {
+    while (scan.nextBlock <= lib) {
       signal.throwIfAborted()
-      if (
-        trace.except != null ||
-        WireClient.chainTimeMs(trace.block_time) <=
-          WireClient.chainTimeMs(before.pool.last_kick)
-      )
-        continue
-      const actions = flattenTraces(trace.action_traces),
-        kicks = actions.filter(
-          action =>
-            action.receiver === Constants.KickerAccount &&
-            action.act?.account === Constants.KickerAccount &&
-            action.act.name === Constants.KickActionName &&
-            (action.act.data as SysioContracts.SysioKickerKickAction).sym ===
-              Constants.LIQTokenCodename
-        ),
-        draws = actions.filter(
-          action =>
-            action.receiver === Constants.TokenAccount &&
-            action.act?.account === Constants.TokenAccount &&
-            action.act.name === Constants.TransferActionName &&
-            (action.act.data as SysioContracts.SysioTokenTransferAction)
-              .from === Constants.TreasuryAccount &&
-            (action.act.data as SysioContracts.SysioTokenTransferAction).to ===
-              Constants.KickerAccount
-        )
-      if (kicks.length !== 1 || draws.length !== 1) continue
-      const transaction = await ctx.wire.getTransaction(trace.id)
-      if (
-        !transaction ||
-        transaction.block_num > lib ||
-        WireClient.chainTimeMs(transaction.block_time) !==
-          WireClient.chainTimeMs(trace.block_time)
-      )
-        continue
-      const block = await ctx.wire.getBlock(transaction.block_num)
-      if (!WireClient.blockContainsTransaction(block, trace.id)) continue
-      assertNoEmissionsMutation(trace.action_traces)
-      return {
-        paid: assetUnits(
-          (draws[0].act.data as SysioContracts.SysioTokenTransferAction)
-            .quantity
-        ),
-        blockTime: transaction.block_time
-      }
+      const block = await ctx.wire.getBlockTrace(scan.nextBlock)
+      if (block?.status !== WireClient.BlockTraceStatus.irreversible) return null
+      scan.nextBlock += 1
+      const receipt = crankReceipt(block)
+      if (receipt != null) return receipt
     }
     return null
-  }
-
-  /** Read candidate structured log traces; their inclusion is checked separately against LIB. */
-  async function readCrankTraces(
-    ctx: ClusterBuildContext
-  ): Promise<CrankTrace[]> {
-    const directory = Path.join(ctx.config.clusterPath, "logs"),
-      files = (await Fs.readdir(directory)).filter(file =>
-        /^cluster_.*\.log$/.test(file)
-      ),
-      logs = await Promise.all(
-        files.map(file => Fs.readFile(Path.join(directory, file), "utf8"))
-      )
-    return logs
-      .flatMap(text => text.split("\n"))
-      .filter(
-        line =>
-          line.includes("[TRX_TRACE]") && line.includes(Constants.KickerAccount)
-      )
-      .flatMap(line => {
-        const start = line.indexOf('{"id":')
-        return start < 0 ? [] : [JSON.parse(line.slice(start)) as CrankTrace]
-      })
   }
 
   /** Verify the unique capped payment, its TWAP, partial clock, budget and yield ledgers. */
@@ -1269,24 +1260,15 @@ export namespace LIQKickerScenario {
   ): Promise<void> {
     if (!ctx.outputs.assert(CapabilityKey)) return
     signal.throwIfAborted()
-    const before = ctx.outputs.assert(CrankBaselineKey)
-    let receipt: KickReceipt
-    await pollUntil(
-      "an irreversible crank payment",
-      async () => {
-        signal.throwIfAborted()
-        receipt = await irreversibleCrank(
-          ctx,
-          await readCrankTraces(ctx),
-          before,
-          signal
-        )
-        return receipt != null
-      },
-      Constants.CrankPaymentTimeoutMs,
-      Constants.PollIntervalMs
-    )
-    const after = await readSnapshot(ctx, signal),
+    const before = ctx.outputs.assert(CrankBaselineKey),
+      scan = { nextBlock: ctx.outputs.assert(CrankBaselineBlockKey) + 1 },
+      receipt = await pollFor(
+        "an irreversible crank payment",
+        () => irreversibleCrank(ctx, scan, signal),
+        Constants.CrankPaymentTimeoutMs,
+        Constants.PollIntervalMs
+      ),
+      after = await readSnapshot(ctx, signal),
       { rows } = await ctx.wire
         .getSysioContract(SysioContractName.swap)
         .tables.priceaccum.query(symbolRange(Constants.PairTokenCodename)),
@@ -2206,6 +2188,12 @@ export namespace LIQKickerScenario {
   export const CrankBaselineKey = outputKey<KickerSnapshot>(
     "LIQKickerScenario.crankBaseline",
     "new observation window and ledgers"
+  )
+
+  /** The head block at the baseline; the crank cannot pay until the flow lowers the minimum after it. */
+  export const CrankBaselineBlockKey = outputKey<number>(
+    "LIQKickerScenario.crankBaselineBlock",
+    "head block when the crank baseline was taken"
   )
 
   /**

@@ -668,6 +668,46 @@ describe("WireClient", () => {
     })
   })
 
+  describe("getBlockTrace", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    const block: WireClient.GetBlockTraceResponse = {
+      number: 12,
+      status: WireClient.BlockTraceStatus.irreversible,
+      transactions: []
+    }
+
+    it("posts the block number to the trace API and returns the traced block", async () => {
+      const post = jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(JSON.stringify(block)))
+
+      await expect(new WireClient(config).getBlockTrace(12)).resolves.toEqual(block)
+      expect(post).toHaveBeenCalledWith(
+        `${config.nodeopUrl}/v1/trace_api/get_block`,
+        expect.objectContaining({ body: JSON.stringify({ block_num: 12 }) })
+      )
+    })
+
+    it("returns null for a block the node has not traced", async () => {
+      jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(null, { status: 404 }))
+
+      await expect(new WireClient(config).getBlockTrace(12)).resolves.toBeNull()
+    })
+
+    it("fails on any other error status", async () => {
+      jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(null, { status: 500 }))
+
+      await expect(new WireClient(config).getBlockTrace(12)).rejects.toThrow(
+        "get_block_trace(12) failed: HTTP 500"
+      )
+    })
+  })
+
   describe("getTransactionId", () => {
     it("extracts from an object", () => {
       expect(WireClient.getTransactionId({ transaction_id: "abc" })).toBe("abc")
