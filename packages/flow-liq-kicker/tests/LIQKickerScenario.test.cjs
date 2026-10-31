@@ -3,7 +3,8 @@ const Fs = require("node:fs")
 const Os = require("node:os")
 const Path = require("node:path")
 const { cloneDeep } = require("lodash")
-const { ClusterBuild, OutputStore, StepExtraRecorder } = require("@wireio/cluster-tool")
+const { SysioContracts } = require("@wireio/sdk-core")
+const { BindConfigProvider, ClusterBuild, OutputStore, StepExtraRecorder, Steps, WireClient, toURL } = require("@wireio/cluster-tool")
 const { LIQKickerScenario, kickReceipt, readWireHoldings, expectedGiftAtBlock, cumulativeAtBlock } = require("../lib/LIQKickerScenario.js")
 
 const LastKickBefore = "2026-10-10T12:00:00.000"
@@ -175,6 +176,70 @@ test("the manual-kick verifies pass when every ledger moved by the modelled gift
   await runManualVerifies({ after }, { paid: Gift, blockTime: LastKickAfter })
 })
 
+test("numeric false flags pass bootstrap and paid-kick verification", async () => {
+  const state = cloneDeep(before)
+  state.config.twap_window_sec = Steps.registry.KickerTwapWindowSec
+  Object.assign(state.pool, { spot_deviation: 0, gift_overflow: 0 })
+  const { ctx } = validationContext(state), { build } = planned(null),
+    step = steps(build).find(step => step.name === "kicker-configured")
+  await step.runner(ctx, step.input, new AbortController().signal)
+  await runManualVerifies({
+    before: { ...before, pool: { ...before.pool, spot_deviation: 0, gift_overflow: 0 } },
+    after: { ...after, pool: { ...after.pool, spot_deviation: 0, gift_overflow: 0 } }
+  }, { paid: Gift, blockTime: LastKickAfter })
+})
+
+test.each([true, 1])("paid-kick spot guard rejects a set flag (%s)", async value => {
+  await Assert.rejects(runManualVerifies({
+    after: { ...after, pool: { ...after.pool, spot_deviation: value } }
+  }, { paid: Gift, blockTime: LastKickAfter }), /the paid kick flagged a spot deviation/)
+})
+
+for (const field of ["spot_deviation", "gift_overflow"]) {
+  test.each([2, 255, -1, 0.5, "0", "1", "false", "true", "", null, undefined, {}, []])(
+    `pool reads reject malformed ${field} (%p)`, async value => {
+      const state = cloneDeep(before), { ctx, build } = planned(null),
+        step = steps(build).find(step => step.name === "snapshot-before-kick")
+      state.pool[field] = value
+      ctx.wire = fakeWire({ state })
+      await Assert.rejects(step.runner(ctx, step.input, new AbortController().signal),
+        new RegExp(`kickpools\\.${field} must be false, true, 0 or 1`))
+    }
+  )
+}
+
+test("SDK table JSON reaches snapshots with only the two safety flags normalized", async () => {
+  const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp),
+    client = new WireClient({ clusterPath: Os.tmpdir(), binary: Path.join(Os.tmpdir(), "clio"), nodeopUrl: toURL(port), kiodUrl: null }),
+    holder = { state: cloneDeep(before) }, reads = fakeWire(holder),
+    { ctx, build } = planned(null), step = steps(build).find(step => step.name === "snapshot-before-kick"),
+    getSysioContract = client.getSysioContract.bind(client)
+  ctx.wire = client
+  client.getWireBalance = reads.getWireBalance
+  client.getSysioContract = name => name === SysioContracts.SysioContractName.kicker ? getSysioContract(name) : reads.getSysioContract(name)
+  const call = jest.spyOn(client.api.v1Provider, "call").mockImplementation(async ({ params }) => {
+    const row = String(params.table) === "kickpools" ? holder.state.pool : holder.state.config,
+      json = { rows: [{ key: "LIQETH", value: cloneDeep(row) }], more: false }
+    return { status: 200, headers: {}, json, text: JSON.stringify(json) }
+  })
+  try {
+    for (const [rawSpot, spot] of [[false, false], [0, false], [true, true], [1, true]]) {
+      for (const [rawOverflow, overflow] of [[false, false], [0, false], [true, true], [1, true]]) {
+        Object.assign(holder.state.pool, { spot_deviation: rawSpot, gift_overflow: rawOverflow })
+        const raw = await client.getSysioContract(SysioContracts.SysioContractName.kicker).tables.kickpools.query()
+        Assert.deepEqual(raw.rows[0], holder.state.pool)
+        await step.runner(ctx, step.input, new AbortController().signal)
+        Assert.deepEqual(ctx.outputs.assert(LIQKickerScenario.BeforeKickKey).pool,
+          { ...holder.state.pool, spot_deviation: spot, gift_overflow: overflow })
+        Assert.equal(holder.state.pool.spot_deviation, rawSpot)
+        Assert.equal(holder.state.pool.gift_overflow, rawOverflow)
+      }
+    }
+  } finally {
+    call.mockRestore()
+  }
+})
+
 for (const [fault, patch, receipt, message] of [
   ["paid more than the model", {}, { paid: Gift + 1n, blockTime: LastKickAfter }, /treasury draw is not the modelled gift/],
   ["last_kick short of the block", {}, { paid: Gift, blockTime: "2026-10-10T12:10:01.000" }, /its own block time/],
@@ -268,7 +333,7 @@ for (const paid of [1n, 2n]) test(`the restored budget conserves ${paid} units i
   ctx.outputs.set(LIQKickerScenario.AfterKickKey, { config: { budget_remaining: String(Budget), min_interval_sec: 60, twap_window_sec: 60, max_spot_deviation_bps: 5000 } })
   ctx.outputs.set(LIQKickerScenario.CrankBaselineKey, { pool: { gifted_total: "0" } })
   ctx.wire = { getSysioContract: () => ({
-    tables: { kickpools: { query: async () => ({ rows: [{ gifted_total: String(paid) }] }) } },
+    tables: { kickpools: { query: async () => ({ rows: [{ ...before.pool, gifted_total: String(paid) }] }) } },
     actions: { setconfig: { invoke: async data => writes.push(data) } }
   }) }
   const step = steps(build).find(step => step.name === "restore-crank-budget")
@@ -411,6 +476,33 @@ for (const testCase of ["warmupSetup", "zeroSupply", "zeroSnapshot"]) {
     await step.runner(ctx, step.input, new AbortController().signal)
   })
 }
+
+for (const field of ["spot_deviation", "gift_overflow"]) {
+  test.each([false, 0, true, 1])(`zero-supply safety assertion preserves ${field} semantics (%s)`, async value => {
+    const { ctx, holder } = validationContext(),
+      step = LIQKickerScenario.planValidationCase(LIQKickerScenario.ValidationCase.zeroSupply)
+    Object.assign(holder.state.pool, { spot_deviation: 0, gift_overflow: 0 })
+    ctx.wire.invokeTransaction = async () => {
+      holder.state.config.min_interval_sec = 4_294_967_295
+      Object.assign(holder.state.pool, { last_kick: LastKickAfter, supply_snapshot: "0", [field]: value })
+      return { processed: { block_time: LastKickAfter, action_traces: [] } }
+    }
+    const pending = step.runner(ctx, step.input, new AbortController().signal)
+    if (value === true || value === 1) await Assert.rejects(pending, /true !== false/)
+    else await pending
+  })
+}
+
+test("a rejected action preserves pool state across numeric and boolean JSON reads", async () => {
+  const { ctx, holder } = validationContext(),
+    step = LIQKickerScenario.planValidationCase(LIQKickerScenario.ValidationCase.zeroCap)
+  Object.assign(holder.state.pool, { spot_deviation: 0, gift_overflow: 1 })
+  ctx.wire.invokeTransaction = async () => {
+    Object.assign(holder.state.pool, { spot_deviation: false, gift_overflow: true })
+    throw new Error("invalid daily cap")
+  }
+  await step.runner(ctx, step.input, new AbortController().signal)
+})
 
 test("zeroSnapshot fails when the chain flags gift_overflow as 1", async () => {
   const { ctx, holder } = validationContext(), step = LIQKickerScenario.planValidationCase(LIQKickerScenario.ValidationCase.zeroSnapshot)

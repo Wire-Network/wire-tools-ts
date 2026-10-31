@@ -60,9 +60,27 @@ async function readKickerConfig(
 }
 
 /**
- * The flow token's `sysio.kicker::kickpools` row (a read). The chain's JSON spells an
- * ABI `bool` as `0` / `1`, so the row's flags are normalized to `boolean` here.
+ * Decode a kicker flag without accepting other uint8 values or truthy JSON.
+ * Sysio's ABI serializer reads `bool` with `pack_unpack<uint8_t>()`.
+ * @param value - The table's JSON boolean or numeric flag.
+ * @param field - The pool field to identify in a malformed-response error.
+ * @returns The flag's boolean value.
  */
+function normalizeKickerBoolean(
+  value: boolean | number,
+  field: string
+): boolean {
+  return match(value)
+    .with(false, 0, () => false)
+    .with(true, 1, () => true)
+    .otherwise(() => {
+      throw new Error(
+        `sysio.kicker::kickpools.${field} must be false, true, 0 or 1`
+      )
+    })
+}
+
+/** The flow token's `sysio.kicker::kickpools` row, with decoded safety flags (a read). */
 async function readKickerPool(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioKickerKickPoolType> {
@@ -76,8 +94,11 @@ async function readKickerPool(
   const [pool] = rows
   return {
     ...pool,
-    gift_overflow: Boolean(pool.gift_overflow),
-    spot_deviation: Boolean(pool.spot_deviation)
+    spot_deviation: normalizeKickerBoolean(
+      pool.spot_deviation,
+      "spot_deviation"
+    ),
+    gift_overflow: normalizeKickerBoolean(pool.gift_overflow, "gift_overflow")
   }
 }
 
