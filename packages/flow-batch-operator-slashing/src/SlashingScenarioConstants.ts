@@ -36,6 +36,8 @@ export namespace SlashingScenarioConstants {
   export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
   /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
+  /** One WIRE in depot atomic units, both the batch minimum and each dispute operator's bond. */
+  export const DisputeOperatorBondAmount = 1_000_000_000n
   /**
    * Bootstrapped batch operators provisioned by the harness — exactly
    * {@link DisputeOperators}.length, because the scenario states the group
@@ -45,8 +47,8 @@ export namespace SlashingScenarioConstants {
    * exist when it runs. A smaller roster reverts the bootstrap with "not enough
    * available batch operators for group assignment".
    *
-   * These bootstrapped operators do NOT stay in the group: once the flow flips
-   * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
+   * These bootstrapped operators do NOT stay in the group: once the flow bonds
+   * the SBP-less dispute operators to ACTIVE it re-materializes the rotation with a
    * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
    * `dispop.*` fill the sole group and these fall outside it, exactly as the
    * hand-off in `SlashingScenario.plan` describes. They keep the network
@@ -88,7 +90,6 @@ export namespace SlashingScenarioConstants {
    * quorum is Q = floor(4/2)+1 = 3 — voting all 3 of these owners clears it.
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
-
 
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
@@ -154,7 +155,7 @@ export namespace SlashingScenarioConstants {
   /** Settle poll interval as a fraction of the epoch duration (see {@link SettleStableChecks}). */
   export const SettlePollIntervalEpochRatio = 0.75
 
-  /** Epochs budgeted for a dispute operator to flip OPERATOR_STATUS_ACTIVE after `processbatch`. */
+  /** Epochs budgeted for a dispute operator to flip OPERATOR_STATUS_ACTIVE after bonding. */
   export const ActiveEpochBudget = 2
   /** Epochs budgeted for `schbatchgps` to make the dispute operators the sole active group. */
   export const GroupEpochBudget = 5

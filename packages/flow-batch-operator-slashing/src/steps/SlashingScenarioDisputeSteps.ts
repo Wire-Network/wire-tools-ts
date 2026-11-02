@@ -40,7 +40,7 @@ const UtcZuluSuffix = "Z"
 /**
  * Flow-local step factories + dispute-domain reads for the slashing scenario.
  * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
- * `sysio.opreg::processbatch`, and the roa node-owner registration pair have no
+ * and the roa node-owner registration pair have no
  * shared `Steps.*` palette factories yet, so this namespace supplies them in the
  * same shape (`(actor, name, description, options, ...args) → ClusterBuildStep`,
  * ABI-exact action names, typed `StepInput`s, named runners). Cross-step values
@@ -496,7 +496,9 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumIdentity = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
+    const ethereumIdentity = ethereumKeyPairFromWallet(
+      ethers.Wallet.createRandom()
+    )
     await pushNodeOwnerReg(
       ctx.wire,
       input.account,
@@ -505,69 +507,6 @@ export namespace SlashingScenarioDisputeSteps {
       ethereumIdentity.publicKey,
       TestClusterConstants.DEV_K1_PUBLIC_KEY
     )
-  }
-
-  // ── Step: sysio.opreg::planProcessbatch (write) ───────────────────────────────
-
-  /** Input for {@link planProcessbatch} — the operator's `label` handle + account-less action data. */
-  export interface ProcessbatchInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.ProcessbatchInput"
-    readonly label: string
-    readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
-  }
-
-  /**
-   * `sysio.opreg::processbatch` — force a dispute operator ACTIVE. Normally an
-   * operator flips UNKNOWN→ACTIVE via `reevaluate_eligibility`, which only
-   * fires on a deposit event; the dispute operators post no collateral, so
-   * nothing would ever evaluate them. `planProcessbatch(label, was_eligible=false,
-   * is_eligible=true)` IS the eligibility callback and flips status directly;
-   * it only needs `sysio.opreg` auth (= `sysio@active` = the kiod dev key
-   * in-cluster). They carry no bond, which is fine — the flow asserts the
-   * SLASHED status flip, not a bond amount.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step option overrides.
-   * @param label - The operator's durable harness `label` handle (its resolved
-   *   `account` is what the action carries).
-   * @param data - The generated action data.
-   * @returns The definition step.
-   */
-  export function planProcessbatch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    label: string,
-    data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
-  ): ClusterBuildStep<C, ProcessbatchInput> {
-    return ClusterBuildStep.create<C, ProcessbatchInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "SlashingScenarioDisputeSteps.ProcessbatchInput", label, data },
-      runProcessbatch
-    )
-  }
-
-  /** Named runner — `sysio.opreg::processbatch` for the operator's resolved account. */
-  export async function runProcessbatch<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ProcessbatchInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .actions.processbatch.invoke({
-        ...input.data,
-        account: ctx.keyStore.assertOperator(input.label).account
-      })
   }
 
   // ── Step: sysio.msgch::planDeliver (write) ────────────────────────────────────
@@ -984,7 +923,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /**
    * Poll until the operator flips OPERATOR_STATUS_ACTIVE (after its
-   * {@link planProcessbatch} eligibility flip lands).
+   * collateral deposit re-evaluates its live eligibility).
    *
    * @param actor - The narrative subject.
    * @param name - Step name.

@@ -8,6 +8,7 @@ import {
   FlowScenario,
   Report,
   Steps,
+  WireCollateralTool,
   WireOperatorProvisioningTool,
   matchesProtoEnum,
   pollUntil,
@@ -149,6 +150,11 @@ export class SlashingScenario extends FlowScenario {
     // The dispute references the contested epoch's envelope log ~16 epochs later
     // (vote + tally + resolve + slash propagation), so retention must outlast it.
     epochRetentionEnvelopeLogCount: Constants.EpochRetentionEnvelopeLogCount,
+    requiredBatchOperatorCollateral: [
+      WireCollateralTool.createWireRequirement(
+        Constants.DisputeOperatorBondAmount
+      )
+    ],
     // Loosest VALID termination thresholds — see the constants' JSDoc.
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
     terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h
@@ -241,9 +247,8 @@ export class SlashingScenario extends FlowScenario {
 
     // The 3 divergent-delivery operators, provisioned SBP-less (no daemon) and
     // non-bootstrapped via the ONE provisioning mechanism, so they never
-    // auto-deliver — the flow pushes their deliveries by hand. With
-    // `req_batchop_collat` empty (this flow does not set it), processbatch can
-    // flip them ACTIVE with no collateral deposits.
+    // auto-deliver — the flow pushes their deliveries by hand. Each operator
+    // bonds the WIRE minimum installed by the scenario defaults below.
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       setup,
       "ProvisionDisputeOperators",
@@ -262,8 +267,8 @@ export class SlashingScenario extends FlowScenario {
     // `operatorsPerEpoch` / `batchOpGroups`), so there is NO mid-run
     // `setconfig`: the batch-op group SIZE + COUNT never change after bootstrap
     // (the depot's #529 invariant forbids resizing a materialized rotation
-    // anyway). Here we only flip the 3 SBP-less dispute ops ACTIVE
-    // (`processbatch`, since `req_batchop_collat` is empty), then re-materialize
+    // anyway). Here we fund and bond the 3 SBP-less dispute ops so they meet the
+    // live collateral policy and become ACTIVE, then re-materialize
     // the rotation with a fresh `schbatchgps` — the ONLY way to fold the
     // now-active, non-bootstrapped dispute ops into the schedule (`advance()`
     // rotates the already-materialized schedule; it does NOT re-select members).
@@ -278,14 +283,28 @@ export class SlashingScenario extends FlowScenario {
       "ReshapeSchedule",
       "One group of exactly the 3 dispute operators"
     ).push(
-      ...Constants.DisputeOperators.map(operator =>
-        DisputeSteps.planProcessbatch(
-          Actor.Sysio,
-          `force-eligible-${operator}`,
-          `flip ${operator} eligible via opreg::processbatch`,
+      ...Constants.DisputeOperators.flatMap(operator =>
+        WireCollateralTool.planDeposit(
+          Actor.BatchOperator,
+          `bond-${operator}`,
+          `bond ${operator}'s WIRE collateral minimum`,
           {},
           operator,
-          { was_eligible: false, is_eligible: true }
+          WireCollateralTool.createWireCollateral(
+            Constants.DisputeOperatorBondAmount
+          )
+        )
+      ),
+      ...Constants.DisputeOperators.map(operator =>
+        WireCollateralTool.planVerifyBalanceRow(
+          Actor.Sysio,
+          `${operator}-bonded`,
+          `${operator}'s WIRE balance row holds its full bond`,
+          {},
+          operator,
+          WireCollateralTool.createWireCollateral(
+            Constants.DisputeOperatorBondAmount
+          )
         )
       ),
       ...Constants.DisputeOperators.map(operator =>
