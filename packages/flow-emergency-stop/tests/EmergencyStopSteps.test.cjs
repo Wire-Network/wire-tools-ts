@@ -255,7 +255,7 @@ for (const [
     Action.recreditEthereum,
     Steps.contracts.sysio.liq,
     "runRecredit",
-    Constants.Shortfall,
+    Constants.EthereumRecredit,
     10_000_001n,
     "data",
     { holder: Constants.User.account, quantity: "0.010000001 LIQETH" }
@@ -273,7 +273,7 @@ for (const [
     Action.donateEthereum,
     EthereumSyndicationTool,
     "runDonateToPool",
-    Constants.Shortfall,
+    Constants.EthereumRecredit,
     10_000_001n,
     "amount",
     10_000_001_000_000_000n
@@ -652,3 +652,18 @@ for (const defect of ["none", "incident", "cleared"]) {
     } else await Assert.rejects(step.runner(ctx, step.input, signal))
   })
 }
+
+
+test("Ethereum recovery funds before the final custody measurement and propagates quote failures", async () => {
+  const Fixture = require("../lib/ethereumCustodyFixture.js")
+  const quote = mock.method(Fixture, "readEthereumCustodyFixture", async () => ({ recredit: 10_000_001n }))
+  const deposit = mock.method(EthereumSyndicationTool, "runDepositLiqEth", async (_ctx, input) => {
+    Assert.equal(input.ethereumHdIndex, Constants.EthereumDonor)
+    Assert.equal(input.amountWei, 2_020_000_002_000_000_000n)
+  })
+  await run(Action.fundEthereumRecovery)
+  Assert.equal(deposit.mock.calls.length, 1)
+  quote.mock.mockImplementation(async () => { throw new Error("custody quote failed") })
+  await Assert.rejects(run(Action.fundEthereumRecovery), /Unexpected emergency-stop action refusal/)
+  Assert.equal(deposit.mock.calls.length, 1)
+})

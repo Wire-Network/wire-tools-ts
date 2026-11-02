@@ -34,17 +34,29 @@ export namespace EmergencyStopScenarioConstants {
       BigInt(Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token])
     )
   /** Ethereum return after its pair-specific flat plus proportional charge. */
-  export const EthereumRedemption = Payout - SyndicationScenario.feeOf(
-    Payout,
-    Steps.registry.DesyndicationFeeBps,
-    BigInt(Steps.registry.DesyndicationFlatFees.LIQETH)
-  )
-  /** Deliberate shortfall beyond measured custody slack. */
+  export const EthereumRedemption =
+    Payout -
+    SyndicationScenario.feeOf(
+      Payout,
+      Steps.registry.DesyndicationFeeBps,
+      BigInt(Steps.registry.DesyndicationFlatFees.LIQETH)
+    )
+  /** Solana's deliberate shortfall beyond measured custody slack. */
   export const Deficit = 10_000_000n
+  /** Extra depot units beyond Ethereum's first refused gap, allowing minor custody drift. */
+  export const EthereumCustodyMargin = 10_000_000n
+  /** Distinct Ethereum policy lanes, each with its own Report phase. */
+  export enum EthereumPayoutLane {
+    EthereumPause = "EthereumPause",
+    EthereumWithinAllowance = "EthereumWithinAllowance",
+    EthereumShortfall = "EthereumShortfall"
+  }
   /** Distinct later message amounts identify admitted attestations. */
   export const ProbeAmount = 100_000_000n
   /** Native wei per nine-decimal depot unit. */
   export const EthereumScale = 1_000_000_000n
+  /** Pre-fund twice the estimated repair, then remeasure after deposit fees/rebases. */
+  export const EthereumRecoveryFundingMultiplier = 2n
   /** Funded donor and permissionless Ethereum cranker. */
   export const EthereumDonor = 32
   /** Ethereum pair token and chain. */
@@ -111,15 +123,25 @@ export namespace EmergencyStopScenarioConstants {
     "emergency.buckets",
     "bucket snapshot"
   )
-  /** Measured shortfall funding, shared only by sequential lanes. */
+  /** Measured Solana shortfall funding and matching recovery donation. */
   export const Shortfall = outputKey<bigint>(
     "emergency.shortfall",
     "custody minus outstanding plus deficit"
   )
-  /** Ethereum payout identity and original native balance. */
+  /** Ethereum-only unbacked credit, also donated back after the policy assertion. */
+  export const EthereumRecredit = outputKey<bigint>(
+    "emergency.ethereumRecredit",
+    "measured Ethereum custody slack plus deliberate gap"
+  )
+  /** Actual Ethereum pool allowance used to derive the fixture. */
+  export const EthereumToleranceBps = outputKey<bigint>(
+    "emergency.ethereumToleranceBps",
+    "on-chain Ethereum custody allowance"
+  )
+  /** Ethereum payout identity for the current sequential lane. */
   export const EthereumRequest = outputKey<bigint>(
     "emergency.ethereumRequest",
-    "stored Ethereum payout"
+    "Ethereum redemption request"
   )
   /** Complete stored record retained across a refused paused payment. */
   export const EthereumPending =

@@ -126,6 +126,7 @@ export namespace EthereumSyndicationTool {
   export interface SyndicationPoolView {
     paused(): Promise<boolean>
     poolBalanceDepot(): Promise<bigint>
+    custodyShortfallBps(): Promise<bigint>
     syndicatedPrincipal(): Promise<bigint>
     outpostChainCode(): Promise<bigint>
     pendingDesyndications(
@@ -142,7 +143,18 @@ export namespace EthereumSyndicationTool {
    * `SyndicationPool` events this tool reads, by ABI name.
    */
   export enum PoolEvent {
-    Desyndicated = "Desyndicated"
+    Desyndicated = "Desyndicated",
+    CustodyShortfall = "CustodyShortfall",
+    CustodyShortfallTolerated = "CustodyShortfallTolerated"
+  }
+
+  /** The ratio check's actual custody and post-burn outstanding, from its event. */
+  export interface CustodyCheck {
+    requestId: bigint
+    postPayoutBalanceDepot: bigint
+    totalSyndicated: bigint
+    /** Event allowance for a tolerated payout; live allowance for a refused payout. */
+    toleranceBps: bigint
   }
 
   /** ERC-20 events used to verify a pool payment's receipt. */
@@ -546,6 +558,81 @@ export namespace EthereumSyndicationTool {
     ctx: C
   ): Promise<bigint> {
     return loadSyndicationPool(ctx, ctx.ethereum.provider).poolBalanceDepot()
+  }
+
+  /**
+   * Read the pool's governed, inclusive custody-gap allowance without changing it.
+   * @param ctx - The build context.
+   * @returns The deployed allowance in basis points.
+   */
+  export async function readCustodyShortfallBps<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<bigint> {
+    return loadSyndicationPool(ctx, ctx.ethereum.provider).custodyShortfallBps()
+  }
+
+  /**
+   * Read the successful transaction's custody-check event for one request.
+   * Missing evidence returns undefined for polling; duplicate evidence is refused.
+   * A refused check must still fully fund the payout, isolating the ratio guard.
+   * @param ctx - The build context.
+   * @param requestId - The depot request id.
+   * @param depotAmount - The exact net redemption, in depot units.
+   * @param tolerated - Select the tolerated event rather than the refusal event.
+   * @returns Actual projected custody, post-burn outstanding and allowance, or undefined.
+   */
+  export async function readCustodyCheck<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint,
+    depotAmount: bigint,
+    tolerated: boolean
+  ): Promise<CustodyCheck> {
+    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+      eventName = tolerated
+        ? PoolEvent.CustodyShortfallTolerated
+        : PoolEvent.CustodyShortfall,
+      events = await pool.queryFilter(
+        pool.getEvent(eventName),
+        EventScanFromBlock
+      ),
+      checks = events
+        .map(event => {
+          Assert.ok(
+            event instanceof ethers.EventLog,
+            `Undecoded ${eventName} event`
+          )
+          return event
+        })
+        .filter(event => BigInt(event.args.requestId) === requestId)
+    if (!checks.length) return undefined
+    Assert.strictEqual(
+      checks.length,
+      1,
+      `Expected exactly one ${eventName} for request ${requestId}`
+    )
+    const [check] = checks,
+      receipt = await check.getTransactionReceipt()
+    Assert.strictEqual(
+      receipt?.status,
+      1,
+      `Custody check ${requestId} has no successful receipt`
+    )
+    Assert.strictEqual(receipt.blockHash, check.blockHash)
+    const balance = BigInt(
+      tolerated
+        ? check.args.postPayoutBalanceDepot
+        : check.args.poolBalanceDepot
+    )
+    if (!tolerated)
+      Assert.ok(balance >= depotAmount, "custody must fully fund the payout")
+    return {
+      requestId,
+      postPayoutBalanceDepot: tolerated ? balance : balance - depotAmount,
+      totalSyndicated: BigInt(check.args.totalSyndicated),
+      toleranceBps: tolerated
+        ? BigInt(check.args.toleranceBps)
+        : await pool.custodyShortfallBps()
+    }
   }
 
   /**

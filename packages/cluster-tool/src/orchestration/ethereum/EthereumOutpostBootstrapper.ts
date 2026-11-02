@@ -277,6 +277,7 @@ export class EthereumOutpostBootstrapper {
             env: {
               ...process.env,
               HARDHAT_NETWORK: "localhost",
+              LOCALHOST_RPC_URL: rpcUrl,
               WIRE_ETH_DEPLOYMENTS_PATH: localDir
             }
           }
