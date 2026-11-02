@@ -67,8 +67,6 @@ export namespace WireLcoImportTool {
   export const AssetMaxAmount = (1n << 62n) - 1n
   /** The largest swap fee of a pool, in 1/10000 of the traded amount. */
   export const MaxPoolFee = 9_999
-  /** The largest clip cap of a pool, in basis points of its shadow side. */
-  export const MaxDepthCapBps = 10_000
   /**
    * `sysio.swap::inittoken`'s `INIT_MAX`: each pool seed must be below it, in base units
    * (1,000,000 tokens at 9 decimals).
@@ -102,13 +100,14 @@ export namespace WireLcoImportTool {
   /**
    * Placeholder pool tuning — the dev bootstrap config's (wire-sysio
    * `etc/config/dex/dex-config.dev.json`): a 0.30 % fee, no locked shares, a one-day
-   * conversion horizon, a 0.50 % clip cap and a 1,000-subunit clip floor.
+   * conversion horizon, a 0.30 % clip cap (the widest the fee admits) and a
+   * 1,000-subunit clip floor.
    */
   export const PlaceholderPoolTuning: LiqPoolSpec = LiqPoolSpec.create({
     fee: 30,
     lockedShares: 0n,
     conversionHorizonSec: 86_400,
-    depthCapBps: 50,
+    depthCapBps: 30,
     clipFloor: 1_000n
   })
   /** Placeholder claim funding account: the system treasury. */
@@ -1006,9 +1005,10 @@ export namespace WireLcoImportTool {
       pool.conversionHorizonSec > 0,
       `${label}: conversionHorizonSec must be positive`
     )
+    // sysio.swap::setyield refuses a clip cap above the fee: a wider clip is worth sandwiching.
     Assert.ok(
-      pool.depthCapBps >= 1 && pool.depthCapBps <= MaxDepthCapBps,
-      `${label}: depthCapBps ${pool.depthCapBps} must be 1..${MaxDepthCapBps}`
+      pool.depthCapBps >= 1 && pool.depthCapBps <= pool.fee,
+      `${label}: depthCapBps ${pool.depthCapBps} must be 1..${pool.fee}, the pool's fee`
     )
     Assert.ok(
       pool.clipFloor > 0n && pool.clipFloor <= AssetMaxAmount,
