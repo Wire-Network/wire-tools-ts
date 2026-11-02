@@ -12,7 +12,8 @@ import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
  * hardhat artifacts (feature/syndication-underwriting d4fbb8f8, whose compiled
  * sources match that commit) to the functions this tool calls. Staged into a
  * fake `artifacts/` tree so the tool's own loaders read them, exactly as they
- * read the real ones at run time.
+ * read the real ones at run time. Custody allowance and check events are trimmed
+ * from the declarations in Ethereum PR #271 (0c777d53).
  */
 const SyndicationPoolFixture = "syndicationPool.abi.json"
 const DepositManagerFixture = "depositManager.abi.json"
@@ -304,6 +305,143 @@ describe("EthereumSyndicationTool", () => {
       await expect(EthereumSyndicationTool.readPoolBalanceDepot(ctx)).resolves.toBe(
         123_000_000_000n
       )
+    })
+
+    it.each([0n, 100n, 250n, 1000n])(
+      "reads the deployed custody allowance: %s",
+      async allowance => {
+        const ctx = context(
+          answeringRunner({ [`${pool}:custodyShortfallBps`]: [allowance] })
+        )
+        await expect(
+          EthereumSyndicationTool.readCustodyShortfallBps(ctx)
+        ).resolves.toBe(allowance)
+      }
+    )
+
+    it("propagates a custody allowance RPC failure", async () => {
+      const ctx = context({
+        provider: null,
+        call: async () => {
+          throw new Error("custody RPC failed")
+        }
+      })
+      await expect(
+        EthereumSyndicationTool.readCustodyShortfallBps(ctx)
+      ).rejects.toThrow("custody RPC failed")
+    })
+
+    describe("readCustodyCheck", () => {
+      /** Real ABI-encoded check logs; tolerated and refused events use different custody frames. */
+      function checkLog(
+        tolerated: boolean,
+        requestId = 23n,
+        custody = 9900n
+      ): ethers.Log {
+        const name = tolerated
+            ? "CustodyShortfallTolerated"
+            : "CustodyShortfall",
+          values = tolerated
+            ? [requestId, custody, 10_000n, 100n]
+            : [requestId, custody, 10_000n],
+          { data, topics } = poolInterface.encodeEventLog(name, values)
+        return new ethers.Log(
+          {
+            address: PoolAddress,
+            blockHash: ethers.ZeroHash,
+            blockNumber: 120,
+            transactionHash: ethers.ZeroHash,
+            transactionIndex: 3,
+            index: 0,
+            removed: false,
+            data,
+            topics
+          },
+          null
+        )
+      }
+
+      /** A provider with independent log and receipt evidence and a live allowance getter. */
+      function checkContext(logs: ethers.Log[], status = 1) {
+        const base = answeringRunner({
+            [`${pool}:custodyShortfallBps`]: [100n]
+          }),
+          provider = {
+            getLogs: async () =>
+              logs.map(
+                log =>
+                  new ethers.Log(log, provider as unknown as ethers.Provider)
+              ),
+            getTransactionReceipt: async () => ({
+              status,
+              blockHash: ethers.ZeroHash
+            })
+          }
+        return context({
+          call: base.call,
+          provider
+        } as unknown as ethers.ContractRunner)
+      }
+
+      it.each([true, false])(
+        "normalizes actual custody for tolerated=%s",
+        async tolerated => {
+          await expect(
+            EthereumSyndicationTool.readCustodyCheck(
+              checkContext([checkLog(tolerated), checkLog(tolerated, 24n)]),
+              23n,
+              500n,
+              tolerated
+            )
+          ).resolves.toEqual({
+            requestId: 23n,
+            postPayoutBalanceDepot: tolerated ? 9900n : 9400n,
+            totalSyndicated: 10_000n,
+            toleranceBps: 100n
+          })
+        }
+      )
+
+      it("returns undefined while the request's check has not arrived", async () => {
+        await expect(
+          EthereumSyndicationTool.readCustodyCheck(
+            checkContext([checkLog(true, 24n)]),
+            23n,
+            500n,
+            true
+          )
+        ).resolves.toBeUndefined()
+      })
+
+      it("rejects duplicate checks and failed receipts", async () => {
+        await expect(
+          EthereumSyndicationTool.readCustodyCheck(
+            checkContext([checkLog(true), checkLog(true)]),
+            23n,
+            500n,
+            true
+          )
+        ).rejects.toThrow("exactly one")
+        await expect(
+          EthereumSyndicationTool.readCustodyCheck(
+            checkContext([checkLog(true)], 0),
+            23n,
+            500n,
+            true
+          )
+        ).rejects.toThrow("successful receipt")
+      })
+
+      it("rejects an unfunded payout even when the pool reports a shortfall", async () => {
+        await expect(
+          EthereumSyndicationTool.readCustodyCheck(
+            checkContext([checkLog(false, 23n, 499n)]),
+            23n,
+            500n,
+            false
+          )
+        ).rejects.toThrow("fully fund")
+      })
     })
 
     it("readPendingDesyndication decodes a stored release", async () => {

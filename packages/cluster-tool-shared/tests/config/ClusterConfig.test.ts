@@ -157,7 +157,7 @@ describe("ClusterConfig shape", () => {
             pool: LiqPoolSpec.create({
               fee: 30,
               conversionHorizonSec: 86_400,
-              depthCapBps: 50,
+              depthCapBps: 30,
               clipFloor: 1_000n
             })
           },

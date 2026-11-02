@@ -29,6 +29,7 @@ import {
   type Report
 } from "@wireio/cluster-tool"
 import { EmergencyStopScenarioConstants as Constants } from "../EmergencyStopScenarioConstants.js"
+import { readEthereumCustodyFixture } from "../ethereumCustodyFixture.js"
 
 const log = getLogger(__filename),
   execFileAsync = promisify(execFile)
@@ -51,6 +52,7 @@ export namespace EmergencyStopSteps {
     donateSolana = "donateSolana",
     reconcileSolana = "reconcileSolana",
     recreditEthereum = "recreditEthereum",
+    fundEthereumRecovery = "fundEthereumRecovery",
     donateEthereum = "donateEthereum"
   }
   /** Typed operation and optional exact expected rejection. */
@@ -208,7 +210,11 @@ export namespace EmergencyStopSteps {
               data: {
                 holder: Constants.User.account,
                 quantity: SyndicationScenario.quantity(
-                  ctx.outputs.assert(Constants.Shortfall)
+                  ctx.outputs.assert(
+                    input.action === Action.recreditEthereum
+                      ? Constants.EthereumRecredit
+                      : Constants.Shortfall
+                  )
                 ).replace(
                   SyndicationScenario.Token,
                   input.action === Action.recreditEthereum
@@ -250,6 +256,24 @@ export namespace EmergencyStopSteps {
             signal
           )
         )
+        .with(Action.fundEthereumRecovery, async () => {
+          // DepositManager charges a fee and rebases existing holders. Fund
+          // before the final fixture measurement and recipient balance snapshot.
+          const fixture = await readEthereumCustodyFixture(ctx, true)
+          return EthereumSyndicationTool.runDepositLiqEth(
+            ctx,
+            {
+              kind: "EthereumSyndicationTool.DepositLiqEthInput",
+              ethereumHdIndex: Constants.EthereumDonor,
+              amountWei:
+                (Constants.Amount +
+                  fixture.recredit *
+                    Constants.EthereumRecoveryFundingMultiplier) *
+                Constants.EthereumScale
+            },
+            signal
+          )
+        })
         .with(Action.donateEthereum, () =>
           EthereumSyndicationTool.runDonateToPool(
             ctx,
@@ -257,7 +281,7 @@ export namespace EmergencyStopSteps {
               kind: "EthereumSyndicationTool.DonateToPoolInput",
               ethereumHdIndex: Constants.EthereumDonor,
               amount:
-                ctx.outputs.assert(Constants.Shortfall) *
+                ctx.outputs.assert(Constants.EthereumRecredit) *
                 Constants.EthereumScale
             },
             signal

@@ -986,7 +986,7 @@ describe("--cluster-build-options-file", () => {
         lcoImport: {
           solana: {
             nativePriceUsd: "15000000000",
-            pool: { fee: 25, depth_cap_bps: 40, clip_floor: "10" }
+            pool: { fee: 25, depth_cap_bps: 20, clip_floor: "10" }
           },
           dclaimFundingAccount: "lco.treasury"
         }
@@ -994,7 +994,7 @@ describe("--cluster-build-options-file", () => {
     )
     expect(loaded.solanaBootstrapJsonFile).toBe("/exports/solana.json")
     expect(loaded.lcoImport.solana.pool).toEqual(
-      LiqPoolSpec.create({ fee: 25, depthCapBps: 40, clipFloor: 10n })
+      LiqPoolSpec.create({ fee: 25, depthCapBps: 20, clipFloor: 10n })
     )
     expect(loaded.lcoImport.dclaimFundingAccount).toBe("lco.treasury")
     expect(() =>

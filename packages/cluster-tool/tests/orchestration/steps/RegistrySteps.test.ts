@@ -68,11 +68,12 @@ describe("Steps.registry", () => {
 
   describe("planMockLiqPools", () => {
     const LiqsolCode = "LIQSOL"
-    // The dev-config seeds; the pacing is the dev cluster's own (one-tick sales).
+    // The dev-config seeds; the horizon and fee are the dev cluster's own, and the
+    // clip cap is the fee, the widest sysio.swap::setyield accepts.
     const PoolSeed = 10_000_000_000
-    const PoolFee = 30
+    const PoolFee = 500
     const HorizonSec = 30
-    const DepthCapBps = 3000
+    const DepthCapBps = 500
     const ClipFloor = 1000
 
     it("returns a Phase of one Sysio regliqpool step per shadow", () => {
@@ -115,7 +116,7 @@ describe("Steps.registry", () => {
       ])
     })
 
-    it("names each pair token after its shadow, seeds both legs equally, and paces for one-tick sales", () => {
+    it("names each pair token after its shadow, seeds both legs equally, and caps each clip at the fee", () => {
       const rows = Steps.registry.MockLiqPoolRegistrations
       expect(rows).toHaveLength(2)
       const liqsol = rows.find(row => row.token_code === LiqsolCode)
@@ -127,6 +128,7 @@ describe("Steps.registry", () => {
       expect(liqsol?.locked_shares).toBe(0)
       expect(liqsol?.conversion_horizon_sec).toBe(HorizonSec)
       expect(liqsol?.depth_cap_bps).toBe(DepthCapBps)
+      rows.forEach(row => expect(row.depth_cap_bps).toBeLessThanOrEqual(row.fee))
       expect(liqsol?.clip_floor).toBe(ClipFloor)
       expect(rows.find(row => row.pair_symbol === "9,LIQETHP")).toBeDefined()
     })

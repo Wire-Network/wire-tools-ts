@@ -46,9 +46,10 @@ Every write is a Report Step; depot confirmations wait for irreversibility.
    process fails the report; successful help without `--batch-kick-crank` records
    unavailable coverage. With a crank, the flow re-adds the pool and gives it a
    one-unit daily cap **and** one-unit budget, permitting exactly one partial
-   payment even across UTC midnight. A structured trace is accepted only after its
-   transaction is located in an irreversible block that contains the same id and
-   execution time. The oracle extends swap's cumulative price to that execution
+   payment even across UTC midnight. The flow scans the trace API's blocks after that
+   baseline for the transaction that kicked and drew from the treasury, and accepts a
+   block only once the node holds it as irreversible, so a kick in a reversible or
+   forked block cannot pass. The oracle extends swap's cumulative price to that execution
    time, checks the partial clock and all ledgers, and checks that the payment settled
    the pool's TWAP observation at its block. The flow then waits for that restarted
    window, restores the pool and the original budget less all paid units. Before
