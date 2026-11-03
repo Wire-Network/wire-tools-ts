@@ -2,7 +2,11 @@ import { jest } from "@jest/globals"
 import Dgram from "node:dgram"
 import Os from "node:os"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
-import { BindConfigPortProtocol, MaximumPort, MinimumPort } from "@wireio/cluster-tool-shared"
+import {
+  BindConfigPortProtocol,
+  MaximumPort,
+  MinimumPort
+} from "@wireio/cluster-tool-shared"
 import { Deferred } from "@wireio/shared"
 import {
   assertEndpoint,
@@ -19,13 +23,9 @@ import {
   toURL,
   URLScheme
 } from "@wireio/cluster-tool/utils"
+import { NetworkInterfaceFixture } from "../fixtures/NetworkInterfaceFixture.js"
 
-/** TEST-NET-1 (RFC 5737): never assigned to a real host. */
-const RemoteAddressV4 = "192.0.2.1"
-/** The IPv6 documentation prefix (RFC 3849): never assigned to a real host. */
-const RemoteAddressV6 = "2001:db8::1"
-/** `family` of an IPv6 entry in `Os.networkInterfaces()`. */
-const IPv6Family = "IPv6"
+const { RemoteAddressV4, RemoteAddressV6 } = NetworkInterfaceFixture
 
 describe("netUtils", () => {
   it("does not re-export the port bounds (they come from @wireio/cluster-tool-shared)", async () => {
@@ -35,6 +35,16 @@ describe("netUtils", () => {
   })
 
   describe("isLocalAddress", () => {
+    beforeEach(() => {
+      jest
+        .spyOn(Os, "networkInterfaces")
+        .mockReturnValue(NetworkInterfaceFixture.Interfaces)
+    })
+
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
     it.each([
       ListenAllAddress,
       ListenAllAddressV6,
@@ -55,40 +65,37 @@ describe("netUtils", () => {
       address => expect(isLocalAddress(address)).toBe(true)
     )
 
-    it("is true for an address of one of this host's interfaces", () => {
-      const interfaceAddress = Object.values(Os.networkInterfaces())
-        .flat()
-        .find(networkInterface => !networkInterface.internal)
-      // A host with no external interface has nothing to check here.
-      if (interfaceAddress != null) {
-        expect(isLocalAddress(interfaceAddress.address)).toBe(true)
-      }
+    it.each([
+      NetworkInterfaceFixture.LocalAddressV4,
+      NetworkInterfaceFixture.LocalAddressV6
+    ])("is true for the local interface address %s", address => {
+      expect(isLocalAddress(address)).toBe(true)
     })
 
     it("ignores an IPv6 zone suffix when matching an interface address", () => {
-      // A non-loopback IPv6 interface address: loopback would match without
-      // the interface lookup this test is about.
-      const isExternalIpv6 = (entry: Os.NetworkInterfaceInfo) =>
-          entry.family === IPv6Family && !entry.internal,
-        [interfaceName, addresses] = Object.entries(Os.networkInterfaces()).find(
-          ([, entries]) => entries?.some(isExternalIpv6) ?? false
-        ) ?? [null, []],
-        ipv6 = addresses?.find(isExternalIpv6)
-      // A host with no IPv6 interface has nothing to check here.
-      if (ipv6 != null) {
-        expect(isLocalAddress(`${ipv6.address}%${interfaceName}`)).toBe(true)
-      }
+      expect(
+        isLocalAddress(
+          `${NetworkInterfaceFixture.LocalAddressV6}%${NetworkInterfaceFixture.InterfaceName}`
+        )
+      ).toBe(true)
     })
 
-    it("is true when this host's interfaces cannot be listed", () => {
-      const listing = jest.spyOn(Os, "networkInterfaces").mockImplementation(() => {
-        throw new Error("interfaces unavailable")
-      })
-      try {
-        expect(isLocalAddress(RemoteAddressV4)).toBe(true)
-      } finally {
-        listing.mockRestore()
+    it.each([RemoteAddressV4, RemoteAddressV6])(
+      "is true for %s when this host's interfaces cannot be listed",
+      address => {
+        jest.spyOn(Os, "networkInterfaces").mockImplementation(() => {
+          throw new Error("interfaces unavailable")
+        })
+        expect(isLocalAddress(address)).toBe(true)
       }
+    )
+
+    it("classifies literal addresses when no interfaces are reported", () => {
+      jest.spyOn(Os, "networkInterfaces").mockReturnValue({})
+      expect(isLocalAddress(Localhost)).toBe(true)
+      expect(isLocalAddress(LocalhostV6)).toBe(true)
+      expect(isLocalAddress(RemoteAddressV4)).toBe(false)
+      expect(isLocalAddress(RemoteAddressV6)).toBe(false)
     })
 
     it.each([RemoteAddressV4, RemoteAddressV6, `${RemoteAddressV6}%eth0`])(
