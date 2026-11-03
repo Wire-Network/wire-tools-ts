@@ -20,6 +20,7 @@ import {
   processCommandBasename,
   sleep
 } from "@wireio/cluster-tool/utils"
+import { NetworkInterfaceFixture } from "../fixtures/NetworkInterfaceFixture.js"
 
 /**
  * Options the fake `get-port` honors — the subset {@link BindConfigProvider}
@@ -38,11 +39,11 @@ const UnreadableFileMode = 0o000
 /** Mode that restores read access (so the suite can clean up). */
 const ReadableFileMode = 0o644
 /** A remote Ethereum outpost endpoint in a complete external bind config. */
-const RemoteAnvilAddress = "10.0.0.5"
+const RemoteAnvilAddress = NetworkInterfaceFixture.RemoteAddressV4
 /** Its port — another host's, inside the local agave band on purpose. */
 const RemoteAnvilPort = 8545
 /** A remote Solana outpost endpoint in a complete external bind config. */
-const RemoteSolanaAddress = "10.0.0.6"
+const RemoteSolanaAddress = NetworkInterfaceFixture.OtherRemoteAddressV4
 /** Its RPC port — another host's, inside the local agave band on purpose. */
 const RemoteSolanaRpcPort = 8899
 
@@ -186,6 +187,10 @@ describe("BindConfigProvider", () => {
   })
 
   beforeEach(() => {
+    // Keep the real local-address classifier, but give it a controlled host.
+    jest
+      .spyOn(Os, "networkInterfaces")
+      .mockReturnValue(NetworkInterfaceFixture.Interfaces)
     allocator.reset()
     mockUdpTakenPorts.clear()
     mockIpv6TakenPorts.clear()
@@ -200,6 +205,10 @@ describe("BindConfigProvider", () => {
       recursive: true,
       force: true
     })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   describe("resolve", () => {
@@ -1654,6 +1663,40 @@ describe("BindConfigProvider", () => {
         }
         expect(await BindConfigProvider.claimResolved(config)).toBe(true)
       })
+
+      it.each([
+        NetworkInterfaceFixture.LocalAddressV4,
+        NetworkInterfaceFixture.LocalAddressV6
+      ])(
+        "refuses a reserved Ethereum port on the local interface %s",
+        async address => {
+          const resolved = await BindConfigProvider.resolve({}, {}),
+            config: BindConfig = {
+              ...resolved,
+              anvil: { address, port: RemoteAnvilPort }
+            }
+          expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+        }
+      )
+
+      it.each([
+        NetworkInterfaceFixture.LocalAddressV4,
+        NetworkInterfaceFixture.LocalAddressV6
+      ])(
+        "refuses a reserved Solana port on the local interface %s",
+        async address => {
+          const resolved = await BindConfigProvider.resolve({}, {}),
+            config: BindConfig = {
+              ...resolved,
+              solana: {
+                ...resolved.solana,
+                address,
+                ports: { ...resolved.solana.ports, http: RemoteSolanaRpcPort }
+              }
+            }
+          expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+        }
+      )
 
       it("registers only the locally bound ports, never a remote outpost's", async () => {
         const resolved = await BindConfigProvider.resolve({}, {})
