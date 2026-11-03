@@ -23,6 +23,9 @@ const RegistrySteps = Steps.registry
 const SyndContractSteps = Steps.contracts.sysio.synd
 const signal = new AbortController().signal
 
+/** Example active principal batch used by the parked-import read mocks. */
+const ParkedBatchId = 1
+
 describe("RegistrySteps mock syndication import", () => {
   let context: ClusterBuildContext
   let dataPath: string
@@ -189,7 +192,9 @@ describe("RegistrySteps mock syndication import", () => {
         chain_kind: chainKind,
         pubkey,
         balance: RegistrySteps.MockSyndicationImportAmount,
-        position: { index_checkpoint: "0", owed_wire: "0" }
+        position: { index_checkpoint: "0", owed_wire: "0" },
+        batch_id: ParkedBatchId,
+        unattributed: RegistrySteps.MockSyndicationImportAmount
       }))
     jest.spyOn(WireSyndicationTool, "readMismatches").mockResolvedValue([])
     const step = RegistrySteps.planVerifyMockSyndicationImport(
@@ -427,7 +432,9 @@ describe("RegistrySteps mock syndication import", () => {
                   chain_kind: chainKind,
                   pubkey,
                   balance: RegistrySteps.MockSyndicationImportAmount,
-                  position: { index_checkpoint: "0", owed_wire: "0" }
+                  position: { index_checkpoint: "0", owed_wire: "0" },
+                  batch_id: ParkedBatchId,
+                  unattributed: RegistrySteps.MockSyndicationImportAmount
                 }
               : parked === 0n
                 ? undefined
@@ -436,7 +443,9 @@ describe("RegistrySteps mock syndication import", () => {
                     chain_kind: chainKind,
                     pubkey,
                     balance: parked.toString(),
-                    position: { index_checkpoint: "0", owed_wire: "0" }
+                    position: { index_checkpoint: "0", owed_wire: "0" },
+                    batch_id: ParkedBatchId,
+                    unattributed: parked.toString()
                   }
           )
         const balance = jest

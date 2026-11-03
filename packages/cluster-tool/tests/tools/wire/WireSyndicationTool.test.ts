@@ -41,6 +41,9 @@ const Solana = "SOLANA",
   RequestId = FixtureRequestId,
   signal = new AbortController().signal
 
+/** Example active batch for parked principal released from a live intake. */
+const ParkedBatchId = 1
+
 /**
  * A fixture context whose `getSysioContract` hands back ONE shared client per contract,
  * so a test can spy on that client's table queries and actions.
@@ -244,19 +247,19 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         chain_kind: "CHAIN_KIND_SVM",
         pubkey,
         balance: 5_000_000_000,
-        position: { index_checkpoint: "0", owed_wire: 0 }
+        position: { index_checkpoint: "0", owed_wire: 0 },
+        batch_id: ParkedBatchId,
+        unattributed: 0
       }
     ])
-    expect(
-      (
-        await WireSyndicationTool.readParked(
-          ctx,
-          Liqsol,
-          SysioSyndChainkind.CHAIN_KIND_SVM,
-          pubkey
-        )
-      ).balance
-    ).toBe(5_000_000_000)
+    const parked = await WireSyndicationTool.readParked(
+      ctx,
+      Liqsol,
+      SysioSyndChainkind.CHAIN_KIND_SVM,
+      pubkey
+    )
+    expect(parked.balance).toBe(5_000_000_000)
+    expect(parked).toMatchObject({ batch_id: ParkedBatchId, unattributed: 0 })
     expect(
       await WireSyndicationTool.readParked(
         ctx,
