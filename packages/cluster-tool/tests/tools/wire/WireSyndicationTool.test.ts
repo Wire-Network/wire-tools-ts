@@ -240,18 +240,17 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
 
   it("readParked matches token, key family and pubkey", async () => {
     const { ctx, clients } = stubbedContext(),
-      pubkey = "cd".repeat(32)
-    serve(clients.synd.tables.parked, [
-      {
+      pubkey = "cd".repeat(32),
+      parkedRow = {
         token_code: Liqsol,
-        chain_kind: "CHAIN_KIND_SVM",
+        chain_kind: SysioSyndChainkind.CHAIN_KIND_SVM,
         pubkey,
         balance: 5_000_000_000,
         position: { index_checkpoint: "0", owed_wire: 0 },
         batch_id: ParkedBatchId,
         unattributed: 0
       }
-    ])
+    serve(clients.synd.tables.parked, [parkedRow])
     const parked = await WireSyndicationTool.readParked(
       ctx,
       Liqsol,
