@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
@@ -9,8 +10,10 @@ import {
   WireClient,
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
-import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 import { toURL } from "@wireio/cluster-tool/utils"
+import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
+
+import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
 
 describe("WireClient", () => {
   let config: WireClientConfig
@@ -37,23 +40,28 @@ describe("WireClient", () => {
       ["9007199.254740993 WIRE", 9_007_199_254_740_993n],
       ["-0.000000001 WIRE", -1n],
       ["-12.345678901 WIRE", -12_345_678_901n]
-    ])("reads %s as exact nine-decimal base units", async (quantity, expected) => {
-      const client = new WireClient(config),
-        balance = jest.spyOn(client.api.v1.chain, "get_currency_balance")
-      jest.spyOn(client.api.v1Provider, "call").mockResolvedValue({
-        status: 200,
-        headers: {},
-        json: [quantity],
-        text: JSON.stringify([quantity])
-      })
+    ])(
+      "reads %s as exact nine-decimal base units",
+      async (quantity, expected) => {
+        const client = new WireClient(config),
+          balance = jest.spyOn(client.api.v1.chain, "get_currency_balance")
+        jest.spyOn(client.api.v1Provider, "call").mockResolvedValue({
+          status: 200,
+          headers: {},
+          json: [quantity],
+          text: JSON.stringify([quantity])
+        })
 
-      await expect(client.getWireBalance("alice")).resolves.toBe(expected)
-      expect(balance).toHaveBeenCalledWith("sysio.token", "alice", "WIRE")
-    })
+        await expect(client.getWireBalance("alice")).resolves.toBe(expected)
+        expect(balance).toHaveBeenCalledWith("sysio.token", "alice", "WIRE")
+      }
+    )
 
     it("returns zero when no balance row exists", async () => {
       const client = new WireClient(config)
-      jest.spyOn(client.api.v1.chain, "get_currency_balance").mockResolvedValue([])
+      jest
+        .spyOn(client.api.v1.chain, "get_currency_balance")
+        .mockResolvedValue([])
 
       await expect(client.getWireBalance("alice")).resolves.toBe(0n)
     })
@@ -61,7 +69,9 @@ describe("WireClient", () => {
     it("propagates currency balance RPC failures", async () => {
       const client = new WireClient(config),
         error = new Error("currency balance RPC failed")
-      jest.spyOn(client.api.v1.chain, "get_currency_balance").mockRejectedValue(error)
+      jest
+        .spyOn(client.api.v1.chain, "get_currency_balance")
+        .mockRejectedValue(error)
 
       await expect(client.getWireBalance("alice")).rejects.toBe(error)
     })
@@ -223,6 +233,101 @@ describe("WireClient", () => {
       expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
     })
 
+    it("preserves a JSON contract rejection instead of masking it as an ambiguous push", async () => {
+      const client = new WireClient(config),
+        stdout = JSON.stringify(TransactionRejection),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/Tier level must be between 1 and 3/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
+    it.each([ClioRunner.DuplicateTransactionCode, 3200000])(
+      "never re-sends an ambiguous JSON error %s",
+      async code => {
+        const client = new WireClient(config),
+          stdout = JSON.stringify({
+            ...TransactionRejection,
+            processed: {
+              ...TransactionRejection.processed,
+              except: { ...TransactionRejection.processed.except, code }
+            }
+          }),
+          send = jest
+            .spyOn(client["runner"], "run")
+            .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+        await expect(
+          client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+        ).rejects.toThrow(/not re-sent/)
+        expect(send).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it("surfaces a zero-exit JSON kicker rejection without entering finality", async () => {
+      const clusterPath = Fs.mkdtempSync(
+          Path.join(Os.tmpdir(), "wire-kicker-rejection-")
+        ),
+        binary = Path.join(clusterPath, "clio"),
+        runsFile = Path.join(clusterPath, "runs"),
+        refusal = "TWAP window must be at least 60 seconds",
+        response = {
+          ...TransactionRejection,
+          processed: {
+            ...TransactionRejection.processed,
+            except: {
+              ...TransactionRejection.processed.except,
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        },
+        client = new WireClient({ ...config, clusterPath, binary }),
+        wait = jest
+          .spyOn(client, "waitForTransactionInBlock")
+          .mockRejectedValue(new Error("not included")),
+        lookup = jest
+          .spyOn(client, "getTransaction")
+          .mockResolvedValue(null as never)
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
+      Fs.writeFileSync(
+        binary,
+        [
+          "#!/usr/bin/env bash",
+          `printf 'run\\n' >> '${runsFile}'`,
+          `printf '%s\\n' '${JSON.stringify(response)}'`
+        ].join("\n"),
+        { mode: 0o755 }
+      )
+      try {
+        const action: SysioContracts.SysioKickerSetconfigAction = {
+          cfg: {
+            budget_remaining: "1000",
+            min_interval_sec: 60,
+            twap_window_sec: 59,
+            max_spot_deviation_bps: 5000
+          }
+        }
+        await expect(
+          client.invokeTransaction(
+            client
+              .getSysioContract(SysioContracts.SysioContractName.kicker)
+              .actions.setconfig.prepare(action, {
+                authorization: WireClient.activeAuthorization("sysio")
+              })
+          )
+        ).rejects.toThrow(refusal)
+        expect(
+          Fs.readFileSync(runsFile, "utf8").trim().split("\n")
+        ).toHaveLength(WireClient.PushMaxAttempts)
+        expect(wait).not.toHaveBeenCalled()
+        expect(lookup).not.toHaveBeenCalled()
+      } finally {
+        Fs.rmSync(clusterPath, { recursive: true, force: true })
+      }
+    })
+
     it("preserves a JSON assertion refusal from a typed desyndicate with max_fee", async () => {
       const client = new WireClient(config),
         refusal = "the andon cord is pulled: funds cannot leave custody",
@@ -232,11 +337,12 @@ describe("WireClient", () => {
         data: SysioContracts.SysioSyndDesyndicateAction = {
           holder: "andon.user",
           quantity: "0.500000000 LIQSOL",
-          max_fee: String(amount * feeBps / 10_000n + flatFee)
+          max_fee: String((amount * feeBps) / 10_000n + flatFee)
         },
         stdout = JSON.stringify({
           transaction_id: TransactionId,
           processed: {
+            id: TransactionId,
             receipt: null,
             except: {
               code: 3050003,
@@ -253,7 +359,8 @@ describe("WireClient", () => {
         ),
         send = jest.spyOn(client["runner"], "run").mockRejectedValue(error),
         wait = jest.spyOn(client, "waitForTransactionInBlock"),
-        result = client.getSysioContract(SysioContracts.SysioContractName.synd)
+        result = client
+          .getSysioContract(SysioContracts.SysioContractName.synd)
           .actions.desyndicate.invoke(data, {
             authorization: WireClient.activeAuthorization(data.holder)
           })
