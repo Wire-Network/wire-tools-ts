@@ -41,6 +41,24 @@ describe("Constants", () => {
       expect(Constants.WIRE_PRECISION).toBe(9)
     })
   })
+  describe("snapshot attestation", () => {
+    it("requires f + 1 matching votes of the 21-finalizer set", () => {
+      const faultyFinalizers = Math.floor((Constants.MAX_PRODUCERS - 1) / 3)
+      expect(faultyFinalizers).toBe(6)
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBe(faultyFinalizers + 1)
+    })
+
+    it("stays inside the range setsnpcfg accepts", () => {
+      // `setsnpcfg` refuses 0, anything above `max_snap_providers` (30), and a zero spacing.
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBeGreaterThan(0)
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBeLessThanOrEqual(30)
+      expect(Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING).toBeGreaterThan(0)
+    })
+
+    it("attests at the contract's default cadence", () => {
+      expect(Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING).toBe(25_000)
+    })
+  })
   describe("nodeOwnerCommitment", () => {
     it("commits each tier's allocation times its owner cap: 341.5M WIRE at the defaults", () => {
       expect(Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS)).toBe(

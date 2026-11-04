@@ -701,7 +701,7 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── OPP config + emissions + dclaim ──
+    // ── OPP config + emissions + snapshot attestation + dclaim ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "OPPConfig",
@@ -823,6 +823,23 @@ export namespace ClusterBuildDefaults {
         "init-t5",
         "seed t5_state at chain head time",
         {}
+      )
+    )
+    // `votesnaphash` refuses every vote until a quorum is set; harmless with no provider nodes.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "SnapshotAttestation",
+      "Configure sysio.system snapshot attestation"
+    ).push(
+      Steps.contracts.sysio.system.planSetsnpcfg<C>(
+        Actor.Sysio,
+        "configure-snapshot-attestation",
+        `attest a snapshot on ${Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS} matching provider votes every ${Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING} blocks`,
+        {},
+        {
+          min_providers: Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS,
+          block_spacing: Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING
+        }
       )
     )
     ClusterBuildPhase.create<C>(

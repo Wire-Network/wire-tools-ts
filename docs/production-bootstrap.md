@@ -10,7 +10,7 @@ the code.
 **What "the values" are.** The concrete numbers/strings below are the cluster tooling's *production-mirror
 defaults*. They split into two kinds:
 - **Structural / fixed** — core symbol, chain/token codes, ROA byte price, operator caps, authority shapes,
-  the `setemitcfg` split ratios. Production keeps these.
+  the `setemitcfg` split ratios, the `setsnpcfg` quorum and cadence. Production keeps these.
 - **Deployment-tunable / dev stand-in** — keys, the finalizer set, supplies, epoch duration, collateral
   amounts and lock windows, the external (ETH/SOL) chain ids, mock token contract addresses, syndication
   bucket sizes and challenge window, operator/producer counts. Production substitutes real keys, the real finalizer set, real external
@@ -251,7 +251,7 @@ uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so t
 `setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in Stage 8
 before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
 
-## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, dclaim)
+## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, snapshot attestation, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
     `[sysio.epoch@active]`. Sizing is computed from the operator counts:
@@ -340,7 +340,16 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `epoch_log_retention_count` | `8640` | emissions pay-log retention, in epochs |
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
-25. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
+25. `sysio::setsnpcfg({min_providers:7, block_spacing:25000})` — `[sysio@active]` — turns snapshot attestation
+    on. Until it runs, `snapconfig.min_providers` is `0` and `sysio::votesnaphash` refuses every vote. Harmless
+    while no snapshot-provider node runs.
+
+| Field | Value | Notes |
+|---|---|---|
+| `min_providers` | `7` | matching snapshot-provider votes that attest a snapshot: f + 1 for the 21-finalizer set (f = 6); the contract accepts `1`–`30` (`max_snap_providers`) |
+| `block_spacing` | `25000` | blocks between attested snapshot heights (the contract default); must be above `0`, and nodes adopt a changed value only on restart |
+
+26. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
     with the bootstrap import window open. DClaim rewards and imported balances remain claimable
     indefinitely, including while awaiting account linking. `importseed` and `importdone` are
     external/operational tools, not part of this bootstrap sequence.
@@ -348,10 +357,10 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 ## Stage 10 — Register the bootstrap node owner (real `nodeownreg` flow; NO `forcereg`)
 Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would inline-send for a real claim:
 
-26. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
+27. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
     creates `wireno` (owner = active = `DEV_K1`) with a finite pool-gifted RAM allocation. `tier:1` = T1
     (Validator); `NodeOwnerTier` = `{T1:1, T2:2, T3:3}`.
-27. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
+28. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
     `[sysio.roa@active]` — records the depositor ETH key as a `sysio.authex` link (inline `recordlink`) and
     allocates the tier-1 reserve post-bootstrap resource policies are issued from. `eth_pub_key` is a **fresh
     random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)**; its
@@ -369,16 +378,16 @@ Create the panic account first so the delegated authority can reference it.
 matching SDK declarations. `ClusterBuildDefaults` implements the sequence below; its Andon steps
 declare the linked `sysio.andon@pull` and `@clear` permissions.
 
-28. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
+29. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — then `sysio.roa::addpolicy({owner:"andon.panic",
     issuer:"wireno", net_weight:"25.0000 SYS", cpu_weight:"25.0000 SYS", ram_weight:"25.0000 SYS",
     time_block:0, network_gen:0})` — `[wireno@active]`. No WIRE is transferred to it **(cluster dev key;
     production: the governance-held panic key)**.
-29. **Permission RAM** — `sysio.roa::addpolicy({owner:"sysio.andon", issuer:"wireno",
+30. **Permission RAM** — `sysio.roa::addpolicy({owner:"sysio.andon", issuer:"wireno",
     net_weight:"0.0000 SYS", cpu_weight:"0.0000 SYS", ram_weight:"0.0100 SYS", time_block:0,
     network_gen:0})` — `[wireno@active]`. Fund the native permission and link rows before creating them;
     the contract deployment's RAM gift covers code/ABI, not these additional rows.
-30. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
+31. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
     - `sysio::updateauth({account:"sysio.andon", permission, parent:"active", auth:{threshold:1,
       keys:[], accounts:[{permission:{actor:"andon.panic",permission:"active"},weight:1},
       {permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}})` — `[sysio.andon@active]`.
@@ -409,7 +418,7 @@ rows below read their chain-side addresses from; in external-outpost mode the sa
 `--external-outpost-config` values instead. Production registers the canonical
 contract/mint addresses via the same shapes.
 
-31. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description, outpost})` —
+32. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description, outpost})` —
     `[sysio.chains@active]`, one per chain (registered ACTIVE; there is no separate `activchain`). `outpost`
     is left empty here and filled by `setoutpost` in Stage 12:
 
@@ -419,7 +428,7 @@ contract/mint addresses via the same shapes.
 | `CHAIN_KIND_EVM` | `slug("ETHEREUM")` | `31337` **(cluster anvil; production: real EVM id)** | `Ethereum (anvil)` | local anvil EVM chain |
 | `CHAIN_KIND_SVM` | `slug("SOLANA")` | `0` | `Solana (test-validator)` | local solana-test-validator |
 
-32. **Tokens** — `sysio.tokens::regtoken({kind, code, symbol_name, description, precision, address})` —
+33. **Tokens** — `sysio.tokens::regtoken({kind, code, symbol_name, description, precision, address})` —
     `[sysio.tokens@active]`, one per token (registered ACTIVE; no separate `activtoken`). `precision` is `9`
     for NATIVE/LIQ tokens and `6` for the ERC-20/SPL stablecoins (their chain-native decimals). `address =
     {kind, address}`; NATIVE leaves `address` empty; non-native carries the chain-side contract bytes (hex,
@@ -437,16 +446,16 @@ contract/mint addresses via the same shapes.
 | `TOKEN_KIND_SPL` | `slug("USDCSOL")` | `USDC (Solana)` | `6` | USDC mint from `sol-mock-mints.json` when present |
 | `TOKEN_KIND_SPL` | `slug("USDTSOL")` | `USDT (Solana)` | `6` | USDT mint from `sol-mock-mints.json` when present |
 
-33. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
+34. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
     `[sysio.tokens@active]`, one per binding (no separate `activctok`). Exactly one `is_native:true` per chain;
     non-native bindings carry the same chain-side address bytes as their token row (empty when unavailable):
     `(WIRE,WIRE,native)`, `(ETHEREUM,ETH,native)`, `(ETHEREUM,LIQETH)`, `(ETHEREUM,USDC)`, `(ETHEREUM,USDT)`,
     `(SOLANA,SOL,native)`, `(SOLANA,LIQSOL)`, `(SOLANA,USDCSOL)`, `(SOLANA,USDTSOL)`.
 
-34. `sysio.swap::setconfig({fee_authority:"sysio", system_token:{sym:"9,WIRE", contract:"sysio.token"}})` —
+35. `sysio.swap::setconfig({fee_authority:"sysio", system_token:{sym:"9,WIRE", contract:"sysio.token"}})` —
     `[sysio.swap@active]` — the depot-local AMM's fee authority and system token. `sysio.swap` trades on the
     depot only; it has no outpost participation and emits no OPP attestations.
-35. **Shadow liq symbols** — `sysio.liq::create({sym, chain_code, token_code})` — `[sysio.liq@active]`, one per
+36. **Shadow liq symbols** — `sysio.liq::create({sym, chain_code, token_code})` — `[sysio.liq@active]`, one per
     registered liq token: `{sym:"9,LIQETH", chain_code:slug("ETHEREUM"), token_code:slug("LIQETH")}` and
     `{sym:"9,LIQSOL", chain_code:slug("SOLANA"), token_code:slug("LIQSOL")}`. Syndicated outpost custody is
     minted 1:1 into these symbols.

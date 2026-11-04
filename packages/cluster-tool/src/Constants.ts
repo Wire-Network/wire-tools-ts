@@ -262,6 +262,19 @@ export namespace Constants {
    * schedule needs one more schedulable producer than this to observe the exit.
    */
   export const MIN_SCHEDULE_SIZE = 4
+  /**
+   * `min_providers` for `sysio::setsnpcfg` — the matching snapshot-provider votes that
+   * attest a snapshot: f + 1 for the {@link MAX_PRODUCERS}-finalizer set (f = 6), so every
+   * attested snapshot carries an honest vote. Raising it demands more matching votes;
+   * `setsnpcfg` accepts 1 through 30 (`max_snap_providers`).
+   */
+  export const SNAPSHOT_ATTESTATION_MIN_PROVIDERS = 7
+  /**
+   * `block_spacing` for `sysio::setsnpcfg` — blocks between attested snapshot heights, the
+   * contract's `snapshot_attestation::default_block_spacing`. Changing it changes which
+   * heights providers snapshot and vote on; nodes adopt a new value only on restart.
+   */
+  export const SNAPSHOT_ATTESTATION_BLOCK_SPACING = 25_000
 
   /**
    * Extra nodeop arguments applied to every node, in EVERY phase — the ini is

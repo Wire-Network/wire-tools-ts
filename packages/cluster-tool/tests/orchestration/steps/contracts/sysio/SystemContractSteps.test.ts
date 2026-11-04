@@ -312,4 +312,63 @@ describe("Steps.contracts.sysio.system", () => {
     await step.runner(ctx, step.input, new AbortController().signal)
     expect(invoke).toHaveBeenCalledWith(data)
   })
+
+  it.each([false, true])(
+    "setsnpcfg is governance-signed with the snap_config data and respects abort=%s",
+    async aborted => {
+      // `require_auth(sysio)`, so the invoker's default `sysio@active` is the signer.
+      const data: SysioContracts.SysioSystemSetsnpcfgAction = {
+        min_providers: 7,
+        block_spacing: 25_000
+      }
+      const step = Steps.contracts.sysio.system.planSetsnpcfg(
+        Report.Actor.Sysio,
+        "configure-snapshot-attestation",
+        "set the snapshot-attestation quorum and cadence",
+        {},
+        data
+      )
+      expect(step.actor).toBe(Report.Actor.Sysio)
+      expect(step.input).toEqual({ kind: "SystemContractSteps.SetsnpcfgInput", data })
+      expect(step.runner).toBe(Steps.contracts.sysio.system.runSetsnpcfg)
+
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system),
+        invoke = jest
+          .spyOn(contract.actions.setsnpcfg, "invoke")
+          .mockResolvedValue(undefined)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      const controller = new AbortController()
+      if (aborted) controller.abort()
+      const result = step.runner(ctx, step.input, controller.signal)
+      if (aborted) {
+        await expect(result).rejects.toThrow()
+        expect(invoke).not.toHaveBeenCalled()
+      } else {
+        await result
+        expect(invoke).toHaveBeenCalledWith(data)
+      }
+      jest.restoreAllMocks()
+    }
+  )
+
+  it("setsnpcfg propagates the contract's refusal", async () => {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    jest
+      .spyOn(contract.actions.setsnpcfg, "invoke")
+      .mockRejectedValue(new Error("min_providers must be at least 1"))
+    await expect(
+      Steps.contracts.sysio.system.runSetsnpcfg(
+        ctx,
+        {
+          kind: "SystemContractSteps.SetsnpcfgInput",
+          data: { min_providers: 0, block_spacing: 25_000 }
+        },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/min_providers must be at least 1/)
+    jest.restoreAllMocks()
+  })
 })
