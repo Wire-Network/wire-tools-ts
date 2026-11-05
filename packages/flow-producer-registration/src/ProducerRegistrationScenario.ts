@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  ClusterBuildStep,
   SyndicationScenario,
   SyndicationUserSteps,
   Constants as DepotConstants,
@@ -16,6 +17,7 @@ import {
   WireCollateralTool,
   WireOperatorProvisioningTool,
   matchesProtoEnum,
+  pollStep,
   pollUntil,
   producerName,
   producerTier,
@@ -86,7 +88,19 @@ function assertNoSeniority(
 }
 
 /**
- * Assert a producer holds seniority: pay credits `service_sec` for every round it counts.
+ * Whether a producer holds seniority: pay credits `service_sec` for every round it counts.
+ *
+ * @param producer - The producer's row.
+ * @returns True when `service_sec` is positive.
+ */
+function holdsSeniority(
+  producer: SysioContracts.SysioSystemProducerInfoType
+): boolean {
+  return BigInt(producer.service_sec) > 0n
+}
+
+/**
+ * Assert a producer holds seniority.
  *
  * @param producer - The producer's row.
  */
@@ -94,9 +108,19 @@ function assertSeniorityEarned(
   producer: SysioContracts.SysioSystemProducerInfoType
 ): void {
   Assert.ok(
-    BigInt(producer.service_sec) > 0n,
+    holdsSeniority(producer),
     "the producer holds no seniority after serving a round"
   )
+}
+
+/**
+ * True once the flow producer's row holds seniority (a read). `onblock` processes the PREVIOUS
+ * block's header, so the credit for a round lands one block after the producer's first block of
+ * it — never on that block itself.
+ */
+async function hasEarnedSeniority(ctx: ClusterBuildContext): Promise<boolean> {
+  const producer = await readProducerRow(ctx)
+  return producer != null && holdsSeniority(producer)
 }
 
 /**
@@ -516,7 +540,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Producer,
         "producer-produces-a-block",
-        "the flow producer becomes head_block_producer and earns seniority",
+        "the flow producer becomes head_block_producer",
         async ctx => {
           // Producing a block is the assertion, not merely appearing in a proposed schedule: a
           // pending schedule only activates once its proposing block is FINAL, so this also
@@ -528,11 +552,25 @@ export class ProducerRegistrationScenario extends FlowScenario {
             Constants.scheduleDeadlineMs(ScheduleSize),
             Constants.PollIntervalMs
           )
-          // Pay credits seniority on the producer's own block for the round it counts — the
-          // first counted round a full rotation — so a producer that has produced holds some.
-          assertSeniorityEarned(await assertProducerRow(ctx))
         },
         scheduleStepOptions
+      ),
+      // Pay credits the producer's first counted round a full rotation of seniority, but in the
+      // `onblock` of the block AFTER its first one: the head can be the producer's block while its
+      // row still holds none. Polled to the block-production deadline, since it lands with the
+      // next block.
+      ClusterBuildStep.create(
+        Actor.Sysio,
+        "producer-earns-seniority",
+        "pay credits the produced round's seniority, one block after the producer's first block",
+        scheduleStepOptions,
+        null,
+        pollStep.lift(
+          "the flow producer's row holds the produced round's seniority",
+          hasEarnedSeniority,
+          Constants.scheduleDeadlineMs(ScheduleSize),
+          Constants.PollIntervalMs
+        )
       )
     )
 
@@ -675,12 +713,20 @@ export class ProducerRegistrationScenario extends FlowScenario {
         async ctx => {
           // The pardon already zeroed the streak, so this is not re-asserting the clear — it is
           // asserting the producer does not fall straight back. A round is scored once, at the
-          // transition where it ENDS, so waiting for the head to move OFF this producer is what
-          // makes the verdict readable: only then has its round been judged, and a SERVED verdict
-          // is the one that leaves the streak at zero and the demotion off.
+          // transition where it ENDS, and `onblock` processes the PREVIOUS block's header, so the
+          // next producer's first block is judged one block later: the verdict, and the round's
+          // seniority credit, are readable once the head has moved OFF this producer and one more
+          // block has followed. A SERVED verdict leaves the streak at zero and the demotion off.
           await pollUntil(
-            "the recovered producer's round ended and was scored",
+            "the recovered producer's round ended",
             async () => !(await hasProducedBlock(ctx)),
+            Constants.scheduleDeadlineMs(ScheduleSize),
+            Constants.PollIntervalMs
+          )
+          const { head_block_num: roundEndedBlock } = await ctx.wire.getInfo()
+          await pollUntil(
+            "the block that ended the recovered producer's round was judged",
+            async () => (await ctx.wire.getInfo()).head_block_num > roundEndedBlock,
             Constants.scheduleDeadlineMs(ScheduleSize),
             Constants.PollIntervalMs
           )
