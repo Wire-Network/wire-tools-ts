@@ -724,10 +724,9 @@ export namespace ClusterBuildDefaults {
     )
     // The opreg half of genesis-producer registration — deferred to here because sysio.opreg is
     // only deployed by `OPPContracts` and configured by `OPPConfig` above. Bootstrapped by fiat:
-    // genesis producers post no collateral, `req_prod_collat` ships empty, and `meets_role_min`
-    // refuses an empty requirement vector by design (SEC-22) — so a non-bootstrapped
-    // registration would sit UNKNOWN forever and never become schedulable. They are also exempt
-    // from `termcheck`, which is what a genesis backstop is for.
+    // genesis producers post no collateral, and `meets_role_min` exempts a bootstrapped operator
+    // from `req_prod_collat` (by default the launch minimum a non-bootstrapped producer must
+    // bond). They are also exempt from `termcheck`, which is what a genesis backstop is for.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "GenesisProducerOperators",
