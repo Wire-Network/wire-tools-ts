@@ -24,9 +24,9 @@ export enum ProducerTier {
 export const ProducerRegistrationOrderBits = 22n
 
 /**
- * Bits of `rank_score` holding the INVERTED composite score, in seconds of
- * seniority-equivalent — the contract's `composite_bits`. Sits between the tier and the
- * registration order.
+ * Bits of `rank_score` holding the INVERTED composite score — the collateral multiple in
+ * hundredths of the minimum bond times the time term in whole hours — the contract's
+ * `composite_bits`. Sits between the tier and the registration order.
  */
 export const ProducerCompositeBits = 40n
 

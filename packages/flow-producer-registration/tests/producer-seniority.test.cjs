@@ -157,7 +157,6 @@ test("the flow installs the shipped seniority defaults around its own demotion t
     weights: Constants.ScoreConfig
   })
   Assert.deepEqual(Constants.ScoreConfig, {
-    collateral_weight: 0,
     snapshot_weight: 259_200,
     relay_weight: 0,
     api_weight: 0,
@@ -165,7 +164,8 @@ test("the flow installs the shipped seniority defaults around its own demotion t
     max_consecutive_missed_rounds: 3,
     snapshot_target_attestations: 1,
     min_blocks_per_round: 0,
-    miss_penalty_sec: 604_800
+    miss_penalty_sec: 604_800,
+    seniority_base_sec: 604_800
   })
 })
 

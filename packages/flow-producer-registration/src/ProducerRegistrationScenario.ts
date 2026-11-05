@@ -488,9 +488,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
         async ctx => {
           // The score is what ranking ORDERS on, and an unscored row sits in the demoted tier
           // where no consumer's walk ever reaches it. Registration checks the posted collateral
-          // against the live minimum — a gate, not a score term, at the installed zero collateral
-          // weight — and takes the producer's registration order; regfinkey then rescores the row
-          // into schedulable standing. The tier is read from the key itself.
+          // against the live minimum — the same bond the composite is multiplied by — and takes
+          // the producer's registration order; regfinkey then rescores the row into schedulable
+          // standing. The tier is read from the key itself.
           await pollUntil(
             "producer rank_score in the healthy tier",
             async () => {

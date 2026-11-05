@@ -95,12 +95,6 @@ export namespace ProducerRegistrationScenarioConstants {
    * the contract's default.
    */
   export const MaxConsecutiveMissedRounds = 3
-  /**
-   * Seconds of seniority one minimum bond is worth — 0, the contract default. Collateral is then
-   * a pure admission gate: below the live minimum the producer is unscored, and bonding more buys
-   * no rank, so the withdrawal phases test the gate rather than a score term.
-   */
-  export const CollateralWeightSec = 0
   /** Seconds of seniority full snapshot credit is worth — the contract default, three days. */
   export const SnapshotWeightSec = 259_200
   /**
@@ -122,15 +116,20 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const MissPenaltySec = 604_800
   /**
+   * Seconds added to every producer's time term — the contract default, seven days — so a
+   * producer with no seniority still scores, and standbys at zero seniority order by stake.
+   */
+  export const SeniorityBaseSec = 604_800
+  /**
    * The `prodscorecfg` the flow installs: the contract's shipped defaults around the flow's own
-   * demotion threshold and round verdict. The composite is seniority (`service_sec` in whole
-   * hours) plus the snapshot term; collateral adds nothing at its zero weight, and equal
-   * composites order by registration. The reserved `relay` / `api` / `benchmark` factors stay
-   * at 0.
+   * demotion threshold and round verdict. The composite is the collateral multiple M — the lowest
+   * bond ÷ minimum across the required pairs, 1x for a bootstrapped producer — times the time
+   * term: seniority (`service_sec` in whole hours) plus the snapshot credit plus the seniority
+   * base. Collateral both gates admission and multiplies the score; equal composites order by
+   * registration. The reserved `relay` / `api` / `benchmark` factors stay at 0.
    */
   export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType =
     {
-      collateral_weight: CollateralWeightSec,
       snapshot_weight: SnapshotWeightSec,
       relay_weight: 0,
       api_weight: 0,
@@ -138,7 +137,8 @@ export namespace ProducerRegistrationScenarioConstants {
       max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
       snapshot_target_attestations: SnapshotTargetAttestations,
       min_blocks_per_round: MinBlocksPerRound,
-      miss_penalty_sec: MissPenaltySec
+      miss_penalty_sec: MissPenaltySec,
+      seniority_base_sec: SeniorityBaseSec
     }
 
   /**

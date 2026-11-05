@@ -582,8 +582,10 @@ export namespace SystemContractSteps {
 
   /**
    * `sysio.system::setscorecfg` — set the producer score configuration: the seconds of
-   * seniority each factor is worth at full credit, the missed-round demotion threshold, the
-   * blocks a round needs to count as served, and the seniority an unserved round costs.
+   * seniority each factor is worth at full credit, the seniority base every producer's time term
+   * starts from, the missed-round demotion threshold, the blocks a round needs to count as
+   * served, and the seniority an unserved round costs. The collateral multiple scales the
+   * resulting time term; it has no weight here.
    *
    * Governance-signed (`sysio@active`). Changing a weight invalidates every stored score at
    * once, so the contract opens a rescore sweep that `onblock` drains a bounded number of
