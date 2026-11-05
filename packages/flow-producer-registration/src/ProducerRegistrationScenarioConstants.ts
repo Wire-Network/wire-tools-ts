@@ -3,7 +3,8 @@ import { TokenAmount } from "@wireio/opp-typescript-models"
 import {
   Constants,
   ProtocolTiming,
-  Constants as DepotConstants
+  Constants as DepotConstants,
+  outputKey
 } from "@wireio/cluster-tool"
 
 /**
@@ -95,10 +96,13 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const MaxConsecutiveMissedRounds = 3
   /**
-   * Fixed-point scale of every score weight — the contract's `producer_rank::score_scale`
-   * (basis points; a weight at this value is 100%).
+   * Seconds of seniority one minimum bond is worth — 0, the contract default. Collateral is then
+   * a pure admission gate: below the live minimum the producer is unscored, and bonding more buys
+   * no rank, so the withdrawal phases test the gate rather than a score term.
    */
-  export const ScoreScale = 10_000
+  export const CollateralWeightSec = 0
+  /** Seconds of seniority full snapshot credit is worth — the contract default, three days. */
+  export const SnapshotWeightSec = 259_200
   /**
    * Snapshot attestations within one pay period that earn full marks on the snapshot factor —
    * the contract default.
@@ -112,23 +116,41 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const MinBlocksPerRound = 0
   /**
-   * The `prodscorecfg` the flow installs: the contract's shipped weights around the flow's own
-   * demotion threshold. Snapshot service is weighted at a TENTH of collateral, as the contract
-   * ships it — it breaks ties rather than outranking a bond. The reserved `relay` / `api` /
-   * `benchmark` factors stay at 0.
+   * Seconds of seniority an unserved round costs, floored at zero — the contract default, seven
+   * days. A served round earns at most one rotation of seniority, so the flow producer holds far
+   * less than one penalty when its node stops, and the first round it misses takes all of it.
+   */
+  export const MissPenaltySec = 604_800
+  /**
+   * The `prodscorecfg` the flow installs: the contract's shipped defaults around the flow's own
+   * demotion threshold and round verdict. The composite is seniority (`service_sec` in whole
+   * hours) plus the snapshot term; collateral adds nothing at its zero weight, and equal
+   * composites order by registration. The reserved `relay` / `api` / `benchmark` factors stay
+   * at 0.
    */
   export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType =
     {
-      collateral_weight: ScoreScale,
-      participation_weight: ScoreScale,
-      snapshot_weight: ScoreScale / 10,
+      collateral_weight: CollateralWeightSec,
+      snapshot_weight: SnapshotWeightSec,
       relay_weight: 0,
       api_weight: 0,
       benchmark_weight: 0,
       max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
       snapshot_target_attestations: SnapshotTargetAttestations,
-      min_blocks_per_round: MinBlocksPerRound
+      min_blocks_per_round: MinBlocksPerRound,
+      miss_penalty_sec: MissPenaltySec
     }
+
+  /**
+   * The flow producer's registration order, recorded when it registers. The off-schedule pardon
+   * must keep it: only a termination or slash takes a new one.
+   */
+  export const RegistrationOrder = outputKey<
+    SysioContracts.SysioSystemProducerInfoType["registration_seq"]
+  >(
+    "producerRegistration.registrationOrder",
+    "the flow producer's registration order, taken when it registered"
+  )
 
   /**
    * Withdrawn from the bond in the removal phase — the WHOLE of it.

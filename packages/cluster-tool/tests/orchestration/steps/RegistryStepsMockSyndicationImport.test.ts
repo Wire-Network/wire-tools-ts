@@ -189,7 +189,9 @@ describe("RegistrySteps mock syndication import", () => {
         chain_kind: chainKind,
         pubkey,
         balance: RegistrySteps.MockSyndicationImportAmount,
-        position: { index_checkpoint: "0", owed_wire: "0" }
+        position: { index_checkpoint: "0", owed_wire: "0" },
+        batch_id: 1,
+        unattributed: RegistrySteps.MockSyndicationImportAmount
       }))
     jest.spyOn(WireSyndicationTool, "readMismatches").mockResolvedValue([])
     const step = RegistrySteps.planVerifyMockSyndicationImport(
@@ -427,7 +429,9 @@ describe("RegistrySteps mock syndication import", () => {
                   chain_kind: chainKind,
                   pubkey,
                   balance: RegistrySteps.MockSyndicationImportAmount,
-                  position: { index_checkpoint: "0", owed_wire: "0" }
+                  position: { index_checkpoint: "0", owed_wire: "0" },
+                  batch_id: 1,
+                  unattributed: RegistrySteps.MockSyndicationImportAmount
                 }
               : parked === 0n
                 ? undefined
@@ -436,7 +440,9 @@ describe("RegistrySteps mock syndication import", () => {
                     chain_kind: chainKind,
                     pubkey,
                     balance: parked.toString(),
-                    position: { index_checkpoint: "0", owed_wire: "0" }
+                    position: { index_checkpoint: "0", owed_wire: "0" },
+                    batch_id: 2,
+                    unattributed: parked.toString()
                   }
           )
         const balance = jest

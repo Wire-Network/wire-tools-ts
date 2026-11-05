@@ -581,8 +581,9 @@ export namespace SystemContractSteps {
   }
 
   /**
-   * `sysio.system::setscorecfg` — set the per-factor weights behind a producer's rank score,
-   * plus the missed-round demotion threshold.
+   * `sysio.system::setscorecfg` — set the producer score configuration: the seconds of
+   * seniority each factor is worth at full credit, the missed-round demotion threshold, the
+   * blocks a round needs to count as served, and the seniority an unserved round costs.
    *
    * Governance-signed (`sysio@active`). Changing a weight invalidates every stored score at
    * once, so the contract opens a rescore sweep that `onblock` drains a bounded number of

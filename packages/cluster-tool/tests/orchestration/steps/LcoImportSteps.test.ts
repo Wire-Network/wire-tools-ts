@@ -556,19 +556,28 @@ describe("LcoImportSteps", () => {
     })
 
     describe("runReconcileSyndication", () => {
-      /** The plan's positions as the `sysio.synd::parked` rows an unlinked import writes. */
+      /**
+       * The plan's positions as the `sysio.synd::parked` rows an unlinked import writes: each
+       * opens its own principal batch, and its whole balance stays unattributed to a live intake.
+       */
       function parkedRows(): SysioContracts.SysioSyndParkedRowType[] {
-        return WireLcoImportTool.chainPlans(plan).flatMap(chainPlan =>
-          chainPlan.syndications.map(spec => ({
-            token_code: chainPlan.pool.tokenCode,
-            chain_kind: SysioSyndChainkind[
-              chainPlan.chain
-            ] as keyof typeof SysioSyndChainkind,
-            pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
-            balance: spec.amount.toString(),
-            position: { index_checkpoint: "1.0", owed_wire: 0 }
+        return WireLcoImportTool.chainPlans(plan)
+          .flatMap(chainPlan =>
+            chainPlan.syndications.map(spec => ({
+              token_code: chainPlan.pool.tokenCode,
+              chain_kind: SysioSyndChainkind[
+                chainPlan.chain
+              ] as keyof typeof SysioSyndChainkind,
+              pubkey: WireLcoImportTool.nativeBytesHex(chainPlan.chain, spec.pubkey),
+              balance: spec.amount.toString(),
+              position: { index_checkpoint: "1.0", owed_wire: 0 }
+            }))
+          )
+          .map((row, index) => ({
+            ...row,
+            batch_id: index + 1,
+            unattributed: row.balance
           }))
-        )
       }
 
       /** The plan's positions, in plan order: Ethereum's two, then Solana's one. */
