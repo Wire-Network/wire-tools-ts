@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import { xor } from "lodash"
 
 import { CatalogNodeKind, type CatalogSnapshot } from "@wireio/ql-shared"
@@ -88,25 +88,25 @@ export const CatalogSlice = createSlice({
   initialState: initialCatalogState,
   reducers: {
     /** Loading owners began. */
-    loadStarted(state) {
+    loadStarted(state: Draft<CatalogState>) {
       state.loading = true
       state.error = null
     },
     /** A new snapshot arrived. */
-    snapshotLoaded(state, action: PayloadAction<CatalogSnapshot>) {
+    snapshotLoaded(state: Draft<CatalogState>, action: PayloadAction<CatalogSnapshot>) {
       state.snapshot = action.payload
     },
     /** Loading finished (successfully or not). */
-    loadFinished(state, action: PayloadAction<string>) {
+    loadFinished(state: Draft<CatalogState>, action: PayloadAction<string>) {
       state.loading = false
       state.error = action.payload
     },
     /** Expand / collapse a node. */
-    nodeToggled(state, action: PayloadAction<string>) {
+    nodeToggled(state: Draft<CatalogState>, action: PayloadAction<string>) {
       state.expanded = xor(state.expanded, [action.payload])
     },
     /** Move the tree cursor (clamped by the visible row count). */
-    cursorMoved(state, action: PayloadAction<number>) {
+    cursorMoved(state: Draft<CatalogState>, action: PayloadAction<number>) {
       state.cursor = moveCursor(state.cursor, action.payload, CatalogState.treeRows(state).length)
     }
   }

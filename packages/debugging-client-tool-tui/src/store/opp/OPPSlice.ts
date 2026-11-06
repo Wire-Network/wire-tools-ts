@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import { asOption } from "@3fv/prelude-ts"
 import { identity } from "lodash"
 import { match } from "ts-pattern"
@@ -60,7 +60,7 @@ export const oppSlice = createSlice({
      * over cap. Deduplicates on `(endpointsType, checksum)` — same pair is a
      * no-op.
      */
-    appendEnvelope: (state, action: PayloadAction<AppendEnvelopePayload>) => {
+    appendEnvelope: (state: Draft<OPPState>, action: PayloadAction<AppendEnvelopePayload>) => {
       const { epoch, record } = action.payload
       const epochRecord: DebugOPPEpochRecord = asOption(state.epochs[epoch]).match({
         Some: identity,
@@ -81,7 +81,7 @@ export const oppSlice = createSlice({
       if (epoch > state.epochIndex) state.epochIndex = epoch
     },
     /** Bulk-replace cache from initial directory scan. */
-    hydrate: (state, action: PayloadAction<DebugOPPEpochRecord[]>) => {
+    hydrate: (state: Draft<OPPState>, action: PayloadAction<DebugOPPEpochRecord[]>) => {
       action.payload.forEach(rec => {
         state.epochs[rec.epoch] = rec
         if (!state.epochOrder.includes(rec.epoch))
@@ -92,7 +92,7 @@ export const oppSlice = createSlice({
       evictExcess(state)
     },
     /** Drop all cache — used when the selected cluster changes. */
-    clear: state => {
+    clear: (state: Draft<OPPState>) => {
       state.epochIndex = 0
       state.epochs = {}
       state.epochOrder = []

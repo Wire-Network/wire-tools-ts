@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import type { SavedQuery } from "@wireio/ql-shared"
 
@@ -25,7 +25,7 @@ export const SavedSlice = createSlice({
   initialState: createSavedInitialState(),
   reducers: {
     /** List (re)loaded. */
-    savedLoaded(state, action: PayloadAction<SavedQuery[]>) {
+    savedLoaded(state: Draft<SavedState>, action: PayloadAction<SavedQuery[]>) {
       state.queries = action.payload
     }
   }
