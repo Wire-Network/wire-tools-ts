@@ -14,6 +14,12 @@ import { Report } from "@wireio/cluster-tool/report"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import {
+  bondRequestRow as request,
+  FixtureRequestId,
+  FixtureTokenCode,
+  syndEnvelopeRow as envelope
+} from "./syndicationRowFixture.js"
 
 const {
   SysioContractName,
@@ -29,10 +35,10 @@ const {
 
 const Solana = "SOLANA",
   Ethereum = "ETHEREUM",
-  Liqsol = "LIQSOL",
+  Liqsol = FixtureTokenCode,
   Liqeth = "LIQETH",
   Bonder = "bonder.a",
-  RequestId = 7,
+  RequestId = FixtureRequestId,
   signal = new AbortController().signal
 
 /**
@@ -66,67 +72,6 @@ function serve<
   jest.spyOn(table, "query").mockResolvedValue({ rows, more })
 }
 
-/** One `sysio.synd::envelopes` row. */
-function envelope(
-  chainCode: string,
-  tokenCode: string,
-  epochIndex: number,
-  state: SysioContracts.SysioSyndEnvelopeState,
-  requestId = RequestId,
-  outcome = SysioSyndRequestOutcome.PENDING
-): SysioContracts.SysioSyndEnvelopeRowType {
-  return {
-    chain_code: chainCode,
-    token_code: tokenCode,
-    epoch_index: epochIndex,
-    digest: "00".repeat(32),
-    synd_total: 5_000_000_000,
-    yield_total: 0,
-    item_count: 1,
-    state,
-    request_id: requestId,
-    released: 0,
-    burned: 0,
-    outcome,
-    forfeit: 0,
-    bounty_returned: 0,
-    hold_share: 0,
-    hold_beneficiary: "",
-    share_pending: false
-  }
-}
-
-/** One `sysio.bond::requests` row. */
-function request(
-  covered: number,
-  bonded: number,
-  state:
-    SysioContracts.SysioBondRequestState | keyof typeof SysioBondRequestState
-): SysioContracts.SysioBondRequestRowType {
-  return {
-    id: String(RequestId),
-    issuer: "sysio.synd",
-    schema: "oppenvelope",
-    statement: "",
-    statement_digest: "00".repeat(32),
-    token_code: Liqsol,
-    covered,
-    bonded,
-    bounty: 0,
-    window_sec: 60,
-    state,
-    created_at: "2026-09-30T00:00:00.000",
-    bonded_at: "2026-09-30T00:00:00.000",
-    hold_bond: 0,
-    hold_beneficiary: "",
-    held_at: "1970-01-01T00:00:00.000",
-    resolved_at: "1970-01-01T00:00:00.000",
-    resolved_index: "0",
-    forfeit_pending: 0,
-    outcome_acknowledged: false
-  }
-}
-
 /** A `sysio.liq::stat` row of a shadow at `precision`. */
 function stat(supply: string): SysioContracts.SysioLiqCurrencyStatsType {
   return {
@@ -147,6 +92,31 @@ function newBuild(): ClusterBuild {
 afterEach(() => jest.restoreAllMocks())
 
 describe("WireSyndicationTool — sysio.synd reads", () => {
+  it("derives a floored fee plus flat charge from the live pair, including a changed charge", async () => {
+    const { ctx, clients } = stubbedContext(),
+      config = Steps.registry.SyndicationConfigRegistrations.find(row => row.token_code === Liqsol)
+    serve(clients.liq.tables.stat, [stat("2.000000001 LIQSOL")])
+    const query = jest.spyOn(clients.synd.tables.syndconfig, "query")
+      .mockResolvedValue({ rows: [config], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000001 LIQSOL"))
+      .resolves.toBe("1100000")
+    query.mockResolvedValue({ rows: [{ ...config, desynd_fee_flat: 200_000 }], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000001 LIQSOL"))
+      .resolves.toBe("1200000")
+  })
+
+  it("refuses missing and truncated live fee configuration", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.stat, [stat("2.000000000 LIQSOL")])
+    const query = jest.spyOn(clients.synd.tables.syndconfig, "query")
+      .mockResolvedValue({ rows: [], more: false })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000000 LIQSOL"))
+      .rejects.toThrow("missing syndication configuration")
+    query.mockResolvedValue({ rows: [], more: true })
+    await expect(WireSyndicationTool.readDesyndicationFee(ctx, "2.000000000 LIQSOL"))
+      .rejects.toThrow(/truncated/)
+  })
+
   it("readEnvelopes keeps only the pair's rows, whatever the other pairs hold", async () => {
     const { ctx, clients } = stubbedContext()
     serve(clients.synd.tables.envelopes, [
@@ -274,7 +244,9 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         chain_kind: "CHAIN_KIND_SVM",
         pubkey,
         balance: 5_000_000_000,
-        position: { index_checkpoint: "0", owed_wire: 0 }
+        position: { index_checkpoint: "0", owed_wire: 0 },
+        batch_id: 1,
+        unattributed: 0
       }
     ])
     expect(
@@ -370,6 +342,15 @@ describe("WireSyndicationTool — shadow ledger and registry reads", () => {
     serve(clients.liq.tables.liqpending, [{ quantity: "0.500000000 LIQSOL" }])
     expect(await WireSyndicationTool.readOutstanding(ctx, Liqsol)).toBe(
       12_500_000_000n
+    )
+  })
+
+  it("readOutstanding preserves asset units beyond Number precision", async () => {
+    const { ctx, clients } = stubbedContext()
+    serve(clients.liq.tables.stat, [stat("9007199.254740993 LIQSOL")])
+    serve(clients.liq.tables.liqpending, [{ quantity: "0.000000001 LIQSOL" }])
+    expect(await WireSyndicationTool.readOutstanding(ctx, Liqsol)).toBe(
+      9_007_199_254_740_994n
     )
   })
 
@@ -1212,13 +1193,6 @@ describe("WireSyndicationTool — sysio.liq holdings and bond arithmetic", () =>
     await expect(
       WireSyndicationTool.readLiqBalance(ctx, Bonder, Liqsol)
     ).rejects.toThrow("truncated")
-  })
-
-  it("parses asset base units without floating point", () => {
-    expect(WireSyndicationTool.assetUnits("2.000000001 LIQSOL")).toBe(
-      2_000_000_001n
-    )
-    expect(WireSyndicationTool.assetUnits("0.000000000 LIQSOL")).toBe(0n)
   })
 
   it("computes the bond remainder and full-bond state", () => {

@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 
+import { ethers } from "ethers"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import {
   AttestationType,
@@ -29,6 +30,10 @@ import {
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { EmergencyStopScenarioConstants as Constants } from "./EmergencyStopScenarioConstants.js"
+import {
+  readEthereumCustodyFixture,
+  ethereumCustodyGapExceedsAllowance
+} from "./ethereumCustodyFixture.js"
 import { EmergencyStopSteps } from "./steps/index.js"
 
 const { Actor } = Report,
@@ -229,8 +234,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
               value => value.requestId === record.requestId
             )
           Assert.ok(message, "missing decoded DESYNDICATE_LIQ")
-          Assert.strictEqual(message.amount.amount, Constants.Payout)
-          Assert.strictEqual(record.amount, Constants.Payout)
+          Assert.strictEqual(message.amount.amount, Constants.Redemption)
+          Assert.strictEqual(record.amount, Constants.Redemption)
           Assert.strictEqual(record.reason, PendingPayoutReason.outpostFrozen)
           Assert.strictEqual(record.tokenCode, SyndicationScenario.TokenCode)
           Assert.strictEqual(
@@ -504,7 +509,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               Constants.User.keypairName
             ),
-            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Payout
+            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Redemption
           )
           Assert.ok(
             !(await SolanaLiqSyndicationTool.readPendingPayout(
@@ -549,7 +554,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               Constants.User.keypairName
             ),
-            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Payout
+            ctx.outputs.assert(Constants.BalanceBefore) + Constants.Redemption
           )
         }
       )
@@ -645,8 +650,29 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           Assert.strictEqual(BigInt(mismatch.sequence), message.sequence)
           Assert.strictEqual(BigInt(mismatch.reported), message.totalSyndicated)
+          // `reported` is the pool custody AT the syndication. The permissionless
+          // per-epoch `report_liq_yield` crank may claim pool rewards into the
+          // ATA afterwards, so tie the snapshot to the live balance through
+          // every later custody change, each of which must be that crank.
+          const custody = await SolanaLiqSyndicationTool.readSyndicationCustody(
+            ctx,
+            message.sequence
+          )
+          StepExtraRecorder.note(
+            "Pool custody at and after the shortfall syndication",
+            { custody }
+          )
+          Assert.strictEqual(BigInt(mismatch.reported), custody.syndication.after)
+          const liveCustody = custody.laterChanges.reduce((previous, change) => {
+            Assert.ok(
+              change.onlyYieldClaims,
+              `pool custody changed after the syndication outside report_liq_yield: ${change.signature} [${change.instructions.join(", ")}]`
+            )
+            Assert.strictEqual(change.before, previous)
+            return change.after
+          }, custody.syndication.after)
           Assert.strictEqual(
-            BigInt(mismatch.reported),
+            liveCustody,
             await SolanaLiqSyndicationTool.readPoolBalance(ctx)
           )
           Assert.strictEqual(
@@ -877,7 +903,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
       )
     )
   }
-  /** Ethereum pause and custody-shortfall lanes both store and later pay exactly once. */
+  /** Exercise explicit pause, tolerated custody gaps and automatic shortfall recovery. */
   private planEthereum(cluster: ClusterBuild): void {
     ClusterBuildPhase.create(
       cluster,
@@ -890,18 +916,17 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "sweep imported Ethereum position",
         write,
         Action.linkEthereum
-      ),
-      EthereumSyndicationTool.planDepositLiqEth(
-        Actor.User,
-        "fund-ethereum-donor",
-        "deposit for recovery custody",
-        outpost,
-        Constants.EthereumDonor,
-        Constants.Amount * Constants.EthereumScale
       )
     )
-    this.planEthereumPayout(cluster, false)
-    this.planEthereumPayout(cluster, true)
+    this.planEthereumPayout(cluster, Constants.EthereumPayoutLane.EthereumPause)
+    this.planEthereumPayout(
+      cluster,
+      Constants.EthereumPayoutLane.EthereumWithinAllowance
+    )
+    this.planEthereumPayout(
+      cluster,
+      Constants.EthereumPayoutLane.EthereumShortfall
+    )
     ClusterBuildPhase.create(
       cluster,
       "FinalSafety",
@@ -950,39 +975,52 @@ export class EmergencyStopScenario extends SyndicationScenario {
       )
     )
   }
-  /** One Ethereum deferred payout, selected by the deliberate cause. */
-  private planEthereumPayout(cluster: ClusterBuild, shortfall: boolean): void {
+  /** One Ethereum payout under the selected pause or custody policy. */
+  private planEthereumPayout(
+    cluster: ClusterBuild,
+    lane: Constants.EthereumPayoutLane
+  ): void {
+    const shortfall = lane === Constants.EthereumPayoutLane.EthereumShortfall,
+      tolerated = lane === Constants.EthereumPayoutLane.EthereumWithinAllowance,
+      custodyFixture = shortfall || tolerated
     const phase = ClusterBuildPhase.create(
       cluster,
-      shortfall ? "EthereumShortfall" : "EthereumPause",
-      "Store and recover one Ethereum redemption"
+      lane,
+      tolerated
+        ? "Pay a fully funded redemption within the custody allowance"
+        : "Store and recover one Ethereum redemption"
     )
-    if (shortfall)
+    if (custodyFixture)
       phase.push(
+        EmergencyStopSteps.planAction(
+          Actor.User,
+          "fund-ethereum-repair",
+          "fund recovery before measuring custody or recipient balances",
+          outpost,
+          Action.fundEthereumRecovery
+        ),
         verifyStep(
           Actor.Sysio,
           "measure-ethereum-shortfall",
-          "measure custody and outstanding",
+          "derive a funded gap from the live allowance and net burn",
           async ctx => {
-            const custody =
-                await EthereumSyndicationTool.readPoolBalanceDepot(ctx),
-              outstanding = await WireSyndicationTool.readOutstanding(
+            const fixture = await readEthereumCustodyFixture(ctx, shortfall),
+              donor = EthereumSyndicationTool.hdWallet(
                 ctx,
-                Constants.EthereumToken
+                Constants.EthereumDonor
+              ),
+              donorBalance = await EthereumSyndicationTool.readLiqEthBalance(
+                ctx,
+                donor.address
               )
-            Assert.ok(custody >= outstanding)
-            ctx.outputs.set(
-              Constants.Shortfall,
-              custody - outstanding + Constants.Deficit
+            Assert.ok(
+              donorBalance >= fixture.recredit * Constants.EthereumScale,
+              "Ethereum donor cannot fully fund the measured repair after deposit fees"
             )
+            ctx.outputs.set(Constants.EthereumRecredit, fixture.recredit)
+            ctx.outputs.set(Constants.EthereumToleranceBps, fixture.toleranceBps)
+            StepExtraRecorder.note("Ethereum custody fixture", { ...fixture })
           }
-        ),
-        EmergencyStopSteps.planAction(
-          Actor.Sysio,
-          "unbacked-ethereum-recredit",
-          "create measured unbacked LIQETH",
-          write,
-          Action.recreditEthereum
         )
       )
     else
@@ -1024,10 +1062,22 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           Assert.strictEqual(
             await EthereumSyndicationTool.readPaused(ctx),
-            !shortfall
+            !custodyFixture
           )
         }
-      ),
+      )
+    )
+    if (custodyFixture)
+      phase.push(
+        EmergencyStopSteps.planAction(
+          Actor.Sysio,
+          "unbacked-ethereum-recredit",
+          "create measured unbacked LIQETH",
+          write,
+          Action.recreditEthereum
+        )
+      )
+    phase.push(
       Steps.contracts.sysio.synd.planDesyndicate(
         Actor.User,
         "ethereum-redemption",
@@ -1043,11 +1093,15 @@ export class EmergencyStopScenario extends SyndicationScenario {
       ),
       verifyStep(
         Actor.EthereumOutpost,
-        "ethereum-stored",
-        "pending reason, recipient, exact depot amount and unchanged wei",
+        tolerated ? "ethereum-tolerated" : "ethereum-stored",
+        tolerated
+          ? "tolerated event proves a positive gap within allowance, without pause or pending payout"
+          : "pending reason, recipient, exact depot amount and unchanged wei",
         async ctx => {
           await pollUntil(
-            "Ethereum deferred payout",
+            tolerated
+              ? "Ethereum tolerated payout"
+              : "Ethereum deferred payout",
             async () => {
               const { rows, more } = await ctx.wire
                 .getSysioContract(SysioContractName.synd)
@@ -1055,23 +1109,52 @@ export class EmergencyStopScenario extends SyndicationScenario {
                   limit: SyndicationScenario.QueryLimit
                 })
               Assert.ok(!more)
-              const row = rows.find(
+              const candidates = rows.filter(
                 value =>
                   value.token_code === Constants.EthereumToken &&
+                  value.holder === SyndicationScenario.Bonder &&
                   BigInt(value.request_id) >
                     ctx.outputs.assert(Constants.LastRequest)
               )
+              Assert.ok(
+                candidates.length <= 1,
+                "ambiguous Ethereum redemption request"
+              )
+              const [row] = candidates
               if (!row) return false
-              const requestId = BigInt(row.request_id),
-                pending =
-                  await EthereumSyndicationTool.readPendingDesyndication(
-                    ctx,
-                    requestId
-                  )
+              const requestId = BigInt(row.request_id)
+              Assert.strictEqual(
+                BigInt(row.amount),
+                Constants.EthereumRedemption
+              )
+              if (tolerated) {
+                const check = await EthereumSyndicationTool.readCustodyCheck(
+                  ctx,
+                  requestId,
+                  Constants.EthereumRedemption,
+                  true
+                )
+                if (!check) return false
+                EmergencyStopScenario.assertEthereumCustodyCheck(
+                  ctx,
+                  check,
+                  false
+                )
+                ctx.outputs.set(Constants.EthereumRequest, requestId)
+                return true
+              }
+              const pending =
+                await EthereumSyndicationTool.readPendingDesyndication(
+                  ctx,
+                  requestId
+                )
               if (!pending) return false
               ctx.outputs.set(Constants.EthereumRequest, requestId)
               ctx.outputs.set(Constants.EthereumPending, pending)
-              Assert.strictEqual(pending.depotAmount, Constants.Payout)
+              Assert.strictEqual(
+                pending.depotAmount,
+                Constants.EthereumRedemption
+              )
               Assert.strictEqual(
                 pending.recipient.toLowerCase(),
                 EmergencyStopScenario.ethereumAddress(ctx).toLowerCase()
@@ -1083,6 +1166,20 @@ export class EmergencyStopScenario extends SyndicationScenario {
                       .CUSTODY_SHORTFALL
                   : EthereumSyndicationTool.PendingPayoutReason.OUTPOST_FROZEN
               )
+              if (shortfall) {
+                const check = await EthereumSyndicationTool.readCustodyCheck(
+                  ctx,
+                  requestId,
+                  Constants.EthereumRedemption,
+                  false
+                )
+                Assert.ok(check, "missing Ethereum custody-shortfall evidence")
+                EmergencyStopScenario.assertEthereumCustodyCheck(
+                  ctx,
+                  check,
+                  true
+                )
+              }
               return true
             },
             ProtocolTiming.SingleHopBudgetMs,
@@ -1090,20 +1187,28 @@ export class EmergencyStopScenario extends SyndicationScenario {
           )
           Assert.strictEqual(
             await EthereumSyndicationTool.readPaused(ctx),
-            true
+            !tolerated
           )
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(
-              ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
-            ),
-            ctx.outputs.assert(Constants.EthereumBefore)
-          )
+          if (tolerated) {
+            Assert.ok(
+              !(await EthereumSyndicationTool.readPendingDesyndication(
+                ctx,
+                ctx.outputs.assert(Constants.EthereumRequest)
+              ))
+            )
+          } else
+            Assert.strictEqual(
+              await EthereumSyndicationTool.readLiqEthBalance(
+                ctx,
+                EmergencyStopScenario.ethereumAddress(ctx)
+              ),
+              ctx.outputs.assert(Constants.EthereumBefore)
+            )
         },
         verify
       )
     )
-    if (shortfall)
+    if (custodyFixture)
       phase.push(
         EmergencyStopSteps.planAction(
           Actor.User,
@@ -1111,69 +1216,120 @@ export class EmergencyStopScenario extends SyndicationScenario {
           "donate measured missing custody",
           outpost,
           Action.donateEthereum
+        ),
+        verifyStep(
+          Actor.EthereumOutpost,
+          "ethereum-custody-repaired",
+          "custody fully backs outstanding and any stored redemption before recovery",
+          async ctx => {
+            const custody =
+                await EthereumSyndicationTool.readPoolBalanceDepot(ctx),
+              outstanding = await WireSyndicationTool.readOutstanding(
+                ctx,
+                Constants.EthereumToken
+              ),
+              pending = tolerated ? 0n : Constants.EthereumRedemption
+            Assert.ok(
+              custody >= outstanding + pending,
+              "Ethereum custody repair is incomplete"
+            )
+            Assert.strictEqual(
+              await EthereumSyndicationTool.readPaused(ctx),
+              !tolerated
+            )
+            StepExtraRecorder.note("Ethereum repaired custody", {
+              custody,
+              outstanding,
+              pending
+            })
+          }
+        )
+      )
+    if (!tolerated)
+      phase.push(
+        EmergencyStopSteps.planAction(
+          Actor.User,
+          "paused-ethereum-payment-refused",
+          "pending payout refuses EnforcedPause before clearing",
+          outpost,
+          Action.payEthereum,
+          "EnforcedPause"
+        ),
+        verifyStep(
+          Actor.EthereumOutpost,
+          "paused-ethereum-payment-unchanged",
+          "paused refusal preserves the entire payout and holder balance",
+          async ctx => {
+            Assert.strictEqual(
+              await EthereumSyndicationTool.readPaused(ctx),
+              true
+            )
+            Assert.deepStrictEqual(
+              await EthereumSyndicationTool.readPendingDesyndication(
+                ctx,
+                ctx.outputs.assert(Constants.EthereumRequest)
+              ),
+              ctx.outputs.assert(Constants.EthereumPending)
+            )
+            Assert.strictEqual(
+              await EthereumSyndicationTool.readLiqEthBalance(
+                ctx,
+                EmergencyStopScenario.ethereumAddress(ctx)
+              ),
+              ctx.outputs.assert(Constants.EthereumBefore)
+            )
+          }
+        ),
+        EthereumSyndicationTool.planSetPaused(
+          Actor.EthereumOutpost,
+          "unpause-ethereum",
+          "panic clears after repair",
+          outpost,
+          false
+        ),
+        EmergencyStopSteps.planAction(
+          Actor.User,
+          "pay-ethereum",
+          "permissionless pending payout",
+          outpost,
+          Action.payEthereum
         )
       )
     phase.push(
-      EmergencyStopSteps.planAction(
-        Actor.User,
-        "paused-ethereum-payment-refused",
-        "pending payout refuses EnforcedPause before clearing",
-        outpost,
-        Action.payEthereum,
-        "EnforcedPause"
-      ),
-      verifyStep(
-        Actor.EthereumOutpost,
-        "paused-ethereum-payment-unchanged",
-        "paused refusal preserves the entire payout and holder balance",
-        async ctx => {
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readPaused(ctx),
-            true
-          )
-          Assert.deepStrictEqual(
-            await EthereumSyndicationTool.readPendingDesyndication(
-              ctx,
-              ctx.outputs.assert(Constants.EthereumRequest)
-            ),
-            ctx.outputs.assert(Constants.EthereumPending)
-          )
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(
-              ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
-            ),
-            ctx.outputs.assert(Constants.EthereumBefore)
-          )
-        }
-      ),
-      EthereumSyndicationTool.planSetPaused(
-        Actor.EthereumOutpost,
-        "unpause-ethereum",
-        "panic clears after repair",
-        outpost,
-        false
-      ),
-      EmergencyStopSteps.planAction(
-        Actor.User,
-        "pay-ethereum",
-        "permissionless pending payout",
-        outpost,
-        Action.payEthereum
-      ),
       verifyStep(
         Actor.User,
         "ethereum-paid",
-        "native payout equals depot units scaled to wei",
+        "successful receipt transfers the exact payout from the pool to the holder",
         async ctx => {
-          Assert.strictEqual(
-            await EthereumSyndicationTool.readLiqEthBalance(
+          const holder = EmergencyStopScenario.ethereumAddress(ctx),
+            payment = await EthereumSyndicationTool.readDesyndicationPayment(
               ctx,
-              EmergencyStopScenario.ethereumAddress(ctx)
-            ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+              ctx.outputs.assert(Constants.EthereumRequest)
+            )
+          Assert.strictEqual(payment.depotAmount, Constants.EthereumRedemption)
+          Assert.strictEqual(
+            payment.requestId,
+            ctx.outputs.assert(Constants.EthereumRequest)
           )
+          Assert.strictEqual(
+            payment.nativeAmount,
+            Constants.EthereumRedemption * Constants.EthereumScale
+          )
+          Assert.strictEqual(
+            ethers.getAddress(payment.recipient),
+            ethers.getAddress(holder)
+          )
+          // The receipt proves the transfer at any transaction index, without
+          // reconstructing a rebasing balance from the previous block's state.
+          const paid = await EthereumSyndicationTool.readLiqEthBalance(
+            ctx,
+            holder
+          )
+          StepExtraRecorder.note("Ethereum desyndication payout", {
+            payment,
+            paid
+          })
+          ctx.outputs.set(Constants.EthereumPaid, paid)
           Assert.ok(
             !(await EthereumSyndicationTool.readPendingDesyndication(
               ctx,
@@ -1200,8 +1356,12 @@ export class EmergencyStopScenario extends SyndicationScenario {
               ctx,
               EmergencyStopScenario.ethereumAddress(ctx)
             ),
-            ctx.outputs.assert(Constants.EthereumBefore) +
-              Constants.Payout * Constants.EthereumScale
+            ctx.outputs.assert(Constants.EthereumPaid)
+          )
+          // Still exactly one payment for the request (throws otherwise).
+          await EthereumSyndicationTool.readDesyndicationPayment(
+            ctx,
+            ctx.outputs.assert(Constants.EthereumRequest)
           )
         }
       )
@@ -1211,6 +1371,35 @@ export class EmergencyStopScenario extends SyndicationScenario {
 
 /** Read-only identity helpers shared by Ethereum verifications. */
 export namespace EmergencyStopScenario {
+  /**
+   * Verify actual settlement-time custody, including changes since fixture measurement.
+   * @param ctx - The build context retaining the measured on-chain allowance.
+   * @param check - The receipt-backed custody-check event.
+   * @param beyondAllowance - Whether this lane must fail the ratio guard.
+   * @returns Nothing; throws if custody drift changed the intended policy outcome.
+   */
+  export function assertEthereumCustodyCheck(
+    ctx: ClusterBuildContext,
+    check: EthereumSyndicationTool.CustodyCheck,
+    beyondAllowance: boolean
+  ): void {
+    Assert.strictEqual(
+      check.toleranceBps,
+      ctx.outputs.assert(Constants.EthereumToleranceBps)
+    )
+    Assert.ok(check.postPayoutBalanceDepot >= 0n)
+    Assert.ok(
+      check.totalSyndicated > check.postPayoutBalanceDepot,
+      "fixture must exercise a positive custody gap"
+    )
+    Assert.strictEqual(
+      ethereumCustodyGapExceedsAllowance(check),
+      beyondAllowance,
+      "actual custody gap no longer exercises the intended allowance lane"
+    )
+    StepExtraRecorder.note("Ethereum custody check at settlement", { ...check })
+  }
+
   /** Imported holder's native Ethereum address. */
   export function ethereumAddress(ctx: ClusterBuildContext): string {
     const address =

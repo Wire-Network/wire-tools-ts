@@ -1,6 +1,5 @@
 import Assert from "node:assert"
 import { getLogger } from "@wireio/shared"
-import { SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
   AuthExLinkTool,
@@ -9,6 +8,7 @@ import {
   ethereumPrivateKeyFromWallet,
   provisionWireUser,
   Report,
+  Steps,
   type ClusterBuildStepOptions,
   type ImportSeedChainKind,
   type StepInput
@@ -27,13 +27,10 @@ import {
 
 const log = getLogger(__filename)
 
-const { SysioContractName } = SysioContracts
-
 /**
- * Flow-local step factories for the emissions soak: dclaim seeding
- * (importseed / importdone), claimer provisioning (account + authex link with
- * its inline sweep), the per-staker claim, and the kiod wallet unlock the old
- * suite performed before each write burst.
+ * Flow-local step factories for the emissions soak: dclaim seeding (one
+ * importseed batch from the published conversion), claimer provisioning (account + authex link with
+ * its inline sweep), and the kiod wallet unlock the old suite performed before each write burst.
  */
 export namespace EmissionsSoakScenarioSteps {
   // ── unlock the kiod wallet (client-side session state, idempotent) ────────
@@ -191,42 +188,11 @@ export namespace EmissionsSoakScenarioSteps {
       batch != null,
       `importseed batch ${input.batchIndex} missing for ${input.chain}`
     )
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.importseed.invoke(batch)
-  }
-
-  // ── close the import window ────────────────────────────────────────────────
-
-  /** `sysio.dclaim::importdone` — flip `cap_config.imported_complete` (dclaim self-auth). */
-  export function planImportDone<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runImportDone
+    await Steps.contracts.sysio.dclaim.runImportseed(
+      ctx,
+      { kind: "DclaimContractSteps.ImportseedInput", data: batch },
+      signal
     )
-  }
-
-  /** Named runner — `sysio.dclaim::importdone` (empty payload). */
-  export async function runImportDone<C extends ClusterBuildContext>(
-    ctx: C,
-    _input: null,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.importdone.invoke({})
   }
 
   // ── provision a claimer's WIRE account ─────────────────────────────────────
@@ -317,48 +283,5 @@ export namespace EmissionsSoakScenarioSteps {
       privateKey: ethereumPrivateKeyFromWallet(wallet),
       ethereumWallet: wallet
     })
-  }
-
-  // ── claim the staker's pending balance ─────────────────────────────────────
-
-  /** Input for {@link planClaim}. */
-  export interface ClaimInput extends StepInput {
-    readonly kind: "EmissionsSoakScenarioSteps.ClaimInput"
-    readonly wireAccount: string
-  }
-
-  /** `sysio.dclaim::claim` — drain the staker's pclaim row into WIRE (staker-authed). */
-  export function planClaim<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    wireAccount: string
-  ): ClusterBuildStep<C, ClaimInput> {
-    return ClusterBuildStep.create<C, ClaimInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "EmissionsSoakScenarioSteps.ClaimInput", wireAccount },
-      runClaim
-    )
-  }
-
-  /** Named runner — `sysio.dclaim::claim` authorized by the staker. */
-  export async function runClaim<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ClaimInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.claim.invoke(
-        { wire_account: input.wireAccount },
-        { authorization: [{ actor: input.wireAccount, permission: "active" }] }
-      )
   }
 }

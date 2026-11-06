@@ -1,7 +1,6 @@
 import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
-import { OppProtocolCapabilitiesSchema } from "./OppProtocolCapabilities.js"
 import {
   EvmAddressPattern,
   SolanaAddressPattern
@@ -35,8 +34,6 @@ const EthereumAddressMapSchema = z.record(
  * from the wire-ethereum source with these addresses overlaid.
  */
 export const ExternalOutpostConfigEthereumSchema = z.strictObject({
-  /** Required release/deployment declaration; never inferred for a remote outpost. */
-  oppProtocol: OppProtocolCapabilitiesSchema,
   /** The outpost chain's id (e.g. 560048 for Hoodi). */
   chainId: z.number().int().positive(),
   /**
@@ -78,8 +75,6 @@ export type ExternalOutpostConfigEthereum = z.infer<
  * from the wire-solana source with this program id overlaid.
  */
 export const ExternalOutpostConfigSolanaSchema = z.strictObject({
-  /** Required release/deployment declaration; never inferred for a remote outpost. */
-  oppProtocol: OppProtocolCapabilitiesSchema,
   /**
    * The outpost RPC endpoint the operator daemons dial. When set it wins over
    * the bind config's `solana` address; omit it when the bind config carries

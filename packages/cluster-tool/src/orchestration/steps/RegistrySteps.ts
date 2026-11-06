@@ -2,7 +2,6 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
-import { OppProtocolCapabilities } from "@wireio/cluster-tool-shared"
 import {
   KeyType,
   PrivateKey,
@@ -32,13 +31,16 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { Constants, ProtocolTiming } from "../../Constants.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { ContractSteps } from "./ContractSteps.js"
 import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
+import { KickerContractSteps } from "./contracts/sysio/KickerContractSteps.js"
 import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { SyndContractSteps } from "./contracts/sysio/SyndContractSteps.js"
 import { SyndicationUserSteps } from "./SyndicationUserSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
+  SysioContractAccount,
   SysioContractName,
   SysioChainsChainkind,
   SysioTokensTokenkind,
@@ -60,36 +62,35 @@ const {
  * bootstrap epoch-0 window, so the phase only ever runs pre-EpochBootstrap).
  */
 export namespace RegistrySteps {
+  /** Registry identity of Ethereum's liquid token, whose rebases can temporarily reduce custody. */
+  const LiqEthCodename = "LIQETH"
+  /** LIQETH's inclusive temporary custody-loss allowance (1%); all other pairs require full backing. */
+  export const LiqEthCustodyShortfallBps = 100
   /**
-   * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
-   * tokenCodename]`, one per liq token {@link runSeedRegistry} registers. Private
-   * source both {@link ShadowLiqTokenRegistrations} and
-   * {@link MockLiqPoolRegistrations} derive from, in this order.
-   */
-  const ShadowLiqTokenPairs = [
-    ["ETHEREUM", "LIQETH"],
-    ["SOLANA", Constants.LIQSOL_CODENAME]
-  ] as const
-  /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
-  const LiqPoolPairSuffix = "P"
-  /**
-   * Mock yield-pool parameters, per pool. The two seeds and the fee mirror the
-   * dev bootstrap config (`etc/config/dex/dex-config.dev.json`); the tick pacing
-   * is the dev cluster's own — a 30 s horizon and a 30 % depth cap sell a flow's
-   * reported yield in ONE tick, so a scenario observes one index bump and then a
-   * stable ledger instead of a day-long drip.
+   * Mock yield-pool parameters, per pool. The two seeds mirror the dev bootstrap
+   * config (`etc/config/dex/dex-config.dev.json`); the 30 s horizon and the fee
+   * are the dev cluster's own, so a flow's reported yield sells in ONE tick
+   * instead of a day-long drip.
    */
   const MockLiqPoolShadowSeed = 10_000_000_000
   /** WIRE (9-dec base units) the system account seeds each mock pool with. */
   const MockLiqPoolWireSeed = 10_000_000_000
-  /** Swap fee of each mock pool, per ten-thousand (0.30 %). */
-  const MockLiqPoolFee = 30
+  /**
+   * Swap fee of each mock pool, per ten-thousand (5 %), well above the dev config's
+   * 0.30 % because it also bounds the clip cap: 5 % of the 10-token shadow side
+   * sells a flow's reported yield (a 0.3-token donation plus staking yield) at once.
+   */
+  const MockLiqPoolFee = 500
   /** Pair-token shares locked at each mock pool's creation. */
   const MockLiqPoolLockedShares = 0
   /** Seconds over which a mock pool's reservoir is time-shared into clips. */
   const MockLiqPoolConversionHorizonSec = 30
-  /** Ceiling of one clip as bps of the pool's shadow depth. */
-  const MockLiqPoolDepthCapBps = 3000
+  /**
+   * Ceiling of one clip as bps of the pool's shadow depth: the fee, the widest
+   * `sysio.swap::setyield` accepts, since a clip wider than the fee is worth
+   * sandwiching.
+   */
+  const MockLiqPoolDepthCapBps = MockLiqPoolFee
   /** Smallest clip (shadow base units) a mock pool sells. */
   const MockLiqPoolClipFloor = 1000
   /**
@@ -98,13 +99,29 @@ export namespace RegistrySteps {
    */
   export const BondHoldBps = 1000
   /**
-   * Fee on each released syndication tranche and on each desyndication (bps). The
-   * bootstrap charges none; a flow that exercises the fee path sets its own through
-   * `sysio.synd::setconfig` in its scenario and restores this.
+   * Fee on each released syndication tranche (bps). The bootstrap charges none: the
+   * only fee planned is on desyndication. A flow that exercises the syndication fee
+   * path sets its own through `sysio.synd::setconfig` in its scenario and restores this.
    */
   export const SyndicationFeeBps = 0
-  /** Fee on each desyndication (bps); see {@link SyndicationFeeBps}. */
-  export const DesyndicationFeeBps = 0
+  /**
+   * Syndication is free. Desyndication takes floor(quantity * 5 / 10000) plus
+   * the pair's flat fee to recover external-chain gas for BOTH round-trip legs.
+   * A lone Ethereum round trip measured about 507k gas; Solana measured
+   * 9k–104k lamports. Break-even sizing assumes syndicating min_desyndicate.
+   * Each flat fee must remain strictly below its pair's min_desyndicate.
+   */
+  export const DesyndicationFeeBps = 5
+  /** Flat return charge in depot base units (9 decimals), by shadow token. */
+  export const DesyndicationFlatFees = {
+    LIQETH: 5_000_000,
+    LIQSOL: 100_000
+  } as const
+  /** Gross return floors in depot base units (9 decimals), by shadow token. */
+  export const MinimumDesyndications = {
+    LIQETH: 100_000_000,
+    LIQSOL: 50_000_000
+  } as const
   /**
    * Size and per-epoch refill of each pair's syndication and desyndication buckets
    * (shadow base units): one million tokens at the depot's 9 decimals, far above any
@@ -118,8 +135,43 @@ export namespace RegistrySteps {
    * contract refuses a challenge whose charge is zero, so this is never 0.
    */
   export const SyndicationChallengeExtra = 1_000_000_000
-  /** Shared gross return floor: 0.001 SOL at nine decimals, also used for LIQETH. */
-  export const MinimumDesyndication = 1_000_000
+
+  /**
+   * `sysio.kicker`'s governance earmark on the cluster (WIRE base units): one million
+   * WIRE. `setconfig` REPLACES the remaining budget; the draw is further capped by the
+   * treasury balance net of pending emissions, unclaimed pay and the remaining emission
+   * ceiling, which on the cluster leaves hundreds of millions of WIRE free, so this
+   * earmark is what bounds the gifts. Changing it changes how much a flow can draw.
+   */
+  export const KickerBudget = 1_000_000_000_000_000
+  /**
+   * `sysio.kicker`'s minimum unpaid interval on the cluster (s): one minute, the
+   * `sysio.epoch` duration floor, so a flow sees a payable interval within an epoch.
+   * The contract's own default is one hour (`kicker_math::default_min_interval_sec`);
+   * a real depot sets its interval by governance, and on a real depot it is a floor
+   * on keeper cadence, not a schedule.
+   */
+  export const KickerMinIntervalSec = 60
+  /** Each LIQ token's annual simple rate (bps): the contract default, 2 %. */
+  export const KickerRateBps = 200
+  /**
+   * Each LIQ token's minimum gift (WIRE base units): the contract default, one WIRE.
+   * At the mock pools' 10-token supply the gift accrues ~0.2 WIRE a year, so no kick
+   * pays at this minimum; a flow that exercises a payment lowers it with `setpool`
+   * and restores this value.
+   */
+  export const KickerMinGift = 1_000_000_000
+  /** Each LIQ token's mandatory daily spend ceiling: 1,000 WIRE in base units. */
+  export const KickerMaxGiftPerDay = 1_000_000_000_000
+  /** Governance TWAP window (s): the contract default, one day. */
+  export const KickerTwapWindowSec = 86_400
+  /**
+   * Governance spot-deviation guard (bps): the contract default, 50 %. A kick whose
+   * pool spot price sits further than this from its TWAP pays nothing and flags the
+   * pool's `spot_deviation`. Raising it admits more manipulated prices; lowering it
+   * skips more honest kicks after a large trade. `setconfig` accepts 1 through 10,000.
+   */
+  export const KickerMaxSpotDeviationBps = 5_000
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
@@ -143,14 +195,14 @@ export namespace RegistrySteps {
   export const MockSyndicationImportCredits: MockSyndicationImportInput[] = [
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "SOLANA",
+      chain_code: Constants.SOLANA_CHAIN_CODENAME,
       token_code: Constants.LIQSOL_CODENAME,
       keyType: KeyType.ED,
       amount: MockSyndicationImportAmount
     },
     {
       kind: "RegistrySteps.MockSyndicationImportInput",
-      chain_code: "ETHEREUM",
+      chain_code: Constants.ETHEREUM_CHAIN_CODENAME,
       token_code: "LIQETH",
       keyType: KeyType.EM,
       amount: MockSyndicationImportAmount
@@ -729,7 +781,7 @@ export namespace RegistrySteps {
    * (one Report step per row) and its unit test.
    */
   export const ShadowLiqTokenRegistrations: SysioContracts.SysioLiqCreateAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       sym: Constants.liqSymbol(tokenCodename),
       chain_code: chainCodename,
       token_code: tokenCodename
@@ -742,10 +794,10 @@ export namespace RegistrySteps {
    * window (epoch 0), so these seed ONLY during bootstrap — never from a flow phase.
    */
   export const MockLiqPoolRegistrations: SysioContracts.SysioLiqRegliqpoolAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
-      pair_symbol: Constants.liqSymbol(`${tokenCodename}${LiqPoolPairSuffix}`),
+      pair_symbol: Constants.liqSymbol(Constants.liqPoolPairCode(tokenCodename)),
       initial_chain_amount: MockLiqPoolShadowSeed,
       initial_wire_amount: MockLiqPoolWireSeed,
       fee: MockLiqPoolFee,
@@ -756,14 +808,42 @@ export namespace RegistrySteps {
     }))
 
   /**
+   * The bootstrap's `sysio.kicker::setconfig` — {@link KickerBudget} and
+   * {@link KickerMinIntervalSec}. Shared by {@link planKicker} and its unit test.
+   */
+  export const KickerConfiguration: SysioContracts.SysioKickerSetconfigAction = {
+    cfg: {
+      budget_remaining: KickerBudget,
+      min_interval_sec: KickerMinIntervalSec,
+      twap_window_sec: KickerTwapWindowSec,
+      max_spot_deviation_bps: KickerMaxSpotDeviationBps
+    }
+  }
+
+  /**
+   * The `sysio.kicker::addpool` rows — one per shadow, in
+   * {@link Constants.SHADOW_LIQ_TOKEN_PAIRS} order, at the contract's default rate, minimum gift
+   * and mandatory daily ceiling. `addpool` refuses a token without its LIQ/WIRE
+   * yield pool, so these follow {@link MockLiqPoolRegistrations}. Shared by
+   * {@link planKickerPools} (one Report step per row) and its unit test.
+   */
+  export const KickerPoolRegistrations: SysioContracts.SysioKickerAddpoolAction[] =
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) => ({
+      sym: tokenCodename,
+      rate_bps: KickerRateBps,
+      min_gift: KickerMinGift,
+      max_gift_per_day: KickerMaxGiftPerDay
+    }))
+
+  /**
    * The `sysio.synd::setconfig` row of each shadow pair — one per liq token
-   * {@link runSeedRegistry} registers, in {@link ShadowLiqTokenPairs} order. A pair with no
+   * {@link runSeedRegistry} registers, in {@link Constants.SHADOW_LIQ_TOKEN_PAIRS} order. A pair with no
    * row releases no syndication and accepts no desyndication, so a real depot configures
    * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
    * that phase (one Report step per row) and its unit test.
    */
   export const SyndicationConfigRegistrations: SysioContracts.SysioSyndSetconfigAction[] =
-    ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) => ({
+    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
       synd_fee_bps: SyndicationFeeBps,
@@ -775,7 +855,9 @@ export namespace RegistrySteps {
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
-      min_desyndicate: MinimumDesyndication
+      min_desyndicate: MinimumDesyndications[tokenCodename],
+      desynd_fee_flat: DesyndicationFlatFees[tokenCodename],
+      custody_shortfall_bps: tokenCodename === LiqEthCodename ? LiqEthCustodyShortfallBps : 0
     }))
 
   /** Seed chains + tokens + chain-token bindings. */
@@ -826,7 +908,7 @@ export namespace RegistrySteps {
     )
   }
 
-  /** Named runner — validate BOTH routes before any `sysio.chains::setoutpost` activation. */
+  /** Named runner — `sysio.chains::setoutpost` for every outpost chain. */
   export async function runSeedOutpostAddresses<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -845,19 +927,8 @@ export namespace RegistrySteps {
         return address
       }
 
-    // Validate the complete deployment before the first activation. An incompatible Solana
-    // outpost must not leave Ethereum partially activated. Remote declarations are REQUIRED.
-    const depot = OppProtocolCapabilities.Current,
-      external = ctx.config.externalOutposts,
-      ethereum = external == null ? depot : external.ethereum.oppProtocol,
-      solana = external == null ? depot : external.solana.oppProtocol
-    OppProtocolCapabilities.assertCompatible(depot, ethereum, "depot -> Ethereum")
-    OppProtocolCapabilities.assertCompatible(ethereum, depot, "Ethereum -> depot")
-    OppProtocolCapabilities.assertCompatible(depot, solana, "depot -> Solana")
-    OppProtocolCapabilities.assertCompatible(solana, depot, "Solana -> depot")
-
     await chains.actions.setoutpost.invoke({
-      code: "ETHEREUM",
+      code: Constants.ETHEREUM_CHAIN_CODENAME,
       outpost: {
         opp_addr: ethAddress("OPP"),
         opp_inbound_addr: ethAddress("OPPInbound")
@@ -867,7 +938,7 @@ export namespace RegistrySteps {
     // goes in `opp_addr` alone — `sysio.chains` rejects an SVM row that sets
     // `opp_inbound_addr`.
     await chains.actions.setoutpost.invoke({
-      code: "SOLANA",
+      code: Constants.SOLANA_CHAIN_CODENAME,
       outpost: {
         opp_addr: artifacts.solanaProgramId,
         opp_inbound_addr: ""
@@ -898,7 +969,7 @@ export namespace RegistrySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
+    const steps: ClusterBuildStep.Any<C>[] = Constants.SHADOW_LIQ_TOKEN_PAIRS.map(
       ([, tokenCodename], index) =>
         LiqContractSteps.planCreate<C>(
           Report.Actor.Sysio,
@@ -943,7 +1014,7 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename], index) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename], index) =>
         SyndContractSteps.planSetconfig<C>(
           Report.Actor.Sysio,
           `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -957,9 +1028,9 @@ export namespace RegistrySteps {
         "verify-shadow-precision",
         "every shadow symbol is at the depot frame's precision, which sysio.bond can bond",
         options,
-        ShadowLiqTokenPairs.map(([, tokenCodename]) => tokenCodename)
+        Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) => tokenCodename)
       ),
-      ...ShadowLiqTokenPairs.map(([chainCodename, tokenCodename]) =>
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) =>
         WireSyndicationTool.planVerifyLiqTokenActive<C>(
           Report.Actor.Sysio,
           `verify-liq-token-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
@@ -985,6 +1056,8 @@ export namespace RegistrySteps {
    * @param name - Short phase name.
    * @param description - Human-readable phase description.
    * @param options - Step option overrides threaded to every pool step.
+   * @param registrations - The pools to seed: {@link MockLiqPoolRegistrations} less any shadow
+   *   whose one pool the launch-data import seeds instead.
    * @returns The self-registered pool-seeding phase.
    */
   export function planMockLiqPools<
@@ -993,16 +1066,100 @@ export namespace RegistrySteps {
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
+    options: ClusterBuildStepOptions,
+    registrations: readonly SysioContracts.SysioLiqRegliqpoolAction[] = MockLiqPoolRegistrations
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = registrations.map(registration =>
+      LiqContractSteps.planRegliqpool<C>(
+        Report.Actor.Sysio,
+        `seed-liq-pool-${registration.chain_code.toLowerCase()}-${registration.token_code.toLowerCase()}`,
+        `seed the ${registration.token_code}/WIRE yield pool on sysio.swap`,
+        options,
+        registration
+      )
+    )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase standing up `sysio.kicker`: deploy it privileged through
+   * `setsyscode`, read the privilege back (its `kick` draws from `sysio` with an
+   * inline transfer under `sysio@active`, which only a privileged contract may
+   * send), then `setconfig` with {@link KickerConfiguration}. Registry setup a
+   * real depot performs too (`docs/platform-bootstrap-config.md`, "Kicker
+   * deployment and earmark"), so the bootstrap composes it unconditionally, after
+   * the emission config and any yield pool exist. Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every step.
+   * @returns The self-registered kicker phase.
+   */
+  export function planKicker<C extends ClusterBuildContext = ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const steps: ClusterBuildStep.Any<C>[] = ShadowLiqTokenPairs.map(
-      ([chainCodename, tokenCodename], index) =>
-        LiqContractSteps.planRegliqpool<C>(
+    const account = SysioContractAccount[SysioContractName.kicker],
+      steps: ClusterBuildStep.Any<C>[] = [
+        ContractSteps.planDeploy<C>(
           Report.Actor.Sysio,
-          `seed-liq-pool-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `seed the ${tokenCodename}/WIRE yield pool on sysio.swap`,
+          "deploy-kicker",
+          "setsyscode sysio.kicker (privileged)",
           options,
-          MockLiqPoolRegistrations[index]
+          SysioContractName.kicker,
+          ContractSteps.DeployMode.system
+        ),
+        ContractSteps.planVerifyPrivileged<C>(
+          Report.Actor.Sysio,
+          "verify-kicker-privileged",
+          `${account} is privileged, so kick may draw from sysio under sysio@active`,
+          options,
+          account
+        ),
+        KickerContractSteps.planSetconfig<C>(
+          Report.Actor.Sysio,
+          "configure-kicker",
+          `set the kicker's ${KickerBudget}-unit WIRE budget and ${KickerMinIntervalSec} s minimum interval`,
+          options,
+          KickerConfiguration
+        )
+      ]
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /**
+   * ONE phase of per-token `sysio.kicker::addpool` steps
+   * ({@link KickerPoolRegistrations}), which start each LIQ token's accrual clock.
+   * `addpool` requires the token's LIQ/WIRE yield pool, which only
+   * {@link planMockLiqPools} registers on a cluster, so the bootstrap composes
+   * this phase exactly when it composes that one, after it and after
+   * {@link planKicker}. Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every addpool step.
+   * @returns The self-registered pool phase.
+   */
+  export function planKickerPools<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = KickerPoolRegistrations.map(
+      registration =>
+        KickerContractSteps.planAddpool<C>(
+          Report.Actor.Sysio,
+          `add-kicker-pool-${registration.sym.toLowerCase()}`,
+          `start ${registration.sym}'s kicker accrual at ${registration.rate_bps} bps`,
+          options,
+          registration
         )
     )
     return ClusterBuildPhase.create<C>(parent, name, description, steps)
@@ -1073,7 +1230,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
-        code: "ETHEREUM",
+        code: Constants.ETHEREUM_CHAIN_CODENAME,
         // External-outpost mode registers the REAL remote chain id so the
         // depot's chains row matches what the daemons dial (networkFromConfig).
         external_chain_id:
@@ -1085,7 +1242,7 @@ export namespace RegistrySteps {
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_SVM,
-        code: "SOLANA",
+        code: Constants.SOLANA_CHAIN_CODENAME,
         external_chain_id: 0,
         name: "Solana (test-validator)",
         description: "Local solana-test-validator (test cluster)",
@@ -1145,34 +1302,44 @@ export namespace RegistrySteps {
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
-      chainToken("ETHEREUM", "ETH", "", true),
+      chainToken(Constants.ETHEREUM_CHAIN_CODENAME, "ETH", "", true),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "LIQETH",
         nullableStrip(liqEthAddresses.LiqEthToken, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDC",
         nullableStrip(ethereumAddresses.MockUsdc, strip0x),
         false
       ),
       chainToken(
-        "ETHEREUM",
+        Constants.ETHEREUM_CHAIN_CODENAME,
         "USDT",
         nullableStrip(ethereumAddresses.MockUsdt, strip0x),
         false
       ),
-      chainToken("SOLANA", "SOL", "", true),
+      chainToken(Constants.SOLANA_CHAIN_CODENAME, "SOL", "", true),
       chainToken(
-        "SOLANA",
+        Constants.SOLANA_CHAIN_CODENAME,
         Constants.LIQSOL_CODENAME,
         nullableMintHex(solanaMints.LIQSOL),
         false
       ),
-      chainToken("SOLANA", "USDCSOL", nullableMintHex(solanaMints.USDC), false),
-      chainToken("SOLANA", "USDTSOL", nullableMintHex(solanaMints.USDT), false)
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDCSOL",
+        nullableMintHex(solanaMints.USDC),
+        false
+      ),
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        "USDTSOL",
+        nullableMintHex(solanaMints.USDT),
+        false
+      )
     ]
     await eachSeries(chainTokenBindings, data =>
       tokens.actions.regctok.invoke(data)

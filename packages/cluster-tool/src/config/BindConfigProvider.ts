@@ -3,26 +3,42 @@ import Crypto from "node:crypto"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
+import { Either } from "@3fv/prelude-ts"
 import Bluebird from "bluebird"
-import { range } from "lodash"
+import { isEmpty, range, uniq } from "lodash"
+
 import {
   BindConfigPortProtocol,
+  BindRegistrationSchemaCodec,
+  MaximumPort,
+  MinimumPort,
   type BindConfig,
   type BindConfigNodeopPorts,
   type BindConfigPortRange,
   type BindNodeopPortsOptions,
   type BindOptions,
+  type BindRegistration,
   type ClusterTopologyOptions
 } from "@wireio/cluster-tool-shared"
 import {
+  Deferred,
+  getLogger,
+  getValue,
+  guard,
+  NestedError
+} from "@wireio/shared"
+
+import {
   isUdpPortFree,
   isIpv6PortFree,
+  isLocalAddress,
   ListenAllAddress,
   Localhost
 } from "../utils/netUtils.js"
 import { mkdirs, withFileLock } from "../utils/fsUtils.js"
 import { isPidAlive, processCommandBasename } from "../utils/processUtils.js"
-import { Deferred, getLogger, getValue, guard } from "@wireio/shared"
+import { readAutomaticPortRanges } from "../utils/portRangeUtils.js"
 
 const log = getLogger(__filename)
 
@@ -128,7 +144,7 @@ export namespace BindConfigProvider {
    * `gossip_addr bind_to port 8000: Address already in use` exactly this
    * way. The band is seeded into EVERY exclusion set
    * ({@link readRegistryPortExclusions}), so no path — default preference,
-   * ephemeral fallback, caller pin, or range window — can produce a port
+   * service-pool fallback, caller pin, or range window — can produce a port
    * inside it.
    */
   export const ReservedAgavePortBand: BindConfigPortRange = {
@@ -137,7 +153,8 @@ export namespace BindConfigProvider {
   }
   // Daemon default preferences. Layout: everything lives in 10500-11999 —
   // above the reserved agave band, below the 12000+ dynamic-range windows,
-  // far below the kernel's 32768+ ephemeral fallbacks. The pre-band values
+  // inside the service pool, subject to the host's automatic-range exclusions.
+  // The pre-band values
   // are preserved as suffixes where possible (anvil 8545 → 10545, solana rpc
   // 8899 → 10899, ...). 10900 is deliberately UNASSIGNED: it is the solana
   // RPC's companion websocket port (rpc+1, bound by agave automatically —
@@ -162,18 +179,21 @@ export namespace BindConfigProvider {
    */
   export const DefaultSolanaGossip = 11_000
   /**
-   * Bounded redraws when resolving a port: candidates that land inside the
-   * caller's claimed/exclusion set (an OS-assigned ephemeral can — see the
-   * re-check in {@link pickPort}) or, for UDP-role ports, pass the TCP probe
-   * but fail the UDP probe are excluded and redrawn up to this many times
-   * before the resolve fails loudly. Raising it only matters on a host whose
-   * port space is heavily squatted.
+   * Bounded redraws when a service candidate passes the IPv4 TCP probe but
+   * fails IPv6 or its UDP-role probe. Each rejected candidate remains locked
+   * in get-port's cache. Raising this tolerates more occupied secondary binds.
    */
   export const UdpPickAttempts = 16
   /**
+   * First fallback service port. The pool extends through MaximumPort, excluding
+   * host automatic client ranges and registry claims. Starting above the Agave
+   * band avoids privileged ports and the validator's implicit sockets.
+   */
+  export const ServicePortFirst = ReservedAgavePortBand.last + 1
+  /**
    * First candidate port of the validator's `--dynamic-port-range` window.
-   * Sits clear of every daemon default above and below the kernel's ephemeral
-   * range; raising it shifts every cluster's candidate windows.
+   * Sits clear of every daemon default above. Windows overlapping the host's
+   * automatic client ranges are skipped; raising it shifts candidate windows.
    */
   export const DefaultSolanaDynamicPortFirst = 12_000
   /**
@@ -183,9 +203,9 @@ export namespace BindConfigProvider {
    */
   export const SolanaDynamicPortRangeSize = 64
   /**
-   * Contiguous windows scanned (stepping by {@link SolanaDynamicPortRangeSize})
-   * before `resolve` gives up — bounds the search to
-   * `DefaultSolanaDynamicPortFirst + SearchLimit × RangeSize`.
+   * Safe contiguous windows probed (stepping by {@link SolanaDynamicPortRangeSize})
+   * before `resolve` gives up. Windows overlapping automatic client-port
+   * ranges are skipped before this limit is applied.
    */
   export const SolanaDynamicPortRangeSearchLimit = 32
   export const DefaultDebuggingServer = 10_991
@@ -193,8 +213,8 @@ export namespace BindConfigProvider {
    * Preferred HTTP port of the first AD-HOC pair — one a flow starts after
    * `NodeConfig.plan` (an operator daemon, or a collateral-backed producer's
    * own node). A PREFERENCE only, placed in the daemon-default layout above:
-   * {@link resolve} seeds the ad-hoc pairs from it and falls back to ephemeral
-   * ports, so pairs never collide within a resolve or across concurrent ones.
+   * {@link resolve} seeds the ad-hoc pairs from it and falls back to the safe
+   * service pool, so pairs never collide within or across concurrent resolves.
    */
   export const DefaultAdHocHttp = 10_988
   /** Preferred p2p port of an ad-hoc node (see {@link DefaultAdHocHttp}). */
@@ -240,7 +260,10 @@ export namespace BindConfigProvider {
     options: BindOptions,
     topology: ClusterTopologyOptions
   ): Promise<BindConfig> {
-    const host = topology.bindAll ? ListenAllAddress : Localhost,
+    let automaticPortRanges: BindConfigPortRange[] = null
+    const readAutomaticPortRangesOnce = () =>
+        (automaticPortRanges ??= readAutomaticPortRanges()),
+      host = topology.bindAll ? ListenAllAddress : Localhost,
       addr = (daemon: keyof BindOptions): string =>
         options[daemon]?.address ?? host,
       // Seed the exclusion set with every LIVE process's registered ports —
@@ -248,6 +271,14 @@ export namespace BindConfigProvider {
       // resolved it but hasn't bound its daemons yet (they spawn minutes
       // later). Dead registrants are reaped during the read.
       claimed = readRegistryPortExclusions(),
+      // Solana is resolved after the nodeops: their automatic picks must not
+      // consume its caller-pinned RPC or implicit WebSocket port first. Keep
+      // these separate from claims so explicit conflicting pins still fail.
+      solanaRpcPin = options.solana?.ports?.http,
+      pinnedSolanaPorts =
+        solanaRpcPin == null
+          ? []
+          : [solanaRpcPin, solanaRpcPin + SolanaWsPortOffset],
       claim = async (
         callerPin: number | null,
         fallbackDefault: number | null,
@@ -257,9 +288,12 @@ export namespace BindConfigProvider {
         const port = await pickPort(
           callerPin,
           fallbackDefault,
-          claimed,
+          callerPin == null
+            ? new Set([...claimed, ...pinnedSolanaPorts])
+            : claimed,
           daemon,
-          protocol
+          protocol,
+          callerPin == null ? readAutomaticPortRangesOnce() : null
         )
         claimed.add(port)
         return port
@@ -290,11 +324,14 @@ export namespace BindConfigProvider {
       // this resolve and no other cluster via the registry is ever handed the
       // companion.
       claimSolanaHttp = async (): Promise<number> => {
-        const http = await claim(
-          options.solana?.ports?.http ?? null,
-          DefaultSolanaRpc,
-          "solana.http"
-        )
+        const callerPin = options.solana?.ports?.http ?? null,
+          http = await pickSolanaRpc(
+            callerPin,
+            DefaultSolanaRpc,
+            claimed,
+            callerPin == null ? readAutomaticPortRangesOnce() : []
+          )
+        claimed.add(http)
         claimed.add(http + SolanaWsPortOffset)
         return http
       },
@@ -302,11 +339,13 @@ export namespace BindConfigProvider {
       // this resolve — and every other resolver via the registry — excludes
       // the whole window, not just its first port.
       claimSolanaDynamicRange = async (): Promise<BindConfigPortRange> => {
-        const dynamicRange = await pickPortRange(
-          options.solana?.ports?.dynamicRange ?? null,
-          claimed,
-          "solana.dynamicRange"
-        )
+        const callerPin = options.solana?.ports?.dynamicRange ?? null,
+          dynamicRange = await pickPortRange(
+            callerPin,
+            claimed,
+            "solana.dynamicRange",
+            callerPin == null ? readAutomaticPortRangesOnce() : null
+          )
         range(dynamicRange.first, dynamicRange.last + 1).forEach(port =>
           claimed.add(port)
         )
@@ -410,37 +449,87 @@ export namespace BindConfigProvider {
     return resolved
   }
 
+  /** One daemon's bind address and every port it binds there. */
+  export interface AddressedPorts {
+    /** The daemon's bind address (`BindConfig.<daemon>.address`). */
+    address: string
+    /** Every port the daemon binds at that address. */
+    ports: number[]
+  }
+
+  /**
+   * Every port of a resolved binding, grouped by the bind address of the
+   * daemon that binds it — the ONE port walker over the `BindConfig` shape.
+   *
+   * @param config - The resolved binding.
+   * @returns One group per daemon, in `kiod, nodeop, anvil, solana,
+   *   debuggingServer` order.
+   */
+  export function addressedPorts(config: BindConfig): AddressedPorts[] {
+    const np = config.nodeop.ports,
+      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p]),
+      dynamicRange = config.solana.ports.dynamicRange
+    return [
+      { address: config.kiod.address, ports: [config.kiod.port] },
+      {
+        address: config.nodeop.address,
+        ports: [
+          np.bios.http,
+          np.bios.p2p,
+          ...flat(np.producers),
+          ...flat(np.batch),
+          ...flat(np.underwriters),
+          ...flat(np.api),
+          ...flat(np.adHoc)
+        ]
+      },
+      { address: config.anvil.address, ports: [config.anvil.port] },
+      {
+        address: config.solana.address,
+        ports: [
+          config.solana.ports.http,
+          // The RPC's companion websocket — agave binds rpc+1 automatically
+          // (no flag assigns it); it rides along so the registry excludes it
+          // for every other resolver.
+          config.solana.ports.http + SolanaWsPortOffset,
+          config.solana.ports.faucet,
+          config.solana.ports.gossip,
+          ...range(dynamicRange.first, dynamicRange.last + 1)
+        ]
+      },
+      {
+        address: config.debuggingServer.address,
+        ports: [config.debuggingServer.port]
+      }
+    ]
+  }
+
   /**
    * Flat list of every port of a resolved binding, for validation and registry
-   * exclusion — the ONE port walker over the `BindConfig` shape.
+   * exclusion — {@link addressedPorts} without the addresses.
    *
    * @param config - The resolved binding.
    * @returns Every claimed port, including agave's implicit rpc+1 websocket.
    */
   export function allPorts(config: BindConfig): number[] {
-    const np = config.nodeop.ports,
-      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p]),
-      dynamicRange = config.solana.ports.dynamicRange
-    return [
-      config.kiod.port,
-      np.bios.http,
-      np.bios.p2p,
-      ...flat(np.producers),
-      ...flat(np.batch),
-      ...flat(np.underwriters),
-      ...flat(np.api),
-      ...flat(np.adHoc),
-      config.anvil.port,
-      config.solana.ports.http,
-      // The RPC's companion websocket — agave binds rpc+1 automatically (no
-      // flag assigns it); it rides allPorts so the registry excludes it for
-      // every other resolver.
-      config.solana.ports.http + SolanaWsPortOffset,
-      config.solana.ports.faucet,
-      config.solana.ports.gossip,
-      ...range(dynamicRange.first, dynamicRange.last + 1),
-      config.debuggingServer.port
-    ]
+    return addressedPorts(config).flatMap(({ ports }) => ports)
+  }
+
+  /**
+   * The ports of a binding this host binds: those of every daemon whose bind
+   * address is local ({@link isLocalAddress}). A complete external bind config
+   * can point the outposts at another host's endpoints; those ports are never
+   * bound here.
+   *
+   * @param config - The resolved binding.
+   * @returns The locally bound ports, each once.
+   */
+  export function locallyBoundPorts(config: BindConfig): number[] {
+    return uniq(
+      addressedPorts(config)
+        .filter(({ address }) => isLocalAddress(address))
+        .flatMap(({ ports }) => ports)
+    )
   }
 
   /**
@@ -496,67 +585,95 @@ export namespace BindConfigProvider {
     ]
   }
 
-  /**
-   * True iff every port of an already-resolved binding is currently free.
-   *
-   * @param config - The resolved binding to re-probe.
-   * @returns Whether all ports are available.
-   */
-  export async function validate(config: BindConfig): Promise<boolean> {
-    // The resolved ports were locked in get-port's in-process cache at resolve
-    // time; clear it so each isPortAvailable re-probes true OS bindability.
-    await clearPortLocks()
-    const taken = await Bluebird.filter(
-      allPorts(config),
-      async port => !(await isPortAvailable(port)),
-      { concurrency: 1 }
-    )
-    return taken.length === 0
-  }
-
   // ── cross-process port registry ────────────────────────────────────────
   //
   // `get-port` + the file lock serialize port SELECTION, but a selected port
   // is not BOUND until its daemon spawns (possibly minutes later) — a second
   // process resolving in that window would re-pick it. Each resolving process
-  // therefore registers its full resolved BindConfig in a host-global registry
-  // file BEFORE the lock releases; later resolvers (still under the lock)
-  // read every LIVE registration into their exclusion set. Files are removed
-  // on process exit; a SIGKILL'd process's file is reaped by the next reader
-  // (pid liveness + recycled-pid basename guard).
+  // therefore registers the ports it resolved in a host-global registry file
+  // BEFORE the lock releases; later resolvers (still under the lock) read every
+  // LIVE registration into their exclusion set. Files are removed on process
+  // exit; a SIGKILL'd process's file is reaped by the next reader (pid
+  // liveness + the recorded-executable guard against recycled pids).
+  //
+  // The on-disk protocol is language-neutral and documented in
+  // docs/bind-registry/README.md: non-Node clients (wire-sysio's Python test
+  // lease) take the same lock and write the same `BindRegistration` shape.
 
   /** Env override for the registry dir — unit tests point it at a scratch dir. */
   export const RegistryPathEnvVar = "WIRE_BIND_REGISTRY_PATH"
+  /** Name of the default registry dir inside the OS temp dir. */
+  export const RegistryDirectoryName = "wire-platform-bind-config"
   /** Registry file suffix: `<pid>.bind-config.json`. */
   export const RegistryFileSuffix = ".bind-config.json"
   /**
-   * Every registrant is a Node.js process (a FlowCLI executable,
-   * `wire-cluster-tool`, or a jest worker) — a live pid running anything else
-   * is a recycled pid wearing a stale registry file.
+   * Suffix of the temp file a registration is written to before it is renamed
+   * into place. Readers never parse it (it does not end in
+   * {@link RegistryFileSuffix}), so a reader never sees a half-written
+   * registration; a dead writer's leftover temp file is deleted by the next
+   * reader.
    */
-  const RegistrantBasename = "node"
+  export const RegistryTemporaryFileSuffix = ".tmp"
+  /**
+   * Largest pid a registration file name may carry: `pid_t` is a signed 32-bit
+   * integer on Linux and macOS. A name outside 1..MaximumPid (pid 0 signals the
+   * reader's own process group, so `kill(0, 0)` always "succeeds") is deleted.
+   */
+  export const MaximumPid = 2_147_483_647
+  /** A registration file name's stem: a positive decimal pid, no sign or leading zero. */
+  const PidStemPattern = /^[1-9][0-9]*$/
 
-  /** The host-global registry dir (env-overridable for tests). */
+  /**
+   * The host-global registry dir: {@link RegistryPathEnvVar} when it is set and
+   * not empty, else `<os.tmpdir()>/wire-platform-bind-config`.
+   */
   export function registryPath(): string {
-    return (
-      process.env[RegistryPathEnvVar] ??
-      Path.join(Os.tmpdir(), "wire-platform-bind-config")
-    )
+    const { [RegistryPathEnvVar]: override } = process.env
+    return isEmpty(override)
+      ? Path.join(Os.tmpdir(), RegistryDirectoryName)
+      : override
   }
 
-  /** THIS process's registry file — an ARRAY of resolved BindConfigs. */
+  /** THIS process's registry file. */
   export function registryFile(): string {
     return Path.join(registryPath(), `${process.pid}${RegistryFileSuffix}`)
   }
 
   /**
-   * Every LIVE registration's ports, reaping stale files as they are found: a
-   * registry file whose pid is gone, or whose pid no longer runs `node`
-   * (recycled), or whose content does not parse, is DELETED instead of
-   * honored. A live pid whose `/proc` is unreadable (another user's process)
-   * is kept conservatively. Call only under the
-   * {@link BindConfigProvider.portLockPath} lock — read/reap/resolve/write
-   * must be one critical section.
+   * The owner pid a registry entry's file name carries — `<pid>` of
+   * `<pid><suffix>` — or `null` when the stem is not a pid in 1..{@link MaximumPid}.
+   *
+   * @param fileName - The entry's file name.
+   * @param suffix - The suffix that follows the pid.
+   * @returns The pid, or `null`.
+   */
+  export function registrationPid(fileName: string, suffix: string): number {
+    const stem = fileName.slice(0, -suffix.length),
+      pid = Number(stem)
+    return PidStemPattern.test(stem) && pid <= MaximumPid ? pid : null
+  }
+
+  /**
+   * Every LIVE registration's ports, reaping stale files as they are found. A
+   * registry file is DELETED only when its name is not a pid, its pid is gone,
+   * or its pid now runs a non-empty executable other than the non-empty one
+   * the file records (a recycled pid); so is a dead writer's leftover temp
+   * file. When either executable is empty or unknown (a writer without
+   * procfs, a zombie, another user's process) the comparison is skipped and
+   * the file kept. Call only under the {@link BindConfigProvider.portLockPath}
+   * lock — read/reap/resolve/write must be one critical section.
+   *
+   * A live pid's file is never deleted, even when it cannot be read or is not
+   * a valid `BindRegistration`: its owner may still hold those ports.
+   *
+   * @throws NestedError naming the file and pid (the read or validation error
+   *   as its cause) when a live pid's registration cannot be read or is invalid.
+   *
+   * THIS process's own registration is included once it has written one:
+   * get-port's in-process locks expire, so a second resolve in the same process
+   * relies on its own registration to keep the first resolve's ports out.
+   * Before that first write, a file under this pid belongs to a dead process
+   * that had the same pid; it is skipped (not deleted) and the write replaces it.
    *
    * The set is SEEDED with {@link ReservedAgavePortBand} — the band is a
    * standing registration on behalf of every validator's implicit binds, so
@@ -568,77 +685,235 @@ export namespace BindConfigProvider {
     const dir = registryPath()
     mkdirs(dir)
     const exclusions = new Set<number>(
-      range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
-    )
-    Fs.readdirSync(dir)
+        range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
+      ),
+      fileNames = Fs.readdirSync(dir),
+      temporarySuffix = `${RegistryFileSuffix}${RegistryTemporaryFileSuffix}`
+    fileNames
+      .filter(fileName => fileName.endsWith(temporarySuffix))
+      .forEach(fileName => {
+        const pid = registrationPid(fileName, temporarySuffix)
+        if (pid === null || !isPidAlive(pid)) {
+          reapRegistration(
+            Path.join(dir, fileName),
+            "temp file of a dead writer"
+          )
+        }
+      })
+    fileNames
       .filter(fileName => fileName.endsWith(RegistryFileSuffix))
       .forEach(fileName => {
         const filePath = Path.join(dir, fileName),
-          pid = Number.parseInt(fileName, 10),
-          basename = Number.isFinite(pid) ? processCommandBasename(pid) : "",
-          alive = Number.isFinite(pid) && isPidAlive(pid),
-          // "" basename + alive = unreadable /proc (foreign user) → keep.
-          recycled = alive && basename !== "" && basename !== RegistrantBasename
-        if (!alive || recycled) {
-          log.info(
-            `bind registry: reaping stale ${fileName} (${!alive ? "pid gone" : `pid recycled to ${basename}`})`
-          )
-          guard(() => Fs.rmSync(filePath, { force: true }))
+          pid = registrationPid(fileName, RegistryFileSuffix)
+        if (pid === null) {
+          reapRegistration(filePath, "not a pid")
           return
         }
-        const entries = getValue(
-          () => JSON.parse(Fs.readFileSync(filePath, "utf8")) as unknown,
-          null
-        )
-        if (!Array.isArray(entries)) {
-          log.warn(`bind registry: reaping malformed ${fileName}`)
-          guard(() => Fs.rmSync(filePath, { force: true }))
+        if (!isPidAlive(pid)) {
+          reapRegistration(filePath, "pid gone")
           return
         }
-        entries.forEach(entry => {
-          // Walked via allPorts so it stays the ONE port walker over the
-          // plain-data BindConfig shape.
-          const ports = getValue(
-            () => allPorts(entry as BindConfig),
-            [] as number[]
-          )
-          if (ports.length === 0) {
-            log.warn(`bind registry: ignoring malformed entry in ${fileName}`)
+        // Before this process's first write, a file under its pid belongs to a
+        // dead process that had the same pid; the first write replaces it.
+        if (pid === process.pid && !ownRegistrationWritten) return
+        Either.try(() =>
+          BindRegistrationSchemaCodec.deserialize(Fs.readFileSync(filePath))
+        ).match({
+          Left: error => {
+            // Its owner's exit hook deleted it after the readdir: already gone.
+            if (
+              (error as NodeJS.ErrnoException).code === FileNotFoundErrorCode
+            ) {
+              return
+            }
+            // A LIVE owner's file is never deleted: handing out its ports could
+            // collide with a process that still holds them. Fail the read.
+            throw new NestedError(
+              "bind registry: the registration of a live process cannot be read or is not valid",
+              { cause: error, context: { file: filePath, pid } }
+            )
+          },
+          Right: registration => {
+            // Compare only when both sides are known: an empty recorded value
+            // (a writer without procfs) or an empty observed one (a zombie,
+            // another user's process) keeps the file on liveness alone.
+            // A reader never reaps its own registration: its pid cannot have
+            // been recycled while it runs.
+            const observed = processCommandBasename(pid)
+            if (
+              pid !== process.pid &&
+              observed !== "" &&
+              registration.executable !== "" &&
+              observed !== registration.executable
+            ) {
+              reapRegistration(
+                filePath,
+                `pid recycled to ${observed}, registered by ${registration.executable}`
+              )
+              return
+            }
+            registration.ports.forEach(port => exclusions.add(port))
           }
-          ports.forEach(port => exclusions.add(port))
         })
       })
     return exclusions
   }
 
-  let registryExitCleanupArmed = false
+  /** `code` of the error a read of a file that no longer exists fails with. */
+  const FileNotFoundErrorCode = "ENOENT"
 
   /**
-   * Append `config` to THIS process's registry file and arm the exit cleanup
-   * (once). One file per pid, holding an array — a process that resolves
-   * several clusters (the harness's jest suite) accumulates its reservations;
-   * they all release together when the process exits. SIGINT/SIGTERM funnel
-   * through `process.exit` (the ProcessManager signal handlers), which fires
-   * the `exit` hook; a SIGKILL leaves the file for the next reader's reaper.
+   * Delete a stale registry entry found by {@link readRegistryPortExclusions},
+   * with one warn line per reap: each one means a process died without
+   * cleaning up, a pid was recycled, or a name was not a pid.
+   *
+   * @param filePath - The registration (or leftover temp) file.
+   * @param reason - Why it is stale, for the log line.
+   */
+  function reapRegistration(filePath: string, reason: string): void {
+    log.warn(`bind registry: reaping ${Path.basename(filePath)} (${reason})`)
+    guard(() => Fs.rmSync(filePath, { force: true }))
+  }
+
+  /**
+   * Write `registration` as THIS process's registry file: to a temp file first,
+   * then renamed over {@link registryFile}, so a concurrent reader sees either
+   * the previous registration or this one, never a partial file.
+   *
+   * @param registration - The full registration to publish.
+   */
+  function writeRegistration(registration: BindRegistration): void {
+    const file = registryFile(),
+      temporaryFile = `${file}${RegistryTemporaryFileSuffix}`
+    Fs.writeFileSync(
+      temporaryFile,
+      BindRegistrationSchemaCodec.serialize(registration)
+    )
+    Fs.renameSync(temporaryFile, file)
+  }
+
+  /**
+   * Whether this process has written its registration. Until it has, a file at
+   * {@link registryFile} belongs to a dead process that had the same pid, so
+   * the first write replaces it instead of merging with it.
+   */
+  let ownRegistrationWritten = false
+
+  /**
+   * The ports THIS process has registered — none until its first write, since a
+   * file under its pid before then belongs to a dead predecessor.
+   *
+   * @returns The ports in this process's registration file.
+   */
+  function readOwnRegisteredPorts(): number[] {
+    return ownRegistrationWritten
+      ? getValue(
+          () =>
+            BindRegistrationSchemaCodec.deserialize(
+              Fs.readFileSync(registryFile())
+            ).ports,
+          []
+        )
+      : []
+  }
+
+  /**
+   * Add `config`'s locally bound ports ({@link locallyBoundPorts}) to THIS
+   * process's registration and arm the exit
+   * cleanup (once). One file per pid: a process that resolves several clusters
+   * (the harness's jest suite) accumulates its reservations, and they all
+   * release together when the process exits. SIGINT/SIGTERM funnel through
+   * `process.exit` (the ProcessManager signal handlers), which fires the `exit`
+   * hook; a SIGKILL leaves the file for the next reader's reaper.
+   *
+   * The process's FIRST registration replaces any file already at
+   * {@link registryFile}: that file cannot be this process's, so merging it
+   * would adopt a dead same-pid process's ports. Later registrations merge.
+   *
+   * The registration records this process's executable exactly as a reader
+   * observes it ({@link processCommandBasename}), so liveness checks compare
+   * like with like. Call only under the {@link BindConfigProvider.portLockPath}
+   * lock ({@link resolve} and {@link claimResolved} do).
    *
    * @param config - The just-resolved binding to register.
    */
   export function registerResolved(config: BindConfig): void {
     mkdirs(registryPath())
-    const file = registryFile(),
-      existing = getValue(
-        () => JSON.parse(Fs.readFileSync(file, "utf8")) as unknown,
-        null
-      ),
-      entries: unknown[] = Array.isArray(existing) ? existing : []
-    entries.push(config)
-    Fs.writeFileSync(file, JSON.stringify(entries, null, 2))
-    if (!registryExitCleanupArmed) {
-      registryExitCleanupArmed = true
+    // Only ports this host binds: another host's port (a remote outpost
+    // endpoint) must never land in this host's exclusion set.
+    const ports = uniq([
+      ...readOwnRegisteredPorts(),
+      ...locallyBoundPorts(config)
+    ])
+    writeRegistration({
+      executable: processCommandBasename(process.pid),
+      ports
+    })
+    if (!ownRegistrationWritten) {
+      ownRegistrationWritten = true
       process.on("exit", () =>
         guard(() => Fs.rmSync(registryFile(), { force: true }))
       )
     }
+  }
+
+  /**
+   * Re-claim an already-resolved binding for a relaunch (`wire-cluster-tool
+   * run`): under the {@link BindConfigProvider.portLockPath} lock, check that
+   * none of its locally bound ports ({@link locallyBoundPorts}) is reserved or
+   * registered by another live process and that each still binds, then
+   * register it for this process. Ports of daemons bound to another host (a
+   * complete external bind config's remote outposts) are not checked. The check and the
+   * registration form one critical section, so no other resolver can take a
+   * port in between. A refusal logs a `bind registry:` warn naming the ports
+   * that sit inside {@link ReservedAgavePortBand}, are held elsewhere, or no
+   * longer bind.
+   *
+   * @param config - The persisted, already-resolved binding.
+   * @returns Whether every port was free and is now registered to this process.
+   */
+  export async function claimResolved(config: BindConfig): Promise<boolean> {
+    return withFileLock(portLockPath(), async () => {
+      // Resolve-time in-process locks would make this process's own ports
+      // read as taken; clear them so the probes see true OS bindability.
+      await clearPortLocks()
+      const ownPorts = new Set(readOwnRegisteredPorts()),
+        exclusions = readRegistryPortExclusions(),
+        // Only locally bound ports are checked: a remote outpost endpoint is
+        // another host's port. Each is listed once, since a second probe would
+        // fail on get-port's in-process lock from the first.
+        ports = locallyBoundPorts(config),
+        reserved = ports.filter(isReservedPort),
+        heldElsewhere = ports.filter(
+          port =>
+            !isReservedPort(port) && exclusions.has(port) && !ownPorts.has(port)
+        )
+      if (reserved.length > 0) {
+        log.warn(
+          `bind registry: ports inside the reserved agave band ${ReservedAgavePortBand.first}-${ReservedAgavePortBand.last}: ${reserved.join(", ")}`
+        )
+        return false
+      }
+      if (heldElsewhere.length > 0) {
+        log.warn(
+          `bind registry: ports held by another live registration: ${heldElsewhere.join(", ")}`
+        )
+        return false
+      }
+      const unbindable = await Bluebird.filter(
+        ports,
+        async port => !(await isPortBindable(port)),
+        { concurrency: 1 }
+      )
+      if (unbindable.length > 0) {
+        log.warn(
+          `bind registry: ports no longer bind: ${unbindable.join(", ")}`
+        )
+        return false
+      }
+      registerResolved(config)
+      return true
+    })
   }
 
   /**
@@ -650,7 +925,7 @@ export namespace BindConfigProvider {
    * collision avoidance. That lock is per-process and invisible to the OS, so
    * a port this process legitimately reserved reads as "taken" to its own
    * later probes. Callers that must RE-acquire a port they already resolved
-   * — {@link validate} re-verifying a resolved binding, or a caller feeding a
+   * — {@link claimResolved} re-claiming a persisted binding, or a caller feeding a
    * registry-vetted port back in as a PIN — clear the locks first.
    *
    * Cross-process safety is unaffected: the file registry
@@ -667,23 +942,24 @@ export namespace BindConfigProvider {
    * `port`; a differing result means `port` is taken or already locked in
    * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
    * in-process cache (its collision-avoidance) — to re-check an already-resolved
-   * port, call {@link clearPortLocks} first (see {@link BindConfigProvider.validate}).
+   * port, call {@link clearPortLocks} first (see {@link BindConfigProvider.claimResolved}).
    *
    * @param port - Port to probe.
    * @returns Whether the port is free.
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
-    return withFileLock(
-      portLockPath(),
-      async () =>
-        (await getPort({ port })) === port && (await isIpv6PortFree(port))
-    )
+    return withFileLock(portLockPath(), () => isPortBindable(port))
+  }
+
+  /** {@link isPortAvailable}'s probe, for callers already holding the port lock. */
+  async function isPortBindable(port: number): Promise<boolean> {
+    return (await getPort({ port })) === port && (await isIpv6PortFree(port))
   }
 
   /**
    * Resolve an AVAILABLE port via `get-port`, preferring `preferred`. Returns
-   * `preferred` when it is free right now, otherwise a get-port-assigned free
-   * port. Use this ANYWHERE a bind port / URL is produced — harness code AND
+   * `preferred` when it is free and outside automatic client-port ranges,
+   * otherwise a free port from the safe service pool. Use this ANYWHERE a bind port / URL is produced — harness code AND
    * tests. The default port is only a PREFERENCE; never commit to a fixed port,
    * which collides across concurrent processes / test runs. READS the
    * cross-process registry (another process's resolved-but-not-yet-bound ports
@@ -708,6 +984,76 @@ export namespace BindConfigProvider {
         protocol
       )
     )
+  }
+
+  /**
+   * Find a free Solana RPC port whose derived WebSocket companion is also
+   * free. Like {@link findAvailable}, this reads the registry under its lock;
+   * planned clusters use {@link resolve} to persist both reservations.
+   *
+   * @param preferred - Preferred RPC port; redraw when either port is unavailable.
+   * @returns The RPC port of a currently free RPC/WebSocket pair.
+   */
+  export function findAvailableSolanaRpc(
+    preferred = DefaultSolanaRpc
+  ): Promise<number> {
+    return withFileLock(portLockPath(), () =>
+      pickSolanaRpc(null, preferred, readRegistryPortExclusions())
+    )
+  }
+
+  const SolanaRpcPickAttempts = 16
+
+  /** Select BOTH implicit RPC ports while the caller holds the registry lock. */
+  async function pickSolanaRpc(
+    callerPin: number,
+    fallbackDefault: number,
+    claimed: Set<number>,
+    automaticPortRanges = readAutomaticPortRanges()
+  ): Promise<number> {
+    if (callerPin != null) {
+      Assert.ok(
+        Number.isInteger(callerPin) &&
+          callerPin >= MinimumPort &&
+          callerPin + SolanaWsPortOffset <= MaximumPort,
+        `invalid Solana RPC port ${callerPin}: RPC and WebSocket ports must fit in ${MinimumPort}-${MaximumPort}`
+      )
+    }
+    const picked = await Bluebird.reduce(
+      range(callerPin != null ? 1 : SolanaRpcPickAttempts),
+      async (found: number, attempt: number) => {
+        if (found != null) return found
+        const http = await pickPort(
+            callerPin,
+            attempt === 0 ? fallbackDefault : null,
+            claimed,
+            "solana.http",
+            BindConfigPortProtocol.tcp,
+            automaticPortRanges
+          ),
+          websocket = http + SolanaWsPortOffset,
+          available =
+            websocket <= MaximumPort &&
+            (callerPin != null ||
+              !isAutomaticPort(websocket, automaticPortRanges)) &&
+            !isReservedPort(websocket) &&
+            !claimed.has(websocket) &&
+            (await getPort({ port: websocket, exclude: claimed })) ===
+              websocket &&
+            (await isIpv6PortFree(websocket))
+        Assert.ok(
+          callerPin == null || available,
+          `Solana RPC port ${http} is pinned but its WebSocket companion ${websocket} is unavailable or reserved`
+        )
+        return available ? http : null
+      },
+      null as number
+    )
+    Assert.ok(
+      picked != null,
+      `no free Solana RPC/WebSocket port pair found within ${SolanaRpcPickAttempts} attempts`
+    )
+    return picked
   }
 
   /**
@@ -763,8 +1109,9 @@ export namespace BindConfigProvider {
 
   /**
    * Resolve one port via `get-port`: a caller-pinned port must be free +
-   * unclaimed (else THROW); otherwise `fallbackDefault` is preferred when free,
-   * falling back to any free port. `claimed` is passed to get-port as `exclude`
+   * unclaimed (else THROW); otherwise `fallbackDefault` is preferred when free
+   * and outside host automatic ranges, falling back within the safe service
+   * pool. `claimed` is passed to get-port as `exclude`
    * so no two daemons in one resolve share a port (get-port also locks each
    * returned port in-process as a second guard).
    *
@@ -772,6 +1119,8 @@ export namespace BindConfigProvider {
    * @param fallbackDefault - The preferred default port, or null.
    * @param claimed - Ports already claimed within this resolve (`exclude` set).
    * @param daemon - Label for the error message.
+   * @param protocol - Transport-specific availability check.
+   * @param automaticPortRanges - Host observation shared by one allocation transaction.
    * @returns The resolved port.
    * @throws If `callerPin` is pinned but unavailable.
    */
@@ -780,7 +1129,8 @@ export namespace BindConfigProvider {
     fallbackDefault: number | null,
     claimed: Set<number>,
     daemon: string,
-    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
+    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp,
+    automaticPortRanges?: readonly BindConfigPortRange[]
   ): Promise<number> {
     if (callerPin !== null) {
       Assert.ok(
@@ -799,24 +1149,30 @@ export namespace BindConfigProvider {
       )
       return callerPin
     }
-    // First draw prefers the default; a candidate is redrawn when it sits in
-    // `claimed` or (for UDP-role ports) fails the UDP probe. The claimed
-    // re-check is load-bearing: get-port consults `exclude` only for EXPLICIT
-    // candidates — its port-0 (OS-assigned) fallback returns without checking
-    // it, so the OS can hand back a port another process resolved but has not
-    // bound yet (registered daemons spawn minutes after their resolve). The
-    // rejected candidate stays locked in get-port's in-process cache, so no
-    // later draw can re-offer it.
+    const automaticRanges = automaticPortRanges ?? readAutomaticPortRanges()
+    // Probe explicit service candidates outside the kernel's automatic client
+    // ranges. get-port closes each probe immediately: its locks and our registry
+    // cannot prevent connect() from taking an ephemeral source port afterward.
     const picked = await Bluebird.reduce(
       range(0, UdpPickAttempts),
       async (found: number | null, attempt: number) => {
         if (found !== null) return found
-        const candidate = await getPort(
-          attempt === 0 && fallbackDefault !== null
-            ? { port: fallbackDefault, exclude: claimed }
-            : { exclude: claimed }
+        const candidate = await getPort({
+          port: servicePortCandidates(
+            attempt === 0 ? fallbackDefault : null,
+            claimed,
+            automaticRanges
+          ),
+          exclude: claimed
+        })
+        // get-port appends an implicit port-0 fallback even to an exhausted
+        // iterable. Fail closed instead of accepting that unsafe kernel draw.
+        Assert.ok(
+          !isAutomaticPort(candidate, automaticRanges),
+          `no free service port outside host automatic client-port ranges for ${daemon}`
         )
         return !claimed.has(candidate) &&
+          !isReservedPort(candidate) &&
           (await isIpv6PortFree(candidate)) &&
           (protocol === BindConfigPortProtocol.tcp ||
             (await isUdpPortFree(candidate)))
@@ -832,6 +1188,38 @@ export namespace BindConfigProvider {
     return picked
   }
 
+  /** Whether a port can be automatically assigned to an unrelated client. */
+  function isAutomaticPort(
+    port: number,
+    automaticPortRanges: readonly BindConfigPortRange[]
+  ): boolean {
+    return automaticPortRanges.some(
+      ({ first, last }) => port >= first && port <= last
+    )
+  }
+
+  /** Explicit candidates only; never ask the kernel to choose a service port. */
+  function* servicePortCandidates(
+    preferred: number,
+    claimed: Set<number>,
+    automaticPortRanges: readonly BindConfigPortRange[]
+  ): Generator<number> {
+    const available = (port: number) =>
+      !claimed.has(port) &&
+      !isReservedPort(port) &&
+      !isAutomaticPort(port, automaticPortRanges)
+    if (preferred != null && available(preferred)) yield preferred
+    const candidates = range(ServicePortFirst, MaximumPort + 1).filter(
+        port => port !== preferred && available(port)
+      ),
+      // Standalone findAvailable callers do not persist registry claims.
+      // Spread their fallbacks instead of making independent processes converge
+      // on the first pool entry during the interval before their callers bind.
+      offset = candidates.length > 0 ? Crypto.randomInt(candidates.length) : 0
+    yield* candidates.slice(offset)
+    yield* candidates.slice(0, offset)
+  }
+
   /** Whether `port` sits inside {@link ReservedAgavePortBand}. */
   function isReservedPort(port: number): boolean {
     return (
@@ -840,7 +1228,7 @@ export namespace BindConfigProvider {
   }
 
   /**
-   * Whether EVERY port of the window starting at `first` is free: not in
+   * Whether EVERY port of the inclusive window is free: not in
    * `exclusions` (the file-locked registry + this resolve's claims — the
    * cross-process coordination surface), available per `get-port` (TCP), AND
    * UDP-bindable. The window is consumed by the validator's dynamic sockets,
@@ -848,14 +1236,16 @@ export namespace BindConfigProvider {
    * window is invisible to the TCP probe and panics agave at first bind.
    *
    * @param first - First port of the candidate window.
+   * @param last - Last port of the candidate window, including arbitrary caller pins.
    * @param exclusions - Ports already claimed/registered.
    * @returns Whether the whole window is free.
    */
   async function isRangeFree(
     first: number,
+    last: number,
     exclusions: Set<number>
   ): Promise<boolean> {
-    const ports = range(first, first + SolanaDynamicPortRangeSize)
+    const ports = range(first, last + 1)
     if (ports.some(port => exclusions.has(port))) return false
     // One occupied port rejects the window. Probing the remaining ports wastes
     // syscalls AND locks otherwise-free candidates in get-port's cache.
@@ -880,15 +1270,25 @@ export namespace BindConfigProvider {
    * @param callerPin - The caller's pinned window, or null.
    * @param exclusions - Ports already claimed/registered.
    * @param daemon - Label for the error message.
+   * @param automaticPortRanges - Host observation shared by one allocation transaction.
    * @returns The resolved window.
    * @throws If pinned-but-unavailable, or no free window within the search limit.
    */
   export async function pickPortRange(
     callerPin: BindConfigPortRange | null,
     exclusions: Set<number>,
-    daemon: string
+    daemon: string,
+    automaticPortRanges?: readonly BindConfigPortRange[]
   ): Promise<BindConfigPortRange> {
     if (callerPin !== null) {
+      Assert.ok(
+        Number.isInteger(callerPin.first) &&
+          Number.isInteger(callerPin.last) &&
+          callerPin.first >= MinimumPort &&
+          callerPin.last <= MaximumPort &&
+          callerPin.first <= callerPin.last,
+        `invalid port range ${callerPin.first}-${callerPin.last} for ${daemon}`
+      )
       Assert.ok(
         callerPin.first > ReservedAgavePortBand.last ||
           callerPin.last < ReservedAgavePortBand.first,
@@ -897,18 +1297,37 @@ export namespace BindConfigProvider {
           `(agave binds implicit sockets there regardless of flags) — pin a window outside it`
       )
       Assert.ok(
-        await isRangeFree(callerPin.first, exclusions),
+        await isRangeFree(callerPin.first, callerPin.last, exclusions),
         `port range ${callerPin.first}-${callerPin.last} for ${daemon} is pinned but unavailable`
       )
       return callerPin
     }
-    const starts = range(0, SolanaDynamicPortRangeSearchLimit).map(
-      i => DefaultSolanaDynamicPortFirst + i * SolanaDynamicPortRangeSize
-    )
+    const automaticRanges = automaticPortRanges ?? readAutomaticPortRanges(),
+      lastStart = MaximumPort - SolanaDynamicPortRangeSize + 1,
+      starts = range(
+        DefaultSolanaDynamicPortFirst,
+        lastStart + 1,
+        SolanaDynamicPortRangeSize
+      )
+        .filter(
+          start =>
+            !automaticRanges.some(
+              ({ first, last }) =>
+                start <= last && first < start + SolanaDynamicPortRangeSize
+            )
+        )
+        .slice(0, SolanaDynamicPortRangeSearchLimit)
     const first = await Bluebird.reduce(
       starts,
       async (found: number | null, start) =>
-        found ?? ((await isRangeFree(start, exclusions)) ? start : null),
+        found ??
+        ((await isRangeFree(
+          start,
+          start + SolanaDynamicPortRangeSize - 1,
+          exclusions
+        ))
+          ? start
+          : null),
       null as number | null
     )
     Assert.ok(

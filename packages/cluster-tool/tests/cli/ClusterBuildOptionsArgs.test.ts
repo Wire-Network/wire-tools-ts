@@ -2,10 +2,11 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { TokenAmount } from "@wireio/opp-typescript-models"
+import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
+  EthereumReadBlockTag,
   NodeopReadMode,
   QueryEngineReadModeSchema,
   SignatureProviderType
@@ -407,6 +408,25 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     ).toHaveLength(13)
   })
 
+  it("registers the Ethereum read confirmation as UNSEEDED leaves: a tag choice and two numbers", () => {
+    const options = register()
+    const blockTag = options.get("ethereum-read-block-tag")
+    expect(blockTag).toMatchObject({
+      type: "string",
+      choices: Object.values(EthereumReadBlockTag)
+    })
+    expect(blockTag?.default).toBeUndefined()
+    ;["ethereum-read-confirmations", "ethereum-read-max-finality-lag-sec"].forEach(
+      flag => {
+        expect(options.get(flag)).toMatchObject({ type: "number" })
+        expect(options.get(flag)?.default).toBeUndefined()
+      }
+    )
+    expect(
+      [...options.keys()].filter(flag => flag.startsWith("ethereum-read-"))
+    ).toHaveLength(3)
+  })
+
   it("seeds a query-engine leaf from a scenario's defaults", () => {
     expect(
       register({ queryEngine: { maxInFlight: 8 } }).get(
@@ -506,6 +526,26 @@ describe("toClusterBuildOptions reverse parse", () => {
     )
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
+  })
+
+  it("reads the launch-data export flags and carries the flag-less lcoImport from the defaults", () => {
+    const lcoImport = {
+        solana: {
+          nativePriceUsd: "15000000000",
+          pool: LiqPoolSpec.create({ fee: 25, clipFloor: 10n })
+        }
+      },
+      options = toClusterBuildOptions(
+        {
+          "ethereum-bootstrap-json-file": "/exports/ethereum.json",
+          "solana-bootstrap-json-file": "/exports/solana.json"
+        },
+        { lcoImport }
+      )
+    expect(options.ethereumBootstrapJsonFile).toBe("/exports/ethereum.json")
+    expect(options.solanaBootstrapJsonFile).toBe("/exports/solana.json")
+    expect(options.lcoImport).toBe(lcoImport)
+    expect(toClusterBuildOptions({}).lcoImport).toBeUndefined()
   })
 
   it("reverse-parses ad-hoc-count, and sizes the ad-hoc bind array from it", () => {
@@ -608,6 +648,21 @@ describe("toClusterBuildOptions reverse parse", () => {
       workerThreads: 4,
       maxResultRows: 500
     })
+  })
+
+  it("reverse-parses the Ethereum read leaves into options.ethereumRead, absent when none is given", () => {
+    expect(
+      toClusterBuildOptions({
+        "ethereum-read-block-tag": EthereumReadBlockTag.latest,
+        "ethereum-read-confirmations": 20,
+        "ethereum-read-max-finality-lag-sec": 600
+      }).ethereumRead
+    ).toEqual({
+      blockTag: EthereumReadBlockTag.latest,
+      confirmations: 20,
+      maxFinalityLagSec: 600
+    })
+    expect(toClusterBuildOptions({}).ethereumRead).toBeUndefined()
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -922,6 +977,38 @@ describe("--cluster-build-options-file", () => {
         })
       )
     ).toThrow()
+  })
+
+  it("decodes the flag-less lcoImport member, its pool tuning a LiqPoolSpec", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        solanaBootstrapJsonFile: "/exports/solana.json",
+        lcoImport: {
+          solana: {
+            nativePriceUsd: "15000000000",
+            pool: { fee: 25, depth_cap_bps: 20, clip_floor: "10" }
+          },
+          dclaimFundingAccount: "lco.treasury"
+        }
+      })
+    )
+    expect(loaded.solanaBootstrapJsonFile).toBe("/exports/solana.json")
+    expect(loaded.lcoImport.solana.pool).toEqual(
+      LiqPoolSpec.create({ fee: 25, depthCapBps: 20, clipFloor: 10n })
+    )
+    expect(loaded.lcoImport.dclaimFundingAccount).toBe("lco.treasury")
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ lcoImport: { ethereum: { nativePriceUsd: "4000.5" } } })
+      )
+    ).toThrow(/nativePriceUsd/)
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({
+          lcoImport: { ethereum: { nativePriceUSD: "400000000000" } }
+        })
+      )
+    ).toThrow(/nativePriceUSD/)
   })
 
   it("sizes the bind node-port arrays from the document's own counts", () => {

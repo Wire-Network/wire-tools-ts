@@ -39,10 +39,10 @@
     "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/debugging-server": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.54",
-    "@wireio/sdk-core": "^1.0.102",
-    "@wireio/shared": "^1.0.102",
-    "@wireio/shared-node": "^1.0.102",
+    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/sdk-core": "^1.0.109",
+    "@wireio/shared": "^1.0.109",
+    "@wireio/shared-node": "^1.0.109",
     "archiver": "^8.0.0",
     "bluebird": "^3.7.2",
     "ethers": "^6.14.0",
@@ -54,6 +54,7 @@
     "source-map-support": "^0.5.21",
     "tree-kill": "^1.2.2",
     "ts-pattern": "^5.9.0",
+    "ws": "^8.18.0",
     "yargs": "^18.0.0",
     "zod": "^4.4.3",
     "zx": "^8.8.5"
@@ -67,6 +68,7 @@
     "@types/node": "25.5.0",
     "@types/proper-lockfile": "^4.1.4",
     "@types/shelljs": "^0.10.0",
+    "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
     "tweetnacl": "^1.0.3"
   }

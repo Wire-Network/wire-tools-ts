@@ -53,11 +53,8 @@ export namespace WireCollateralTool {
   /**
    * The account whose WIRE funds an operator's bond. `sysio` holds the bootstrap WIRE
    * issue; `sysio.token::transfer` from it is the harness's one WIRE funding path.
-   *
-   * Coupled to `TokenContractSteps.runTransfer`, which always signs as `sysio@active`
-   * through a module-private authorization: the transfer's `from` must be the account
-   * that signs it, so changing this value without changing that signer makes every
-   * funding Step fail its authorization check.
+   * `TokenContractSteps.runTransfer` signs as the transfer's `from`, so the cluster's
+   * wallet must hold this account's active key.
    */
   export const FundingAccount = "sysio"
 

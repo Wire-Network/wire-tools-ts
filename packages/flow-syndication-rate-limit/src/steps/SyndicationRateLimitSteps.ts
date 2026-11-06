@@ -1,4 +1,3 @@
-import { SysioContracts } from "@wireio/sdk-core"
 import {
   getLogger,
   ClusterBuildStep,
@@ -18,7 +17,7 @@ export namespace SyndicationRateLimitSteps {
   /** Exact attempted redemption. */
   export interface RefusedDesyndicationInput extends StepInput {
     readonly kind: "SyndicationRateLimitSteps.RefusedDesyndicationInput"
-    readonly data: SysioContracts.SysioSyndDesyndicateAction
+    readonly data: Steps.contracts.sysio.synd.DesyndicateData
   }
   /** Plan one redemption that exceeds even a full desyndication bucket. */
   export function planRefusedDesyndication(
@@ -52,9 +51,12 @@ export namespace SyndicationRateLimitSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     try {
-      await Steps.contracts.sysio.synd.runDesyndicate(
+      await Steps.contracts.sysio.synd.runQuotedDesyndicate(
         ctx,
-        { kind: "SyndContractSteps.DesyndicateInput", data: input.data },
+        {
+          kind: "SyndContractSteps.QuotedDesyndicateInput",
+          data: input.data
+        },
         signal
       )
       ctx.outputs.set(Constants.Refusal, "")

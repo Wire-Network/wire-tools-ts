@@ -1,17 +1,27 @@
 import Assert from "node:assert"
+import type { PublicKey } from "@solana/web3.js"
 import { SysioContracts } from "@wireio/sdk-core"
-import { OperatorType } from "@wireio/opp-typescript-models"
 import {
+  AttestationType,
+  BatchOperatorGroups,
+  Envelope,
+  OperatorType
+} from "@wireio/opp-typescript-models"
+import {
+  BatchOperatorSchedule,
   ClusterBuildPhase,
   OperatorDaemonArtifactsKey,
   FlowScenario,
   ProtocolTiming,
   Report,
+  SolanaOutpostBootstrapper,
+  SolanaOutpostProgramTool,
   Steps,
   WireCollateralTool,
   WireOperatorProvisioningTool,
   Constants as DepotConstants,
   getLogger,
+  loadOutpostContract,
   matchesProtoEnum,
   packedSlugValue,
   pollUntil,
@@ -70,6 +80,21 @@ async function readWithdrawRemitChainCodes(
   return new Set(remits.map(entry => packedSlugValue(entry.action.chain_code)))
 }
 
+/** Anchor account-client surface for the runtime-loaded outpost IDL. */
+interface SolanaAccountClient {
+  fetch(address: PublicKey): Promise<unknown>
+}
+
+/** The Ethereum inbound cursor advances only after an envelope is accepted. */
+interface EthereumInboundView {
+  nextEpochIndex(): Promise<bigint>
+}
+
+/** The Solana outpost configuration's accepted inbound epoch cursor. */
+interface SolanaOutpostConfigAccount {
+  nextEpochIndex: number
+}
+
 /**
  * Batch Operator Termination via Delivery Underperformance — verifies the full
  * protocol promise that a non-bootstrapped operator becomes ACTIVE only once its
@@ -100,11 +125,14 @@ async function readWithdrawRemitChainCodes(
  *    balance row is emptied, and `remitclaims{operator, WIRE}` holds exactly the
  *    bond. `opreg::claimremit` then pays it out: the operator's liquid WIRE
  *    rises by exactly the bond and the claim row is gone.
+ * 9. **ContinuedRotation** — with sufficient standing operators, ordinary
+ *    rotation fills every duty seat, excludes the terminated operator from
+ *    published windows, and both outposts accept another complete rotation.
  */
 export class TerminationScenario extends FlowScenario {
   readonly name = "flow-batch-operator-termination"
   readonly description =
-    "Non-bootstrapped batch operator bonds WIRE on the depot, misses its scheduled deliveries, is terminated, and claims its bond back"
+    "Batch operator bonds WIRE on the depot, is terminated for missed deliveries, claims its bond, and standing operators keep both outposts advancing"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -135,6 +163,13 @@ export class TerminationScenario extends FlowScenario {
         timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
           cluster.context.config.epochDurationSec
         )
+      },
+      rotationStepOptions = {
+        timeoutMs:
+          Constants.rotationDeadlineMs(
+            cluster.context.config.epochDurationSec,
+            BatchOperatorSchedule.resolve(cluster.context.config).batchOpGroups
+          ) + ProtocolTiming.PollDeadlineBufferMs
       }
 
     // ── 1. Substrate health (WIRE / ETH outpost / SOL validator) ──
@@ -500,6 +535,150 @@ export class TerminationScenario extends FlowScenario {
         remitClaimStepOptions,
         Constants.DoomedOperatorLabel,
         WireCollateralTool.createWireClaim(0n)
+      )
+    )
+
+    // ── 9. Ordinary rotation keeps delivering with sufficient standing operators ──
+    ClusterBuildPhase.create(
+      cluster,
+      "ContinuedRotation",
+      "Standing operators fill the rotation and both outposts accept another full window"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "post-remit-rotation",
+        "published groups exclude the terminated operator and both outposts advance through a full window",
+        async ctx => {
+          const operator = ctx.keyStore.assertOperator(
+              Constants.DoomedOperatorLabel
+            ),
+            addresses = ctx.outputs.assert(
+              OperatorDaemonArtifactsKey
+            ).ethereumAddresses,
+            ethereum = loadOutpostContract<EthereumInboundView>(
+              ctx.config.ethereumPath,
+              addresses,
+              "OPPInbound",
+              ["outpost"],
+              ctx.ethereum.provider
+            ),
+            program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+              ctx.solana.connection,
+              ctx.config.solanaPath
+            ),
+            configAddress = SolanaOutpostProgramTool.derivePda(
+              program.programId,
+              Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OutpostConfig)
+            ),
+            accounts: Record<string, SolanaAccountClient> = program.account,
+            readCursors = async () => {
+              const [ethereumNext, solanaConfig] = await Promise.all([
+                ethereum.nextEpochIndex(),
+                accounts.outpostConfig.fetch(configAddress)
+              ])
+              return [
+                Number(ethereumNext),
+                Number(
+                  (solanaConfig as SolanaOutpostConfigAccount).nextEpochIndex
+                )
+              ]
+            },
+            baseline = await readCursors(),
+            start = await Steps.contracts.sysio.epoch.readEpochState(ctx),
+            standing = new Set(
+              ctx.keyStore.operators
+                .filter(
+                  entry =>
+                    entry.type === OperatorType.BATCH &&
+                    entry.account !== operator.account
+                )
+                .map(entry => entry.account)
+            ),
+            groupCount = start.batch_op_groups.length,
+            groupSize = BatchOperatorSchedule.resolve(
+              ctx.config
+            ).operatorsPerEpoch,
+            targetEpoch =
+              Math.max(Number(start.current_epoch_index), ...baseline) +
+              groupCount,
+            chains = [Constants.EthereumChainCode, Constants.SolanaChainCode]
+
+          Assert.ok(
+            groupCount > 1,
+            "termination regression requires multiple duty groups"
+          )
+          await pollUntil(
+            `both outposts accept post-remit epochs through ${targetEpoch}`,
+            async () => {
+              const { rows } = await ctx.wire.getOutboundEnvelopes()
+              for (const chain of chains) {
+                const row = rows.find(
+                  entry => packedSlugValue(entry.chain_code) === chain
+                )
+                Assert.ok(
+                  row != null,
+                  `missing outbound envelope for chain ${chain}`
+                )
+                const envelope = Envelope.fromBinary(
+                    Buffer.from(row.raw_envelope, "hex")
+                  ),
+                  announcements = envelope.messages.flatMap(message =>
+                    (message.payload?.attestations ?? [])
+                      .filter(
+                        entry =>
+                          entry.type === AttestationType.BATCH_OPERATOR_GROUPS
+                      )
+                      .map(entry => BatchOperatorGroups.fromBinary(entry.data))
+                  )
+                Assert.ok(
+                  announcements.length > 0,
+                  `no published group window at epoch ${row.epoch_index}`
+                )
+                for (const announcement of announcements) {
+                  const groups = announcement.groups.map(group =>
+                      group.operators.map(member =>
+                        Buffer.from(member.address).toString("utf8")
+                      )
+                    ),
+                    members = groups.flat()
+                  Assert.equal(
+                    groups.length,
+                    groupCount,
+                    "published window lost a group"
+                  )
+                  Assert.ok(
+                    groups.every(group => group.length === groupSize),
+                    "standing operators did not fill every seat"
+                  )
+                  Assert.ok(
+                    !members.includes(operator.account),
+                    "terminated operator re-entered a published group"
+                  )
+                  Assert.equal(
+                    new Set(members).size,
+                    groupCount * groupSize,
+                    "published groups repeat an operator"
+                  )
+                  Assert.ok(
+                    members.every(account => standing.has(account)),
+                    "replacement is not a standing operator"
+                  )
+                }
+              }
+              const cursors = await readCursors()
+              log.info(
+                `[${this.name}] post-remit ETH/SOL next epochs=${cursors.join("/")}; target>${targetEpoch}`
+              )
+              return cursors.every(epoch => epoch > targetEpoch)
+            },
+            Constants.rotationDeadlineMs(
+              ctx.config.epochDurationSec,
+              groupCount
+            ),
+            Constants.PollIntervalMs
+          )
+        },
+        rotationStepOptions
       )
     )
   }

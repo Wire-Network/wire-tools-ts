@@ -5,11 +5,13 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  EthereumReadBlockTag,
   ExternalOutpostConfigSchemaCodec,
   NodeopReadMode,
+  createUnsetEthereumReadConfirmationConfig,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { TokenAmount } from "@wireio/opp-typescript-models"
+import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
 import { KeyType, SlugName } from "@wireio/sdk-core"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
@@ -165,6 +167,68 @@ describe("ClusterConfigProvider", () => {
     })
   })
 
+  describe("resolveLcoImport", () => {
+    /** Pool tuning a caller sets. */
+    const pool = LiqPoolSpec.create({
+      fee: 25,
+      conversionHorizonSec: 3_600,
+      depthCapBps: 20,
+      clipFloor: 10n
+    })
+
+    it("is null without an export", () => {
+      expect(ClusterConfigProvider.resolveLcoImport({})).toBeNull()
+      expect(ClusterConfigProvider.resolveLcoImport({ lcoImport: {} })).toBeNull()
+    })
+
+    it("resolves each export absolute and leaves every unset value null", () => {
+      expect(
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "exports/solana.json",
+          lcoImport: {
+            solana: { nativePriceUsd: "15000000000", pool },
+            dclaimFundingAccount: "lco.treasury"
+          }
+        })
+      ).toEqual({
+        ethereum: null,
+        solana: {
+          bootstrapJsonFile: Path.resolve("exports/solana.json"),
+          nativePriceUsd: "15000000000",
+          highestTranchePriceUsd: null,
+          pool
+        },
+        dclaimFundingAccount: "lco.treasury"
+      })
+    })
+
+    it("refuses a chain's options without its export, and options with no export at all", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "/exports/solana.json",
+          lcoImport: { ethereum: { nativePriceUsd: "1" } }
+        })
+      ).toThrow(/lcoImport\.ethereum is set but ethereumBootstrapJsonFile is not/)
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          lcoImport: { dclaimFundingAccount: "sysio" }
+        })
+      ).toThrow(/lcoImport is set but no bootstrap JSON file is/)
+    })
+
+    it("persists the import through cluster-config.json, its pool tuning intact", () => {
+      const lcoImport = ClusterConfigProvider.resolveLcoImport({
+          ethereumBootstrapJsonFile: "/exports/ethereum.json",
+          lcoImport: { ethereum: { pool } }
+        }),
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize({ ...fixtureConfig(), lcoImport })
+        )
+      expect(reloaded.lcoImport).toEqual(lcoImport)
+      expect(reloaded.lcoImport.ethereum.pool.clipFloor).toBe(10n)
+    })
+  })
+
   describe("deserialize", () => {
     it("rehydrates the persisted topology as the plain ClusterConfig shape", () => {
       const cfg = fixtureConfig()
@@ -226,6 +290,28 @@ describe("ClusterConfigProvider", () => {
       const reloaded = ClusterConfigProvider.loadSync(file)
       expect(reloaded.clusterPath).toBe(dir)
       expect(reloaded.bind.nodeop.ports.batch).toHaveLength(3)
+    })
+
+    it("refuses to load a read confirmation nodeop would refuse, a depth beside a non-latest tag", async () => {
+      const file = Path.join(dir, ClusterConfigProvider.ConfigFilename)
+      Fs.writeFileSync(
+        file,
+        JSON.stringify({
+          ...PersistedFixture,
+          clusterPath: dir,
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.safe,
+            confirmations: 12,
+            maxFinalityLagSec: null
+          }
+        })
+      )
+      expect(() => ClusterConfigProvider.loadSync(file)).toThrow(
+        /applies only to the latest block tag/
+      )
+      await expect(ClusterConfigProvider.load(file)).rejects.toThrow(
+        /applies only to the latest block tag/
+      )
     })
   })
 
@@ -706,6 +792,39 @@ describe("ClusterConfigProvider", () => {
       expect(config.queryEngine.timeoutMs).toBe(
         QueryEngineConfigProvider.DefaultTimeoutMs
       )
+    })
+
+    it("leaves the Ethereum read confirmation unset by default, so nodeop's defaults govern", async () => {
+      const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.ethereumRead).toEqual(
+        createUnsetEthereumReadConfirmationConfig()
+      )
+    })
+
+    it("persists a caller's Ethereum read confirmation", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        ethereumRead: { blockTag: EthereumReadBlockTag.safe }
+      })
+      expect(config.ethereumRead).toEqual({
+        blockTag: EthereumReadBlockTag.safe,
+        confirmations: null,
+        maxFinalityLagSec: null
+      })
+    })
+
+    it("rejects a confirmation depth beside a non-latest tag before any port is claimed", async () => {
+      const bindResolve = jest.spyOn(BindConfigProvider, "resolve")
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.finalized,
+            confirmations: 12
+          }
+        })
+      ).rejects.toThrow(/applies only to the latest block tag/)
+      expect(bindResolve).not.toHaveBeenCalled()
     })
 
     it("rejects a caller query deadline when no API node is planned", async () => {

@@ -2,8 +2,7 @@ import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   Constants as HarnessConstants,
   ProtocolTiming,
-  SolanaLiqSyndicationTool,
-  SolanaOutpostBootstrapper
+  SolanaLiqSyndicationTool
 } from "@wireio/cluster-tool"
 
 /**
@@ -24,7 +23,7 @@ export namespace LIQYieldScenarioConstants {
 
   /** Registered chain slug code of the Solana outpost — what `OutpostConfig.chain_code` stamps. */
   export const SolanaChainCode: bigint = BigInt(
-    SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
+    SlugName.from(HarnessConstants.SOLANA_CHAIN_CODENAME)
   )
   /** Depot token codename the outpost's REAL liqSOL mint is registered under. */
   export const LIQTokenCodename = HarnessConstants.LIQSOL_CODENAME

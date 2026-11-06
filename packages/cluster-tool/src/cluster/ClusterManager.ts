@@ -346,11 +346,12 @@ export namespace ClusterManager {
     // condition.
     const isExternalOutpost = config.externalOutposts != null
 
+    // Check-and-register under the port lock, so no other resolver can take a
+    // port between the check and this process's registration.
     Assert.ok(
-      await BindConfigProvider.validate(config.bind),
-      `cluster ${config.clusterPath}: one or more resolved ports are no longer free — cannot relaunch`
+      await BindConfigProvider.claimResolved(config.bind),
+      `cluster ${config.clusterPath}: one or more resolved ports are reserved, held by another process or no longer bind — cannot relaunch (the "bind registry:" warning logged just before names the ports)`
     )
-    BindConfigProvider.registerResolved(config.bind)
 
     const controller = new AbortController(),
       nodes = NodeConfig.plan(config),
@@ -392,21 +393,10 @@ export namespace ClusterManager {
     } else {
       log.info("[cluster] starting anvil")
       if (ctx.processManager.get(AnvilProcess.ProcessLabel) == null) {
-        // Interval mining from the FIRST boot (constructor option, not the
-        // create-path's post-deploy `evm_setIntervalMining` RPC toggle) — a
-        // relaunch never runs the outpost deploy that needs instamine.
-        const anvil = await AnvilProcess.create(ctx.processManager, {
-          host: config.bind.anvil.address,
-          port: config.bind.anvil.port,
-          chainId: AnvilProcess.DefaultChainId,
-          stateFile: Path.join(
-            config.dataPath,
-            AnvilProcess.StateSubpath,
-            AnvilProcess.StateFilename
-          ),
-          slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
-          blockTimeSec: AnvilProcess.BlockTimeSec
-        })
+        const anvil = await AnvilProcess.create(
+          ctx.processManager,
+          AnvilProcess.optionsFor(config, AnvilProcess.Launch.relaunch)
+        )
         await anvil.start()
       }
 

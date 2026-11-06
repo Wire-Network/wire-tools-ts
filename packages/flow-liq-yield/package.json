@@ -7,13 +7,14 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "test:unit": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.cjs --runInBand"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/sdk-core": "^1.0.102",
-    "@wireio/opp-typescript-models": "^1.0.54"
+    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/sdk-core": "^1.0.109"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

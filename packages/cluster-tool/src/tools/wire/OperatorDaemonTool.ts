@@ -16,6 +16,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import {
   type ClusterConfig,
+  type EthereumReadConfirmationConfig,
   ExternalOutpostConfig,
   NodeopReadMode
 } from "@wireio/cluster-tool-shared"
@@ -26,6 +27,7 @@ import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumReadConfirmationConfigProvider } from "../../config/EthereumReadConfirmationConfigProvider.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
@@ -141,10 +143,6 @@ export namespace OperatorDaemonTool {
   export const UnderwriterIdleCrankIntervalMs = 300_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 30_000
-  /** The `sysio.chains` codename identifying the ETH outpost. */
-  export const EthereumChainCodename = "ETHEREUM"
-  /** The `sysio.chains` codename identifying the SOL outpost. */
-  export const SolanaChainCodename = "SOLANA"
   /**
    * Outpost RPC client ids ARE the chain codes.
    *
@@ -154,9 +152,9 @@ export namespace OperatorDaemonTool {
    * id is invisible to them, and a batch operator that cannot reach an active
    * chain shuts down rather than relaying a partial epoch.
    */
-  export const EthereumClientId = EthereumChainCodename
+  export const EthereumClientId = Constants.ETHEREUM_CHAIN_CODENAME
   /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
-  export const SolanaClientId = SolanaChainCodename
+  export const SolanaClientId = Constants.SOLANA_CHAIN_CODENAME
   /** SOL inbound-delivery instruction the batch operator invokes. */
   export const SolanaEpochInInstruction = "epoch_in"
   /**
@@ -179,10 +177,14 @@ export namespace OperatorDaemonTool {
 
   // ── network endpoints the daemon dials ─────────────────────────────────────
 
-  /** The chain endpoints + debugging sink an operator daemon dials. */
+  /**
+   * The chain endpoints + debugging sink an operator daemon dials, and the read
+   * confirmation its Ethereum client reads the outpost at.
+   */
   export interface OperatorDaemonNetwork {
     readonly ethereumRpcUrl: string
     readonly ethereumChainId: number
+    readonly ethereumRead: EthereumReadConfirmationConfig
     readonly solanaRpcUrl: string
     readonly debuggingServerUrl: string
     readonly debuggingServerEnabled: boolean
@@ -212,6 +214,7 @@ export namespace OperatorDaemonTool {
       ethereumChainId:
         config.externalOutposts?.ethereum.chainId ??
         AnvilProcess.DefaultChainId,
+      ethereumRead: config.ethereumRead,
       solanaRpcUrl:
         config.externalOutposts?.solana.rpcUrl ??
         toURL(
@@ -418,6 +421,7 @@ export namespace OperatorDaemonTool {
           String(network.ethereumChainId)
         ].join(",")
       ),
+      ...EthereumReadConfirmationConfigProvider.toArgs(network.ethereumRead),
       ...artifacts.ethereumAbiFiles.flatMap(file =>
         pair("--ethereum-abi-file", file)
       ),

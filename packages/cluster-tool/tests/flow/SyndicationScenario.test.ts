@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { assetUnits } from "@wireio/cluster-tool/utils"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { Keypair } from "@solana/web3.js"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
@@ -95,7 +96,7 @@ describe("syndication scenario accounting", () => {
   })
   it("round trips base units without floating point, including dust", () => {
     expect(
-      WireSyndicationTool.assetUnits(
+      assetUnits(
         SyndicationScenario.quantity(2_000_000_001n)
       )
     ).toBe(2_000_000_001n)
@@ -213,7 +214,9 @@ describe("syndication scenario accounting", () => {
       window_sec: 60,
       bounty: 5,
       challenge_extra: 6,
-      min_desyndicate: 1
+      min_desyndicate: 50_000_000,
+      desynd_fee_flat: 100_000,
+      custody_shortfall_bps: 0
     }
     ctx.outputs.set(SyndicationScenario.OriginalConfigKey, config)
     await step.runner(ctx, step.input, signal)
@@ -360,10 +363,7 @@ describe("decoded syndication intake", () => {
       burned: 0,
       outcome: SysioContracts.SysioSyndRequestOutcome.PENDING,
       forfeit: 0,
-      bounty_returned: 0,
-      hold_share: 0,
-      hold_beneficiary: "",
-      share_pending: false
+      bounty_returned: 0
     }
   }
 
@@ -587,8 +587,12 @@ describe("syndication bond provider and fee arithmetic", () => {
     ])
   })
   it("rounds fees down and coverage up to the increment", () => {
+    expect(SyndicationScenario.feeOf).toBe(WireSyndicationTool.feeOf)
+    expect(SyndicationScenario.BasisPoints).toBe(WireSyndicationTool.BasisPoints)
     expect(SyndicationScenario.feeOf(2_000_000_001n, 100)).toBe(20_000_000n)
     expect(SyndicationScenario.feeOf(99n, 100)).toBe(0n)
+    expect(SyndicationScenario.feeOf(99n, 100, 100_000n)).toBe(100_000n)
+    expect(SyndicationScenario.feeOf(2_000_000_001n, 5, 100_000n)).toBe(1_100_000n)
     expect(SyndicationScenario.feeOf(0n, 100)).toBe(0n)
     expect(SyndicationScenario.coveredOf(2_000_000_001n)).toBe(2_010_000_000n)
     expect(SyndicationScenario.coveredOf(2_000_000_000n)).toBe(2_000_000_000n)

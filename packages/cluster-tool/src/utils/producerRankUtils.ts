@@ -7,8 +7,9 @@ import type { SysioContracts } from "@wireio/sdk-core"
  * The tier packed into the top two bits of `sysio.system::producer_info.rank_score` — mirrors
  * the contract's `producer_tier`, whose ascending order is the schedule's: healthy producers
  * first, then the bootstrapped backstop, then producers demoted for missed rounds. An UNSCORED
- * row (no ACTIVE `OPERATOR_TYPE_PRODUCER` row in `sysio.opreg` behind it) also sits in the
- * demoted tier, where no consumer's walk ever reaches it.
+ * row (parked, keyless, without an ACTIVE `OPERATOR_TYPE_PRODUCER` row in `sysio.opreg`, or
+ * below the live producer collateral minimum) also sits in the demoted tier, where no
+ * consumer's walk ever reaches it.
  */
 export enum ProducerTier {
   healthy = 0,
@@ -16,8 +17,24 @@ export enum ProducerTier {
   demoted = 2
 }
 
-/** Bits of `rank_score` below the tier — the contract's `tier_bits` (2) off a 64-bit key. */
-export const ProducerTierShift = 62n
+/**
+ * Bits of `rank_score` holding the registration order — the contract's `registration_bits`. The
+ * low bits, so producers with equal composites sort by earliest registration.
+ */
+export const ProducerRegistrationOrderBits = 22n
+
+/**
+ * Bits of `rank_score` holding the INVERTED composite score — the collateral multiple in
+ * hundredths of the minimum bond times the time term in whole hours — the contract's
+ * `composite_bits`. Sits between the tier and the registration order.
+ */
+export const ProducerCompositeBits = 40n
+
+/**
+ * Bits of `rank_score` below the tier — the contract's `tier_shift`: the composite plus the
+ * registration order, leaving its `tier_bits` (2) at the top of the 64-bit key.
+ */
+export const ProducerTierShift = ProducerCompositeBits + ProducerRegistrationOrderBits
 
 /**
  * Widen a `rank_score` to `bigint` without letting a lossy JSON rendering pass silently.
@@ -50,9 +67,9 @@ function toRankScore(rankScore: SysioContracts.SysioSystemProducerInfoType["rank
 /**
  * Decode the {@link ProducerTier} a producer's `rank_score` carries.
  *
- * The composite score below the tier is what ranking ORDERS on within a tier, so it is the
- * tier — never the raw key — that says whether collateral moved a producer out of the demoted
- * tier or a demotion moved it in.
+ * The composite score and registration order below the tier are what ranking ORDERS on within
+ * a tier, so it is the tier — never the raw key — that says whether meeting the collateral
+ * minimum moved a producer out of the demoted tier or a demotion moved it in.
  *
  * @param rankScore - The row's `rank_score` (a uint64 the RPC renders as a number or a string).
  * @returns The tier.

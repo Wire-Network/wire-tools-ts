@@ -20,7 +20,6 @@ import {
   SyndicationUserSteps,
   Constants as HarnessConstants,
   WireSyndicationTool,
-  SolanaOutpostBootstrapper,
   containsLIQYield,
   containsSyndicateLIQ,
   outputKey,
@@ -242,7 +241,7 @@ export class LIQSyndicationScenario extends FlowScenario {
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
                 ctx,
-                SolanaOutpostBootstrapper.SolanaChainCodename,
+                HarnessConstants.SOLANA_CHAIN_CODENAME,
                 Constants.LIQTokenCodename,
                 SysioSyndItemKind.SYNDICATION,
                 Constants.SyndicateAmount,
@@ -300,7 +299,7 @@ export class LIQSyndicationScenario extends FlowScenario {
         "resolve-syndication",
         "sysio validates the custody report",
         circulationStepOptions,
-        SolanaOutpostBootstrapper.SolanaChainCodename,
+        HarnessConstants.SOLANA_CHAIN_CODENAME,
         Constants.LIQTokenCodename,
         LIQSyndicationScenario.SyndicationEpochKey
       ),
@@ -449,7 +448,7 @@ export class LIQSyndicationScenario extends FlowScenario {
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
                 ctx,
-                SolanaOutpostBootstrapper.SolanaChainCodename,
+                HarnessConstants.SOLANA_CHAIN_CODENAME,
                 Constants.LIQTokenCodename,
                 SysioSyndItemKind.YIELD,
                 amount
@@ -472,7 +471,7 @@ export class LIQSyndicationScenario extends FlowScenario {
         "resolve-yield",
         "sysio validates the reported custody yield",
         circulationStepOptions,
-        SolanaOutpostBootstrapper.SolanaChainCodename,
+        HarnessConstants.SOLANA_CHAIN_CODENAME,
         Constants.LIQTokenCodename,
         LIQSyndicationScenario.YieldEpochKey
       ),
@@ -491,7 +490,7 @@ export class LIQSyndicationScenario extends FlowScenario {
         async ctx => {
           const envelope = await WireSyndicationTool.readEnvelope(
             ctx,
-            SolanaOutpostBootstrapper.SolanaChainCodename,
+            HarnessConstants.SOLANA_CHAIN_CODENAME,
             Constants.LIQTokenCodename,
             ctx.outputs.assert(LIQSyndicationScenario.YieldEpochKey)
           )

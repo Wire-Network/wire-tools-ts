@@ -135,6 +135,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
+| `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
@@ -341,6 +342,31 @@ Rules of the road (binding for sessions/automation; see
   collision-proof via `BindConfig`, so parallelism is bounded only by host
   resources.
 
+### Service ports and automatic client ports
+
+`BindConfigProvider` selects automatic service ports outside the host's actual
+automatic client-port ranges, including both ports of the Solana RPC/PubSub pair
+and every port of its dynamic window. Fallback services use available ports from
+10001 through 65535 with a randomized starting point, excluding those ranges,
+the reserved Agave band, and live registry claims. Every candidate still passes
+the existing IPv4/IPv6 and transport-specific availability checks.
+
+Host observations are read-only: Linux uses
+`/proc/sys/net/ipv4/ip_local_port_range`; macOS reads the ordinary, high and low
+`net.inet.ip.portrange` bounds; Windows queries IPv4/IPv6 TCP/UDP ranges with
+`netsh`. Unreadable or unsupported settings and exhausted safe pools fail
+automatic allocation. A fully pinned plan does not require these observations.
+Keep these host settings stable while clusters are running. Explicit
+pinned ports/ranges retain their availability-checked behavior; an operator who
+pins inside an automatic client range accepts the source-port collision risk.
+Ports resolved on one machine must be reviewed against the destination machine's
+settings before external deployment.
+
+During Solana startup the harness observes `validator.log` every 100 ms and
+records the first bind error's assigned-port socket states/owners with
+`ss -tuapn` where available. That snapshot is retained in startup diagnostics
+even if the conflicting client exits before readiness times out.
+
 ## Launching a persistent test cluster
 
 For interactive work — poking the chains with `clio` or the debugging TUI —
@@ -358,7 +384,7 @@ between at random:
 | Starts | the WHOLE cluster, in dependency order | ONE daemon |
 | Needs | this repo installed + built | only that daemon's binary |
 | Ports/paths | re-read from `cluster-config.json` at launch | frozen from the config at emit time |
-| Registers with the bind registry | yes (`validate` + `registerResolved`) | **no** |
+| Registers with the bind registry | yes (`claimResolved`) | **no** |
 
 `run` is the local development path. `start.sh` exists for the **published
 artifact**: a consumer who unpacks
@@ -442,9 +468,38 @@ depot needs them too:
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
-| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: free syndication and desyndication charged at floor(quantity × 5 / 10000) plus a pair-specific flat fee, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and flat fees / gross minima of 5,000,000 / 100,000,000 for LIQETH and 100,000 / 50,000,000 for LIQSOL (9 decimals; flat < minimum; both round-trip legs’ gas: Ethereum ≈507k gas, Solana 9k–104k lamports)), with custody shortfall allowance 100 bps for LIQETH and zero for LIQSOL; then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+
+Break-even sizing assumes a syndication of the pair's `min_desyndicate`.
+Outposts separately configure minimum syndications of 0.005 liqETH (5,000,000
+depot units) and 0.0025 liqSOL (2,500,000 base units), each 1/20 of the return
+minimum. Return Steps derive `max_fee` from the live pair immediately before
+submission; the contract refuses a higher charge before moving funds.
 
 Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
+
+### The LIQ kicker
+
+`sysio.kicker` pays governance-budgeted T5 WIRE gifts to LIQ holders through
+`sysio.liq::addyield` (wire-sysio `contracts/sysio.system/EMISSIONS.md`). The bootstrap
+follows `docs/platform-bootstrap-config.md` ("Kicker deployment and earmark"):
+
+| Phase | What it does |
+|---|---|
+| `Kicker` | every `create`, after `SyndicationConfig` and any `MockLiqPools`: deploys `sysio.kicker` through `setsyscode` (privileged, so its inline `sysio.token::transfer` may draw from `sysio` under `sysio@active`), reads the privilege back, then `setconfig` with a 1,000,000 WIRE budget, a 60 s minimum interval, an 86,400 s TWAP window and the contract's 5,000 bps spot-deviation guard (`Steps.registry.KickerConfiguration`; the contract default interval is one hour) |
+| `KickerPools` | only with `--enable-mock-liq-pools` (`addpool` refuses a token without its LIQ/WIRE yield pool): one `addpool` per LIQ token at the contract defaults, 200 bps, a one-WIRE `min_gift` and a mandatory 1,000-WIRE daily ceiling |
+
+The `--wire-build-path` build must carry `contracts/sysio.kicker/sysio.kicker.{wasm,abi}`.
+At the mock pools' 10-token supply a gift accrues about 0.2 WIRE a year, so no kick pays at
+the default minimum; a flow that exercises a payment lowers it with `setpool` and
+restores it.
+
+`addpool` checkpoints current LIQ supply in `kickpools.supply_snapshot`. Gifts use
+`min(supply_snapshot, current supply)`; `addyield` distributes over current supply.
+Full payments checkpoint current supply, while partial payments retain the smaller
+supply they priced. A zero snapshot only restarts the clock at current supply.
+At the 72-hour catch-up limit, a below-minimum gift forfeits and checkpoints only
+if the same interval at the same TWAP sized on current supply reaches `min_gift`.
 
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:
@@ -493,7 +548,7 @@ command comes first).
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
-| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
+| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults). Give a remote outpost as an IP literal: `run` treats every host name as local, so it checks and registers a host name's ports on this host ([bind registry §6](docs/bind-registry/README.md#6-ports-a-client-must-never-take)) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
@@ -554,29 +609,17 @@ values only — the outposts' real-world deployed addresses and public keys:
 ```json
 {
   "ethereum": {
-    "oppProtocol": { "emit": [1], "receive": [1] },
     "chainId": 560048,
     "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
     "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
     "liqEthAddresses": { "LiqEthToken": "0x…" }
   },
   "solana": {
-    "oppProtocol": { "emit": [1], "receive": [1] },
     "rpcUrl": "https://api.testnet.solana.com",
     "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
   }
 }
 ```
-
-`oppProtocol` is required for each remote outpost. Declare the capabilities of its
-deployed implementation using the reviewed `opp-compatibility.json` matrix in
-the platform manifest as the V1 reference. Before either outpost is activated,
-every emitted version must be supported by its receiver in both directions.
-Missing declarations, zero/reserved versions, and incompatible pairs fail closed.
-Exported external configs preserve the declaration. Validation uses this trusted
-metadata without contacting either outpost; operators remain responsible for
-matching it to the deployed code. See the platform manifest's
-`docs/opp-compatibility.md` for receiver-first upgrade and rollback order.
 
 - `outpostAddresses` is the outpost deploy record (`outpost-addrs-<network>.json`)
   and must carry `OPP`, `OPPInbound` and `BAR`. `liqEthAddresses` (the liqEth
@@ -794,13 +837,15 @@ handled. Keep them in mind when touching any of these areas:
 - **Port selection vs port binding.** `BindConfigProvider.resolve` picks free ports,
   but a picked port is not *bound* until its daemon spawns (possibly minutes
   later). A second process resolving in that window would happily re-pick it.
-  Every resolving process therefore registers its full resolved `BindConfig`
-  in `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
+  Every resolving process therefore registers the ports it resolved in
+  `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
   releasing the host-global port lock; later resolvers read every LIVE
   registration into their exclusion set (dead-pid files are reaped —
-  `kill(pid, 0)` + a `/proc/<pid>/cmdline` recycled-pid guard). Files are
-  removed on process exit; `findAvailable` reads the registry but never
-  writes it.
+  `kill(pid, 0)`, plus a recycled-pid guard comparing `/proc/<pid>/cmdline`
+  with the executable the file records). Files are removed on process exit;
+  `findAvailable` reads the registry but never writes it. The file format and
+  lock are a language-neutral protocol that non-Node clients (wire-sysio's
+  Python test-port lease) implement too: [`docs/bind-registry/`](docs/bind-registry/README.md).
 - **Hardhat deploy shares the repo's compile cache.** The Ethereum outpost
   deploy (`npx hardhat run src/scripts/deployLocal.ts`) compiles-if-stale
   into `<wire-ethereum>/artifacts/` + `<wire-ethereum>/cache/`, which are

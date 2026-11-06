@@ -110,11 +110,10 @@ export const ExternalOutpostProgramId =
 export function fixtureExternalOutposts(): ExternalOutpostConfig {
   return {
     ethereum: {
-      oppProtocol: { emit: [1], receive: [1, 2] },
       chainId: ExternalOutpostChainId,
       outpostAddresses: { ...ExternalOutpostAddresses }
     },
-    solana: { oppProtocol: { emit: [1], receive: [1, 2] }, programId: ExternalOutpostProgramId }
+    solana: { programId: ExternalOutpostProgramId }
   }
 }
 

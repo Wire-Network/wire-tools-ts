@@ -106,20 +106,10 @@ export namespace StartScriptSteps {
     }
   }
 
-  /** The anvil config in its RUN form — interval mining on (see {@link DaemonConfig}). */
+  /** The anvil config a `start.sh` relaunches: {@link AnvilProcess.Launch.relaunch}, interval mining on. */
   export function resolveAnvilConfig(config: ClusterConfig) {
     return AnvilProcess.resolveConfig(
-      {
-        host: config.bind.anvil.address,
-        chainId: AnvilProcess.DefaultChainId,
-        stateFile: Path.join(
-          config.dataPath,
-          AnvilProcess.StateSubpath,
-          AnvilProcess.StateFilename
-        ),
-        slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
-        blockTimeSec: AnvilProcess.BlockTimeSec
-      },
+      AnvilProcess.optionsFor(config, AnvilProcess.Launch.relaunch),
       { binary: config.executables.anvil, port: config.bind.anvil.port }
     )
   }

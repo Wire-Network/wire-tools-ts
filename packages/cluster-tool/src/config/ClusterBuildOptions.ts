@@ -7,6 +7,8 @@ import type {
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
   CollateralRequirement,
+  EthereumReadConfirmationOptions,
+  LcoImportOptions,
   QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
@@ -104,6 +106,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  /**
+   * The read confirmation every operator daemon's Ethereum client reads what the
+   * outpost emitted at (`--ethereum-read-block-tag`, `--ethereum-read-confirmations`,
+   * `--ethereum-read-max-finality-lag-sec`): every member optional; an omitted one
+   * leaves nodeop's default in force (`latest`, 12 confirmations, 1152 s). A depth
+   * or lag beside a tag other than `latest` is rejected.
+   */
+  ethereumRead?: EthereumReadConfirmationOptions
   // solana-test-validator tuning
   /**
    * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
@@ -117,6 +127,10 @@ export interface ClusterBuildOptions {
   terminateMaxPercentMisses24h?: number
   terminateWindowMs?: number
   // collateral
+  /**
+   * Per-(chain, token) minimum bonds a non-bootstrapped producer must post. Omit for
+   * `ClusterConfigProvider.DefaultRequiredProducerCollateral`, the launch minimum.
+   */
   requiredProducerCollateral?: CollateralRequirement[]
   requiredBatchOperatorCollateral?: CollateralRequirement[]
   requiredUnderwriterCollateral?: CollateralRequirement[]
@@ -136,4 +150,24 @@ export interface ClusterBuildOptions {
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
+  // launch-data (LCO) import
+  /**
+   * Path of the frozen Ethereum outpost's pre-launch export (`--ethereum-bootstrap-json-file`,
+   * an `EthereumGenesisSnapshot`). The bootstrap imports its stakers' liqETH, its WIRE claims
+   * and its LIQETH yield pool during epoch zero.
+   */
+  ethereumBootstrapJsonFile?: string
+  /**
+   * Path of the Solana outpost's genesis export (`--solana-bootstrap-json-file`, a
+   * `SolanaGenesisSnapshot`). The bootstrap imports its stakers' liqSOL, its WIRE claims and
+   * its LIQSOL yield pool during epoch zero.
+   */
+  solanaBootstrapJsonFile?: string
+  /**
+   * The launch-data import's pricing, pool tuning and claim funding account. Flag-less — a
+   * build-options document or a flow's `Scenario.defaults` sets it. A chain's members require
+   * that chain's export; an unset value takes a named placeholder, which external outposts
+   * refuse.
+   */
+  lcoImport?: LcoImportOptions
 }

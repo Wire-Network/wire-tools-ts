@@ -96,7 +96,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
-| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`, `QueryEngineConfig`, `EthereumReadConfirmationConfig`, `WireOpregBootstrap`) and wire envelopes (`JsonRPCProtocol` + the JSON-RPC 2.0 response envelope) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize), plus `JsonRPCTransport` — the ONE JSON-RPC-over-HTTP pipeline the debugging and query-engine clients share |
 | `flow-*` (15 enabled packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle, depot collateral, emissions, node-owner NFT, yield, LIQ syndication and underwriting, and emergency stop |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -128,7 +128,8 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
   validates on both ends (safeParse results ride `Either`, never `if`) and
   bridges the `TokenAmount` bigint round-trip via a `z.codec`. A shape published
   to other teams commits its generated JSON Schema (`scripts/generate-json-schemas.mjs`;
-  `docs/outpost/wire-opreg-bootstrap.schema.json`), gated against drift by jest.
+  `docs/outpost/wire-opreg-bootstrap.schema.json`,
+  `docs/bind-registry/bind-registration.schema.json`), gated against drift by jest.
 
 ## The Orchestration Model (read STYLE.md "Orchestration Model" first)
 
@@ -196,18 +197,23 @@ file lock against the cross-process registry
 (`/tmp/wire-platform-bind-config/<pid>.bind-config.json`, override
 `WIRE_BIND_REGISTRY_PATH`) and the reserved agave band. That registry is the ONLY
 mechanism making concurrent clusters safe on one host, and it works by *exclusion*:
-`resolve` seeds its claimed set from every live registrant. A port the registry never
+`resolve` seeds its claimed set from every live registrant. Non-Node clients (wire-sysio's
+Python test-port lease) join the same registry through the protocol in
+[`docs/bind-registry/`](docs/bind-registry/README.md); any change to the lock, file shape or
+liveness rule changes that protocol and its Python interop test. A port the registry never
 issued is invisible to that set, so a co-running cluster can resolve the same number.
 The resulting failures do not look like port collisions — a validator's UDP
 double-bind silently swallows forwarded transactions, and a daemon that resolves now
 but spawns minutes later collides with whoever took its port in between.
 
-**It is not a "does anything bind it?" question.** A port obtained off-registry is an
-OS *ephemeral* port (32768+ per `/proc/sys/net/ipv4/ip_local_port_range`), and the
-kernel can hand that same number to one of `resolve`'s own UNPINNED draws partway
-through the same resolve — the pin then lands in `claimed` and its pinned draw is
-correctly refused. That is an intermittent failure whose rate is just the odds of
-kernel reuse, so it survives a green test run and surfaces later as a flake.
+**It is not a "does anything bind it?" question.** A raw port-0 allocation uses
+the host's automatic client-port range (`/proc/sys/net/ipv4/ip_local_port_range`
+on Linux). Registry coordination cannot stop the kernel from assigning a planned
+but not-yet-bound port to an unrelated outbound connection. `BindConfigProvider`
+therefore excludes the observed automatic ranges from its UNPINNED service
+draws, including Solana's implicit WebSocket companion and dynamic windows.
+Explicit pins still require availability checks and can accept that collision
+risk; obtaining one off-provider also bypasses the registry's exclusion set.
 
 **The find-then-pin trap.** Every picker LOCKS what it hands back in `get-port`'s
 in-process cache (its collision avoidance). So obtaining a port via `findAvailable`
@@ -314,7 +320,8 @@ against already-deployed REMOTE ETH+SOL outposts — see "`create` against exter
 outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), `--enable-mock-liq-pools` (default off, forced
+requires `--external-outpost-config` and must be an IP literal, since the bind
+registry treats every host name as local), `--enable-mock-liq-pools` (default off, forced
 on by a local `create`, refused with `--external-outpost-config` — seed the
 2 mock shadow-liq yield pools on `sysio.swap` and back the shadow in outpost
 custody), `--enable-mock-syndication-import` (default off, forced on by a local
@@ -332,7 +339,12 @@ kind, and never `producer_api_plugin`), and
 `query-timeout-ms` defaults to 30000 (`QueryEngineConfigProvider.DefaultTimeoutMs`
 — the plugin's own 1000 ms would reject every client `timeout_ms` above it) and
 is always rendered, every other member only when set, so nodeop and the plugin
-own those defaults; any member the caller sets requires `--api-count` ≥ 1); `package` writes
+own those defaults; any member the caller sets requires `--api-count` ≥ 1),
+`--ethereum-read-block-tag <finalized|safe|latest>` / `--ethereum-read-confirmations <n>` /
+`--ethereum-read-max-finality-lag-sec <s>` (the operator daemons' Ethereum read
+confirmation, persisted as `ClusterConfig.ethereumRead`; each member rendered as
+nodeop's `--outpost-ethereum-read-*` only when set, so nodeop owns the defaults:
+`latest`, 12 confirmations, 1152 s); `package` writes
 one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
 a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
 other, loosely coupled).
@@ -417,16 +429,23 @@ daemon args (`resolveOperatorDaemonArgs`).
 `sysio.liq::regliqpool`) must be seeded during epoch zero through scenario defaults, before flow phases run. The shadow
 symbols themselves (`sysio.liq::create`, one per registered liq token), the swap's
 `setconfig` and the kicker are registry setup a real depot performs too, so the
-bootstrap does those unconditionally. A flow needing the first bonder sets
+bootstrap does those unconditionally (`Kicker`: privileged `sysio.kicker` deploy, a
+read-back of its privilege and `setconfig` with a 60 s interval, 86,400 s TWAP window and 5,000 bps spot guard). `addpool` needs a token's yield pool, so
+`KickerPools` runs only with `enableMockLiqPools`; at the mock pools' supply no kick
+meets the default one-WIRE `min_gift`, so a flow that needs a payment lowers it with
+`sysio.kicker::setpool` and restores it. Every pool also needs a positive daily cap
+from its minimum through 1,000 WIRE. A payment requires a mature TWAP observation
+window, and catch-up is bounded to 72 hours. A flow needing the first bonder sets
 `enableMockSyndicationImport: true` in `Scenario.defaults`, never `plan()`:
 `importsynd` is epoch-zero only. Reload the unlinked bonder with
 `Steps.registry.readMockSyndicationBonder(ctx)` (durable label
 `Steps.registry.MockSyndicationBonderLabel`); link its ED/EM keys in the flow to
 sweep the parked import. Either mock shadow flag enables custody backing after
 all seeds, with one funding/deposit/donation per Step and final custody checks.
-Ethereum then seeds principal through `OutpostManager.execute` in a separate
-Step, preserving the pool configuration. Verification requires principal to equal
-the backing and custody to cover it before the epoch relay can realize yield. A flow
+Ethereum seeds the planned shadow obligation during the pool's one-shot deployment
+initialization. Before funding, the backing phase requires that principal to equal
+the measured depot obligation; after funding it verifies unchanged obligation,
+matching principal and sufficient custody before the epoch relay can realize yield. A flow
 whose batch operators underwrite sets `enableBatchOperatorUnderwriting: true` in
 `Scenario.defaults` too, never `plan()`: with the import on, each funded operator's ED
 and EM keys get an epoch-zero LIQSOL and LIQETH credit, which reorders the bootstrap — the import, its
@@ -442,7 +461,15 @@ unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: t
 panic account `Constants.PANIC_ACCOUNT`, funded native `pull`/`clear` permissions
 and action links) and `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
-`Steps.registry.SyndicationConfigRegistrations`, with no fees). A flow that needs a
+`Steps.registry.SyndicationConfigRegistrations`: free syndication;
+desyndication = floor(quantity × 5 / 10000) + flat fee, recovering gas for both
+round-trip legs (Ethereum ≈507k gas; Solana 9k–104k lamports). At 9 decimals,
+LIQETH flat/minimum = 5,000,000/100,000,000 and LIQSOL = 100,000/50,000,000;
+flat < minimum). Break-even sizing assumes a syndication of min_desyndicate.
+Outpost syndication minima are separately configured at 0.005 liqETH and
+0.0025 liqSOL (1/20 of the depot return minima). `runQuotedDesyndicate` derives
+`max_fee` from the live pair before the write; a governance increase between
+read and submission is refused on chain. A flow that needs a
 fee or another bucket sets its own `synd::setconfig` in `plan()` — governance, not
 bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicating
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
@@ -458,6 +485,13 @@ are `SolanaLiqSyndicationTool` (`planSetFrozen`, `planDonateToPool`,
 `planPayPendingDesyndication`, which derives the relay's `pending_desyndication`
 PDA) and `EthereumSyndicationTool` (`planSyndicate`, `planDonateToPool`,
 `planSetPaused`, `planPayPendingDesyndication`).
+
+Emergency-stop payout evidence uses the successful Ethereum receipt's matching
+liqETH `Transfer` from the pool to the recipient; a payment may occupy any
+transaction position in its block. Solana custody changes qualify as yield
+claims only when every top-level instruction referencing the pool ATA calls
+the actual liqsol-core program with the IDL-encoded `reportLiqYield` data.
+Anchor log names alone are diagnostic, not custody attribution.
 
 **Removed functionality.** The eight reserve/swap flow packages and their bootstrap
 flags have been deleted. Only batch operators run OPP daemons. Syndication bond

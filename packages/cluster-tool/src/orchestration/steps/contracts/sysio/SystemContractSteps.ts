@@ -581,8 +581,11 @@ export namespace SystemContractSteps {
   }
 
   /**
-   * `sysio.system::setscorecfg` — set the per-factor weights behind a producer's rank score,
-   * plus the missed-round demotion threshold.
+   * `sysio.system::setscorecfg` — set the producer score configuration: the seconds of
+   * seniority each factor is worth at full credit, the seniority base every producer's time term
+   * starts from, the missed-round demotion threshold, the blocks a round needs to count as
+   * served, and the seniority an unserved round costs. The collateral multiple scales the
+   * resulting time term; it has no weight here.
    *
    * Governance-signed (`sysio@active`). Changing a weight invalidates every stored score at
    * once, so the contract opens a rescore sweep that `onblock` drains a bounded number of
@@ -616,6 +619,63 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.setscorecfg.invoke(input.data)
+  }
+
+  /** Input for {@link planSetsnpcfg} — the generated `system::setsnpcfg` data. */
+  export interface SetsnpcfgInput extends StepInput {
+    /** Input discriminator. */
+    readonly kind: "SystemContractSteps.SetsnpcfgInput"
+    /** The snapshot-attestation quorum and cadence written to `snapconfig`. */
+    readonly data: SysioContracts.SysioSystemSetsnpcfgAction
+  }
+
+  /**
+   * `sysio.system::setsnpcfg` — set the snapshot-attestation quorum and cadence.
+   *
+   * Governance-signed (`sysio@active`). Until it runs, `snapconfig.min_providers` is 0 and
+   * `votesnaphash` refuses every vote. Nodes adopt a changed `block_spacing` only on restart.
+   *
+   * @param actor - Narrative subject in the step report.
+   * @param name - Unique step name.
+   * @param description - Description of the configuration.
+   * @param options - Step execution options.
+   * @param data - Generated `setsnpcfg` action data.
+   * @returns One governance-signed configuration step.
+   */
+  export function planSetsnpcfg<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioSystemSetsnpcfgAction
+  ): ClusterBuildStep<C, SetsnpcfgInput> {
+    return ClusterBuildStep.create<C, SetsnpcfgInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SystemContractSteps.SetsnpcfgInput", data },
+      runSetsnpcfg
+    )
+  }
+
+  /**
+   * Named runner — `sysio.system::setsnpcfg` under the invoker's default `sysio@active`.
+   *
+   * @param ctx - Cluster context supplying the system contract client.
+   * @param input - The `setsnpcfg` action data.
+   * @param signal - Cancellation signal checked before submitting the action.
+   * @returns Completion of the action invocation.
+   */
+  export async function runSetsnpcfg<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SetsnpcfgInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .actions.setsnpcfg.invoke(input.data)
   }
 
   /** Input for {@link planSetacctram} — the generated `system::setacctram` data. */

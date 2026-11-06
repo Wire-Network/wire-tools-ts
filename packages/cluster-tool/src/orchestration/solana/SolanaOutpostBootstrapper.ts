@@ -12,6 +12,7 @@ import {
 import { SlugName } from "@wireio/sdk-core"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 
+import { Constants } from "../../Constants.js"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -296,7 +297,7 @@ export class SolanaOutpostBootstrapper {
     // BATCH_OPERATOR_GROUPS attestation. (The clean-room rename: liqsol_core's
     // own staking `initialize` already claims the bare name.)
     const solanaChainCode = new anchor.BN(
-      SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
+      SlugName.from(Constants.SOLANA_CHAIN_CODENAME)
     )
     const initializeTransaction = await program.methods
       .initializeOutpost(solanaChainCode)
@@ -572,8 +573,6 @@ export namespace SolanaOutpostBootstrapper {
   /** Bancor connector weight (basis points) for the bootstrap-seeded reserves. */
   export const BootstrapConnectorWeightBps = 5000
 
-  /** The outpost's own chain codename on the depot's chain registry. */
-  export const SolanaChainCodename = "SOLANA"
   /** Native SOL token codename. */
   export const SolTokenCodename = "SOL"
   /** Native SOL chain decimals (lamports) — bound via `set_token_precision`. */

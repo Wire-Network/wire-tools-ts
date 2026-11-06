@@ -48,7 +48,9 @@ export namespace SyndicationChallengeScenarioConstants {
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: String(Bounty),
     challenge_extra: String(Extra),
-    min_desyndicate: Steps.registry.MinimumDesyndication
+    min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token],
+    custody_shortfall_bps: 0
   }
   /** Fee-pot seed envelope. */
   export const SeedEpoch = outputKey<number>(

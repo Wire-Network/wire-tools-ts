@@ -8,6 +8,7 @@ import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { MockShadowBackingSteps } from "./MockShadowBackingSteps.js"
 import { KeySteps } from "./KeySteps.js"
+import { LcoImportSteps } from "./LcoImportSteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
@@ -55,6 +56,8 @@ export namespace Steps {
   export import registry = RegistrySteps
   /** Opt-in custody backing after mock shadow seeds. */
   export import mockShadowBacking = MockShadowBackingSteps
+  /** The launch-data (LCO) import of each outpost's frozen export, during epoch zero. */
+  export import lcoImport = LcoImportSteps
   /** The wire-solana liqsol surface (`anchor run init-*`) on the cluster validator. */
   export import solanaLiqsolSurface = SolanaLiqsolSurfaceSteps
   export import solanaOutpost = SolanaOutpostSteps

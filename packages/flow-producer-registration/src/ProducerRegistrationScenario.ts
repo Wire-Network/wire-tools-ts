@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  ClusterBuildStep,
   SyndicationScenario,
   SyndicationUserSteps,
   Constants as DepotConstants,
@@ -16,6 +17,7 @@ import {
   WireCollateralTool,
   WireOperatorProvisioningTool,
   matchesProtoEnum,
+  pollStep,
   pollUntil,
   producerName,
   producerTier,
@@ -58,6 +60,85 @@ async function readProducerRow(
   const account = producerAccount(ctx),
     { rows } = await ctx.wire.getProducers()
   return rows.find(row => row.owner === account)
+}
+
+/** The flow producer's row on `sysio::producers`, asserted present (a read). */
+async function assertProducerRow(
+  ctx: ClusterBuildContext
+): Promise<SysioContracts.SysioSystemProducerInfoType> {
+  const producer = await readProducerRow(ctx)
+  Assert.ok(producer != null, "the flow producer has no sysio::producers row")
+  return producer
+}
+
+/**
+ * Assert a producer holds no seniority. Seniority (`service_sec`) is earned only by serving
+ * rounds, and every unserved round costs `miss_penalty_sec` of it, floored at zero.
+ *
+ * @param producer - The producer's row.
+ */
+function assertNoSeniority(
+  producer: SysioContracts.SysioSystemProducerInfoType
+): void {
+  Assert.equal(
+    BigInt(producer.service_sec),
+    0n,
+    `the producer holds ${producer.service_sec}s of seniority where it should hold none`
+  )
+}
+
+/**
+ * Whether a producer holds seniority: pay credits `service_sec` for every round it counts.
+ *
+ * @param producer - The producer's row.
+ * @returns True when `service_sec` is positive.
+ */
+function holdsSeniority(
+  producer: SysioContracts.SysioSystemProducerInfoType
+): boolean {
+  return BigInt(producer.service_sec) > 0n
+}
+
+/**
+ * Assert a producer holds seniority.
+ *
+ * @param producer - The producer's row.
+ */
+function assertSeniorityEarned(
+  producer: SysioContracts.SysioSystemProducerInfoType
+): void {
+  Assert.ok(
+    holdsSeniority(producer),
+    "the producer holds no seniority after serving a round"
+  )
+}
+
+/**
+ * True once the flow producer's row holds seniority (a read). `onblock` processes the PREVIOUS
+ * block's header, so the credit for a round lands one block after the producer's first block of
+ * it — never on that block itself.
+ */
+async function hasEarnedSeniority(ctx: ClusterBuildContext): Promise<boolean> {
+  const producer = await readProducerRow(ctx)
+  return producer != null && holdsSeniority(producer)
+}
+
+/**
+ * Assert a producer holds a registration order — the tiebreak between equal composites, taken
+ * once per registration; 0 is unassigned.
+ *
+ * @param producer - The producer's row.
+ * @returns The registration order.
+ */
+function assertRegistrationOrder(
+  producer: SysioContracts.SysioSystemProducerInfoType
+): SysioContracts.SysioSystemProducerInfoType["registration_seq"] {
+  Assert.notEqual(
+    BigInt(producer.registration_seq),
+    0n,
+    "the producer holds no registration order"
+  )
+  return producer.registration_seq
 }
 
 /**
@@ -126,8 +207,9 @@ async function verifyProducerLeavesSchedule(
 
 /**
  * A fresh producer bonds 2.0 LIQSOL AND 2.0 LIQETH on the depot, joins the active
- * schedule, produces blocks, is demoted for missed rounds, and recovers through
- * the off-schedule registration pardon. Withdrawing either shadow removes
+ * schedule, earns seniority by producing blocks, loses it to the miss penalty and is
+ * demoted for missed rounds, and recovers through the off-schedule registration
+ * pardon, which keeps its registration order. Withdrawing either shadow removes
  * admission; each bond is returned through its own remit claim.
  */
 export class ProducerRegistrationScenario extends FlowScenario {
@@ -175,16 +257,16 @@ export class ProducerRegistrationScenario extends FlowScenario {
         )
       }
 
-    // ── 0. Install the weights + the demotion threshold the flow asserts against ──
+    // ── 0. Install the weights, the demotion threshold and the miss penalty the flow asserts against ──
     ClusterBuildPhase.create(
       cluster,
       "ScoreConfig",
-      "Install the producer score weights and the missed-round demotion threshold"
+      "Install the producer score weights, the missed-round demotion threshold and the miss penalty"
     ).push(
       Steps.contracts.sysio.system.planSetscorecfg(
         Actor.Sysio,
         "setscorecfg",
-        `install prodscorecfg with max_consecutive_missed_rounds = ${Constants.MaxConsecutiveMissedRounds}`,
+        `install prodscorecfg with max_consecutive_missed_rounds = ${Constants.MaxConsecutiveMissedRounds} and miss_penalty_sec = ${Constants.MissPenaltySec}`,
         {},
         { weights: Constants.ScoreConfig }
       )
@@ -402,11 +484,12 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "registration-scores-the-producer",
-        "registration scores the admitted producer in the healthy tier",
+        "registration scores the admitted producer in the healthy tier, with a registration order and no seniority",
         async ctx => {
           // The score is what ranking ORDERS on, and an unscored row sits in the demoted tier
-          // where no consumer's walk ever reaches it. Registration reads the already-posted
-          // collateral for the initial score; regfinkey then rescores the row into schedulable
+          // where no consumer's walk ever reaches it. Registration checks the posted collateral
+          // against the live minimum — the same bond the composite is multiplied by — and takes
+          // the producer's registration order; regfinkey then rescores the row into schedulable
           // standing. The tier is read from the key itself.
           await pollUntil(
             "producer rank_score in the healthy tier",
@@ -419,6 +502,14 @@ export class ProducerRegistrationScenario extends FlowScenario {
             },
             Constants.scoreDeadlineMs(),
             Constants.PollIntervalMs
+          )
+          // Seniority is earned only by serving rounds, and the producer's node does not start
+          // until the next phase. The order is recorded for the pardon to be checked against.
+          const producer = await assertProducerRow(ctx)
+          assertNoSeniority(producer)
+          ctx.outputs.set(
+            Constants.RegistrationOrder,
+            assertRegistrationOrder(producer)
           )
         },
         scoreStepOptions
@@ -463,6 +554,23 @@ export class ProducerRegistrationScenario extends FlowScenario {
           )
         },
         scheduleStepOptions
+      ),
+      // Pay credits the producer's first counted round a full rotation of seniority, but in the
+      // `onblock` of the block AFTER its first one: the head can be the producer's block while its
+      // row still holds none. Polled to the block-production deadline, since it lands with the
+      // next block.
+      ClusterBuildStep.create(
+        Actor.Sysio,
+        "producer-earns-seniority",
+        "pay credits the produced round's seniority, one block after the producer's first block",
+        scheduleStepOptions,
+        null,
+        pollStep.lift(
+          "the flow producer's row holds the produced round's seniority",
+          hasEarnedSeniority,
+          Constants.scheduleDeadlineMs(ScheduleSize),
+          Constants.PollIntervalMs
+        )
       )
     )
 
@@ -482,7 +590,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "misses-accrue-then-demote",
-        `consecutive_missed_rounds reaches ${Constants.MaxConsecutiveMissedRounds} and demotion fires`,
+        `consecutive_missed_rounds reaches ${Constants.MaxConsecutiveMissedRounds}, demotion fires and the miss penalty takes its seniority`,
         async ctx => {
           await pollUntil(
             "producer demoted for consecutive missed rounds",
@@ -512,6 +620,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
               `is_demoted is set but rank_score ${demoted.rank_score} is not in the demoted tier`
             )
           }
+          // Each unserved round costs miss_penalty_sec of seniority, floored at zero, and the
+          // installed penalty is far above what the producer earned before its node stopped.
+          assertNoSeniority(demoted)
         },
         demotionStepOptions
       ),
@@ -547,7 +658,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "demotion-cleared",
-        "regproducer pardons a producer the schedule dropped, clearing the demotion and the streak",
+        "regproducer pardons a producer the schedule dropped, clearing the demotion and the streak but keeping its registration order",
         async ctx => {
           const producer = await readProducerRow(ctx)
           if (producer == null) {
@@ -569,6 +680,15 @@ export class ProducerRegistrationScenario extends FlowScenario {
                 "a pardon for an unscheduled producer must clear it, since it has no round to serve"
             )
           }
+          // The pardon clears the demotion, not the registration: the producer keeps the order it
+          // took when it registered, and with it its place among equal composites. Only a
+          // termination or slash takes a new one.
+          const registered = ctx.outputs.assert(Constants.RegistrationOrder)
+          Assert.equal(
+            BigInt(assertRegistrationOrder(producer)),
+            BigInt(registered),
+            `the pardon moved the registration order from ${registered} to ${producer.registration_seq}`
+          )
         },
         {}
       ),
@@ -589,16 +709,24 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "served-rounds-keep-the-record-clean",
-        "the recovered producer stays healthy while it serves its rounds",
+        "the recovered producer stays healthy and earns seniority back while it serves its rounds",
         async ctx => {
           // The pardon already zeroed the streak, so this is not re-asserting the clear — it is
           // asserting the producer does not fall straight back. A round is scored once, at the
-          // transition where it ENDS, so waiting for the head to move OFF this producer is what
-          // makes the verdict readable: only then has its round been judged, and a SERVED verdict
-          // is the one that leaves the streak at zero and the demotion off.
+          // transition where it ENDS, and `onblock` processes the PREVIOUS block's header, so the
+          // next producer's first block is judged one block later: the verdict, and the round's
+          // seniority credit, are readable once the head has moved OFF this producer and one more
+          // block has followed. A SERVED verdict leaves the streak at zero and the demotion off.
           await pollUntil(
-            "the recovered producer's round ended and was scored",
+            "the recovered producer's round ended",
             async () => !(await hasProducedBlock(ctx)),
+            Constants.scheduleDeadlineMs(ScheduleSize),
+            Constants.PollIntervalMs
+          )
+          const { head_block_num: roundEndedBlock } = await ctx.wire.getInfo()
+          await pollUntil(
+            "the block that ended the recovered producer's round was judged",
+            async () => (await ctx.wire.getInfo()).head_block_num > roundEndedBlock,
             Constants.scheduleDeadlineMs(ScheduleSize),
             Constants.PollIntervalMs
           )
@@ -619,6 +747,8 @@ export class ProducerRegistrationScenario extends FlowScenario {
                 "while serving its rounds"
             )
           }
+          // The misses floored its seniority at zero; the round it just served earned some back.
+          assertSeniorityEarned(producer)
         },
         {}
       )

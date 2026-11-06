@@ -90,7 +90,6 @@ export namespace EthereumSyndicationTool {
   /** `SyndicationPool` functions the tool encodes, by ABI name. */
   export enum PoolFunction {
     syndicate = "syndicate",
-    initializeSyndication = "initializeSyndication",
     pause = "pause",
     unpause = "unpause",
     payPendingDesyndication = "payPendingDesyndication"
@@ -126,11 +125,10 @@ export namespace EthereumSyndicationTool {
   export interface SyndicationPoolView {
     paused(): Promise<boolean>
     poolBalanceDepot(): Promise<bigint>
+    custodyShortfallBps(): Promise<bigint>
     syndicatedPrincipal(): Promise<bigint>
     outpostChainCode(): Promise<bigint>
-    pendingDesyndications(
-      requestId: bigint
-    ): Promise<[string, bigint, bigint]>
+    pendingDesyndications(requestId: bigint): Promise<[string, bigint, bigint]>
     maxSyndicationPerTransfer(): Promise<bigint>
     yieldDeadband(): Promise<bigint>
     liqTokenCode(): Promise<bigint>
@@ -138,9 +136,73 @@ export namespace EthereumSyndicationTool {
     authority(): Promise<string>
   }
 
-  /** The liqETH token reads this tool makes. */
+  /**
+   * `SyndicationPool` events this tool reads, by ABI name.
+   */
+  export enum PoolEvent {
+    Desyndicated = "Desyndicated",
+    CustodyShortfall = "CustodyShortfall",
+    CustodyShortfallTolerated = "CustodyShortfallTolerated"
+  }
+
+  /** The ratio check's actual custody and post-burn outstanding, from its event. */
+  export interface CustodyCheck {
+    requestId: bigint
+    postPayoutBalanceDepot: bigint
+    totalSyndicated: bigint
+    /** Event allowance for a tolerated payout; live allowance for a refused payout. */
+    toleranceBps: bigint
+  }
+
+  /** ERC-20 events used to verify a pool payment's receipt. */
+  export enum LiqEthEvent {
+    Transfer = "Transfer"
+  }
+
+  /** The first block an event scan covers — the whole cluster chain. */
+  export const EventScanFromBlock = 0
+
+  /**
+   * The liqETH token reads this tool makes. Each takes optional ethers
+   * overrides so a read can be pinned to a `blockTag`.
+   */
   export interface LiqEthTokenView {
-    balanceOf(account: string): Promise<bigint>
+    balanceOf(account: string, overrides?: ethers.Overrides): Promise<bigint>
+    /** The rebasing index (`RewardsERC20.index`). */
+    index(overrides?: ethers.Overrides): Promise<bigint>
+    /** The index's fixed-point unit (`RewardsERC20.unit`). */
+    unit(overrides?: ethers.Overrides): Promise<bigint>
+  }
+
+  /**
+   * One `SyndicationPool.Desyndicated` event — a depot release the pool PAID,
+   * verified against the liqETH transfer in its successful receipt.
+   */
+  export interface DesyndicationPayment {
+    /** The payout address. */
+    recipient: string
+    /** liqETH wei the pool transferred. */
+    nativeAmount: bigint
+    /** The depot units (9 decimals) the release carried. */
+    depotAmount: bigint
+    /** The depot request id. */
+    requestId: bigint
+    /** The block the payment landed in. */
+    blockNumber: number
+    /** The payment transaction's index inside that block. */
+    transactionIndex: number
+  }
+
+  /**
+   * liqETH's share rate at one block: `balance = floor(shares · index / unit)`
+   * and a transfer of `value` moves `ceil(value · unit / index)` shares
+   * (`RewardsERC20._shareToToken` / `previewShares`).
+   */
+  export interface LiqEthRate {
+    /** `RewardsERC20.index()`. */
+    index: bigint
+    /** `RewardsERC20.unit()`. */
+    unit: bigint
   }
 
   /** The access-manager read the configuration check makes. */
@@ -238,10 +300,7 @@ export namespace EthereumSyndicationTool {
   ): ethers.BaseContract {
     return loadOutpostContract<object>(
       ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.LiqEthAddressesFile
-      ),
+      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
       DepositManagerContractName,
       [...DepositManagerArtifactSubpath],
       runner
@@ -262,10 +321,7 @@ export namespace EthereumSyndicationTool {
   ): LiqEthTokenView & ethers.BaseContract {
     return loadOutpostContract<LiqEthTokenView>(
       ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.LiqEthAddressesFile
-      ),
+      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
       LiqEthTokenContractName,
       [...LiqEthTokenArtifactSubpath],
       runner,
@@ -496,6 +552,81 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
+   * Read the pool's governed, inclusive custody-gap allowance without changing it.
+   * @param ctx - The build context.
+   * @returns The deployed allowance in basis points.
+   */
+  export async function readCustodyShortfallBps<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<bigint> {
+    return loadSyndicationPool(ctx, ctx.ethereum.provider).custodyShortfallBps()
+  }
+
+  /**
+   * Read the successful transaction's custody-check event for one request.
+   * Missing evidence returns undefined for polling; duplicate evidence is refused.
+   * A refused check must still fully fund the payout, isolating the ratio guard.
+   * @param ctx - The build context.
+   * @param requestId - The depot request id.
+   * @param depotAmount - The exact net redemption, in depot units.
+   * @param tolerated - Select the tolerated event rather than the refusal event.
+   * @returns Actual projected custody, post-burn outstanding and allowance, or undefined.
+   */
+  export async function readCustodyCheck<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint,
+    depotAmount: bigint,
+    tolerated: boolean
+  ): Promise<CustodyCheck> {
+    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+      eventName = tolerated
+        ? PoolEvent.CustodyShortfallTolerated
+        : PoolEvent.CustodyShortfall,
+      events = await pool.queryFilter(
+        pool.getEvent(eventName),
+        EventScanFromBlock
+      ),
+      checks = events
+        .map(event => {
+          Assert.ok(
+            event instanceof ethers.EventLog,
+            `Undecoded ${eventName} event`
+          )
+          return event
+        })
+        .filter(event => BigInt(event.args.requestId) === requestId)
+    if (!checks.length) return undefined
+    Assert.strictEqual(
+      checks.length,
+      1,
+      `Expected exactly one ${eventName} for request ${requestId}`
+    )
+    const [check] = checks,
+      receipt = await check.getTransactionReceipt()
+    Assert.strictEqual(
+      receipt?.status,
+      1,
+      `Custody check ${requestId} has no successful receipt`
+    )
+    Assert.strictEqual(receipt.blockHash, check.blockHash)
+    const balance = BigInt(
+      tolerated
+        ? check.args.postPayoutBalanceDepot
+        : check.args.poolBalanceDepot
+    )
+    if (!tolerated)
+      Assert.ok(balance >= depotAmount, "custody must fully fund the payout")
+    return {
+      requestId,
+      postPayoutBalanceDepot: tolerated ? balance : balance - depotAmount,
+      totalSyndicated: BigInt(check.args.totalSyndicated),
+      toleranceBps: tolerated
+        ? BigInt(check.args.toleranceBps)
+        : await pool.custodyShortfallBps()
+    }
+  }
+
+  /**
    * The release the pool stored under `requestId`, or `undefined` when none is
    * stored (never deferred, or already paid — paying deletes it). A READ.
    *
@@ -503,9 +634,10 @@ export namespace EthereumSyndicationTool {
    * @param requestId - The depot request id.
    * @returns The stored release, or `undefined`.
    */
-  export async function readPendingDesyndication<
-    C extends ClusterBuildContext
-  >(ctx: C, requestId: bigint): Promise<PendingDesyndication> {
+  export async function readPendingDesyndication<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint
+  ): Promise<PendingDesyndication> {
     const [recipient, depotAmount, reason] = await loadSyndicationPool(
       ctx,
       ctx.ethereum.provider
@@ -533,13 +665,156 @@ export namespace EthereumSyndicationTool {
    *
    * @param ctx - The build context.
    * @param account - The address to read.
+   * @param blockTag - The block to read at; the latest when omitted.
    * @returns The balance.
    */
   export async function readLiqEthBalance<C extends ClusterBuildContext>(
     ctx: C,
-    account: string
+    account: string,
+    blockTag?: ethers.BlockTag
   ): Promise<bigint> {
-    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account)
+    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account, {
+      blockTag
+    })
+  }
+
+  /**
+   * liqETH's share rate at `blockTag`. A READ.
+   *
+   * @param ctx - The build context.
+   * @param blockTag - The block to read at.
+   * @returns The index and its unit.
+   */
+  export async function readLiqEthRate<C extends ClusterBuildContext>(
+    ctx: C,
+    blockTag: ethers.BlockTag
+  ): Promise<LiqEthRate> {
+    const token = loadLiqEthToken(ctx, ctx.ethereum.provider)
+    return {
+      index: await token.index({ blockTag }),
+      unit: await token.unit({ blockTag })
+    }
+  }
+
+  /**
+   * The ONE `Desyndicated` event for `requestId`, backed by exactly one matching
+   * liqETH transfer in its successful receipt. A READ, independent of block position.
+   *
+   * @param ctx - The build context.
+   * @param requestId - The depot request id.
+   * @returns The payment and its block position.
+   * @throws If the payment or its matching token transfer is missing or duplicated.
+   */
+  export async function readDesyndicationPayment<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint
+  ): Promise<DesyndicationPayment> {
+    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+      events = await pool.queryFilter(
+        pool.getEvent(PoolEvent.Desyndicated),
+        EventScanFromBlock
+      ),
+      payments = events
+        .map(event => {
+          Assert.ok(
+            event instanceof ethers.EventLog,
+            `EthereumSyndicationTool: an undecoded ${PoolEvent.Desyndicated} log in tx ${event.transactionHash}`
+          )
+          return event
+        })
+        .filter(event => BigInt(event.args.requestId) === requestId)
+    Assert.strictEqual(
+      payments.length,
+      1,
+      `EthereumSyndicationTool: expected exactly one ${PoolEvent.Desyndicated} event for request ` +
+        `${requestId}, found ${payments.length}`
+    )
+    const [payment] = payments
+    await assertDesyndicationTransfer(ctx, pool, payment)
+    return {
+      recipient: payment.args.recipient,
+      nativeAmount: BigInt(payment.args.nativeAmount),
+      depotAmount: BigInt(payment.args.depotAmount),
+      requestId: BigInt(payment.args.requestId),
+      blockNumber: payment.blockNumber,
+      transactionIndex: payment.transactionIndex
+    }
+  }
+
+  /** Verify the pool's payment against the actual token transfer in its receipt. */
+  async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
+    ctx: C,
+    pool: ReturnType<typeof loadSyndicationPool>,
+    payment: ethers.EventLog
+  ): Promise<void> {
+    const receipt = await payment.getTransactionReceipt()
+    Assert.ok(
+      receipt?.status,
+      `EthereumSyndicationTool: payment ${payment.transactionHash} has no successful receipt`
+    )
+    Assert.strictEqual(receipt.blockHash, payment.blockHash)
+    const token = loadLiqEthToken(ctx, ctx.ethereum.provider),
+      tokenAddress = ethers.getAddress(await token.getAddress()),
+      poolAddress = ethers.getAddress(await pool.getAddress()),
+      transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
+      transfers = receipt.logs
+        .filter(
+          event =>
+            ethers.getAddress(event.address) === tokenAddress &&
+            event.topics[0] === transferTopic
+        )
+        .map(event => token.interface.parseLog(event))
+        .filter(
+          event =>
+            ethers.getAddress(event.args.from) === poolAddress &&
+            ethers.getAddress(event.args.to) ===
+              ethers.getAddress(payment.args.recipient) &&
+            BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+        )
+    Assert.strictEqual(
+      transfers.length,
+      1,
+      `EthereumSyndicationTool: expected exactly one matching liqETH transfer for request ` +
+        `${payment.args.requestId}, found ${transfers.length}`
+    )
+  }
+
+  /**
+   * The balance a liqETH holder ends with after receiving `value` wei, by the
+   * token's own share arithmetic: the holder's shares are recovered from its
+   * balance, `ceil(value · unit / index)` shares are added, and the result is
+   * `floor(shares · index / unit)`. A pure value helper — the exact figure a
+   * rebasing token makes of a transfer, which can exceed `balance + value`.
+   *
+   * @param balance - The holder's balance before the transfer.
+   * @param value - The wei transferred.
+   * @param rate - The share rate the transfer ran at.
+   * @returns The balance after the transfer.
+   * @throws If `index < unit` (a share is then worth under one wei, so a
+   *   balance no longer determines its share count).
+   */
+  export function liqEthBalanceAfterTransfer(
+    balance: bigint,
+    value: bigint,
+    rate: LiqEthRate
+  ): bigint {
+    const { index, unit } = rate
+    Assert.ok(
+      index >= unit,
+      `EthereumSyndicationTool: liqETH index ${index} below its unit ${unit} — shares are not recoverable from a balance`
+    )
+    const shares = ceilDiv(balance * unit, index)
+    Assert.strictEqual(
+      (shares * index) / unit,
+      balance,
+      `EthereumSyndicationTool: no share count yields balance ${balance} at index ${index}/${unit}`
+    )
+    return ((shares + ceilDiv(value * unit, index)) * index) / unit
+  }
+
+  /** `ceil(numerator / denominator)` for non-negative bigints. */
+  function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+    return (numerator + denominator - 1n) / denominator
   }
 
   /**
@@ -581,15 +856,16 @@ export namespace EthereumSyndicationTool {
       authority = await pool.authority()
     // The pool must answer to THIS manager, or its answer is about another pool.
     Assert.ok(
-      ethers.getAddress(authority) === ethers.getAddress(await manager.getAddress()),
+      ethers.getAddress(authority) ===
+        ethers.getAddress(await manager.getAddress()),
       `EthereumSyndicationTool: SyndicationPool's authority is ${authority}, not the deployed ` +
         `${OutpostManagerAuthorityContractName} ${await manager.getAddress()}`
     )
     const [immediate] = await manager.canCall(
-        account,
-        await pool.getAddress(),
-        pool.interface.getFunction(functionName).selector
-      )
+      account,
+      await pool.getAddress(),
+      pool.interface.getFunction(functionName).selector
+    )
     return immediate
   }
 
@@ -679,65 +955,6 @@ export namespace EthereumSyndicationTool {
     ctx: C
   ): Promise<bigint> {
     return loadSyndicationPool(ctx, ctx.ethereum.provider).syndicatedPrincipal()
-  }
-
-  /** Input to the bootstrap-only principal seed, after custody funding. */
-  export interface InitializeSyndicationInput extends StepInput {
-    readonly kind: "EthereumSyndicationTool.InitializeSyndicationInput"
-    readonly ethereumHdIndex: number
-    readonly initialPrincipal: bigint
-  }
-
-  /** Plan one manager transaction seeding principal without changing pool configuration. */
-  export function planInitializeSyndication<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
-    initialPrincipal: bigint
-  ): ClusterBuildStep<C, InitializeSyndicationInput> {
-    return ClusterBuildStep.create<C, InitializeSyndicationInput>(
-      actor, name, description, options,
-      { kind: "EthereumSyndicationTool.InitializeSyndicationInput", ethereumHdIndex, initialPrincipal },
-      runInitializeSyndication
-    )
-  }
-
-  /** ONE restricted reinitializer, routed through the manager by its configuration signer. */
-  export async function runInitializeSyndication<C extends ClusterBuildContext>(
-    ctx: C,
-    input: InitializeSyndicationInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    Assert.ok(input.initialPrincipal >= 0n, "initial principal must not be negative")
-    const signer = hdWallet(ctx, input.ethereumHdIndex),
-      pool = loadSyndicationPool(ctx, signer),
-      manager = loadOutpostContract<object>(
-        ctx.config.ethereumPath,
-        readDeployAddresses(ctx, EthereumOutpostBootstrapper.OutpostAddressesFile),
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
-        signer,
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        EthereumOutpostBootstrapper.OutpostManagerArtifactName
-      ),
-      configuration = await Promise.all([
-        pool.outpostChainCode(), pool.liqTokenCode(),
-        pool.liqTokenPrecision(), pool.yieldDeadband()
-      ])
-    await send(signer, {
-      to: manager.target,
-      data: manager.interface.encodeFunctionData(ManagerFunction.execute, [
-        await pool.getAddress(),
-        pool.interface.encodeFunctionData(PoolFunction.initializeSyndication, [
-          ...configuration, input.initialPrincipal
-        ])
-      ])
-    }, "EthereumSyndicationTool.planInitializeSyndication")
   }
 
   // ── Step: liqETH allowance for the pool (`approve`) ──────────────────────

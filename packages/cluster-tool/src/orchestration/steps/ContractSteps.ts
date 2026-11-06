@@ -121,4 +121,49 @@ export namespace ContractSteps {
     signal.throwIfAborted()
     await new WireSysioContractTool(ctx.wire).grantSysioCode(input.account)
   }
+
+  /** Input for {@link planVerifyPrivileged}. */
+  export interface VerifyPrivilegedInput extends StepInput {
+    readonly kind: "ContractSteps.VerifyPrivilegedInput"
+    readonly account: string
+  }
+
+  /**
+   * Verify `account` is privileged. A {@link DeployMode.system} deploy marks
+   * its account privileged inline (`sysio.roa::setsyscode` → `setpriv`); a
+   * contract whose inline actions borrow another account's authority (the
+   * kicker's `sysio@active` treasury draw) depends on it, so the bootstrap
+   * reads the flag back rather than trusting the deploy path.
+   */
+  export function planVerifyPrivileged<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string
+  ): ClusterBuildStep<C, VerifyPrivilegedInput> {
+    return ClusterBuildStep.create<C, VerifyPrivilegedInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "ContractSteps.VerifyPrivilegedInput", account },
+      runVerifyPrivileged
+    )
+  }
+
+  /** Named runner — fail unless the chain marks the account privileged. */
+  export async function runVerifyPrivileged<C extends ClusterBuildContext>(
+    ctx: C,
+    input: VerifyPrivilegedInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.ok(
+      await ctx.wire.isPrivileged(input.account),
+      `${input.account} is not privileged after its system deploy`
+    )
+  }
 }

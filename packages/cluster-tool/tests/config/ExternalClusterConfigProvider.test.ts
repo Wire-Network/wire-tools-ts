@@ -54,12 +54,11 @@ const config: ExternalClusterConfig = {
   },
   wire: { epochDurationSec: 60, genesisFile: "genesis.json" },
   ethereum: {
-    oppProtocol: { emit: [1], receive: [1, 2] },
     addressFile: "outpost-addrs.json",
     abiFiles: ["eth-abis/OPP.json"],
     chainId: 1
   },
-  solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/opp.json" }
+  solana: { idlFile: "solana-idls/opp.json" }
 }
 
 describe("ExternalClusterConfigProvider", () => {
@@ -83,8 +82,6 @@ describe("ExternalClusterConfigProvider", () => {
     expect(loaded.ethereum.addressFile).toBe(Path.join(dir, "outpost-addrs.json"))
     expect(loaded.ethereum.abiFiles[0]).toBe(Path.join(dir, "eth-abis/OPP.json"))
     expect(loaded.solana?.idlFile).toBe(Path.join(dir, "solana-idls/opp.json"))
-    expect(loaded.ethereum.oppProtocol).toEqual(config.ethereum.oppProtocol)
-    expect(loaded.solana.oppProtocol).toEqual(config.solana.oppProtocol)
   })
 
   it("load carries the rpcUrls through and resolves the optional liqEth + mints references", () => {
@@ -97,7 +94,6 @@ describe("ExternalClusterConfigProvider", () => {
           liqEthAddressFile: "liqeth-addrs.json"
         },
         solana: {
-          ...config.solana,
           idlFile: "solana-idls/opp.json",
           rpcUrl: "https://solana-rpc.external.example/",
           mintsFile: "sol-mock-mints.json"

@@ -52,7 +52,6 @@ describe("ExternalClusterConfig", () => {
     },
     wire: { epochDurationSec: 60 },
     ethereum: {
-      oppProtocol: { emit: [1], receive: [1, 2] },
       addressFile: "outpost-addrs.json",
       abiFiles: ["eth-abis/OPP.json"],
       chainId: 1
@@ -109,18 +108,6 @@ describe("ExternalClusterConfig", () => {
   })
 
   describe("outpost artifact sections", () => {
-    it.each(["ethereum", "solana"] as const)(
-      "requires the exported %s protocol declaration",
-      chain => {
-        const missing = JSON.parse(ExternalClusterConfigSchemaCodec.serialize({
-          ...config,
-          solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
-        }))
-        delete missing[chain].oppProtocol
-        expect(() => ExternalClusterConfigSchemaCodec.deserialize(JSON.stringify(missing))).toThrow(/oppProtocol/)
-      }
-    )
-
     it("round-trips every optional field: rpcUrls, liqEth record, SPL mints", () => {
       const full: ExternalClusterConfig = {
         ...config,
@@ -130,7 +117,6 @@ describe("ExternalClusterConfig", () => {
           liqEthAddressFile: "liqeth-addrs.json"
         },
         solana: {
-          oppProtocol: { emit: [1], receive: [1, 2] },
           idlFile: "solana-idls/liqsol_core.json",
           rpcUrl: "https://solana-rpc.external.example/",
           mintsFile: "sol-mock-mints.json"
@@ -150,7 +136,7 @@ describe("ExternalClusterConfig", () => {
         withoutIdlFile = JSON.parse(
           ExternalClusterConfigSchemaCodec.serialize({
             ...config,
-            solana: { oppProtocol: { emit: [1], receive: [1, 2] }, idlFile: "solana-idls/liqsol_core.json" }
+            solana: { idlFile: "solana-idls/liqsol_core.json" }
           })
         )
       delete withoutAddressFile.ethereum.addressFile

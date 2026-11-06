@@ -9,16 +9,26 @@ request's coverage (2.010000000 LIQSOL). That operator is the only possible bond
 and its first bond exhausts the cap.
 
 Setup sets the pair rules and checks that only the funded operator holds LIQSOL.
-The first challenge window is **589 seconds**, sized from the post-bond envelope:
-one 60-second scenario epoch for submission, a complete 420-second single hop,
+The first challenge window is **601 seconds**, sized from the post-bond envelope:
+one 72-second scenario epoch for submission, a complete 420-second single hop,
 78 seconds of governance finality for three producers, two 15-second active plugin
 passes for request issuance and reads, and one 1-second observer poll gap.
+
+The flow runs on **72-second epochs**, not the 60-second shortest. The underwriter
+verifies each request's statement against the Solana outpost's outbound envelope
+log, which keeps the last 10 epochs (`MAX_TRACKED_ENVELOPES` in liqsol-core). The
+second request is bonded only once the first bond is paid back, a challenge window
+plus three plugin passes (approve, claim, bond) after that bond. At 60-second
+epochs the window alone is about ten epochs, so the second request's statement can
+leave the log first and the request is never bonded. 72 seconds is the shortest
+epoch that keeps one epoch to spare; slower epochs only add margin, since the log
+counts epochs.
+
 Step deadlines remain ceilings that return early; they do not size the window.
 `WIRE_FLOW_TIMEOUT_SCALE` scales deadlines only. Once the first request is issued (and has
 saved its window), a separate governance Step restores **60-second windows** for
-later requests. This limits the necessary extra challenge time to the first
-request: **589/60/60-second windows total 709 seconds**, versus the PR head's
-720 seconds (three 240-second windows), a reduction of 11 seconds. The governance
+later requests, so only the first request carries the extra challenge time:
+**601/60/60-second windows**. The governance
 Step has a 108-second ceiling: the topology-derived 78-second irreversible-finality
 budget plus the shared 30-second Step margin. It adds no fixed sleep.
 The flow then acts only as users: two syndications by a linked user, one by an unlinked recipient, and that
@@ -67,7 +77,7 @@ operators' own nodes. `flow-syndication-plugin-underwriting` keeps the case of a
 three operators funded and racing.
 
 Each run uses a fresh cluster with mock liquidity pools, the syndication import
-and 60-second epochs. The pair configuration is restored at the end. The run
+and 72-second epochs. The pair configuration is restored at the end. The run
 requires a nodeop built with the `batch_operator_plugin` underwriter role
 (wire-sysio PR #671).
 
@@ -87,8 +97,7 @@ Run the runner in the background with a log and the monitor alongside it, withou
 The Report under `<cluster>/reports/` is the assertion record. The
 `second-held-by-cap` row records its held-reading count and span. The
 `second-bonded-after-recovery` row records the approval and bond times and the
-balance it compared. This package has no Jest suite; `test:unit` checks the verify Steps and that
-the flow plans no underwriter write.
+balance it compared.
 
 All protocol polls run at one-second intervals and return early. Request intake
 (first, second and unlinked) has a 720-second poll budget and a 750-second Step
@@ -98,4 +107,4 @@ writes have 60-second ceilings; the `configure-later-requests` governance Step h
 a 108-second ceiling, while other depot configuration and key-link writes have
 60-second irreversible-finality ceilings. The recovery snapshot adds no wait or
 poll: a racing claim causes one immediate balance reread. Explicit timeout scaling
-multiplies ceilings and poll budgets, never the 589/60/60-second challenge windows.
+multiplies ceilings and poll budgets, never the 601/60/60-second challenge windows.

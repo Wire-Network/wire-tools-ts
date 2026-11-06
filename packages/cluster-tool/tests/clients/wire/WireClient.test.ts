@@ -1,5 +1,7 @@
+import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
@@ -9,6 +11,9 @@ import {
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
 import { toURL } from "@wireio/cluster-tool/utils"
+import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
+
+import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
 
 describe("WireClient", () => {
   let config: WireClientConfig
@@ -23,6 +28,53 @@ describe("WireClient", () => {
       ),
       kiodUrl: null
     }
+  })
+
+  describe("getWireBalance", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    it.each([
+      ["0.000000000 WIRE", 0n],
+      ["0.000000001 WIRE", 1n],
+      ["12.345678901 WIRE", 12_345_678_901n],
+      ["9007199.254740993 WIRE", 9_007_199_254_740_993n],
+      ["-0.000000001 WIRE", -1n],
+      ["-12.345678901 WIRE", -12_345_678_901n]
+    ])(
+      "reads %s as exact nine-decimal base units",
+      async (quantity, expected) => {
+        const client = new WireClient(config),
+          balance = jest.spyOn(client.api.v1.chain, "get_currency_balance")
+        jest.spyOn(client.api.v1Provider, "call").mockResolvedValue({
+          status: 200,
+          headers: {},
+          json: [quantity],
+          text: JSON.stringify([quantity])
+        })
+
+        await expect(client.getWireBalance("alice")).resolves.toBe(expected)
+        expect(balance).toHaveBeenCalledWith("sysio.token", "alice", "WIRE")
+      }
+    )
+
+    it("returns zero when no balance row exists", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_currency_balance")
+        .mockResolvedValue([])
+
+      await expect(client.getWireBalance("alice")).resolves.toBe(0n)
+    })
+
+    it("propagates currency balance RPC failures", async () => {
+      const client = new WireClient(config),
+        error = new Error("currency balance RPC failed")
+      jest
+        .spyOn(client.api.v1.chain, "get_currency_balance")
+        .mockRejectedValue(error)
+
+      await expect(client.getWireBalance("alice")).rejects.toBe(error)
+    })
   })
 
   // The regression suite for the 2026-08-04 double-push: a finality wait that
@@ -110,6 +162,262 @@ describe("WireClient", () => {
       ).rejects.toThrow(/can never apply/)
       expect(send.mock.calls.length).toBeGreaterThan(1)
       expect(send).toHaveBeenCalledTimes(WireClient.FinalityMaxAttempts)
+    })
+
+    /** A clio failure shaped like `execFile`'s rejection of a run that printed `stderr`. */
+    function clioFailure(stderr: string, fields: object = {}) {
+      return Object.assign(new Error(`Command failed: clio\n${stderr}`), {
+        stderr,
+        ...fields
+      })
+    }
+
+    it("does NOT re-send a push whose reply was lost (http_exception)", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3200000: http exception\nError Details:\nFailure when receiving data from the peer"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/may have reached the node, so it is not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("does NOT re-send a push whose clio was killed by its timeout", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure("", { killed: true, signal: "SIGTERM" }) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ["the node already has", "Error 3040008: Duplicate transaction", {}],
+      [
+        "failed unrecognizably",
+        "",
+        { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }
+      ]
+    ])("does NOT re-send a push that %s", async (_case, stderr, fields) => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stderr, fields) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/not re-sent/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("re-sends a push the node rejected", async () => {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(
+            clioFailure(
+              "Error 3050003: sysio_assert_message assertion failure"
+            ) as never
+          )
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/assertion failure/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
+    it("preserves a JSON contract rejection instead of masking it as an ambiguous push", async () => {
+      const client = new WireClient(config),
+        stdout = JSON.stringify(TransactionRejection),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/Tier level must be between 1 and 3/)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+    })
+
+    it.each([ClioRunner.DuplicateTransactionCode, 3200000])(
+      "never re-sends an ambiguous JSON error %s",
+      async code => {
+        const client = new WireClient(config),
+          stdout = JSON.stringify({
+            ...TransactionRejection,
+            processed: {
+              ...TransactionRejection.processed,
+              except: { ...TransactionRejection.processed.except, code }
+            }
+          }),
+          send = jest
+            .spyOn(client["runner"], "run")
+            .mockRejectedValue(clioFailure(stdout, { stdout }) as never)
+        await expect(
+          client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+        ).rejects.toThrow(/not re-sent/)
+        expect(send).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it("surfaces a zero-exit JSON kicker rejection without entering finality", async () => {
+      const clusterPath = Fs.mkdtempSync(
+          Path.join(Os.tmpdir(), "wire-kicker-rejection-")
+        ),
+        binary = Path.join(clusterPath, "clio"),
+        runsFile = Path.join(clusterPath, "runs"),
+        refusal = "TWAP window must be at least 60 seconds",
+        response = {
+          ...TransactionRejection,
+          processed: {
+            ...TransactionRejection.processed,
+            except: {
+              ...TransactionRejection.processed.except,
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        },
+        client = new WireClient({ ...config, clusterPath, binary }),
+        wait = jest
+          .spyOn(client, "waitForTransactionInBlock")
+          .mockRejectedValue(new Error("not included")),
+        lookup = jest
+          .spyOn(client, "getTransaction")
+          .mockResolvedValue(null as never)
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
+      Fs.writeFileSync(
+        binary,
+        [
+          "#!/usr/bin/env bash",
+          `printf 'run\\n' >> '${runsFile}'`,
+          `printf '%s\\n' '${JSON.stringify(response)}'`
+        ].join("\n"),
+        { mode: 0o755 }
+      )
+      try {
+        const action: SysioContracts.SysioKickerSetconfigAction = {
+          cfg: {
+            budget_remaining: "1000",
+            min_interval_sec: 60,
+            twap_window_sec: 59,
+            max_spot_deviation_bps: 5000
+          }
+        }
+        await expect(
+          client.invokeTransaction(
+            client
+              .getSysioContract(SysioContracts.SysioContractName.kicker)
+              .actions.setconfig.prepare(action, {
+                authorization: WireClient.activeAuthorization("sysio")
+              })
+          )
+        ).rejects.toThrow(refusal)
+        expect(
+          Fs.readFileSync(runsFile, "utf8").trim().split("\n")
+        ).toHaveLength(WireClient.PushMaxAttempts)
+        expect(wait).not.toHaveBeenCalled()
+        expect(lookup).not.toHaveBeenCalled()
+      } finally {
+        Fs.rmSync(clusterPath, { recursive: true, force: true })
+      }
+    })
+
+    it("preserves a JSON assertion refusal from a typed desyndicate with max_fee", async () => {
+      const client = new WireClient(config),
+        refusal = "the andon cord is pulled: funds cannot leave custody",
+        amount = 500_000_000n,
+        feeBps = 5n,
+        flatFee = 100_000n,
+        data: SysioContracts.SysioSyndDesyndicateAction = {
+          holder: "andon.user",
+          quantity: "0.500000000 LIQSOL",
+          max_fee: String((amount * feeBps) / 10_000n + flatFee)
+        },
+        stdout = JSON.stringify({
+          transaction_id: TransactionId,
+          processed: {
+            id: TransactionId,
+            receipt: null,
+            except: {
+              code: 3050003,
+              name: "sysio_assert_message_exception",
+              message: "sysio_assert_message assertion failure",
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        }),
+        error = enrichClioError(
+          clioFailure("", { stdout, code: 19, killed: false, signal: null }),
+          stdout,
+          ""
+        ),
+        send = jest.spyOn(client["runner"], "run").mockRejectedValue(error),
+        wait = jest.spyOn(client, "waitForTransactionInBlock"),
+        result = client
+          .getSysioContract(SysioContracts.SysioContractName.synd)
+          .actions.desyndicate.invoke(data, {
+            authorization: WireClient.activeAuthorization(data.holder)
+          })
+      await expect(result).rejects.toBe(error)
+      await expect(result).rejects.toThrow(refusal)
+      expect(send).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+      expect(wait).not.toHaveBeenCalled()
+    })
+
+    it("rejects a failed trace clio push transaction printed with exit 0, without waiting for it", async () => {
+      const refusal = "TWAP window must be at least 60 seconds",
+        stdout = JSON.stringify({
+          transaction_id: TransactionId,
+          processed: {
+            id: TransactionId,
+            receipt: null,
+            scheduled: false,
+            except: {
+              code: 3050003,
+              name: "sysio_assert_message_exception",
+              message: "sysio_assert_message assertion failure",
+              stack: [{ msg: `assertion failure with message: ${refusal}` }]
+            }
+          }
+        }),
+        dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wireclient-trace-")),
+        runs = Path.join(dir, "runs"),
+        binary = Path.join(dir, "clio")
+      Fs.writeFileSync(
+        binary,
+        `#!/usr/bin/env bash\necho run >> '${runs}'\necho '${stdout}'\n`,
+        { mode: 0o755 }
+      )
+      try {
+        const client = new WireClient({ ...config, binary }),
+          wait = jest.spyOn(client, "waitForTransactionInBlock"),
+          data: SysioContracts.SysioKickerSetconfigAction = {
+            cfg: {
+              budget_remaining: "1000000000000000",
+              min_interval_sec: 60,
+              twap_window_sec: 59,
+              max_spot_deviation_bps: 5000
+            }
+          },
+          setconfig = client
+            .getSysioContract(SysioContracts.SysioContractName.kicker)
+            .actions.setconfig.prepare(data, {
+              authorization: WireClient.activeAuthorization("sysio")
+            })
+        await expect(client.invokeTransaction(setconfig)).rejects.toThrow(refusal)
+        expect(wait).not.toHaveBeenCalled()
+        expect(
+          Fs.readFileSync(runs, "utf-8").trim().split("\n")
+        ).toHaveLength(WireClient.PushMaxAttempts)
+      } finally {
+        Fs.rmSync(dir, { recursive: true, force: true })
+      }
     })
 
     it("skips the wait entirely for the settled-no-op sentinel", async () => {
@@ -360,6 +668,46 @@ describe("WireClient", () => {
     })
   })
 
+  describe("getBlockTrace", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    const block: WireClient.GetBlockTraceResponse = {
+      number: 12,
+      status: WireClient.BlockTraceStatus.irreversible,
+      transactions: []
+    }
+
+    it("posts the block number to the trace API and returns the traced block", async () => {
+      const post = jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(JSON.stringify(block)))
+
+      await expect(new WireClient(config).getBlockTrace(12)).resolves.toEqual(block)
+      expect(post).toHaveBeenCalledWith(
+        `${config.nodeopUrl}/v1/trace_api/get_block`,
+        expect.objectContaining({ body: JSON.stringify({ block_num: 12 }) })
+      )
+    })
+
+    it("returns null for a block the node has not traced", async () => {
+      jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(null, { status: 404 }))
+
+      await expect(new WireClient(config).getBlockTrace(12)).resolves.toBeNull()
+    })
+
+    it("fails on any other error status", async () => {
+      jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(new Response(null, { status: 500 }))
+
+      await expect(new WireClient(config).getBlockTrace(12)).rejects.toThrow(
+        "get_block_trace(12) failed: HTTP 500"
+      )
+    })
+  })
+
   describe("getTransactionId", () => {
     it("extracts from an object", () => {
       expect(WireClient.getTransactionId({ transaction_id: "abc" })).toBe("abc")
@@ -422,6 +770,84 @@ describe("WireClient", () => {
     })
   })
 
+  describe("paged table reads", () => {
+    const query: WireClient.TableRowsQuery = {
+        account: "sysio.dclaim",
+        scope: "sysio.dclaim",
+        table: "unmapped",
+        limit: 2
+      },
+      kvRow = (id: number) => ({ key: { id }, value: { id } }),
+      page = (ids: number[], nextKey: string) => ({
+        rows: ids.map(kvRow),
+        more: nextKey != null,
+        next_key: nextKey
+      })
+
+    it("getTableRows passes the node's next_key through as the next page's bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([1, 2], `{"id":3}`) as never)
+      expect(await client.getTableRows(query)).toEqual({
+        rows: [{ id: 1 }, { id: 2 }],
+        more: true,
+        nextKey: `{"id":3}`
+      })
+    })
+
+    it("getAllTableRows resumes each page at the previous page's next_key", async () => {
+      const client = new WireClient(config),
+        read = jest
+          .spyOn(client.api.v1.chain, "get_table_rows")
+          .mockResolvedValueOnce(page([1, 2], `{"id":3}`) as never)
+          .mockResolvedValueOnce(page([3, 4], `{"id":5}`) as never)
+          .mockResolvedValueOnce(page([5], undefined) as never)
+      expect(await client.getAllTableRows(query)).toEqual(
+        [1, 2, 3, 4, 5].map(id => ({ id }))
+      )
+      expect(
+        read.mock.calls.map(([params]: any[]) => params.lower_bound)
+      ).toEqual([undefined, `{"id":3}`, `{"id":5}`])
+    })
+
+    it("getAllTableRows refuses a page with more rows but no resume key", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue({ rows: [kvRow(1)], more: true } as never)
+      await expect(client.getAllTableRows(query)).rejects.toThrow(
+        /sysio\.dclaim::unmapped reported more rows but no resume key/
+      )
+    })
+
+    it("getAllTableRows refuses a resume key that does not move past its own bound", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_table_rows")
+        .mockResolvedValue(page([3], `{"id":3}`) as never)
+      await expect(
+        client.getAllTableRows({ ...query, lowerBound: `{"id":3}` })
+      ).rejects.toThrow(/no resume key past \{"id":3\}/)
+    })
+
+    it("queryAll reads the contract's table in its own scope through getAllTableRows", async () => {
+      const client = new WireClient(config),
+        all = jest.spyOn(client, "getAllTableRows").mockResolvedValue([])
+      await client
+        .getSysioContract(SysioContracts.SysioContractName.dclaim)
+        .tables.unmapped.queryAll({ limit: 500 })
+      expect(all).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account: "sysio.dclaim",
+          scope: "sysio.dclaim",
+          table: "unmapped",
+          limit: 500
+        })
+      )
+    })
+  })
+
   describe("typed table getters", () => {
     it("getProducers reads sysio::producers through the typed accessor", async () => {
       const client = new WireClient(config),
@@ -436,6 +862,25 @@ describe("WireClient", () => {
           table: "producers"
         })
       )
+    })
+  })
+
+  describe("isPrivileged", () => {
+    it("reads get_account's privileged flag for the named account", async () => {
+      const client = new WireClient(config),
+        getAccount = jest
+          .spyOn(client.api.v1.chain, "get_account")
+          .mockResolvedValue({ privileged: true } as never)
+      expect(await client.isPrivileged("sysio.kicker")).toBe(true)
+      expect(getAccount).toHaveBeenCalledWith("sysio.kicker")
+    })
+
+    it("is false for an unprivileged account", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_account")
+        .mockResolvedValue({ privileged: false } as never)
+      expect(await client.isPrivileged("alice")).toBe(false)
     })
   })
 

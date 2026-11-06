@@ -264,7 +264,7 @@ describe("SolanaLiqSyndicationTool", () => {
           "syndicate",
           {},
           UserName,
-          1n
+          2_500_000n
         ).input.userName
       ).toBe(UserName)
       expect(

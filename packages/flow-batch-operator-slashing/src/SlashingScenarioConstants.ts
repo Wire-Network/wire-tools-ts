@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
@@ -119,12 +119,16 @@ export namespace SlashingScenarioConstants {
    * slug_name of the contested outpost. ETHEREUM is one of the two outposts
    * the bootstrap registers + activates; its slug fits a JS number.
    */
-  export const ContestedChainCode = SlugName.from("ETHEREUM")
+  export const ContestedChainCode = SlugName.from(
+    Constants.ETHEREUM_CHAIN_CODENAME
+  )
   /**
    * slug_name of the non-contested active outpost (SOLANA) — receives the
    * consistent consensus envelope (see {@link ConsensusEnvelopeTag}).
    */
-  export const NonContestedChainCode = SlugName.from("SOLANA")
+  export const NonContestedChainCode = SlugName.from(
+    Constants.SOLANA_CHAIN_CODENAME
+  )
 
   /** Envelope fixture: `epoch_envelope_index` (mirrors `sysio.dispute_tests.cpp::encode_envelope`). */
   export const EnvelopeEpochEnvelopeIndex = 1

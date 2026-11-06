@@ -18,7 +18,6 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   ExternalClusterConfigSchemaCodec,
-  OppProtocolCapabilities,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -1135,7 +1134,6 @@ export namespace ExternalClusterConfigSteps {
         EthereumOutpostBootstrapper.OutpostAddressesFile
       ),
       abiFiles,
-      oppProtocol: external == null ? OppProtocolCapabilities.Current : external.oppProtocol,
       chainId: external?.chainId ?? AnvilProcess.DefaultChainId,
       ...(external?.rpcUrl != null ? { rpcUrl: external.rpcUrl } : {}),
       ...(Fs.existsSync(liqEthAddressFile) ? { liqEthAddressFile } : {})
@@ -1147,8 +1145,7 @@ export namespace ExternalClusterConfigSteps {
    * RPC endpoint of the source cluster's external-outpost config when set.
    */
   function solanaSection(merged: ClusterConfig): ExternalClusterConfigSolana {
-    const external = merged.externalOutposts?.solana,
-      rpcUrl = external?.rpcUrl,
+    const rpcUrl = merged.externalOutposts?.solana.rpcUrl,
       idlFile = Path.join(
         merged.dataPath,
         OperatorDaemonTool.SolanaIdlSubpath,
@@ -1161,7 +1158,6 @@ export namespace ExternalClusterConfigSteps {
     return Fs.existsSync(idlFile)
       ? {
           idlFile,
-          oppProtocol: external == null ? OppProtocolCapabilities.Current : external.oppProtocol,
           ...(rpcUrl != null ? { rpcUrl } : {}),
           ...(Fs.existsSync(mintsFile) ? { mintsFile } : {})
         }

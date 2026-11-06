@@ -98,10 +98,15 @@ the path flags.
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
 | `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
+| `--ethereum-read-block-tag` | | nodeop's own (`latest`) | block tag every operator daemon's Ethereum client reads what the outpost emitted at (`finalized`, `safe` or `latest`); renders `--outpost-ethereum-read-block-tag` only when set |
+| `--ethereum-read-confirmations` | | nodeop's own (`12`) | with `latest`: how many blocks deep the read is, the head counting as one; renders `--outpost-ethereum-read-confirmations` only when set; a whole number from 1 to 4294967295 (nodeop parses a `uint32`); refused beside another tag, when the config resolves and when it loads |
+| `--ethereum-read-max-finality-lag-sec` | | nodeop's own (`1152`) | with `latest`: seconds the finalized block may trail the head before reads fall back to it; renders `--outpost-ethereum-read-max-finality-lag-sec` only when set; a whole number from 1 to 4294967295 (nodeop parses a `uint32`); refused beside another tag, when the config resolves and when it loads |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
 | `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts, from their trusted deployed addresses + public keys — never contacting them |
-| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
+| `--ethereum-bootstrap-json-file <file>` | | — | the frozen Ethereum outpost's pre-launch export (opp-snapshot `EthereumGenesisSnapshot`): import its staked liqETH, WIRE claims and LIQETH yield pool during epoch zero. See "Launch-data import" below |
+| `--solana-bootstrap-json-file <file>` | | — | the Solana outpost's genesis export (`SolanaGenesisSnapshot`): import its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero |
+| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` or `ethereumRead.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
@@ -135,6 +140,54 @@ A local `create` therefore needs a nodeop built with the underwriter role. With
 flag, because the harness cannot back shadow on outposts it did not deploy.
 Batch-operator underwriting stays available there as an explicit flag. Flows set
 these options in their scenario defaults instead.
+
+**Launch-data import.** `--ethereum-bootstrap-json-file` and
+`--solana-bootstrap-json-file` replay each outpost's frozen pre-launch export onto the
+depot inside the epoch-0 window, in the `LcoImport` phase group right after
+`SyndicationConfig`:
+
+- each staker's principal → `sysio.synd::importsynd`, keyed by its pubkey (50 per push);
+- each address's pretokens → `sysio.dclaim::importseed` at one pretoken per WIRE (500 per push);
+- the protocol-owned liq (booked custody less every staked position; on Solana exactly the
+  export's `initialChainAmount`, never the custody slack) → `sysio.liq::regliqpool`, its WIRE side
+  `liq × native price ÷ highest tranche price`;
+- then `sysio.dclaim` is funded with every claim, the claims and positions are reconciled
+  against the plan (`parked` holds exactly the unlinked positions, and each account an
+  authex link resolves to holds exactly its linked positions), both imports are sealed
+  (`sysio.synd` only when no mock import follows), and the result is verified.
+
+Each export is checked first: a Solana export must hash to its `allocationHash`, book exactly
+its wallets' purchased liqSOL as `initialChainAmount` and derive its `backingAvailable`; an
+Ethereum staker's pubkey must be its address's key; no export list may name an address twice;
+every declared total must add up; and each pool must meet `sysio.swap`'s limits (seeds below
+10^15, a clip cap of at most the fee). Against external outposts the Solana export must also come from the targeted
+`programId`. The bootstrap is refused before anything runs when the claims, the T5 allotment
+(the pools' WIRE included) and the node-owner commitments exceed the 1,000,000,000 WIRE supply.
+Before the first import write, `verify-lco-funding` checks the funding account holds every
+claim and `sysio` keeps its T5 allotment and node-owner commitments, and
+`verify-lco-shadows-unminted` checks no imported shadow has supply yet; the emission config's
+`t5_distributable` already excludes every seeded pool's WIRE.
+
+The prices, pool tuning and claim funding account come from the flag-less `lcoImport`
+member of a `--cluster-build-options-file` document (or a flow's scenario defaults):
+
+```json
+{
+  "lcoImport": {
+    "ethereum": { "nativePriceUsd": "400000000000", "highestTranchePriceUsd": "10000000",
+                  "pool": { "fee": 30, "conversion_horizon_sec": 86400, "depth_cap_bps": 30, "clip_floor": "1000" } },
+    "solana": { "nativePriceUsd": "20000000000" },
+    "dclaimFundingAccount": "sysio"
+  }
+}
+```
+
+Prices are USD with 8 decimals, and a misspelled member is an error. Any value nobody sets
+takes a named placeholder that the build logs and reports; `create` against external outposts
+refuses every placeholder. The mock pool of an imported shadow is skipped (a shadow has one
+pool), and against local outposts the imported shadow is backed in custody like mock shadow. The import's record,
+every pool and position as a `BootstrapPlatformConfig`, is written to
+`<cluster>/lco-import-bootstrap-platform-config.json`.
 
 ### `run` / `destroy`
 

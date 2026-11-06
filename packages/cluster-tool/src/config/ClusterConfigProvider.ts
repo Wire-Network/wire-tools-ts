@@ -22,7 +22,11 @@ import {
   type ClusterSignatureProviderConfig,
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
+  type CollateralRequirement,
   type ExternalOutpostConfig,
+  type LcoImportChainConfig,
+  type LcoImportChainOptions,
+  type LcoImportConfig,
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
@@ -59,6 +63,7 @@ import type {
 // module-init, so whichever module loads first the other is complete by the
 // time a value is dereferenced.
 import { NodeConfig } from "./NodeConfig.js"
+import { EthereumReadConfirmationConfigProvider } from "./EthereumReadConfirmationConfigProvider.js"
 import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
@@ -190,6 +195,34 @@ export namespace ClusterConfigProvider {
     })
   ]
 
+  /** The launch minimum LIQETH bond of a non-bootstrapped producer: 0.2 LIQETH, in depot base units. */
+  export const DefaultProducerMinimumBondLiqEth = 200_000_000
+  /** The launch minimum LIQSOL bond of a non-bootstrapped producer: 5 LIQSOL, in depot base units. */
+  export const DefaultProducerMinimumBondLiqSol = 5_000_000_000
+
+  /**
+   * The default `requiredProducerCollateral`, written to `sysio.opreg::setconfig`'s
+   * `req_prod_collat`: the launch minimum for a non-bootstrapped producer, BOTH shadow liq tokens
+   * bonded on WIRE. Bootstrapped genesis producers are exempt. Governance can change it on chain,
+   * and an explicit `requiredProducerCollateral` replaces it.
+   */
+  export const DefaultRequiredProducerCollateral: readonly CollateralRequirement[] = [
+    {
+      chainCode: Constants.WireChainCode,
+      tokenCode: Number(
+        SlugName.from(Constants.liqTokenCode(Constants.ETHEREUM_CHAIN_CODENAME))
+      ),
+      minimumBond: DefaultProducerMinimumBondLiqEth
+    },
+    {
+      chainCode: Constants.WireChainCode,
+      tokenCode: Number(
+        SlugName.from(Constants.liqTokenCode(Constants.SOLANA_CHAIN_CODENAME))
+      ),
+      minimumBond: DefaultProducerMinimumBondLiqSol
+    }
+  ]
+
   /**
    * Resolve the underwriter role's configuration: `null` when
    * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
@@ -230,6 +263,70 @@ export namespace ClusterConfigProvider {
     )
     return { fundedOperatorCount, maxExposure }
   }
+  /**
+   * Resolve the launch-data (LCO) import: `null` without an export file, else each exported
+   * chain's absolute export path plus its pricing and pool tuning (`null` where unset — the
+   * import then takes a placeholder), and the claim funding account.
+   *
+   * @param options - The caller's options.
+   * @return The import configuration, or `null` when no export was given.
+   * @throws If `lcoImport` sets a chain whose export file is missing, or is set with no
+   *   export at all.
+   */
+  export function resolveLcoImport(
+    options: ClusterBuildOptions
+  ): LcoImportConfig {
+    const {
+      ethereumBootstrapJsonFile: ethereumFile,
+      solanaBootstrapJsonFile: solanaFile,
+      lcoImport = {}
+    } = options
+    Assert.ok(
+      lcoImport.ethereum == null || ethereumFile != null,
+      "ClusterConfigProvider: lcoImport.ethereum is set but ethereumBootstrapJsonFile is not"
+    )
+    Assert.ok(
+      lcoImport.solana == null || solanaFile != null,
+      "ClusterConfigProvider: lcoImport.solana is set but solanaBootstrapJsonFile is not"
+    )
+    if (ethereumFile == null && solanaFile == null) {
+      Assert.ok(
+        lcoImport.dclaimFundingAccount == null,
+        "ClusterConfigProvider: lcoImport is set but no bootstrap JSON file is"
+      )
+      return null
+    }
+    return {
+      ethereum: resolveLcoImportChain(ethereumFile, lcoImport.ethereum),
+      solana: resolveLcoImportChain(solanaFile, lcoImport.solana),
+      dclaimFundingAccount: lcoImport.dclaimFundingAccount ?? null
+    }
+  }
+
+  /**
+   * One chain's import: its export resolved absolute and its unset values `null` — explicit
+   * `null` because the slot is persisted to `cluster-config.json`.
+   */
+  function resolveLcoImportChain(
+    bootstrapJsonFile: string,
+    options: LcoImportChainOptions = {}
+  ): LcoImportChainConfig {
+    if (bootstrapJsonFile == null) {
+      return null
+    }
+    const {
+      nativePriceUsd = null,
+      highestTranchePriceUsd = null,
+      pool = null
+    } = options
+    return {
+      bootstrapJsonFile: Path.resolve(bootstrapJsonFile),
+      nativePriceUsd,
+      highestTranchePriceUsd,
+      pool
+    }
+  }
+
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
@@ -249,10 +346,14 @@ export namespace ClusterConfigProvider {
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
     assertExternalOutpostMockData(options)
-    const batchOperatorCount = assertBatchOperatorSchedule(options),
+    const lcoImport = resolveLcoImport(options),
+      batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)
+      ),
+      ethereumRead = EthereumReadConfirmationConfigProvider.resolve(
+        options.ethereumRead
       ),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
@@ -304,7 +405,9 @@ export namespace ClusterConfigProvider {
         options.requiredBatchOperatorCollateral ?? [],
       requiredUnderwriterCollateral:
         options.requiredUnderwriterCollateral ?? [],
-      requiredProducerCollateral: options.requiredProducerCollateral ?? [],
+      requiredProducerCollateral: options.requiredProducerCollateral ?? [
+        ...DefaultRequiredProducerCollateral
+      ],
       underwriterCollateral: options.underwriterCollateral ?? null,
       // Genesis authority = the well-known dev BIOS key pair, matching the
       // long-green bootstrap (the real finalizer policy is set later via
@@ -323,12 +426,14 @@ export namespace ClusterConfigProvider {
         options,
         batchOperatorCount
       ),
+      lcoImport,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,
       chainStateDbSizeMb:
         options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
       queryEngine,
+      ethereumRead,
       solanaSlotsPerEpoch:
         options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }
@@ -927,8 +1032,8 @@ export namespace ClusterConfigProvider {
    * Parse + rehydrate a persisted config via {@link ClusterConfigSchemaCodec} —
    * zod DECODE (`underwriterCollateral.amount` restored to a `TokenAmount`;
    * missing `signatureProvider`/`externalOutposts` filled by schema defaults).
-   * Does NOT re-claim ports (reload, not resolve) — `run` re-probes via
-   * `BindConfigProvider.validate`.
+   * Does NOT re-claim ports (reload, not resolve) — `run` re-claims them via
+   * `BindConfigProvider.claimResolved`.
    *
    * @param input - Raw JSON string.
    * @returns The rehydrated config.

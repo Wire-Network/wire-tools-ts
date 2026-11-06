@@ -1,23 +1,109 @@
+import { jest } from "@jest/globals"
 import Dgram from "node:dgram"
+import Os from "node:os"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
-import { BindConfigPortProtocol } from "@wireio/cluster-tool-shared"
+import {
+  BindConfigPortProtocol,
+  MaximumPort,
+  MinimumPort
+} from "@wireio/cluster-tool-shared"
 import { Deferred } from "@wireio/shared"
 import {
   assertEndpoint,
   EndpointPattern,
   filterSocketLinesByLocalPort,
+  isLocalAddress,
   isUdpPortFree,
   ListenAllAddress,
+  ListenAllAddressV6,
+  LocalhostV6,
   Localhost,
-  MaximumPort,
-  MinimumPort,
   toAddress,
   toDialAddress,
   toURL,
   URLScheme
 } from "@wireio/cluster-tool/utils"
+import { NetworkInterfaceFixture } from "../fixtures/NetworkInterfaceFixture.js"
+
+const { RemoteAddressV4, RemoteAddressV6 } = NetworkInterfaceFixture
 
 describe("netUtils", () => {
+  it("does not re-export the port bounds (they come from @wireio/cluster-tool-shared)", async () => {
+    const netUtils = await import("@wireio/cluster-tool/utils/netUtils")
+    expect("MinimumPort" in netUtils).toBe(false)
+    expect("MaximumPort" in netUtils).toBe(false)
+  })
+
+  describe("isLocalAddress", () => {
+    beforeEach(() => {
+      jest
+        .spyOn(Os, "networkInterfaces")
+        .mockReturnValue(NetworkInterfaceFixture.Interfaces)
+    })
+
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
+    it.each([
+      ListenAllAddress,
+      ListenAllAddressV6,
+      "::0",
+      "0:0:0:0:0:0:0:0",
+      "::ffff:0.0.0.0",
+      Localhost,
+      "127.1.2.3",
+      LocalhostV6,
+      "0:0:0:0:0:0:0:1"
+    ])("is true for the wildcard or loopback spelling %s", address =>
+      expect(isLocalAddress(address)).toBe(true)
+    )
+
+    // Fails closed: this host cannot tell which machine a name means.
+    it.each(["localhost", "rpc.testnet.example", ""])(
+      "is true for the non-literal %p",
+      address => expect(isLocalAddress(address)).toBe(true)
+    )
+
+    it.each([
+      NetworkInterfaceFixture.LocalAddressV4,
+      NetworkInterfaceFixture.LocalAddressV6
+    ])("is true for the local interface address %s", address => {
+      expect(isLocalAddress(address)).toBe(true)
+    })
+
+    it("ignores an IPv6 zone suffix when matching an interface address", () => {
+      expect(
+        isLocalAddress(
+          `${NetworkInterfaceFixture.LocalAddressV6}%${NetworkInterfaceFixture.InterfaceName}`
+        )
+      ).toBe(true)
+    })
+
+    it.each([RemoteAddressV4, RemoteAddressV6])(
+      "is true for %s when this host's interfaces cannot be listed",
+      address => {
+        jest.spyOn(Os, "networkInterfaces").mockImplementation(() => {
+          throw new Error("interfaces unavailable")
+        })
+        expect(isLocalAddress(address)).toBe(true)
+      }
+    )
+
+    it("classifies literal addresses when no interfaces are reported", () => {
+      jest.spyOn(Os, "networkInterfaces").mockReturnValue({})
+      expect(isLocalAddress(Localhost)).toBe(true)
+      expect(isLocalAddress(LocalhostV6)).toBe(true)
+      expect(isLocalAddress(RemoteAddressV4)).toBe(false)
+      expect(isLocalAddress(RemoteAddressV6)).toBe(false)
+    })
+
+    it.each([RemoteAddressV4, RemoteAddressV6, `${RemoteAddressV6}%eth0`])(
+      "is false for the remote IP literal %s",
+      address => expect(isLocalAddress(address)).toBe(false)
+    )
+  })
+
   it("exposes the loopback and bind-all address constants", () => {
     expect(Localhost).toBe("127.0.0.1")
     expect(ListenAllAddress).toBe("0.0.0.0")

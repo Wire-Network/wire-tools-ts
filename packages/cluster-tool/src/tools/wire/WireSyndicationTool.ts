@@ -41,6 +41,7 @@ import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/Bon
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
+import { assetUnits } from "../../utils/index.js"
 
 const {
   SysioContractName,
@@ -315,6 +316,46 @@ export namespace WireSyndicationTool {
       .tables.syndconfig.query({ limit: TableRowLimit })
     assertCompleteRead(result.more, SysioContractName.synd, "syndconfig")
     return result.rows.find(row => isPair(row, chainCode, tokenCode))
+  }
+
+  /** Basis-point denominator used by the depot's integer fee calculation. */
+  export const BasisPoints = 10_000n
+
+  /**
+   * Calculate floor(amount * feeBps / 10000) plus a flat base-unit charge.
+   * @param amount - Gross base units.
+   * @param feeBps - Percentage charge in basis points.
+   * @param flatFee - Flat charge, zero for syndication.
+   * @return Fee in base units.
+   */
+  export function feeOf(amount: bigint, feeBps: number, flatFee = 0n): bigint {
+    return (amount * BigInt(feeBps)) / BasisPoints + flatFee
+  }
+
+  /**
+   * Derive the fee cap from the live shadow pair's configuration immediately before a write.
+   * @param ctx - Build context used for typed table reads.
+   * @param quantity - Gross shadow asset being returned.
+   * @return Current fee in shadow base units; a later governance increase is refused on chain.
+   */
+  export async function readDesyndicationFee<C extends ClusterBuildContext>(
+    ctx: C,
+    quantity: SysioContracts.SysioSyndDesyndicateAction["quantity"]
+  ): Promise<string> {
+    const asset = Asset.from(quantity),
+      stat = await readShadowStat(ctx, asset.symbol.name)
+    Assert.ok(stat != null, "missing shadow token")
+    const config = await readSyndicationConfig(
+      ctx,
+      stat.chain_code,
+      stat.token_code
+    )
+    Assert.ok(config != null, "missing syndication configuration")
+    return feeOf(
+      assetUnits(quantity),
+      config.desynd_fee_bps,
+      BigInt(config.desynd_fee_flat)
+    ).toString()
   }
 
   /**
@@ -1196,14 +1237,4 @@ export namespace WireSyndicationTool {
     )
   }
 
-  /**
-   * The base units of an ABI asset string (`"2.000000000 LIQSOL"` → `2000000000n`), without
-   * passing the integer amount through floating point.
-   *
-   * @param quantity - The asset string.
-   * @return Its base units.
-   */
-  export function assetUnits(quantity: string): bigint {
-    return BigInt(Asset.from(quantity).units.toString())
-  }
 }

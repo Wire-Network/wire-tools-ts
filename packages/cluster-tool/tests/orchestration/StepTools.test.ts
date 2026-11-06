@@ -102,16 +102,23 @@ describe("pollStep.lift", () => {
 })
 
 describe("pollFor", () => {
+  beforeEach(() => jest.useFakeTimers())
+  afterEach(() => jest.useRealTimers())
+
   it("returns the first value a read yields, skipping null and undefined", async () => {
     const reads = [undefined, null, 0, 5],
-      read = jest.fn(async () => reads.shift())
-    await expect(pollFor("value", read, 1_000, 1)).resolves.toBe(0)
+      read = jest.fn(async () => reads.shift()),
+      result = expect(pollFor("value", read, 1_000, 1)).resolves.toBe(0)
+    await jest.runAllTimersAsync()
+    await result
     expect(read).toHaveBeenCalledTimes(3)
   })
 
   it("times out when the read never yields", async () => {
-    await expect(pollFor("never", async () => null, 20, 5)).rejects.toThrow(
+    const result = expect(pollFor("never", async () => null, 20, 5)).rejects.toThrow(
       "Timed out waiting for: never"
     )
+    await jest.runAllTimersAsync()
+    await result
   })
 })

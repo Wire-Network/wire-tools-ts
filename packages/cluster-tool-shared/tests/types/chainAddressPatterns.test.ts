@@ -1,7 +1,12 @@
 import {
   EvmAddressPattern,
+  EvmCompressedPublicKeyPattern,
   SolanaAddressPattern
 } from "@wireio/cluster-tool-shared"
+
+/** The secp256k1 generator point, compressed — a valid even-parity key. */
+const GeneratorPublicKey =
+  "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 
 describe("chainAddressPatterns", () => {
   it("EvmAddressPattern accepts a 0x + 40 hex address in any letter case", () => {
@@ -25,5 +30,25 @@ describe("chainAddressPatterns", () => {
     expect(SolanaAddressPattern.test("0OIl1111111111111111111111111111")).toBe(false)
     expect(SolanaAddressPattern.test("1111111111111111111111111111111")).toBe(false)
     expect(SolanaAddressPattern.test("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsUx")).toBe(false)
+  })
+
+  it("EvmCompressedPublicKeyPattern accepts a 02/03-prefixed 33-byte key, with or without 0x", () => {
+    expect(EvmCompressedPublicKeyPattern.test(GeneratorPublicKey)).toBe(true)
+    expect(EvmCompressedPublicKeyPattern.test(`0x${GeneratorPublicKey}`)).toBe(true)
+    expect(
+      EvmCompressedPublicKeyPattern.test(`03${GeneratorPublicKey.slice(2)}`)
+    ).toBe(true)
+  })
+
+  it("EvmCompressedPublicKeyPattern rejects a bad parity prefix, a 20-byte address and a short key", () => {
+    expect(
+      EvmCompressedPublicKeyPattern.test(`04${GeneratorPublicKey.slice(2)}`)
+    ).toBe(false)
+    expect(
+      EvmCompressedPublicKeyPattern.test("0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc")
+    ).toBe(false)
+    expect(
+      EvmCompressedPublicKeyPattern.test(GeneratorPublicKey.slice(0, -2))
+    ).toBe(false)
   })
 })

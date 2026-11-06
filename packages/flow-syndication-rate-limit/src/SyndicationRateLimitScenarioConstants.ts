@@ -49,8 +49,17 @@ export namespace SyndicationRateLimitScenarioConstants {
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
     challenge_extra: "1000000000",
-    min_desyndicate: Steps.registry.MinimumDesyndication
+    min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token],
+    custody_shortfall_bps: 0
   }
+  /** Accepted payout after the configured proportional and flat charges. */
+  export const DesyndicationNet = DesyndicationAmount - SyndicationScenario.feeOf(
+    DesyndicationAmount,
+    Config.desynd_fee_bps,
+    BigInt(Config.desynd_fee_flat)
+  )
+
   /** A's envelope epoch. */
   export const Epoch = outputKey<number>("rate.epoch", "burst envelope epoch")
   /** Shared request. */

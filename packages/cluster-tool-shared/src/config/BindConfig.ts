@@ -13,6 +13,11 @@ export enum BindConfigPortProtocol {
   udp = "udp"
 }
 
+/** Lowest port an endpoint or registration may name (0 is "any", meaningless in a static config). */
+export const MinimumPort = 1
+/** Highest port an endpoint or registration may name. */
+export const MaximumPort = 65_535
+
 /** One nodeop's per-node binding: `{ http, p2p }` listen ports + an optional advertise address. */
 export const BindConfigNodeopPortsSchema = z.object({
   /** HTTP (RPC) listen port. */

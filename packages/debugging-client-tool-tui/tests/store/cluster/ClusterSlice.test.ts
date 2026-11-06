@@ -6,6 +6,7 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState
@@ -104,9 +105,11 @@ const stubConfig: ClusterConfig = {
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,
   batchOperatorUnderwriting: null,
+  lcoImport: null,
   deploymentKind: ClusterDeploymentKind.local,
   chainStateDbSizeMb: DefaultChainStateDbSizeMb,
-  queryEngine: createUnsetQueryEngineConfig()
+  queryEngine: createUnsetQueryEngineConfig(),
+  ethereumRead: createUnsetEthereumReadConfirmationConfig()
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

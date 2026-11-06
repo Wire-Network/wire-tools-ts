@@ -34,7 +34,7 @@ export class SyndicationPluginUnderwritingCapScenario extends SyndicationScenari
       fundedOperatorCount: Constants.FundedOperatorCount,
       maxExposure: [Constants.UnderwriterExposureCap]
     },
-    epochDurationSec: SyndicationScenario.EpochDurationSec,
+    epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: 3,
     underwriterCount: 0
