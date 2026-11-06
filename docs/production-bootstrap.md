@@ -251,7 +251,7 @@ uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so t
 `setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in Stage 8
 before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
 
-## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, snapshot attestation, dclaim)
+## Stage 9 — OPP / application configuration (epoch, genesis producer registration, emissions, snapshot attestation, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
     `[sysio.epoch@active]`. Sizing is computed from the operator counts:
@@ -259,21 +259,9 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
     batch_op_groups)`, `batch_operator_minimum_active = operators_per_epoch * batch_op_groups` (cluster
     `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` **(cluster 90; production: real cadence)**.
 
-21. `sysio.opreg::setconfig({...})` — `[sysio.opreg@active]`:
-
-| Field | Value | Notes |
-|---|---|---|
-| `max_available_producers` | `21` | |
-| `max_available_batch_ops` | `63` | |
-| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
-| `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
-| `terminate_max_consecutive_misses` | `5` | |
-| `terminate_max_pct_misses_24h` | `5` | |
-| `terminate_window_ms` | `86400000` | 24 h |
-| `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
-| `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
-| `req_batchop_collat` | `[]` | empty by default |
-| `req_uw_collat` | `[]` | empty by default |
+21. **Defer operator collateral configuration** until the chain, token and chain-token rows
+    have been registered in step 34. `sysio.opreg::setconfig` validates every collateral reference,
+    including depot shadow tokens; the `OperatorRegistryConfig` phase follows `Registry`.
 
 `req_prod_collat` is the launch minimum a non-bootstrapped producer must bond, both rows at once, in
 depot base units at precision 9. Production uses these values; the council can change them later with
@@ -282,8 +270,9 @@ depot base units at precision 9. Production uses these values; the council can c
 22. **Genesis producer operators** — `sysio.opreg::regoperator({account:<producer>,
     type:OPERATOR_TYPE_PRODUCER, is_bootstrapped:true})` — `[sysio.opreg@active]` — one call per producer
     account (`defproducera … defproduceru`). Registered here rather than in Stage 5 because `sysio.opreg` is
-    only deployed (Stage 8) and configured (step 21) by now. Bootstrapped by fiat: genesis producers post no
-    collateral, and as bootstrapped operators they are exempt from `req_prod_collat` and from `termcheck`.
+    only deployed in Stage 8. These privileged genesis registrations use the contract's default config
+    until step 34 configures collateral. Bootstrapped producers bypass collateral eligibility even when
+    nonempty launch minima are configured later, and are also exempt from `termcheck`.
 23. **Genesis producer registration** — per producer account, in this order:
     - `sysio::regproducer({producer:<producer>, producer_key:<hosting node's K1>, url:"", location:0})` —
       `[<producer>@active]`. `sysio.system` admits it only for an ACTIVE PRODUCER operator, so it follows
@@ -451,9 +440,31 @@ contract/mint addresses via the same shapes.
 
 34. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
     `[sysio.tokens@active]`, one per binding (no separate `activctok`). Exactly one `is_native:true` per chain;
-    non-native bindings carry the same chain-side address bytes as their token row (empty when unavailable):
-    `(WIRE,WIRE,native)`, `(ETHEREUM,ETH,native)`, `(ETHEREUM,LIQETH)`, `(ETHEREUM,USDC)`, `(ETHEREUM,USDT)`,
+    outpost non-native bindings carry the same chain-side address bytes as their token row (empty when unavailable):
+    `(WIRE,WIRE,native)`, `(WIRE,LIQETH)`, `(WIRE,LIQSOL)`,
+    `(ETHEREUM,ETH,native)`, `(ETHEREUM,LIQETH)`, `(ETHEREUM,USDC)`, `(ETHEREUM,USDT)`,
     `(SOLANA,SOL,native)`, `(SOLANA,LIQSOL)`, `(SOLANA,USDCSOL)`, `(SOLANA,USDTSOL)`.
+    The WIRE shadow bindings are non-native with empty contract addresses: they describe depot
+    collateral custody while the ETHEREUM and SOLANA bindings describe the tokens' origins.
+
+    **After all registry writes**, `OperatorRegistryConfig` calls `sysio.opreg::setconfig({...})`
+    with `[sysio.opreg@active]`. Every nonempty role requirement now has its chain, token and exact
+    binding registered. This also supports producer launch minima of 0.2 LIQETH and 5 LIQSOL on WIRE;
+    supplied minima are preserved, and an explicit empty list stays empty.
+
+| Field | Value | Notes |
+|---|---|---|
+| `max_available_producers` | `21` | |
+| `max_available_batch_ops` | `63` | |
+| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
+| `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
+| `terminate_max_consecutive_misses` | `5` | |
+| `terminate_max_pct_misses_24h` | `5` | |
+| `terminate_window_ms` | `86400000` | 24 h |
+| `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
+| `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
+| `req_batchop_collat` | configured batch-operator requirements, default `[]` | |
+| `req_uw_collat` | configured underwriter requirements, default `[]` | |
 
 35. `sysio.swap::setconfig({fee_authority:"sysio", system_token:{sym:"9,WIRE", contract:"sysio.token"}})` —
     `[sysio.swap@active]` — the depot-local AMM's fee authority and system token. `sysio.swap` trades on the
