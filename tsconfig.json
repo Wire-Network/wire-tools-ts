@@ -13,6 +13,10 @@
     "dist"
   ],
   "references": [
+    { "path": "./packages/flow-batch-roster-replacement/tsconfig.json" },
+    { "path": "./packages/flow-lco-launch-smoke/tsconfig.json" },
+    { "path": "./packages/flow-ethereum-round-trip/tsconfig.json" },
+    { "path": "./packages/flow-batch-relay-restart/tsconfig.json" },
     { "path": "./packages/cluster-tool-shared/tsconfig.json" },
     { "path": "./packages/cluster-tool/tsconfig.json" },
     { "path": "./packages/flow-operator-collateral-deposit/tsconfig.json" },
