@@ -157,20 +157,17 @@ export namespace SolanaLiqsolSurfaceSteps {
    * 100-slot epoch schedule sufficient: at agave's default the wait would be
    * days.
    *
-   * `init-tranche-state` is the other omission, and for a harder reason: it
-   * CANNOT run on a local cluster built from a deployable program. Outside
-   * `--features development`, `initialize_tranche_state` pins its
-   * `chainlink_feed` and `chainlink_program` accounts to the real mainnet
-   * Chainlink SOL/USD feed and program by address, and a test validator hosts
-   * neither — the script hands it the system program and the instruction
-   * refuses with `InvalidChainlinkFeed` (7701). The tranche state is the
+   * `init-tranche-state` is also scenario-owned. The normal outpost pins its
+   * oracle accounts to the configured Chainlink feed and program; ordinary
+   * local validators host neither. A pretoken flow opts into
+   * `enableSolanaFixedPriceOracle` and initializes the tranche with those
+   * addresses itself, after the oracle fixture is loaded at genesis.
+   * The tranche state is the
    * pretoken sale's price oracle: nothing on the syndication path reads it, and
    * neither does any later script here (`init-wire-config`,
    * `init-pretoken-purchase-history` and `init-reserve` name no tranche or
    * chainlink account), so the surface this harness needs is complete without
-   * it. A cluster that DOES need the tranche state needs those two accounts
-   * cloned onto its validator first, which is a wire-solana decision, not a
-   * step this phase can take.
+   * it.
    */
   export const InitScripts: ReadonlyArray<InitScript> = [
     { script: "init-token-mint", description: "create the liqSOL Token-2022 mint + its mint authority" },

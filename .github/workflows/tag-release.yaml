@@ -228,6 +228,9 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Setup Rust for oracle fixture unit tests
+        run: rustup toolchain install 1.90.0 --profile minimal
+
       # Gate the release on the same install/build + root jest run ci.yaml uses.
       - name: Install, build and test
         env:

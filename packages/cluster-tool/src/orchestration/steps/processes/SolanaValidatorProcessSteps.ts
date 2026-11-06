@@ -5,6 +5,7 @@ import {
   type SolanaValidatorProgram
 } from "../../../cluster/processes/SolanaValidatorProcess.js"
 import { SolanaFundingTool } from "../../../tools/solana/SolanaFundingTool.js"
+import { SolanaFixedPriceOracleTool } from "../../../tools/solana/SolanaFixedPriceOracleTool.js"
 import { SolanaOutpostProgramTool } from "../../../tools/solana/SolanaOutpostProgramTool.js"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
@@ -20,13 +21,22 @@ export namespace SolanaValidatorProcessSteps {
    * with every wire-solana program loaded upgradeable, the per-cluster deployer
    * as their upgrade authority. Idempotent.
    */
-  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStart)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runStart
+    )
   }
 
   /** Named runner — get-or-create the {@link SolanaValidatorProcess} and start it. */
@@ -36,7 +46,8 @@ export namespace SolanaValidatorProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null) return
+    if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null)
+      return
 
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
       address: ctx.config.bind.solana.address,
@@ -44,9 +55,13 @@ export namespace SolanaValidatorProcessSteps {
       faucetPort: ctx.config.bind.solana.ports.faucet,
       gossipPort: ctx.config.bind.solana.ports.gossip,
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
-      ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
+      ledgerPath: Path.join(
+        ctx.config.dataPath,
+        SolanaValidatorProcess.LedgerSubpath
+      ),
       slotsPerEpoch: ctx.config.solanaSlotsPerEpoch,
-      programs: resolvePrograms(ctx.config)
+      programs: resolvePrograms(ctx.config),
+      extraArgs: SolanaFixedPriceOracleTool.accountArgs(ctx.config)
     })
     await validator.start()
   }
@@ -84,14 +99,21 @@ export namespace SolanaValidatorProcessSteps {
     const upgradeAuthority = SolanaFundingTool.createDeployerKeypair(
       config.dataPath
     ).publicKey.toBase58()
-    return SolanaOutpostProgramTool.GenesisAnchorPrograms.map(program => ({
-      name: program,
-      programId: SolanaOutpostProgramTool.assertProgramId(
-        config.solanaPath,
-        program
-      ).toBase58(),
-      soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath, program),
-      upgradeAuthority
-    }))
+    const programs: SolanaValidatorProgram[] =
+      SolanaOutpostProgramTool.GenesisAnchorPrograms.map(program => ({
+        name: program,
+        programId: SolanaOutpostProgramTool.assertProgramId(
+          config.solanaPath,
+          program
+        ).toBase58(),
+        soFile: SolanaOutpostProgramTool.programSoFile(
+          config.solanaPath,
+          program
+        ),
+        upgradeAuthority
+      }))
+    if (config.enableSolanaFixedPriceOracle)
+      programs.push(SolanaFixedPriceOracleTool.program(config))
+    return programs
   }
 }
