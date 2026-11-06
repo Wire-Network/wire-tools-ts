@@ -270,17 +270,20 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `terminate_max_consecutive_misses` | `5` | |
 | `terminate_max_pct_misses_24h` | `5` | |
 | `terminate_window_ms` | `86400000` | 24 h |
-| `req_prod_collat` | `[]` | per-(chain,token) min-bond rows; empty ⇒ no collateral required **(cluster; production: real minimums)** |
+| `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
+| `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
 | `req_batchop_collat` | `[]` | empty by default |
 | `req_uw_collat` | `[]` | empty by default |
+
+`req_prod_collat` is the launch minimum a non-bootstrapped producer must bond, both rows at once, in
+depot base units at precision 9. Production uses these values; the council can change them later with
+`setconfig`. Bootstrapped genesis producers are exempt.
 
 22. **Genesis producer operators** — `sysio.opreg::regoperator({account:<producer>,
     type:OPERATOR_TYPE_PRODUCER, is_bootstrapped:true})` — `[sysio.opreg@active]` — one call per producer
     account (`defproducera … defproduceru`). Registered here rather than in Stage 5 because `sysio.opreg` is
     only deployed (Stage 8) and configured (step 21) by now. Bootstrapped by fiat: genesis producers post no
-    collateral, `req_prod_collat` ships empty, and a non-bootstrapped registration against an empty
-    requirement vector would never become eligible. As bootstrapped operators they are also exempt from
-    `termcheck`.
+    collateral, and as bootstrapped operators they are exempt from `req_prod_collat` and from `termcheck`.
 23. **Genesis producer registration** — per producer account, in this order:
     - `sysio::regproducer({producer:<producer>, producer_key:<hosting node's K1>, url:"", location:0})` —
       `[<producer>@active]`. `sysio.system` admits it only for an ACTIVE PRODUCER operator, so it follows

@@ -244,7 +244,9 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         chain_kind: "CHAIN_KIND_SVM",
         pubkey,
         balance: 5_000_000_000,
-        position: { index_checkpoint: "0", owed_wire: 0 }
+        position: { index_checkpoint: "0", owed_wire: 0 },
+        batch_id: 1,
+        unattributed: 0
       }
     ])
     expect(

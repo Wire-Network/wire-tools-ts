@@ -283,15 +283,15 @@ describe("Steps.contracts.sysio.system", () => {
     // passing a producer authorization here would break it.
     const data: SysioContracts.SysioSystemSetscorecfgAction = {
       weights: {
-        collateral_weight: 10_000,
-        participation_weight: 10_000,
-        snapshot_weight: 10_000,
+        snapshot_weight: 259_200,
         relay_weight: 0,
         api_weight: 0,
         benchmark_weight: 0,
         max_consecutive_missed_rounds: 3,
         snapshot_target_attestations: 1,
-        min_blocks_per_round: 6
+        min_blocks_per_round: 6,
+        miss_penalty_sec: 604_800,
+        seniority_base_sec: 604_800
       }
     }
     const step = Steps.contracts.sysio.system.planSetscorecfg(
