@@ -442,9 +442,10 @@ window, and catch-up is bounded to 72 hours. A flow needing the first bonder set
 `Steps.registry.MockSyndicationBonderLabel`); link its ED/EM keys in the flow to
 sweep the parked import. Either mock shadow flag enables custody backing after
 all seeds, with one funding/deposit/donation per Step and final custody checks.
-Ethereum then seeds principal through `OutpostManager.execute` in a separate
-Step, preserving the pool configuration. Verification requires principal to equal
-the backing and custody to cover it before the epoch relay can realize yield. A flow
+Ethereum seeds the planned shadow obligation during the pool's one-shot deployment
+initialization. Before funding, the backing phase requires that principal to equal
+the measured depot obligation; after funding it verifies unchanged obligation,
+matching principal and sufficient custody before the epoch relay can realize yield. A flow
 whose batch operators underwrite sets `enableBatchOperatorUnderwriting: true` in
 `Scenario.defaults` too, never `plan()`: with the import on, each funded operator's ED
 and EM keys get an epoch-zero LIQSOL and LIQETH credit, which reorders the bootstrap — the import, its

@@ -30,6 +30,9 @@ describe("MockShadowBackingSteps", () => {
       fixtureConfig(),
       getLogger("mock-shadow-backing-test")
     )
+    jest
+      .spyOn(EthereumSyndicationTool, "readSyndicatedPrincipal")
+      .mockResolvedValue(110_000_000_000n)
   })
   afterEach(() => {
     jest.restoreAllMocks()
@@ -50,7 +53,6 @@ describe("MockShadowBackingSteps", () => {
       MockShadowBackingSteps.runReadCustody,
       MockShadowBackingSteps.runDepositEthereum,
       MockShadowBackingSteps.runDonateEthereum,
-      MockShadowBackingSteps.runInitializeEthereum,
       MockShadowBackingSteps.runVerifyCustody
     ])
   })
@@ -100,19 +102,35 @@ describe("MockShadowBackingSteps", () => {
         custody = 10_000_000_000n,
         shortfall = 100_000_000_000n,
         solana = chain === ChainKind.SVM
-      jest.spyOn(WireSyndicationTool, "readOutstanding").mockResolvedValue(backing)
-      jest.spyOn(SolanaLiqSyndicationTool, "readPoolBalance").mockResolvedValue(custody)
-      jest.spyOn(EthereumSyndicationTool, "readPoolBalanceDepot").mockResolvedValue(custody)
-      const step = MockShadowBackingSteps.planReadCustody(actor, "read", "read", {}, chain)
+      jest
+        .spyOn(WireSyndicationTool, "readOutstanding")
+        .mockResolvedValue(backing)
+      jest
+        .spyOn(SolanaLiqSyndicationTool, "readPoolBalance")
+        .mockResolvedValue(custody)
+      jest
+        .spyOn(EthereumSyndicationTool, "readPoolBalanceDepot")
+        .mockResolvedValue(custody)
+      const step = MockShadowBackingSteps.planReadCustody(
+        actor,
+        "read",
+        "read",
+        {},
+        chain
+      )
       await step.runner(context, step.input, signal)
-      const nativeRequired = context.outputs.assert(solana
-        ? MockShadowBackingSolanaRequiredKey
-        : MockShadowBackingEthereumRequiredKey),
+      const nativeRequired = context.outputs.assert(
+          solana
+            ? MockShadowBackingSolanaRequiredKey
+            : MockShadowBackingEthereumRequiredKey
+        ),
         scale = solana ? 1n : MockShadowBackingSteps.EthereumWeiPerDepotUnit
       expect(nativeRequired).toBe(shortfall * scale)
       expect(custody + nativeRequired / scale).toBe(backing)
       if (!solana) {
-        expect(context.outputs.assert(MockShadowBackingEthereumPrincipalKey)).toBe(backing)
+        expect(
+          context.outputs.assert(MockShadowBackingEthereumPrincipalKey)
+        ).toBe(backing)
       }
     }
   )
@@ -120,6 +138,9 @@ describe("MockShadowBackingSteps", () => {
   it.each([ChainKind.SVM, ChainKind.EVM] as const)(
     "does not acquire backing when custody already covers %s",
     async chain => {
+      jest
+        .mocked(EthereumSyndicationTool.readSyndicatedPrincipal)
+        .mockResolvedValue(10n)
       jest.spyOn(WireSyndicationTool, "readOutstanding").mockResolvedValue(10n)
       jest
         .spyOn(SolanaLiqSyndicationTool, "readPoolBalance")
@@ -176,7 +197,9 @@ describe("MockShadowBackingSteps", () => {
         .mockResolvedValueOnce(10n)
         .mockResolvedValue(9n)
       context.outputs.set(MockShadowBackingEthereumPrincipalKey, 10n)
-      jest.spyOn(EthereumSyndicationTool, "readSyndicatedPrincipal").mockResolvedValue(10n)
+      jest
+        .spyOn(EthereumSyndicationTool, "readSyndicatedPrincipal")
+        .mockResolvedValue(10n)
       const step = MockShadowBackingSteps.planVerifyCustody(
         actor,
         "verify",
@@ -194,32 +217,66 @@ describe("MockShadowBackingSteps", () => {
   it("rejects covered custody with unseeded principal", async () => {
     context.outputs.set(MockShadowBackingEthereumPrincipalKey, 10n)
     jest.spyOn(WireSyndicationTool, "readOutstanding").mockResolvedValue(10n)
-    jest.spyOn(EthereumSyndicationTool, "readPoolBalanceDepot").mockResolvedValue(10n)
-    jest.spyOn(EthereumSyndicationTool, "readSyndicatedPrincipal").mockResolvedValue(0n)
-    const step = MockShadowBackingSteps.planVerifyCustody(actor, "verify", "verify", {}, ChainKind.EVM)
-    await expect(step.runner(context, step.input, signal)).rejects.toThrow("principal must equal backing")
+    jest
+      .spyOn(EthereumSyndicationTool, "readPoolBalanceDepot")
+      .mockResolvedValue(10n)
+    jest
+      .spyOn(EthereumSyndicationTool, "readSyndicatedPrincipal")
+      .mockResolvedValue(0n)
+    const step = MockShadowBackingSteps.planVerifyCustody(
+      actor,
+      "verify",
+      "verify",
+      {},
+      ChainKind.EVM
+    )
+    await expect(step.runner(context, step.input, signal)).rejects.toThrow(
+      "principal must equal backing"
+    )
   })
 
-  it("seeds depot principal even when custody already covers the obligation", async () => {
-    jest.spyOn(WireSyndicationTool, "readOutstanding").mockResolvedValue(110_000_000_000n)
-    jest.spyOn(EthereumSyndicationTool, "readPoolBalanceDepot").mockResolvedValue(110_000_000_000n)
-    const read = MockShadowBackingSteps.planReadCustody(actor, "read", "read", {}, ChainKind.EVM)
-    await read.runner(context, read.input, signal)
-    expect(context.outputs.assert(MockShadowBackingEthereumRequiredKey)).toBe(0n)
-    const write = jest.fn().mockResolvedValue(undefined),
-      original = EthereumSyndicationTool.planInitializeSyndication,
-      spy = jest.spyOn(EthereumSyndicationTool, "planInitializeSyndication").mockImplementation((...args: Parameters<typeof original>) => {
-        const planned = original(...args)
-        return ClusterBuildStep.create(planned.actor, planned.name, planned.description, planned.options, planned.input, write)
-      }),
-      step = MockShadowBackingSteps.planInitializeEthereum(actor, "initialize", "initialize", {})
-    await step.runner(context, step.input, signal)
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(write).toHaveBeenCalledTimes(1)
-    expect(write).toHaveBeenCalledWith(context, expect.objectContaining({
-      ethereumHdIndex: MockShadowBackingSteps.EthereumBackerHdIndex,
-      initialPrincipal: 110_000_000_000n
-    }), signal)
+  it("refuses a mismatched deployment seed before publishing a funding amount", async () => {
+    jest
+      .spyOn(WireSyndicationTool, "readOutstanding")
+      .mockResolvedValue(110_000_000_000n)
+    jest
+      .spyOn(EthereumSyndicationTool, "readPoolBalanceDepot")
+      .mockResolvedValue(0n)
+    jest
+      .mocked(EthereumSyndicationTool.readSyndicatedPrincipal)
+      .mockResolvedValue(0n)
+    const read = MockShadowBackingSteps.planReadCustody(
+      actor,
+      "read",
+      "read",
+      {},
+      ChainKind.EVM
+    )
+    await expect(read.runner(context, read.input, signal)).rejects.toThrow(
+      "principal must equal planned depot obligation"
+    )
+    expect(context.outputs.get(MockShadowBackingEthereumRequiredKey)).toBeNull()
+  })
+
+  it("refuses an obligation that changes during custody funding", async () => {
+    context.outputs.set(MockShadowBackingEthereumPrincipalKey, 10n)
+    jest.spyOn(WireSyndicationTool, "readOutstanding").mockResolvedValue(11n)
+    jest
+      .spyOn(EthereumSyndicationTool, "readPoolBalanceDepot")
+      .mockResolvedValue(11n)
+    jest
+      .mocked(EthereumSyndicationTool.readSyndicatedPrincipal)
+      .mockResolvedValue(10n)
+    const verify = MockShadowBackingSteps.planVerifyCustody(
+      actor,
+      "verify",
+      "verify",
+      {},
+      ChainKind.EVM
+    )
+    await expect(verify.runner(context, verify.input, signal)).rejects.toThrow(
+      "obligation changed during backing"
+    )
   })
 
   describe.each([

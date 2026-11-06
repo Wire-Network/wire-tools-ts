@@ -126,12 +126,6 @@ export namespace MockShadowBackingSteps {
           "donate liqETH into SyndicationPool",
           options
         ),
-        planInitializeEthereum<C>(
-          Report.Actor.EthereumOutpost,
-          "initialize-mock-shadow-principal-ethereum",
-          "reconcile SyndicationPool principal with mock shadow",
-          options
-        ),
         planVerifyCustody<C>(
           Report.Actor.EthereumOutpost,
           "verify-mock-shadow-backing-ethereum",
@@ -174,7 +168,16 @@ export namespace MockShadowBackingSteps {
     const { outstanding, custody } = await readCustody(ctx, input),
       solana = input.chain === ChainKind.SVM,
       required = custody >= outstanding ? 0n : outstanding - custody
-    if (!solana) ctx.outputs.set(MockShadowBackingEthereumPrincipalKey, outstanding)
+    if (!solana) {
+      const principal =
+        await EthereumSyndicationTool.readSyndicatedPrincipal(ctx)
+      Assert.equal(
+        principal,
+        outstanding,
+        "mock shadow principal must equal planned depot obligation before funding"
+      )
+      ctx.outputs.set(MockShadowBackingEthereumPrincipalKey, outstanding)
+    }
     ctx.outputs.set(
       solana
         ? MockShadowBackingSolanaRequiredKey
@@ -198,10 +201,24 @@ export namespace MockShadowBackingSteps {
     if (input.chain === ChainKind.EVM) {
       const backing = ctx.outputs.assert(MockShadowBackingEthereumPrincipalKey),
         principal = await EthereumSyndicationTool.readSyndicatedPrincipal(ctx)
-      Assert.equal(principal, backing, "mock shadow principal must equal backing")
-      Assert.ok(custody >= backing, "mock shadow custody must cover seeded principal")
+      Assert.equal(
+        outstanding,
+        backing,
+        "mock shadow obligation changed during backing"
+      )
+      Assert.equal(
+        principal,
+        backing,
+        "mock shadow principal must equal backing"
+      )
+      Assert.ok(
+        custody >= backing,
+        "mock shadow custody must cover seeded principal"
+      )
       StepExtraRecorder.note("mock shadow principal reconciliation", {
-        backing: backing.toString(), principal: principal.toString(), custody: custody.toString()
+        backing: backing.toString(),
+        principal: principal.toString(),
+        custody: custody.toString()
       })
     }
   }
@@ -462,39 +479,6 @@ export namespace MockShadowBackingSteps {
       {},
       input.ethereumHdIndex,
       amount
-    )
-    await step.runner(ctx, step.input, signal)
-  }
-  /** Plan the restricted Ethereum principal seed as its own write. */
-  export function planInitializeEthereum<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, EthereumBackingInput> {
-    return ClusterBuildStep.create<C, EthereumBackingInput>(
-      actor, name, description, options,
-      {
-        kind: "MockShadowBackingSteps.EthereumBackingInput",
-        amountKey: MockShadowBackingEthereumPrincipalKey,
-        ethereumHdIndex: EthereumBackerHdIndex
-      },
-      runInitializeEthereum
-    )
-  }
-
-  /** Seed the full depot obligation even when existing custody needed no donation. */
-  export async function runInitializeEthereum<C extends ClusterBuildContext>(
-    ctx: C,
-    input: EthereumBackingInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const step = EthereumSyndicationTool.planInitializeSyndication<C>(
-      Report.Actor.EthereumOutpost, "InitializeEthereum", "seed mock shadow principal", {},
-      input.ethereumHdIndex, ctx.outputs.assert(input.amountKey)
     )
     await step.runner(ctx, step.input, signal)
   }
