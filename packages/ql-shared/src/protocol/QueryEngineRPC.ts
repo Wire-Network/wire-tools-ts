@@ -12,6 +12,20 @@ export namespace QueryEngineRPC {
   export const MaxRequestInteger = Number.MAX_SAFE_INTEGER
   /** Smallest `timeout_ms` the engine accepts. */
   export const MinRequestTimeoutMs = 1
+  /**
+   * The engine's INVALID_PARAMS message for a params object it cannot read as
+   * a named `query` (the engine's `invalid_params_message`). An engine that
+   * predates schema 1.1 sends it for ANY member beyond `query`; a paging
+   * engine sends it only for a missing or empty `query`.
+   */
+  export const InvalidParamsMessage = "Expected named query parameter"
+  /**
+   * A JSON-RPC method the engine does not serve, sent by the engine probe
+   * (`QueryEngineClient.ping`). The engine answers it with METHOD_NOT_FOUND
+   * from the request envelope alone, before reading any chain state, so that
+   * answer proves `query_engine_plugin` is serving {@link ExecutePath}.
+   */
+  export const ProbeMethod = "query.probe"
 }
 
 /** JSON-RPC method names (identity enum; quoted member because of the dot). */

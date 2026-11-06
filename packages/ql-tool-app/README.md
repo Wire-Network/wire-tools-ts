@@ -20,7 +20,8 @@ files, so a profile added with `wql profiles add` shows up in the app and vice v
 Features:
 
 - **Connections** — a connection manager for profiles (endpoint, timeouts, retries,
-  owners) with a "Test connection" check.
+  owners) with a "Test connection" check: the node's `get_info` plus a query-engine
+  probe, without reading an ABI or a table.
 - **Schema navigator** — owners → tables → key and value fields with their types; context
   actions to select rows, describe a table or copy its qualified name.
 - **SQL editor** — tabs, semantic highlighting, completion of keywords, owners, tables and
@@ -203,7 +204,8 @@ them.
 |---|---|
 | `FATAL: The SUID sandbox helper binary was found, but is not configured correctly` | Chromium cannot use its OS sandbox on this host (Ubuntu 24.04 restricts user namespaces, and `chrome-sandbox` in `node_modules` is not setuid root). `start`, `dev` and the e2e tests detect this and launch with `--no-sandbox`; launching `electron` by hand needs the same flag. To keep the OS sandbox instead, make the helper setuid root: `sudo chown root:root <electron>/dist/chrome-sandbox && sudo chmod 4755 <electron>/dist/chrome-sandbox` (redo after every reinstall). |
 | Run reports "query host failed" | the query host crashed repeatedly; press **Restart** in the status bar and check `logs/query-host.log` |
-| Connection test fails with a schema-version error | the node's query engine predates response schema `1.1`; use a newer nodeop |
+| Connection test fails with HTTP 404 | the node answers `get_info` but does not load `query_engine_plugin`; point the profile at an API node that does |
+| A query fails with a schema-version error | the node's query engine predates response schema `1.1`; use a newer nodeop |
 | No owners in the navigator | the profile's owner list is empty or wrong; edit it in the connection manager |
 
 ## Related packages

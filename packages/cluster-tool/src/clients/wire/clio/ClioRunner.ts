@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+
 import { asOption } from "@3fv/prelude-ts"
-import { getLogger } from "@wireio/shared"
-import { negate } from "lodash"
+import { isPlainObject, negate } from "lodash"
+import { isMatching, match, P } from "ts-pattern"
+
+import { getLogger, getValue } from "@wireio/shared"
+
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
@@ -29,7 +33,9 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends object> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<
+  T extends object
+> extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
 }
 
@@ -44,6 +50,10 @@ export interface ClioError {
   message?: string
   stdout?: string
   stderr?: string
+  /** Set by `execFile` when it killed the child (its timeout). */
+  killed?: boolean
+  /** The signal that ended the child, when one did. */
+  signal?: string
 }
 
 /**
@@ -75,6 +85,15 @@ export function enrichClioError(
   return error
 }
 
+/** Parse clio `-j` stdout, or return it trimmed when it is not JSON. */
+function parseJsonOutput(stdout: string): unknown {
+  try {
+    return JSON.parse(stdout)
+  } catch {
+    return stdout.trim()
+  }
+}
+
 /**
  * Private `execFile` transport for the `clio` CLI — the only surface other
  * `clients/wire` files use to shell out to clio. Folds chain-side rejection
@@ -84,7 +103,10 @@ export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
   /** Run a clio command, returning parsed JSON. */
-  run<T extends object>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
+  run<T extends object>(
+    args: string[],
+    options: ClioRunOptionsJson<T>
+  ): Promise<T>
   /** Run a clio command, returning raw stdout. */
   run(args: string[], options?: ClioRunOptions): Promise<string>
   async run(
@@ -98,28 +120,10 @@ export class ClioRunner {
       ...args
     ]
     log.debug("clio %s", fullArgs.join(" "))
-    // TRANSPORT retries only: a connection-level failure (refused / reset under
-    // host connection churn — the node itself keeps serving). A NON-transport
-    // error IS the result (rethrown).
-    //
-    // ⚠️ The safety argument here is NOT uniform across the patterns, and the
-    // claim this comment used to make — "a re-pushed duplicate surfaces as the
-    // benign `tx_duplicate`" — is FALSE for `clio push action`. clio re-SIGNS
-    // with fresh TAPOS, so a re-run is a NEW transaction with a NEW id, which
-    // the chain has no way to dedupe. Run-5 (2026-08-04) demonstrates it: one
-    // logical `newaccount` produced a400888817 → 8d8cfc45 → c5bc6523.
-    //
-    // The patterns split by WHEN they can occur:
-    //   pre-submission  `Connection refused` / `couldn't connect to server` —
-    //                   nothing reached the node; re-running is genuinely safe.
-    //   ambiguous       `Connection reset` / `Failed http request to nodeop` —
-    //                   the node may have ACCEPTED the transaction before the
-    //                   socket died, so a re-run can double-apply it.
-    // The ambiguous class belongs in the same "unknown → do not re-send" bucket
-    // as an unresolved finality wait (see WireClient.withFinality). Narrowing it
-    // is a behavioural change with its own blast radius and is NOT made here;
-    // this note exists so the next reader does not inherit the false premise.
-    // Every logical clio invocation — command line, outcome, duration — is
+    // Retries only a failed connection (`TransportFailurePattern`): nothing reached the
+    // node, so even a push may re-run. Any other error is the result; a push not proven
+    // unapplied (`isProvenUnapplied`) must never re-run, as clio re-signs it into a new
+    // transaction. Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
       // MASKED, not raw: this array is serialized verbatim into the Report, and
@@ -163,10 +167,14 @@ export class ClioRunner {
     options: ClioRunOptions | ClioRunOptionsJson<any>
   ): Promise<any> {
     try {
-      const { stdout, stderr } = await execFileAsync(this.config.binary, fullArgs, {
-        maxBuffer: ClioRunner.MaxBuffer,
-        timeout: ClioRunner.CommandTimeoutMs
-      })
+      const { stdout, stderr } = await execFileAsync(
+        this.config.binary,
+        fullArgs,
+        {
+          maxBuffer: ClioRunner.MaxBuffer,
+          timeout: ClioRunner.CommandTimeoutMs
+        }
+      )
       asOption(stderr)
         .filter(isNotEmpty)
         .match({
@@ -174,11 +182,18 @@ export class ClioRunner {
           None: () => null
         })
       if (options.json) {
-        try {
-          return JSON.parse(stdout)
-        } catch {
-          return stdout.trim()
-        }
+        const result = parseJsonOutput(stdout)
+        // `clio push transaction` prints a failed trace and still exits 0; fail it as
+        // `push action` does, so the catch below reports it like any failed command.
+        if (ClioRunner.isFailedTransactionTrace(result))
+          throw Object.assign(
+            new Error(ClioRunner.FailedTransactionTraceMessage),
+            {
+              stdout,
+              stderr
+            }
+          )
+        return result
       }
       return stdout.trim()
     } catch (error) {
@@ -206,19 +221,136 @@ export namespace ClioRunner {
   /** Delay between transport retries (ms). */
   export const TransportRetryDelayMs = 1_500
 
-  /** clio's connection-level failure signatures (transport, not chain rejection). */
+  /**
+   * clio's failed-connection signatures: its `connection_exception`, which its libcurl
+   * transport raises only for `CURLE_COULDNT_CONNECT` / `CURLE_URL_MALFORMAT`, so nothing
+   * reached the node.
+   */
   export const TransportFailurePattern =
-    /Failed http request to nodeop|Connection refused|Connection reset|couldn't connect to server/i
+    /Failed http request to nodeop|Connection refused|couldn't connect to server/i
 
-  /** True when `error` is a connection-level clio failure (safe to re-run). */
+  /** The chain error code clio prints for a failed command (`Error 3050003: …`). */
+  export const ChainErrorCodePattern = /Error (3\d{6}):/
+
+  /** Lower bound of the chain exception family accepted as rejection evidence. */
+  const ChainErrorCodeMinimum = 3_000_000
+  /** Upper bound of the chain exception family accepted as rejection evidence. */
+  const ChainErrorCodeMaximum = 3_999_999
+  /** clio's text-mode prefix, used to apply the same HTTP exclusion to JSON codes. */
+  const ChainErrorCodePrefix = "Error "
+  /** JSON-looking stdout must never be scanned as text-mode rejection evidence. */
+  const JsonResponsePrefixPattern = /^\s*[[{]/
+
+  /**
+   * clio's `http_exception` family (`Error 3200000`–`3200006`): an HTTP failure after the
+   * connection opened, such as a reply that never arrived, so the request may have reached
+   * the node.
+   */
+  export const HttpExceptionPattern = /Error 3200\d{3}\b/
+
+  /** `tx_duplicate`: the node already has the transaction. */
+  export const DuplicateTransactionCode = 3040008
+
+  /** The message of the error {@link ClioRunner.run} throws for a failed trace clio printed with exit 0. */
+  export const FailedTransactionTraceMessage =
+    "clio printed a failed transaction trace"
+
+  /**
+   * True when `result` is a transaction trace the chain failed: its `processed.except` is
+   * an object. `clio push action` exits non-zero on one; `clio push transaction` prints it
+   * and exits 0, so the runner fails that command itself.
+   *
+   * @param result - A clio `-j` result, parsed or raw.
+   * @returns True for a failed transaction trace.
+   */
+  export function isFailedTransactionTrace(result: unknown): boolean {
+    return isMatching({ processed: { except: P.when(isPlainObject) } }, result)
+  }
+
+  /** True when `error` is a failed clio connection (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {
     const candidate = error as ClioError
     return (
       candidate != null &&
       typeof candidate === "object" &&
       typeof candidate.message === "string" &&
+      candidate.killed !== true &&
+      candidate.signal == null &&
+      (candidate.stdout == null ||
+        (typeof candidate.stdout === "string" &&
+          !JsonResponsePrefixPattern.test(candidate.stdout))) &&
       TransportFailurePattern.test(candidate.message)
     )
+  }
+
+  /**
+   * True only when a failed clio push provably did not apply, so it may be sent again: its
+   * connection failed, or clio returned a chain rejection in text or JSON — not an HTTP
+   * failure after connecting, and not `Duplicate transaction`. Anything else, a killed clio
+   * included, may have reached the node; its outcome is read from the chain instead.
+   */
+  export function isProvenUnapplied(error: unknown): boolean {
+    const candidate = error as ClioError
+    if (
+      candidate == null ||
+      typeof candidate !== "object" ||
+      typeof candidate.message !== "string" ||
+      (candidate.stdout != null && typeof candidate.stdout !== "string") ||
+      candidate.killed === true ||
+      candidate.signal != null
+    ) {
+      return false
+    }
+    const code = getChainErrorCode(candidate)
+    return (
+      isTransportFailure(candidate) ||
+      (code != null &&
+        code !== DuplicateTransactionCode &&
+        !HttpExceptionPattern.test(candidate.message) &&
+        !HttpExceptionPattern.test(`${ChainErrorCodePrefix}${code}:`))
+    )
+  }
+
+  /**
+   * Read a rejection code from clio's captured response, not a nested action trace or
+   * console message. A JSON failure must identify the same transaction at both levels,
+   * have no receipt, and not be scheduled. Successful or incomplete JSON never falls
+   * back to scanning its embedded text as if it were a text-mode chain error.
+   */
+  function getChainErrorCode(error: ClioError): number {
+    const response: unknown = getValue(() => JSON.parse(error.stdout), null)
+    return match(response)
+      .with(
+        {
+          transaction_id: P.string,
+          processed: {
+            id: P.string,
+            receipt: null,
+            scheduled: P.optional(false),
+            except: {
+              code: P.number
+                .int()
+                .between(ChainErrorCodeMinimum, ChainErrorCodeMaximum)
+            }
+          }
+        },
+        ({ transaction_id, processed }) =>
+          transaction_id.length > 0 && transaction_id === processed.id
+            ? processed.except.code
+            : null
+      )
+      .with(P.nullish, () =>
+        asOption(error.stdout)
+          .filter(stdout => JsonResponsePrefixPattern.test(stdout))
+          .match({
+            Some: () => null,
+            None: () =>
+              asOption(ChainErrorCodePattern.exec(error.message))
+                .map(([, digits]) => Number(digits))
+                .getOrUndefined()
+          })
+      )
+      .otherwise(() => null)
   }
 
   /**

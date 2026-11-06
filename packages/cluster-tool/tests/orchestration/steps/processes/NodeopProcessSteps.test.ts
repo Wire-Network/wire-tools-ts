@@ -18,9 +18,11 @@ import {
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { Report } from "@wireio/cluster-tool/report"
+import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 import { PersistedFixture } from "../../../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../../../config/resolveEnvironmentFixture.js"
 import { fixtureOperatorAccount } from "../../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
@@ -257,6 +259,97 @@ describe("Steps.processes.nodeop", () => {
       ctx.processManager,
       expect.objectContaining({ relaunch: true, postBootstrap: true })
     )
+  })
+
+  describe("batch-operator launch args", () => {
+    /** Start the first planned batch-operator node of `ctx`; return the extra args it got. */
+    async function startBatchOperator(
+      ctx: ReturnType<typeof fixtureContext>
+    ): Promise<string[]> {
+      const node = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.batch_operator
+        ),
+        recoverySpy = jest
+          .spyOn(NodeopProcess, "startWithRecovery")
+          .mockResolvedValue(undefined)
+      ctx.keyStore.setOperator(
+        operatorAccount(node.batchOperatorLabel, OperatorType.BATCH)
+      )
+      await Steps.processes.nodeop.runStart(
+        ctx,
+        { kind: "NodeopProcessSteps.StartInput", nodeName: node.name },
+        new AbortController().signal
+      )
+      return recoverySpy.mock.calls[0][1].extraArgs
+    }
+
+    it("starts SYNC-ONLY under an external-outpost config — no batch_operator_plugin, no outpost client", async () => {
+      // No daemon artifacts are prepared: the sync-only start must not need them.
+      const extraArgs = await startBatchOperator(
+        fixtureContext({
+          ...sandbox(),
+          externalOutposts: fixtureExternalOutposts()
+        })
+      )
+      expect(extraArgs).toEqual(OperatorDaemonTool.batchOperatorSyncArgs())
+      expect(extraArgs).not.toContain("--plugin")
+      expect(extraArgs).not.toContain("--outpost-ethereum-client")
+      expect(extraArgs).not.toContain("--outpost-solana-client")
+    })
+
+    it("starts with the full OPP daemon args against local outposts", async () => {
+      const ctx = fixtureContext(sandbox())
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
+      const extraArgs = await startBatchOperator(ctx)
+      expect(extraArgs).toContain("--outpost-ethereum-client")
+      expect(extraArgs).toContain("--outpost-solana-client")
+      expect(extraArgs.slice(0, 2)).toEqual(
+        OperatorDaemonTool.batchOperatorSyncArgs()
+      )
+    })
+  })
+
+  describe("verify synced", () => {
+    it("carries the target node name as typed input", () => {
+      const step = Steps.processes.nodeop.planVerifySynced(
+        Report.Actor.BatchOperator,
+        "verify-node_04-synced",
+        "node_04 synced",
+        {},
+        "node_04"
+      )
+      expect(step.actor).toBe(Report.Actor.BatchOperator)
+      expect(step.input.kind).toBe("NodeopProcessSteps.VerifySyncedInput")
+      expect(step.input.nodeName).toBe("node_04")
+    })
+
+    it("passes once the node's local head reaches the depot head", async () => {
+      const ctx = fixtureContext(sandbox()),
+        node = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.batch_operator
+        )
+      // A CONSTRUCTED (never started) process satisfies the running-nodeop assertion.
+      await NodeopProcess.create(ctx.processManager, { node })
+      jest.spyOn(WireClient.prototype, "getHead").mockResolvedValue(42)
+      jest.spyOn(NodeopProcess.prototype, "head").mockResolvedValue(42)
+      await expect(
+        Steps.processes.nodeop.runVerifySynced(
+          ctx,
+          { kind: "NodeopProcessSteps.VerifySyncedInput", nodeName: node.name },
+          new AbortController().signal
+        )
+      ).resolves.toBeUndefined()
+    })
+
+    it("fails when the node is not a running nodeop", async () => {
+      await expect(
+        Steps.processes.nodeop.runVerifySynced(
+          fixtureContext(sandbox()),
+          { kind: "NodeopProcessSteps.VerifySyncedInput", nodeName: "node_99" },
+          new AbortController().signal
+        )
+      ).rejects.toThrow(/node_99 is not a running nodeop/)
+    })
   })
 
   describe("resolveOperators (exported for ClusterManager.run reuse)", () => {

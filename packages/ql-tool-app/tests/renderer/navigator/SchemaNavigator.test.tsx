@@ -56,6 +56,26 @@ describe("SchemaNavigator", () => {
     expect(workbench.store.getState().workspace.tabs).toHaveLength(2)
   })
 
+  it("expanding one item never re-runs another expanded item's failed load", async () => {
+    const workbench = catalogWorkbench()
+    workbench.queryPort.loadOwner.mockRejectedValue(new Error("get_abi failed"))
+    RenderWithStore.render(<SchemaNavigator />, workbench)
+    fireEvent.click(screen.getByText("other"))
+    await waitFor(() => expect(screen.getByTestId("catalog-error")).toHaveTextContent("get_abi failed"))
+    fireEvent.click(screen.getByText("sample"))
+    await waitFor(() => expect(screen.getByText("positions")).toBeInTheDocument())
+    expect(workbench.queryPort.loadOwner).toHaveBeenCalledTimes(1)
+  })
+
+  it("closing the catalog error clears it", async () => {
+    const workbench = catalogWorkbench()
+    workbench.store.dispatch(CatalogActions.catalogFailed({ owner: null, message: "abi missing" }))
+    RenderWithStore.render(<SchemaNavigator />, workbench)
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    await waitFor(() => expect(screen.queryByTestId("catalog-error")).not.toBeInTheDocument())
+    expect(workbench.store.getState().catalog.error).toBeNull()
+  })
+
   it("shows the catalog error and labels key fields", () => {
     const workbench = catalogWorkbench(),
       [table] = CatalogFixtures.loaded().owners[0].tables

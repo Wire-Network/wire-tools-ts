@@ -16,6 +16,7 @@ import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 import { fixtureProducerTopologyOverrides } from "../config/clusterConfigFixture.js"
+import { fixtureExternalOutposts } from "../config/resolveEnvironmentFixture.js"
 import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
 /** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
@@ -120,14 +121,7 @@ describe("ClusterState", () => {
         clusterPath: dir,
         dataPath: Path.join(dir, "data"),
         walletPath: Path.join(dir, "wallet"),
-        externalOutposts: {
-          ethereum: {
-            addressFile: "/ext/outpost-addrs.json",
-            abiFiles: ["/ext/eth-abis/OPP.json"],
-            chainId: 11_155_111
-          },
-          solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
-        }
+        externalOutposts: fixtureExternalOutposts()
       })
       const state = ClusterState.capture(ctx)
       expect(state.anvilStateFile).toBeNull()

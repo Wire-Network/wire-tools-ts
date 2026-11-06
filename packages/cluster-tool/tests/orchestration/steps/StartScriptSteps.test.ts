@@ -11,10 +11,12 @@ import {
   NodeRole
 } from "@wireio/cluster-tool/config"
 import {
+  AnvilProcess,
   KiodProcess,
   NodeopProcess
 } from "@wireio/cluster-tool/cluster/processes"
-import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { seedProducerOperators } from "../outputs/operatorAccountFixture.js"
 
@@ -162,6 +164,45 @@ describe("StartScriptSteps", () => {
         expect(NodeopProcess.buildArgs(resolved)).not.toContain(
           MaxTransactionTimeFlag
         )
+      )
+    })
+  })
+
+  describe("resolveAnvilConfig", () => {
+    /** A sandbox cluster whose anvil binds a registry-issued port. */
+    async function clusterWithAnvilPort() {
+      const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+      return fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        buildPath: Path.join(dir, "build"),
+        bind: { ...PersistedFixture.bind, anvil: { ...PersistedFixture.bind.anvil, port } }
+      })
+    }
+
+    it("is the relaunch options, with the persisted binary", async () => {
+      const config = await clusterWithAnvilPort()
+      expect(startScript.resolveAnvilConfig(config)).toEqual(
+        AnvilProcess.resolveConfig(AnvilProcess.optionsFor(config, AnvilProcess.Launch.relaunch), {
+          binary: config.executables.anvil,
+          port: config.bind.anvil.port
+        })
+      )
+    })
+
+    it("renders finality and interval mining into the planned anvil's argv", async () => {
+      const config = await clusterWithAnvilPort(),
+        anvil = DaemonConfig.plan(config, {
+          nodeop: [],
+          anvil: startScript.resolveAnvilConfig(config)
+        }).find(daemon => daemon.kind === DaemonKind.anvil)
+      expect(anvil.argv).toEqual(
+        expect.arrayContaining([
+          "--slots-in-an-epoch",
+          String(AnvilProcess.SlotsInAnEpoch),
+          "--block-time",
+          String(AnvilProcess.BlockTimeSec)
+        ])
       )
     })
   })

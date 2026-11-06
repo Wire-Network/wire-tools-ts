@@ -4,7 +4,8 @@ import {
   outputKey,
   ProtocolTiming,
   Steps,
-  SyndicationScenario
+  SyndicationScenario,
+  WireSyndicationTool
 } from "@wireio/cluster-tool"
 
 /** Amounts and typed cross-step state for the underwriting flow. */
@@ -40,7 +41,9 @@ export namespace SyndicationUnderwritingScenarioConstants {
     window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
     bounty: 0,
     challenge_extra: "1000000000",
-    min_desyndicate: Steps.registry.MinimumDesyndication
+    min_desyndicate: Steps.registry.MinimumDesyndications[SyndicationScenario.Token],
+    desynd_fee_flat: Steps.registry.DesyndicationFlatFees[SyndicationScenario.Token],
+    custody_shortfall_bps: 0
   }
   /** Initial ledger and custody balances. */
   export const Before = outputKey<SyndicationUnderwritingSnapshot>(
@@ -53,25 +56,28 @@ export namespace SyndicationUnderwritingScenarioConstants {
     "first consensus epoch"
   )
   /** First request id. */
-  export const FirstRequest = outputKey<
-    SysioContracts.SysioBondApproveAction["request_id"]
-  >("underwriting.firstRequest", "first request")
+  export const FirstRequest: WireSyndicationTool.RequestKey = outputKey(
+    "underwriting.firstRequest",
+    "first request"
+  )
   /** Second envelope epoch. */
   export const SecondEpoch = outputKey<number>(
     "underwriting.secondEpoch",
     "later consensus epoch"
   )
   /** Second request id. */
-  export const SecondRequest = outputKey<
-    SysioContracts.SysioBondApproveAction["request_id"]
-  >("underwriting.secondRequest", "later request")
+  export const SecondRequest: WireSyndicationTool.RequestKey = outputKey(
+    "underwriting.secondRequest",
+    "later request"
+  )
   /** Parked recipient's envelope epoch. */
   export const ParkedEpoch = outputKey<number>(
     "underwriting.parkedEpoch",
     "unlinked consensus epoch"
   )
   /** Parked recipient's request id. */
-  export const ParkedRequest = outputKey<
-    SysioContracts.SysioBondApproveAction["request_id"]
-  >("underwriting.parkedRequest", "unlinked request")
+  export const ParkedRequest: WireSyndicationTool.RequestKey = outputKey(
+    "underwriting.parkedRequest",
+    "unlinked request"
+  )
 }

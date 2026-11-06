@@ -53,11 +53,8 @@ export namespace WireCollateralTool {
   /**
    * The account whose WIRE funds an operator's bond. `sysio` holds the bootstrap WIRE
    * issue; `sysio.token::transfer` from it is the harness's one WIRE funding path.
-   *
-   * Coupled to `TokenContractSteps.runTransfer`, which always signs as `sysio@active`
-   * through a module-private authorization: the transfer's `from` must be the account
-   * that signs it, so changing this value without changing that signer makes every
-   * funding Step fail its authorization check.
+   * `TokenContractSteps.runTransfer` signs as the transfer's `from`, so the cluster's
+   * wallet must hold this account's active key.
    */
   export const FundingAccount = "sysio"
 
@@ -65,9 +62,10 @@ export namespace WireCollateralTool {
   export const FundingMemo = "harness depot collateral funding"
 
   /**
-   * Row limit for the `operators` / `remitclaims` / `wtdwqueue` reads. A read that comes
-   * back with `more` set is refused ({@link assertCompleteRead}) rather than trusted, so a
-   * row past the limit can never read as absent.
+   * Row limit for the `remitclaims` / `wtdwqueue` reads (the `operators` read is
+   * `OpregContractSteps.readOperators`). A read that comes back with `more` set is
+   * refused ({@link assertCompleteRead}) rather than trusted, so a row past the limit can
+   * never read as absent.
    */
   export const TableRowLimit = 100
 
@@ -640,11 +638,9 @@ export namespace WireCollateralTool {
     ctx: C,
     account: string
   ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-    const result = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query({ limit: TableRowLimit })
-    assertCompleteRead(result.more, OperatorsTable)
-    return result.rows.find(row => row.account === account)
+    return (await OpregContractSteps.readOperators(ctx)).find(
+      row => row.account === account
+    )
   }
 
   // ── Verify: the `remitclaims{account, token}` row ────────────────────────
@@ -817,11 +813,9 @@ export namespace WireCollateralTool {
     )
   }
 
-  /** Table names {@link assertCompleteRead} reports. */
-  export const OperatorsTable = "operators"
-  /** See {@link OperatorsTable}. */
+  /** Table name {@link assertCompleteRead} reports for the `remitclaims` read. */
   export const RemitClaimsTable = "remitclaims"
-  /** See {@link OperatorsTable}. */
+  /** Table name {@link assertCompleteRead} reports for the `wtdwqueue` read. */
   export const WithdrawQueueTable = "wtdwqueue"
 
   /**

@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { ClioRunner } from "../../clients/wire/clio/ClioRunner.js"
 import { Constants } from "../../Constants.js"
+import { SyndicationUserSteps } from "../../orchestration/steps/SyndicationUserSteps.js"
 
 const log = getLogger(__filename)
 
@@ -85,15 +86,11 @@ export async function provisionWireUser(
   await wire.invoke<SysioContracts.SysioRoaAddpolicyAction>(
     "sysio.roa",
     "addpolicy",
-    {
-      owner: account,
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "25.0000 SYS",
-      ram_weight: "25.0000 SYS",
-      cpu_weight: "25.0000 SYS",
-      time_block: 0,
-      network_gen: 0
-    },
+    SyndicationUserSteps.nodeOwnerPolicy(account, {
+      net: Constants.DEFAULT_RESOURCE_WEIGHT,
+      cpu: Constants.DEFAULT_RESOURCE_WEIGHT,
+      ram: Constants.DEFAULT_RAM_WEIGHT
+    }),
     [{ actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }]
   )
 

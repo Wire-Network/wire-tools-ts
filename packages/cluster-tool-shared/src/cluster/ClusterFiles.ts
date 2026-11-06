@@ -29,4 +29,17 @@ export namespace ClusterFiles {
    * `package` and later by external flow runs).
    */
   export const ExternalConfigFilename = "external-cluster-config.json" as const
+  /**
+   * The `WireOpregBootstrap` JSON — the bootstrapped operator roster and the
+   * initial batch-operator schedule — written by every cluster bootstrap into
+   * the cluster directory. Public data only (no key material).
+   */
+  export const WireOpregBootstrapFilename = "wire-opreg-bootstrap.json" as const
+  /**
+   * The launch-data (LCO) import's record — a `BootstrapPlatformConfig` (proto JSON) of every
+   * yield pool and syndicated position the bootstrap imported — written into the cluster
+   * directory when the cluster imports an export. Public data only (no key material).
+   */
+  export const LcoImportRecordFilename =
+    "lco-import-bootstrap-platform-config.json" as const
 }

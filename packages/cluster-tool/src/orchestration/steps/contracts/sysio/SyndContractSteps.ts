@@ -1,4 +1,6 @@
 import { SysioContracts } from "@wireio/sdk-core"
+
+import { WireSyndicationTool } from "../../../../tools/wire/WireSyndicationTool.js"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -196,10 +198,22 @@ export namespace SyndContractSteps {
       })
   }
 
-  /** Input for {@link planDesyndicate} — the generated `sysio.synd::desyndicate` data. */
+  /** Gross return intent; the runner derives max_fee from the live pair immediately before submission. */
+  export type DesyndicateData = Omit<
+    SysioContracts.SysioSyndDesyndicateAction,
+    "max_fee"
+  >
+
+  /** Full action data, including the caller's derived fee cap. */
   export interface DesyndicateInput extends StepInput {
     readonly kind: "SyndContractSteps.DesyndicateInput"
     readonly data: SysioContracts.SysioSyndDesyndicateAction
+  }
+
+  /** Serializable planned return; the fee cap is resolved when its Step executes. */
+  export interface QuotedDesyndicateInput extends StepInput {
+    readonly kind: "SyndContractSteps.QuotedDesyndicateInput"
+    readonly data: DesyndicateData
   }
 
   /**
@@ -213,19 +227,42 @@ export namespace SyndContractSteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioSyndDesyndicateAction
-  ): ClusterBuildStep<C, DesyndicateInput> {
-    return ClusterBuildStep.create<C, DesyndicateInput>(
+    data: DesyndicateData
+  ): ClusterBuildStep<C, QuotedDesyndicateInput> {
+    return ClusterBuildStep.create<C, QuotedDesyndicateInput>(
       actor,
       name,
       description,
       options,
-      { kind: "SyndContractSteps.DesyndicateInput", data },
-      runDesyndicate
+      { kind: "SyndContractSteps.QuotedDesyndicateInput", data },
+      runQuotedDesyndicate
     )
   }
 
-  /** Named runner — `sysio.synd::desyndicate`, signed by the holder. */
+  /** Named runner — resolve the live fee cap, then submit exactly one return. */
+  export async function runQuotedDesyndicate<C extends ClusterBuildContext>(
+    ctx: C,
+    input: QuotedDesyndicateInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await runDesyndicate(
+      ctx,
+      {
+        kind: "SyndContractSteps.DesyndicateInput",
+        data: {
+          ...input.data,
+          max_fee: await WireSyndicationTool.readDesyndicationFee(
+            ctx,
+            input.data.quantity
+          )
+        }
+      },
+      signal
+    )
+  }
+
+  /** Named runner — `sysio.synd::desyndicate` with the caller's fee cap, signed by the holder. */
   export async function runDesyndicate<C extends ClusterBuildContext>(
     ctx: C,
     input: DesyndicateInput,

@@ -1,11 +1,20 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { ProtocolTiming } from "@wireio/cluster-tool"
+import { getLogger } from "@wireio/cluster-tool/logging"
 import {
+  ClusterBuild,
+  ClusterBuildContext,
   SolanaOutpostBootstrapper,
   Steps
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import {
+  SolanaLiqSyndicationTool,
+  WireState
+} from "@wireio/cluster-tool/tools/solana"
 import { solanaNativePublicKey } from "@wireio/cluster-tool/utils"
 
+import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
 /** A batch `OperatorAccount` under an explicit chain account name. */
@@ -24,6 +33,100 @@ describe("Steps.solanaOutpost.deploy", () => {
     expect(step.input).toBeNull()
     expect(typeof step.runner).toBe("function")
   })
+})
+
+describe("Steps.solanaOutpost.launch", () => {
+  const context = new ClusterBuildContext(
+      fixtureConfig(),
+      getLogger("solana-outpost-launch-test")
+    ),
+    signal = new AbortController().signal
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it("registers Launching, then PostLaunch, then the read-back on its parent", () => {
+    const cluster = ClusterBuild.forContext(context),
+      phase = Steps.solanaOutpost.planLaunch(
+        cluster,
+        "SolanaOutpostLaunch",
+        "take the outpost out of pre-launch",
+        {}
+      )
+    expect(cluster.children).toEqual([phase])
+    expect(phase.name).toBe("SolanaOutpostLaunch")
+    expect(phase.steps.map(step => step.name)).toEqual([
+      "set-wire-state-launching",
+      "set-wire-state-post-launch",
+      "verify-post-launch"
+    ])
+    // Two admin writes through the one set_wire_state factory, in the only
+    // order liqsol_core accepts, then the input-less verify.
+    expect(phase.steps.map(step => step.input)).toEqual([
+      {
+        kind: "SolanaLiqSyndicationTool.SetWireStateInput",
+        wireState: WireState.launching
+      },
+      {
+        kind: "SolanaLiqSyndicationTool.SetWireStateInput",
+        wireState: WireState.postLaunch
+      },
+      null
+    ])
+    expect(phase.steps.slice(0, 2).map(step => step.runner)).toEqual([
+      SolanaLiqSyndicationTool.runSetWireState,
+      SolanaLiqSyndicationTool.runSetWireState
+    ])
+    expect(new Set(phase.steps.map(step => step.actor))).toEqual(
+      new Set([Report.Actor.SolanaOutpost])
+    )
+  })
+
+  it("applies the caller's step options to every step", () => {
+    const options = { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs },
+      phase = Steps.solanaOutpost.planLaunch(
+        ClusterBuild.forContext(context),
+        "SolanaOutpostLaunch",
+        "take the outpost out of pre-launch",
+        options
+      )
+    expect(phase.steps.map(step => step.options)).toEqual([
+      options,
+      options,
+      options
+    ])
+  })
+
+  it("passes the read-back step when the outpost is PostLaunch", async () => {
+    const readWireState = jest
+        .spyOn(SolanaLiqSyndicationTool, "readWireState")
+        .mockResolvedValue(WireState.postLaunch),
+      [, , verify] = Steps.solanaOutpost.planLaunch(
+        ClusterBuild.forContext(context),
+        "SolanaOutpostLaunch",
+        "take the outpost out of pre-launch",
+        {}
+      ).steps
+    await expect(
+      verify.runner(context, verify.input, signal)
+    ).resolves.toBeUndefined()
+    expect(readWireState).toHaveBeenCalledWith(context)
+  })
+
+  it.each([WireState.preLaunch, WireState.launching, WireState.refund])(
+    "fails the read-back, naming the state, when the outpost is %s",
+    async state => {
+      jest
+        .spyOn(SolanaLiqSyndicationTool, "readWireState")
+        .mockResolvedValue(state)
+      await expect(
+        Steps.solanaOutpost.assertPostLaunch(context)
+      ).rejects.toThrow(
+        `the outpost is in ${state}, not ${WireState.postLaunch}`
+      )
+    }
+  )
 })
 
 describe("Steps.solanaOutpost.oppBootstrap", () => {

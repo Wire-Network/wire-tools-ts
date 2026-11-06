@@ -3,7 +3,7 @@ import Os from "node:os"
 import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
 import { ACCOUNT_SIZE, AccountLayout, AccountState, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token"
-import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { Connection, Keypair, PublicKey, type MessageCompiledInstruction, type TokenBalance } from "@solana/web3.js"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
   AnchorEnumVariant,
@@ -723,6 +723,196 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
       await expect(
         SolanaLiqSyndicationTool.readPoolBalance(readContext(new Map()))
       ).rejects.toThrow()
+    })
+
+    /** One pool-ATA transaction the custody mock serves. */
+    interface PoolTransactionFixture {
+      signature: string
+      failed?: boolean
+      logs: string[]
+      before?: bigint
+      after: bigint
+      poolInstructions?: MessageCompiledInstruction[]
+      loadedPool?: boolean
+    }
+
+    /** The queued log line `syndicate_liq` emits for `sequence`. */
+    function queuedLog(sequence: bigint): string {
+      return `${SolanaLiqSyndicationTool.SyndicationQueuedLogPrefix}user=u token_code=1 amount=5 sequence=${sequence} total_syndicated=1000`
+    }
+
+    /** An Anchor instruction log line for `name`. */
+    function instructionLog(name: string): string {
+      return `${SolanaLiqSyndicationTool.AnchorInstructionLogPrefix}${name}`
+    }
+
+    /** A pool token balance at its static or lookup-table account index. */
+    function poolBalance(amount: bigint, accountIndex = 1): TokenBalance[] {
+      return [
+        {
+          accountIndex,
+          mint: basePdas.liqsolMint.toBase58(),
+          uiTokenAmount: {
+            amount: amount.toString(),
+            decimals: SolanaLiqSyndicationTool.LiqsolDecimals,
+            uiAmount: null
+          }
+        }
+      ]
+    }
+
+    /**
+     * A context whose connection answers `getSignaturesForAddress` (newest
+     * first, as the RPC does) and `getTransaction` from `transactions` (given
+     * oldest first). A failed signature's transaction is never served.
+     */
+    function custodyContext(
+      transactions: PoolTransactionFixture[],
+      unavailable: string[] = []
+    ): Parameters<typeof SolanaLiqSyndicationTool.readSyndicationCustody>[0] {
+      return {
+        solana: {
+          connection: {
+            getSignaturesForAddress: async (address: PublicKey) => {
+              expect(address.toBase58()).toBe(basePdas.liqsolPoolAta.toBase58())
+              return [...transactions]
+                .reverse()
+                .map(entry => ({
+                  signature: entry.signature,
+                  err: entry.failed ? { InstructionError: [0, "Custom"] } : null
+                }))
+            },
+            getTransaction: async (signature: string) => {
+              const entry = transactions.find(value => value.signature === signature)
+              expect(entry.failed).toBeFalsy()
+              return unavailable.includes(signature)
+                ? null
+                : {
+                    slot: transactions.indexOf(entry),
+                    transaction: {
+                      message: {
+                        staticAccountKeys: [signer, entry.loadedPool ? signer : basePdas.liqsolPoolAta, basePdas.liqsolCoreProgram, TOKEN_2022_PROGRAM_ID],
+                        compiledInstructions: entry.poolInstructions ?? [yieldInstruction()]
+                      }
+                    },
+                    meta: {
+                      loadedAddresses: { writable: entry.loadedPool ? [basePdas.liqsolPoolAta] : [], readonly: [] },
+                      logMessages: entry.logs,
+                      preTokenBalances:
+                        entry.before == null ? [] : poolBalance(entry.before, entry.loadedPool ? 4 : 1),
+                      postTokenBalances: poolBalance(entry.after, entry.loadedPool ? 4 : 1)
+                    }
+                  }
+            }
+          }
+        },
+        config: { solanaPath }
+      } as unknown as Parameters<
+        typeof SolanaLiqSyndicationTool.readSyndicationCustody
+      >[0]
+    }
+
+    /** The real IDL-encoded yield instruction, referencing pool account index 1. */
+    function yieldInstruction(): MessageCompiledInstruction {
+      return {
+        programIdIndex: 2,
+        accountKeyIndexes: [1],
+        data: program.coder.instruction.encode(SolanaLiqSyndicationTool.ReportLiqYieldMethodName, {})
+      }
+    }
+
+    it("readSyndicationCustody returns the syndication and every later pool change", async () => {
+      const custody = await SolanaLiqSyndicationTool.readSyndicationCustody(
+        custodyContext([
+          { signature: "earlier", logs: [instructionLog("Synd"), queuedLog(6n)], before: 10n, after: 100n },
+          { signature: "syndication", logs: [instructionLog("Synd"), queuedLog(7n)], after: 1_000n },
+          { signature: "rejected", failed: true, logs: [], before: 1_000n, after: 1_000n },
+          { signature: "untouched", logs: [instructionLog("Synd")], before: 1_000n, after: 1_000n },
+          {
+            signature: "yield",
+            logs: [instructionLog(SolanaLiqSyndicationTool.ReportLiqYieldInstructionName)],
+            before: 1_000n,
+            after: 1_001n
+          }
+        ]),
+        7n
+      )
+      expect(custody.syndication).toMatchObject({
+        signature: "syndication",
+        slot: 1,
+        instructions: ["Synd"],
+        before: 0n,
+        after: 1_000n
+      })
+      expect(custody.laterChanges).toHaveLength(1)
+      expect(custody.laterChanges[0]).toMatchObject({
+        signature: "yield",
+        before: 1_000n,
+        after: 1_001n
+      })
+      expect(custody.laterChanges[0].onlyYieldClaims).toBe(true)
+    })
+
+    it("readSyndicationCustody refuses a sequence no pool transaction queued", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicationCustody(
+          custodyContext([
+            { signature: "syndication", logs: [queuedLog(70n)], before: 0n, after: 1_000n }
+          ]),
+          7n
+        )
+      ).rejects.toThrow(/queued syndication sequence 7$/)
+    })
+
+    it("readSyndicationCustody refuses a pool transaction the RPC cannot serve", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicationCustody(
+          custodyContext(
+            [{ signature: "syndication", logs: [queuedLog(7n)], before: 0n, after: 1_000n }],
+            ["syndication"]
+          ),
+          7n
+        )
+      ).rejects.toThrow(/pool transaction syndication is unavailable/)
+    })
+
+    it.each(["mixed transfer", "spoofed log", "wrong instruction", "no pool instruction"])(
+      "does not attribute %s to a yield claim", async fault => {
+        const claim = yieldInstruction(),
+          foreign = { ...claim, programIdIndex: 3 },
+          poolInstructions = fault === "mixed transfer" ? [claim, foreign]
+            : fault === "spoofed log" ? [foreign]
+            : fault === "wrong instruction" ? [{ ...claim, data: Buffer.alloc(8) }]
+            : [{ ...claim, accountKeyIndexes: [0] }],
+          custody = await SolanaLiqSyndicationTool.readSyndicationCustody(custodyContext([
+            { signature: "syndication", logs: [queuedLog(7n)], after: 1_000n },
+            { signature: "change", logs: [instructionLog(SolanaLiqSyndicationTool.ReportLiqYieldInstructionName)],
+              before: 1_000n, after: 2_000n, poolInstructions }
+          ]), 7n)
+        expect(custody.laterChanges[0].onlyYieldClaims).toBe(false)
+      }
+    )
+
+    it("resolves a yield claim's pool through loaded address-table keys", async () => {
+      const claim = { ...yieldInstruction(), accountKeyIndexes: [4] },
+        custody = await SolanaLiqSyndicationTool.readSyndicationCustody(custodyContext([
+          { signature: "syndication", logs: [queuedLog(7n)], after: 1_000n },
+          { signature: "yield", logs: [], before: 1_000n, after: 1_001n,
+            loadedPool: true, poolInstructions: [claim] }
+        ]), 7n)
+      expect(custody.laterChanges[0].onlyYieldClaims).toBe(true)
+    })
+
+    it("allows unrelated instructions that do not reference the pool", async () => {
+      const custody = await SolanaLiqSyndicationTool.readSyndicationCustody(custodyContext([
+        { signature: "syndication", logs: [queuedLog(7n)], after: 1_000n },
+        { signature: "yield", logs: [], before: 1_000n, after: 1_001n,
+          poolInstructions: [
+            { programIdIndex: 3, accountKeyIndexes: [0], data: Buffer.alloc(0) },
+            yieldInstruction()
+          ] }
+      ]), 7n)
+      expect(custody.laterChanges[0].onlyYieldClaims).toBe(true)
     })
   })
 

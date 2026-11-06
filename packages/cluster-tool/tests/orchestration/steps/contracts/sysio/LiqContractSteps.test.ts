@@ -41,7 +41,7 @@ describe("Steps.contracts.sysio.liq", () => {
       fee: 30,
       locked_shares: 0,
       conversion_horizon_sec: 30,
-      depth_cap_bps: 3000,
+      depth_cap_bps: 30,
       clip_floor: 1000
     }
     const step = Steps.contracts.sysio.liq.planRegliqpool(

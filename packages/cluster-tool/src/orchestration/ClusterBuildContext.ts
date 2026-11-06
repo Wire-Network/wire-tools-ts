@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Keypair } from "@solana/web3.js"
 import { EventEmitter } from "eventemitter3"
@@ -75,8 +76,17 @@ export class ClusterBuildContext<
     }))
   }
 
-  /** The Ethereum client, bound to the cluster's anvil RPC. */
+  /**
+   * The Ethereum client, bound to the cluster's anvil RPC. Refused under an
+   * external-outpost config: that config is trusted and the harness never
+   * contacts an external outpost, so any step reaching for this client is a
+   * defect.
+   */
   get ethereum(): EthereumClient {
+    Assert.ok(
+      this.config.externalOutposts == null,
+      "ClusterBuildContext.ethereum: the harness never contacts an external Ethereum outpost"
+    )
     return (this.ethereumClient ??= new EthereumClient(
       toURL(
         this.config.bind.anvil.port,
@@ -85,8 +95,15 @@ export class ClusterBuildContext<
     ))
   }
 
-  /** The Solana client, bound to the cluster's validator RPC (ambient payer). */
+  /**
+   * The Solana client, bound to the cluster's validator RPC (ambient payer).
+   * Refused under an external-outpost config, like {@link ethereum}.
+   */
   get solana(): SolanaClient {
+    Assert.ok(
+      this.config.externalOutposts == null,
+      "ClusterBuildContext.solana: the harness never contacts an external Solana outpost"
+    )
     return (this.solanaClient ??= new SolanaClient(
       toURL(
         this.config.bind.solana.ports.http,

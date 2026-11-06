@@ -137,6 +137,17 @@ describe("createCreateCommand", () => {
     expect(registeredDefault(commandLine, "batch-operator-count")).toBe(9)
   })
 
+  it("seeds --external-outpost-config from the options file, so create's local-outpost gate sees it", () => {
+    const externalOutpostConfig = Path.join(dir, "external-outpost.json"),
+      file = writeOptionsFile({ externalOutpostConfig })
+    expect(
+      registeredDefault(
+        ["create", `--${ClusterBuildOptionsFileFlag}`, file],
+        "external-outpost-config"
+      )
+    ).toBe(externalOutpostConfig)
+  })
+
   it("the file beats the WIRE_* environment (env is the lower layer for create)", () => {
     const previousCluster = process.env.WIRE_CLUSTER_PATH,
       previousBuild = process.env.WIRE_BUILD_PATH

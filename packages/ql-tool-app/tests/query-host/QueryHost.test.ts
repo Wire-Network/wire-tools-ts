@@ -15,6 +15,7 @@ import {
 import {
   HostControlKind,
   QueryHostMessageKind,
+  type QueryHostConnectionTested,
   type QueryHostExecute,
   type QueryHostExecuted,
   type QueryHostFailed,
@@ -146,6 +147,45 @@ describe("handleQueryHostRequest", () => {
       code: QueryErrorCode.QUERY_BUSY,
       data: { kind: QueryErrorKind.QUERY_BUSY, retryable: true }
     })
+  })
+
+  it("testConnection answers the node's chain and head after get_info and the engine probe — no ABI, no query", async () => {
+    const context = new QueryHostContext(),
+      { catalog } = context.servicesFor(profile),
+      loadOwner = jest.spyOn(catalog, "loadOwner"),
+      describe = jest.spyOn(catalog, "describe"),
+      executedBefore = stub.requests.length,
+      response = await handleQueryHostRequest(context, new Map(), {
+        kind: QueryHostMessageKind.testConnection,
+        requestId: "t1",
+        profile
+      })
+    expect(response).toMatchObject({
+      kind: QueryHostMessageKind.connectionTested,
+      requestId: "t1",
+      result: { chainId: StubQueryEngine.ChainId }
+    })
+    expect((response as QueryHostConnectionTested).result.headBlockNum).toBeGreaterThanOrEqual(StubQueryEngine.FirstBlock)
+    expect(loadOwner).not.toHaveBeenCalled()
+    expect(describe).not.toHaveBeenCalled()
+    expect(stub.requests).toHaveLength(executedBefore)
+  })
+
+  it("testConnection to an unreachable endpoint answers failed as transport", async () => {
+    // A registry-issued port nothing listens on: the connection is refused.
+    const closedPort = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp),
+      unreachable = ConnectionProfile.create({
+        name: "gone",
+        endpoint: `http://${StubQueryEngine.Host}:${closedPort}`,
+        retries: 0
+      }),
+      response = await handleQueryHostRequest(new QueryHostContext(), new Map(), {
+        kind: QueryHostMessageKind.testConnection,
+        requestId: "t2",
+        profile: unreachable
+      })
+    expect(response.kind).toBe(QueryHostMessageKind.failed)
+    expect((response as QueryHostFailed).failure.kind).toBe(QueryFailureKind.transport)
   })
 
   it("an unreachable profile endpoint fails catalog requests as transport", async () => {

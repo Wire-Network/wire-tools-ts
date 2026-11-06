@@ -1,6 +1,90 @@
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 
 describe("Constants", () => {
+  describe("LIQSOL_CODENAME", () => {
+    it("is the codename the syndication scenario trades", () => {
+      expect(Constants.LIQSOL_CODENAME).toBe("LIQSOL")
+    })
+  })
+  describe("liqSymbol", () => {
+    it("renders a liq token's shadow symbol at the liq-token precision", () => {
+      expect(Constants.LIQ_TOKEN_PRECISION).toBe(9)
+      expect(Constants.liqSymbol("LIQSOL")).toBe("9,LIQSOL")
+      expect(Constants.liqSymbol("LIQETHP")).toBe("9,LIQETHP")
+    })
+  })
+  describe("shadow liq pairs", () => {
+    it("pairs each outpost chain with its liq token, Ethereum first", () => {
+      expect(Constants.SHADOW_LIQ_TOKEN_PAIRS).toEqual([
+        [Constants.ETHEREUM_CHAIN_CODENAME, "LIQETH"],
+        [Constants.SOLANA_CHAIN_CODENAME, Constants.LIQSOL_CODENAME]
+      ])
+      expect([Constants.ETHEREUM_CHAIN_CODENAME, Constants.SOLANA_CHAIN_CODENAME]).toEqual([
+        "ETHEREUM",
+        "SOLANA"
+      ])
+    })
+
+    it("names a chain's liq token, refusing a chain with none", () => {
+      expect(Constants.liqTokenCode("SOLANA")).toBe("LIQSOL")
+      expect(Constants.liqTokenCode("ETHEREUM")).toBe("LIQETH")
+      expect(() => Constants.liqTokenCode("WIRE")).toThrow(/WIRE has no shadow liq token/)
+    })
+
+    it("names a liq token's pool pair code with the pair suffix", () => {
+      expect(Constants.LIQ_POOL_PAIR_SUFFIX).toBe("P")
+      expect(Constants.liqPoolPairCode("LIQSOL")).toBe("LIQSOLP")
+      expect(Constants.liqSymbol(Constants.liqPoolPairCode("LIQETH"))).toBe("9,LIQETHP")
+    })
+
+    it("carries WIRE's nine-decimal precision", () => {
+      expect(Constants.WIRE_PRECISION).toBe(9)
+    })
+  })
+  describe("snapshot attestation", () => {
+    it("requires f + 1 matching votes of the 21-finalizer set", () => {
+      const faultyFinalizers = Math.floor((Constants.MAX_PRODUCERS - 1) / 3)
+      expect(faultyFinalizers).toBe(6)
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBe(faultyFinalizers + 1)
+    })
+
+    it("stays inside the range setsnpcfg accepts", () => {
+      // `setsnpcfg` refuses 0, anything above `max_snap_providers` (30), and a zero spacing.
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBeGreaterThan(0)
+      expect(Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS).toBeLessThanOrEqual(30)
+      expect(Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING).toBeGreaterThan(0)
+    })
+
+    it("attests at the contract's default cadence", () => {
+      expect(Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING).toBe(25_000)
+    })
+  })
+  describe("nodeOwnerCommitment", () => {
+    it("commits each tier's allocation times its owner cap: 341.5M WIRE at the defaults", () => {
+      expect(Constants.nodeOwnerCommitment(Constants.EMISSION_CONFIG_DEFAULTS)).toBe(
+        341_500_000n * 10n ** 9n
+      )
+      expect(
+        Constants.nodeOwnerCommitment({
+          ...Constants.EMISSION_CONFIG_DEFAULTS,
+          t1_allocation: 1,
+          t2_allocation: 0,
+          t3_allocation: 0
+        })
+      ).toBe(BigInt(Constants.T1_MAX_NODE_OWNERS))
+    })
+  })
+
+  describe("batchOperatorLabels", () => {
+    it("lists the bootstrap batch-operator labels in index order", () => {
+      expect(Constants.batchOperatorLabels(3)).toEqual([
+        "batchop.a",
+        "batchop.b",
+        "batchop.c"
+      ])
+      expect(Constants.batchOperatorLabels(0)).toEqual([])
+    })
+  })
   describe("development keys", () => {
     it("derives a deterministic dev K1 public key (SYS-prefixed)", () => {
       expect(Constants.DEV_K1_PUBLIC_KEY).toMatch(/^SYS/)
@@ -41,17 +125,26 @@ describe("Constants", () => {
     it("lists the OPP system accounts", () => {
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.epoch")
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.dclaim")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.councl")
       expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.authex")
     })
     it("maps OPP contract paths", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe(
         "contracts/sysio.opreg"
       )
+      expect(Constants.SYSTEM_ACCOUNTS).toContain("sysio.councl")
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.councl"]).toBe(
+        "contracts/sysio.councl"
+      )
     })
     it("creates the underwriting, syndication and emergency-stop accounts", () => {
       expect(Constants.SYSTEM_ACCOUNTS).toEqual(
         expect.arrayContaining(["sysio.andon", "sysio.bond", "sysio.synd"])
       )
+    })
+    it("creates the kicker account, which is privileged rather than granted @sysio.code", () => {
+      expect(Constants.SYSTEM_ACCOUNTS).toContain("sysio.kicker")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.kicker")
     })
     it("maps the underwriting, syndication and emergency-stop contract paths", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.andon"]).toBe("contracts/sysio.andon")
@@ -222,8 +315,10 @@ describe("Constants", () => {
     const T1Cap = 21
     const T2Cap = 84
     const T3Cap = 1000
-    /** 1,000,000,000 WIRE x 1e9 subunits — the supply issued to `sysio` at bootstrap. */
-    const WireSupplySubunits = 1_000_000_000_000_000_000
+
+    it("issues 1,000,000,000 WIRE at 9 decimals", () => {
+      expect(Constants.WIRE_SUPPLY).toBe(1_000_000_000_000_000_000n)
+    })
 
     it("sets tier allocations PER OWNER, not per tier", () => {
       expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
@@ -237,7 +332,7 @@ describe("Constants", () => {
       const committed =
         t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
       expect(committed).toBe(341_500_000_000_000_000)
-      expect(committed).toBeLessThan(WireSupplySubunits)
+      expect(BigInt(committed)).toBeLessThan(Constants.WIRE_SUPPLY)
     })
 
     it("vests over 12 / 24 / 36 months on a 30-day month", () => {

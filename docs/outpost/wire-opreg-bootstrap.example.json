@@ -1,0 +1,96 @@
+{
+  "label": "testnet-epoch60",
+  "awsAccount": "test",
+  "epochDurationSec": 60,
+  "operators": [
+    {
+      "accountName": "defproducera",
+      "type": "PRODUCER",
+      "keys": {
+        "wire": {
+          "type": "K1",
+          "publicKey": "PUB_K1_8YHGQ9fn1Wbs6N8CFdnvB66drqkNhSfmLEseV15oLSH6SEiM7W"
+        },
+        "wireFinalizer": {
+          "type": "BLS",
+          "publicKey": "PUB_BLS_pipQER5KQSWjEKVuAB-clmy6zTUGKCi9YMk3p0NSgm5JS6FuFLdqeMkUSnNcgaEWMleT898Kvm63wclUPFo4gpo2jWYMYdlDnOhg3l4tIB4-fqWUWcIWUwF1_ifj9UwFq0TRIA",
+          "proofOfPossession": "SIG_BLS_xOcDFt8HHazXbsvMunn9-iaRBbH9ulyEgCN9mmb_Jxf8CJYCmuViTjS4CsFksewAjRbJ9ez642tyyDEP56jLUHqh5XaHdVGppDBsZItrMPLpLeXo00pVvwBYhILWC5QFn90wUAFAuOgB0XyVrSiPM7_jIdbZYeopGVOqzZSlu4wloAfL_AY6wuF2uaxUGfsLQuEcEUL82t2btnQsH7LT4wpWlHtv1kVVbkib2VteQFyGjGKmYL4-dR7hz5jNn-0U6EX7bw"
+        }
+      }
+    },
+    {
+      "accountName": "wireno.na1ct",
+      "type": "BATCH",
+      "keys": {
+        "wire": {
+          "type": "K1",
+          "publicKey": "PUB_K1_8WyvCMeh1jurVdMkBYcmmpq2v6Whhx8HN9AZqvFhHR8yTVjU2j"
+        },
+        "ethereum": {
+          "type": "EM",
+          "publicKey": "PUB_EM_02ba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0",
+          "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+        },
+        "solana": {
+          "type": "ED",
+          "publicKey": "PUB_ED_6vXYr7Ch5ZMfh4zYza5tUa7dJyWCRHCc9J4raS4tAqMp",
+          "address": "6vXYr7Ch5ZMfh4zYza5tUa7dJyWCRHCc9J4raS4tAqMp"
+        }
+      }
+    },
+    {
+      "accountName": "wireno.ppjmp",
+      "type": "BATCH",
+      "keys": {
+        "wire": {
+          "type": "K1",
+          "publicKey": "PUB_K1_89pZD7hYPa6R9TZ24YHy23iCFMv7Qpu4pqyQ4DQTX9ZAszfGZ7"
+        },
+        "ethereum": {
+          "type": "EM",
+          "publicKey": "PUB_EM_039d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f04",
+          "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+        },
+        "solana": {
+          "type": "ED",
+          "publicKey": "PUB_ED_EDrwqZ6hRjARxs1WVj39jhXx8a5tMyNtqhwNH8A3FXFy",
+          "address": "EDrwqZ6hRjARxs1WVj39jhXx8a5tMyNtqhwNH8A3FXFy"
+        }
+      }
+    },
+    {
+      "accountName": "wireno.wanbf",
+      "type": "BATCH",
+      "keys": {
+        "wire": {
+          "type": "K1",
+          "publicKey": "PUB_K1_7NtFEbwVrWsQCcy92bf5whGa7wV2qNjugJJZQngBB1noo5dDLy"
+        },
+        "ethereum": {
+          "type": "EM",
+          "publicKey": "PUB_EM_0220b871f3ced029e14472ec4ebc3c0448164942b123aa6af91a3386c1c403e0eb",
+          "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+        },
+        "solana": {
+          "type": "ED",
+          "publicKey": "PUB_ED_DPzaL1E9FQhZjjHhyoqNGTf4YHULrYoq7NnisztW8iZz",
+          "address": "DPzaL1E9FQhZjjHhyoqNGTf4YHULrYoq7NnisztW8iZz"
+        }
+      }
+    }
+  ],
+  "batchOperatorGroups": {
+    "activeGroupIndex": 0,
+    "groups": [
+      [
+        "wireno.na1ct"
+      ],
+      [
+        "wireno.wanbf"
+      ],
+      [
+        "wireno.ppjmp"
+      ]
+    ]
+  }
+}

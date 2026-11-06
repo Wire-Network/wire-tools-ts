@@ -1,11 +1,14 @@
 import type {
   AWSClusterNodeConfig,
+  BatchOperatorUnderwritingOptions,
   BindOptions,
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
   CollateralRequirement,
+  EthereumReadConfirmationOptions,
+  LcoImportOptions,
   QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
@@ -61,14 +64,34 @@ export interface ClusterBuildOptions {
   bind?: BindOptions
   /**
    * Seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` at
-   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer — an
-   * external / real-world depot mints NO unbacked shadow unless a caller (or a
-   * flow's scenario `defaults`) opts in. The depot contract gates `regliqpool`
+   * bootstrap (`--enable-mock-liq-pools`). Default `false` at every layer. Flows
+   * opt in through scenario defaults; a local `wire-cluster-tool create` forces
+   * it on; external outposts refuse it. The depot contract gates `regliqpool`
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockLiqPools?: boolean
-  /** Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock shadow in outpost custody. Default false; flows opt in through defaults. */
+  /**
+   * Import mock LIQSOL/LIQETH bonder positions during epoch zero and back all mock
+   * shadow in outpost custody (`--enable-mock-syndication-import`). Default `false`
+   * at every layer. Flows opt in through scenario defaults; a local
+   * `wire-cluster-tool create` forces it on; external outposts refuse it.
+   */
   enableMockSyndicationImport?: boolean
+  /**
+   * Run the `batch_operator_plugin` underwriter role on every batch-operator daemon, bonding
+   * from the operator's own account (`--enable-batch-operator-underwriting`). Default false.
+   * Flows opt in through defaults; a local `wire-cluster-tool create` forces it on.
+   * Requires a nodeop built with the underwriter role.
+   */
+  enableBatchOperatorUnderwriting?: boolean
+  /**
+   * How the underwriter role runs when {@link enableBatchOperatorUnderwriting} is on: which
+   * operators the mock import funds and the exposure caps. Flag-less — a flow's
+   * `Scenario.defaults` or a build-options document sets it. Every member defaults
+   * (`ClusterConfigProvider.resolveBatchOperatorUnderwriting`); setting it with the role off
+   * is refused.
+   */
+  batchOperatorUnderwriting?: BatchOperatorUnderwritingOptions
   // nodeop tuning
   /**
    * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit
@@ -83,6 +106,14 @@ export interface ClusterBuildOptions {
    * when `apiCount` is 0.
    */
   queryEngine?: QueryEngineOptions
+  /**
+   * The read confirmation every operator daemon's Ethereum client reads what the
+   * outpost emitted at (`--ethereum-read-block-tag`, `--ethereum-read-confirmations`,
+   * `--ethereum-read-max-finality-lag-sec`): every member optional; an omitted one
+   * leaves nodeop's default in force (`latest`, 12 confirmations, 1152 s). A depth
+   * or lag beside a tag other than `latest` is rejected.
+   */
+  ethereumRead?: EthereumReadConfirmationOptions
   // solana-test-validator tuning
   /**
    * `solana-test-validator --slots-per-epoch` for this cluster. Omit for the
@@ -115,4 +146,24 @@ export interface ClusterBuildOptions {
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
+  // launch-data (LCO) import
+  /**
+   * Path of the frozen Ethereum outpost's pre-launch export (`--ethereum-bootstrap-json-file`,
+   * an `EthereumGenesisSnapshot`). The bootstrap imports its stakers' liqETH, its WIRE claims
+   * and its LIQETH yield pool during epoch zero.
+   */
+  ethereumBootstrapJsonFile?: string
+  /**
+   * Path of the Solana outpost's genesis export (`--solana-bootstrap-json-file`, a
+   * `SolanaGenesisSnapshot`). The bootstrap imports its stakers' liqSOL, its WIRE claims and
+   * its LIQSOL yield pool during epoch zero.
+   */
+  solanaBootstrapJsonFile?: string
+  /**
+   * The launch-data import's pricing, pool tuning and claim funding account. Flag-less — a
+   * build-options document or a flow's `Scenario.defaults` sets it. A chain's members require
+   * that chain's export; an unset value takes a named placeholder, which external outposts
+   * refuse.
+   */
+  lcoImport?: LcoImportOptions
 }

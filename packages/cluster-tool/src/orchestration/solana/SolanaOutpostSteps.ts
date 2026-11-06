@@ -7,14 +7,19 @@ import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
+import { WireState } from "../../tools/solana/SolanaAnchorEnumTool.js"
+import { SolanaLiqSyndicationTool } from "../../tools/solana/SolanaLiqSyndicationTool.js"
 import { solanaNativePublicKey } from "../../utils/keyPairUtils.js"
 import { OperatorAccount } from "../outputs/OperatorAccount.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { EpochContractSteps } from "../steps/contracts/sysio/EpochContractSteps.js"
+import { verifyStep } from "../StepTools.js"
 import { SolanaOutpostBootstrapper } from "./SolanaOutpostBootstrapper.js"
 
 const log = getLogger(__filename)
@@ -74,6 +79,76 @@ export namespace SolanaOutpostSteps {
       rpcUrl: ctx.solana.rpcUrl,
       clusterDataPath: ctx.config.dataPath
     }).bootstrap()
+  }
+
+  /**
+   * Take the outpost out of pre-launch: `set_wire_state` Launching, then
+   * PostLaunch, each its own admin write signed by the deployer (the liqsol
+   * `global_config.admin`), then verify the decoded `GlobalState.wire_state`.
+   * `liqsol_core` refuses PreLaunch -> PostLaunch, so the flip is always these
+   * two writes, in this order.
+   *
+   * Composed after the outpost deploy and before any operator daemon starts the
+   * OPP exchange. PostLaunch is the only state in which the outpost queues
+   * `SYNDICATE_LIQ`, reports `LIQ_YIELD` and pays a `DESYNDICATE_LIQ`; each of
+   * those also needs the liqSOL mint mapped to its depot token code
+   * (`set_token_address`), which this phase does not write. Self-registers on
+   * `parent`.
+   *
+   * @param parent - The build root or enclosing group to register on.
+   * @param name - Phase name (report node).
+   * @param description - One-line phase description.
+   * @param options - Per-step tuning applied to every step.
+   * @returns The registered phase.
+   */
+  export function planLaunch<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(parent, name, description, [
+      SolanaLiqSyndicationTool.planSetWireState<C>(
+        Report.Actor.SolanaOutpost,
+        "set-wire-state-launching",
+        "move the outpost GlobalState to Launching",
+        options,
+        WireState.launching
+      ),
+      SolanaLiqSyndicationTool.planSetWireState<C>(
+        Report.Actor.SolanaOutpost,
+        "set-wire-state-post-launch",
+        "move the outpost GlobalState to PostLaunch",
+        options,
+        WireState.postLaunch
+      ),
+      verifyStep<C>(
+        Report.Actor.SolanaOutpost,
+        "verify-post-launch",
+        "the outpost GlobalState.wire_state decodes to { postLaunch: {} }",
+        assertPostLaunch,
+        options
+      )
+    ])
+  }
+
+  /**
+   * Verify body — the outpost's `GlobalState.wire_state` is PostLaunch.
+   *
+   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @throws If the decoded launch state is anything other than PostLaunch.
+   */
+  export async function assertPostLaunch<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<void> {
+    const wireState = await SolanaLiqSyndicationTool.readWireState(ctx)
+    Assert.strictEqual(
+      wireState,
+      WireState.postLaunch,
+      `SolanaOutpostSteps.assertPostLaunch: the outpost is in ${wireState}, not ${WireState.postLaunch}`
+    )
   }
 
   /**

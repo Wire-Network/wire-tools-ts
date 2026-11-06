@@ -1,4 +1,3 @@
-import Fs from "node:fs"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, SysioContracts } from "@wireio/sdk-core"
@@ -7,10 +6,11 @@ import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-import { collectPhaseNames } from "./clusterBuildFixture.js"
+import { collectPhaseNames, collectStepNames } from "./clusterBuildFixture.js"
 import { seedProducerOperators } from "./outputs/operatorAccountFixture.js"
 
 /** One `finalizer_policy` entry as `bios::setfinalizer` receives it. */
@@ -37,18 +37,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
 
   beforeEach(() => {
     environment = fixtureResolveEnvironment("genesis-gates-")
-    externalConfigFile = Path.join(environment.rootPath, "external-outpost.json")
-    Fs.writeFileSync(
-      externalConfigFile,
-      JSON.stringify({
-        ethereum: {
-          addressFile: "outpost-addrs.json",
-          abiFiles: ["eth-abis/OPP.json"],
-          chainId: 11_155_111
-        },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
-      })
-    )
+    externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
   })
 
   afterEach(() => {
@@ -65,12 +54,11 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
     }
   }
 
-  /** Base options for an EXTERNAL-mode build (underwriters are excluded there). */
+  /** Base options for an EXTERNAL-mode build. */
   function externalOptions() {
     return {
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile,
-      underwriterCount: 0
+      externalOutpostConfig: externalConfigFile
     }
   }
 
@@ -110,6 +98,22 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
   })
 
   describe("genesis account seeding", () => {
+    it.each(["local", "external"])(
+      "creates and deploys sysio.councl without an unnecessary code grant in %s mode",
+      async mode => {
+        const cluster = await ClusterBuildDefaults.create(
+            mode === "local" ? baseOptions() : externalOptions()
+          ),
+          names = collectStepNames(cluster.children),
+          createIndex = names.indexOf("create-sysio.councl"),
+          deployIndex = names.indexOf("deploy-councl")
+        expect(createIndex).toBeGreaterThanOrEqual(0)
+        expect(deployIndex).toBeGreaterThan(createIndex)
+        expect(names).not.toContain("grant-sysio.councl")
+        expect(names.filter(name => name === "deploy-councl")).toHaveLength(1)
+      }
+    )
+
     it("seeds the bios producer + the bootstrap node owner as key-store OPERATORS", async () => {
       const { keyStore } = (await ClusterBuildDefaults.create(baseOptions()))
         .context

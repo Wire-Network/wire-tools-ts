@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 
 import {
   LogicalType,
+  QueryEngineMethod,
   QueryEngineRPC,
   QueryErrorCode,
   QueryErrorKind,
@@ -48,7 +49,8 @@ export interface StubRequest {
 
 /**
  * A `node:http` stand-in for a node's query engine (`POST /v1/query/execute`,
- * schema 1.1 with server paging) and chain API (`POST /v1/chain/get_abi`), with
+ * schema 1.1 with server paging; METHOD_NOT_FOUND for any other method) and
+ * chain API (`POST /v1/chain/get_abi`, `GET /v1/chain/get_info`), with
  * the `sample` owner's tables: `positions` (3 rows), `big` (10 000 × 12),
  * `slow` (answers after 3 s), `busy` (retryable QUERY_BUSY) — and a QUERY_SYNTAX
  * error for any JOIN. It runs on a {@link TestHttpServer} (registry-issued port).
@@ -110,6 +112,15 @@ export class StubQueryEngine {
       reply(StubQueryEngine.abiResponse(body.account_name))
       return
     }
+    if (request.url === StubQueryEngine.InfoPath) {
+      reply(StubQueryEngine.infoResponse(this.blockNumber))
+      return
+    }
+    // Like the engine: any method but query.execute is refused from the envelope alone.
+    if (body.method !== QueryEngineMethod["query.execute"]) {
+      reply(StubQueryEngine.errorEnvelope(body.id, StubQueryEngine.MethodNotFound))
+      return
+    }
     const params = body.params as QueryRequestParams
     this.requests.push({ params, at: Date.now() })
     const failure = StubQueryEngine.errorFor(params.query)
@@ -145,6 +156,16 @@ export namespace StubQueryEngine {
   export const Host = TestHttpServer.Host
   /** Chain API path. */
   export const AbiPath = "/v1/chain/get_abi"
+  /** Chain API `get_info` path. */
+  export const InfoPath = "/v1/chain/get_info"
+  /** The engine's refusal of any method but `query.execute`. */
+  export const MethodNotFound: StubError = {
+    kind: QueryErrorKind.METHOD_NOT_FOUND,
+    message: "Method not found",
+    retryable: false,
+    line: null,
+    column: null
+  }
   /** The stub owner. */
   export const Owner = "sample"
   /** First block number answered. */
@@ -296,6 +317,30 @@ export namespace StubQueryEngine {
         message: failure.message,
         data: { kind: failure.kind, retryable: failure.retryable, line: failure.line, column: failure.column, limit: null }
       }
+    }
+  }
+
+  /**
+   * `get_info` at `blockNumber` (every field `GetInfoResponse` decodes).
+   *
+   * @param blockNumber - The head block.
+   * @returns The response.
+   */
+  export function infoResponse(blockNumber: number): object {
+    const blockId = blockNumber.toString(16).padStart(64, "0")
+    return {
+      server_version: "0badc0de",
+      chain_id: ChainId,
+      head_block_num: blockNumber,
+      last_irreversible_block_num: blockNumber - 2,
+      last_irreversible_block_id: blockId,
+      head_block_id: blockId,
+      head_block_time: "2026-10-07T12:00:00.000",
+      head_block_producer: "sysio",
+      virtual_block_cpu_limit: 200_000,
+      virtual_block_net_limit: 1_048_576,
+      block_cpu_limit: 200_000,
+      block_net_limit: 1_048_576
     }
   }
 

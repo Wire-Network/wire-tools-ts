@@ -76,10 +76,9 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
         toClusterBuildOptions(argv, this.scenario.defaults),
         argv
       )
-    const cluster = await ClusterBuildDefaults.create<C>(
-      options,
-      this.scenario.createContext?.bind(this.scenario)
-    )
+    const cluster = await ClusterBuildDefaults.create<C>(options, {
+      createContext: this.scenario.createContext?.bind(this.scenario)
+    })
     this.scenario.plan(cluster)
     // Name the report before launch — the renderers title with it
     // ("flow-…: SUCCESS|FAILED") and launch writes the files.

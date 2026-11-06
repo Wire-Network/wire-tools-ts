@@ -32,6 +32,17 @@ export interface SchemaCodec<T> {
    *   render it with {@link SchemaCodec.formatIssues}.
    */
   validate(value: unknown): Either<z.ZodError, T>
+  /**
+   * The JSON Schema ({@link SchemaCodec.JSONSchemaTarget}) of the WIRE form — the
+   * schema's input side, i.e. what `serialize` writes and `deserialize` accepts
+   * (a codec field projects to its wire type). zod refinements (cross-field
+   * checks) have no JSON Schema form, so the document is necessary, not
+   * sufficient: `deserialize` / `validate` stay the authority.
+   *
+   * @returns The generated JSON Schema document.
+   * @throws When a member has no JSON form on its input side (a bare `z.custom`).
+   */
+  toJSONSchema(): z.core.JSONSchema.BaseSchema
 }
 
 /**
@@ -51,6 +62,9 @@ export namespace SchemaCodec {
   /** Separator between the clauses of {@link formatIssues}. */
   export const IssueSeparator = "; "
 
+  /** The JSON Schema dialect {@link SchemaCodec.toJSONSchema} emits. */
+  export const JSONSchemaTarget = "draft-2020-12"
+
   /** Discriminated safe-parse result of a `z.ZodType<T>` (name-stable via `ReturnType`). */
   type SafeParseResult<T> = ReturnType<z.ZodType<T>["safeParse"]>
 
@@ -58,7 +72,7 @@ export namespace SchemaCodec {
    * Create the {@link SchemaCodec} for `schema`.
    *
    * @param schema - The zod schema whose decoded type is `T`.
-   * @returns The codec exposing `serialize` / `serializeCompact` / `deserialize` / `check` / `validate`.
+   * @returns The codec exposing `serialize` / `serializeCompact` / `deserialize` / `check` / `validate` / `toJSONSchema`.
    */
   export function create<T>(schema: z.ZodType<T>): SchemaCodec<T> {
     return {
@@ -78,6 +92,9 @@ export namespace SchemaCodec {
       },
       validate(value: unknown): Either<z.ZodError, T> {
         return toEither(schema.safeParse(value))
+      },
+      toJSONSchema(): z.core.JSONSchema.BaseSchema {
+        return z.toJSONSchema(schema, { io: "input", target: JSONSchemaTarget })
       }
     }
   }

@@ -5,6 +5,7 @@ import Path from "node:path"
 import { Level } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  assetUnits,
   ClusterBuildPhase,
   ProtocolTiming,
   pollUntil,
@@ -141,7 +142,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
         "record exact pre-intake accounting",
         async ctx => {
           ctx.outputs.set(Constants.Before, {
-            supply: SyndicationScenario.units(
+            supply: assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -237,13 +238,11 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
             await SyndicationScenario.readBalance(ctx, Constants.User.account),
             ctx.outputs.assert(Constants.Before).holder +
               Constants.Burst -
-              (Constants.Burst * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints
+              SyndicationScenario.feeOf(Constants.Burst, Constants.FeeBps)
           )
           ctx.outputs.set(
             Constants.Hold,
-            (BigInt(request.covered) * BigInt(rows[0].hold_bps)) /
-              SyndicationScenario.BasisPoints
+            SyndicationScenario.feeOf(BigInt(request.covered), rows[0].hold_bps)
           )
         }
       ),
@@ -298,8 +297,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
             await SyndicationScenario.readFees(ctx),
             before.fees -
               Constants.Bounty +
-              (Constants.Burst * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints +
+              SyndicationScenario.feeOf(Constants.Burst, Constants.FeeBps) +
               Constants.Extra
           )
         }
@@ -357,7 +355,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
           Assert.strictEqual(BigInt(envelope.forfeit), Constants.Amount)
           Assert.strictEqual(BigInt(request.forfeit_pending), 0n)
           Assert.strictEqual(
-            SyndicationScenario.units(
+            assetUnits(
               (
                 await WireSyndicationTool.readShadowStat(
                   ctx,
@@ -371,15 +369,13 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
             await SyndicationScenario.readBalance(ctx, Constants.User.account),
             before.holder +
               Constants.Burst -
-              (Constants.Burst * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints
+              SyndicationScenario.feeOf(Constants.Burst, Constants.FeeBps)
           )
           Assert.strictEqual(
             await SyndicationScenario.readFees(ctx),
             before.fees -
               Constants.Bounty +
-              (Constants.Burst * BigInt(Constants.FeeBps)) /
-                SyndicationScenario.BasisPoints +
+              SyndicationScenario.feeOf(Constants.Burst, Constants.FeeBps) +
               Constants.Extra +
               Constants.Amount -
               Constants.Burst
@@ -586,8 +582,7 @@ export class SyndicationChallengeScenario extends SyndicationScenario {
               )) ===
                 ctx.outputs.assert(Constants.Before).holder +
                   Constants.Burst -
-                  (Constants.Burst * BigInt(Constants.FeeBps)) /
-                    SyndicationScenario.BasisPoints +
+                  SyndicationScenario.feeOf(Constants.Burst, Constants.FeeBps) +
                   Constants.ProbeAmount,
             ProtocolTiming.SingleHopBudgetMs,
             SyndicationScenario.PollMs

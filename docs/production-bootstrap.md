@@ -10,7 +10,7 @@ the code.
 **What "the values" are.** The concrete numbers/strings below are the cluster tooling's *production-mirror
 defaults*. They split into two kinds:
 - **Structural / fixed** — core symbol, chain/token codes, ROA byte price, operator caps, authority shapes,
-  the `setemitcfg` split ratios. Production keeps these.
+  the `setemitcfg` split ratios, the `setsnpcfg` quorum and cadence. Production keeps these.
 - **Deployment-tunable / dev stand-in** — keys, the finalizer set, supplies, epoch duration, collateral
   amounts and lock windows, the external (ETH/SOL) chain ids, mock token contract addresses, syndication
   bucket sizes and challenge window, operator/producer counts. Production substitutes real keys, the real finalizer set, real external
@@ -200,7 +200,7 @@ unlimited.
 | Group | Accounts |
 |---|---|
 | System / authority | `sysio.noop`, `sysio.bpay`, `sysio.msig`, `sysio.names`, `sysio.token`, `sysio.vpay`, `sysio.wrap`, `sysio.authex` |
-| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.swap`, `sysio.liq`, `sysio.andon`, `sysio.bond`, `sysio.synd` |
+| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.swap`, `sysio.liq`, `sysio.andon`, `sysio.bond`, `sysio.synd`, `sysio.councl` |
 | T5 buckets | `sysio.gov` (governance), `sysio.ops` (capex/ops) |
 | Dev-only (cluster) | `dev.owner1` |
 11. `sysio::setprodkeys({schedule:[{producer_name, block_signing_key}…]})` — `[sysio@active]` — one row per
@@ -228,12 +228,13 @@ standalone key, and `sysio.authex` keeps the plain `sysio@active` owner/active i
 ## Stage 8 — OPP contracts + owner `sysio.code` grants
 18. deploy the OPP set — **sys** — `[sysio@active]`, in order: `sysio.chains`, `sysio.tokens`, `sysio.epoch`,
     `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.andon`, `sysio.swap`, `sysio.liq`,
-    `sysio.bond`, `sysio.synd`. `sysio.andon` precedes the four contracts that read its cord (swap, liq, bond,
-    synd), `sysio.bond` precedes `sysio.synd`, and `sysio.synd` precedes the first liq-token registration
-    (Stage 11).
+    `sysio.bond`, `sysio.synd`, `sysio.councl`. `sysio.andon` precedes the four contracts that read its cord
+    (swap, liq, bond, synd), `sysio.bond` precedes `sysio.synd`, and `sysio.synd` precedes the first liq-token registration
+    (Stage 11). `sysio.councl` uses the same SYSIO-built artifacts and privileged deployment path;
+    candidate registration and election initialization are separate governance operations.
 19. `sysio::updateauth` on **each OPP account's owner** (`grantSysioCode`) — `[<account>@owner]` — owner ←
     `{threshold:1, keys:[], accounts:[{sysio@active,1},{<account>@sysio.code,1}], waits:[]}` (sorted by name
-    value; `sysio` sorts first). (11 calls: every OPP account except `sysio.andon`, which sends no inline
+    value; `sysio` sorts first). (11 calls: every OPP account except `sysio.andon` and `sysio.councl`, which send no inline
     actions.) Lets each contract inline-send its own actions (epoch `advance`, `evalcons`, `dispatch`, …)
     while staying governed by `sysio@active`.
 
@@ -250,7 +251,7 @@ uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so t
 `setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in Stage 8
 before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
 
-## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, dclaim)
+## Stage 9 — OPP / application configuration (epoch, genesis producer registration, emissions, snapshot attestation, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
     `[sysio.epoch@active]`. Sizing is computed from the operator counts:
@@ -258,28 +259,16 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
     batch_op_groups)`, `batch_operator_minimum_active = operators_per_epoch * batch_op_groups` (cluster
     `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` **(cluster 90; production: real cadence)**.
 
-21. `sysio.opreg::setconfig({...})` — `[sysio.opreg@active]`:
-
-| Field | Value | Notes |
-|---|---|---|
-| `max_available_producers` | `21` | |
-| `max_available_batch_ops` | `63` | |
-| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
-| `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
-| `terminate_max_consecutive_misses` | `5` | |
-| `terminate_max_pct_misses_24h` | `5` | |
-| `terminate_window_ms` | `86400000` | 24 h |
-| `req_prod_collat` | `[]` | per-(chain,token) min-bond rows; empty ⇒ no collateral required **(cluster; production: real minimums)** |
-| `req_batchop_collat` | `[]` | empty by default |
-| `req_uw_collat` | `[]` | empty by default |
+21. **Defer operator collateral configuration** until the chain, token and chain-token rows
+    have been registered in step 34. `sysio.opreg::setconfig` validates every collateral reference,
+    including depot shadow tokens; the `OperatorRegistryConfig` phase follows `Registry`.
 
 22. **Genesis producer operators** — `sysio.opreg::regoperator({account:<producer>,
     type:OPERATOR_TYPE_PRODUCER, is_bootstrapped:true})` — `[sysio.opreg@active]` — one call per producer
     account (`defproducera … defproduceru`). Registered here rather than in Stage 5 because `sysio.opreg` is
-    only deployed (Stage 8) and configured (step 21) by now. Bootstrapped by fiat: genesis producers post no
-    collateral, `req_prod_collat` ships empty, and a non-bootstrapped registration against an empty
-    requirement vector would never become eligible. As bootstrapped operators they are also exempt from
-    `termcheck`.
+    only deployed in Stage 8. These privileged genesis registrations use the contract's default config
+    until step 34 configures collateral. Bootstrapped producers bypass collateral eligibility even when
+    nonempty launch minima are configured later, and are also exempt from `termcheck`.
 23. **Genesis producer registration** — per producer account, in this order:
     - `sysio::regproducer({producer:<producer>, producer_key:<hosting node's K1>, url:"", location:0})` —
       `[<producer>@active]`. `sysio.system` admits it only for an ACTIVE PRODUCER operator, so it follows
@@ -322,7 +311,7 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `t2_duration` | `62208000` | 24 × 30 d |
 | `t3_duration` | `93312000` | 36 × 30 d |
 | `min_claimable` | `10000000000` | 10 WIRE |
-| `t5_distributable` | `375000000000000000` | 375,000,000 WIRE (T5 treasury budget) |
+| `t5_distributable` | `375000000000000000` less the DEX earmark | 375,000,000 WIRE (T5 treasury budget), less every seeded pool's WIRE side (the LCO pools and any mock pools), which leaves the treasury |
 | `t5_floor` | `125000000000000000` | 125,000,000 WIRE (T5 floor) |
 | `target_annual_decay_bps` | `6940` | 69.40% annual survival (≈30.6% decay) |
 | `annual_initial_emission` | `563150000000000 × 365 = 205549750000000000` | ≈563,150 WIRE/day, annualized |
@@ -339,7 +328,16 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 | `epoch_log_retention_count` | `8640` | emissions pay-log retention, in epochs |
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
-25. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
+25. `sysio::setsnpcfg({min_providers:7, block_spacing:25000})` — `[sysio@active]` — turns snapshot attestation
+    on. Until it runs, `snapconfig.min_providers` is `0` and `sysio::votesnaphash` refuses every vote. Harmless
+    while no snapshot-provider node runs.
+
+| Field | Value | Notes |
+|---|---|---|
+| `min_providers` | `7` | matching snapshot-provider votes that attest a snapshot: f + 1 for the 21-finalizer set (f = 6); the contract accepts `1`–`30` (`max_snap_providers`) |
+| `block_spacing` | `25000` | blocks between attested snapshot heights (the contract default); must be above `0`, and nodes adopt a changed value only on restart |
+
+26. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
     with the bootstrap import window open. DClaim rewards and imported balances remain claimable
     indefinitely, including while awaiting account linking. `importseed` and `importdone` are
     external/operational tools, not part of this bootstrap sequence.
@@ -347,10 +345,10 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
 ## Stage 10 — Register the bootstrap node owner (real `nodeownreg` flow; NO `forcereg`)
 Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would inline-send for a real claim:
 
-26. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
+27. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
     creates `wireno` (owner = active = `DEV_K1`) with a finite pool-gifted RAM allocation. `tier:1` = T1
     (Validator); `NodeOwnerTier` = `{T1:1, T2:2, T3:3}`.
-27. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
+28. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
     `[sysio.roa@active]` — records the depositor ETH key as a `sysio.authex` link (inline `recordlink`) and
     allocates the tier-1 reserve post-bootstrap resource policies are issued from. `eth_pub_key` is a **fresh
     random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)**; its
@@ -368,16 +366,16 @@ Create the panic account first so the delegated authority can reference it.
 matching SDK declarations. `ClusterBuildDefaults` implements the sequence below; its Andon steps
 declare the linked `sysio.andon@pull` and `@clear` permissions.
 
-28. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
+29. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — then `sysio.roa::addpolicy({owner:"andon.panic",
     issuer:"wireno", net_weight:"25.0000 SYS", cpu_weight:"25.0000 SYS", ram_weight:"25.0000 SYS",
     time_block:0, network_gen:0})` — `[wireno@active]`. No WIRE is transferred to it **(cluster dev key;
     production: the governance-held panic key)**.
-29. **Permission RAM** — `sysio.roa::addpolicy({owner:"sysio.andon", issuer:"wireno",
+30. **Permission RAM** — `sysio.roa::addpolicy({owner:"sysio.andon", issuer:"wireno",
     net_weight:"0.0000 SYS", cpu_weight:"0.0000 SYS", ram_weight:"0.0100 SYS", time_block:0,
     network_gen:0})` — `[wireno@active]`. Fund the native permission and link rows before creating them;
     the contract deployment's RAM gift covers code/ABI, not these additional rows.
-30. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
+31. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
     - `sysio::updateauth({account:"sysio.andon", permission, parent:"active", auth:{threshold:1,
       keys:[], accounts:[{permission:{actor:"andon.panic",permission:"active"},weight:1},
       {permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}})` — `[sysio.andon@active]`.
@@ -397,17 +395,18 @@ authority is replaced by this setup.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
-outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, the inert
-`StakingManager`, plus the `liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
+outpost contracts deploy (`OPP`, `OPPInbound`, `OutpostManager`, `SyndicationPool`, `BAR`, plus the
+`liqEth` suite) and the tooling verifies the `SyndicationPool` configuration and
 the panic account's pause role, then anvil switches to interval mining; solana-test-validator starts with all
 four wire-solana programs at genesis (`liqsol_core` hosts the OPP outpost), the liqsol surface is stood up by
 wire-solana's own `init-*` scripts, and the OPP PDAs are initialized with the native-SOL token binding and
 precision. These deploys produce the artifact files (`outpost-addrs.json`, `liqeth-addrs.json`) the registry
-rows below read their chain-side addresses from; in external-outpost mode the operator-supplied artifacts
-(including `sol-mock-mints.json`) are copied into place instead. Production registers the canonical
+rows below read their chain-side addresses from; in external-outpost mode the same records (and
+`sol-mock-mints.json`, when the config carries mints) are written from the trusted
+`--external-outpost-config` values instead. Production registers the canonical
 contract/mint addresses via the same shapes.
 
-31. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description, outpost})` —
+32. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description, outpost})` —
     `[sysio.chains@active]`, one per chain (registered ACTIVE; there is no separate `activchain`). `outpost`
     is left empty here and filled by `setoutpost` in Stage 12:
 
@@ -417,7 +416,7 @@ contract/mint addresses via the same shapes.
 | `CHAIN_KIND_EVM` | `slug("ETHEREUM")` | `31337` **(cluster anvil; production: real EVM id)** | `Ethereum (anvil)` | local anvil EVM chain |
 | `CHAIN_KIND_SVM` | `slug("SOLANA")` | `0` | `Solana (test-validator)` | local solana-test-validator |
 
-32. **Tokens** — `sysio.tokens::regtoken({kind, code, symbol_name, description, precision, address})` —
+33. **Tokens** — `sysio.tokens::regtoken({kind, code, symbol_name, description, precision, address})` —
     `[sysio.tokens@active]`, one per token (registered ACTIVE; no separate `activtoken`). `precision` is `9`
     for NATIVE/LIQ tokens and `6` for the ERC-20/SPL stablecoins (their chain-native decimals). `address =
     {kind, address}`; NATIVE leaves `address` empty; non-native carries the chain-side contract bytes (hex,
@@ -435,16 +434,37 @@ contract/mint addresses via the same shapes.
 | `TOKEN_KIND_SPL` | `slug("USDCSOL")` | `USDC (Solana)` | `6` | USDC mint from `sol-mock-mints.json` when present |
 | `TOKEN_KIND_SPL` | `slug("USDTSOL")` | `USDT (Solana)` | `6` | USDT mint from `sol-mock-mints.json` when present |
 
-33. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
+34. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
     `[sysio.tokens@active]`, one per binding (no separate `activctok`). Exactly one `is_native:true` per chain;
-    non-native bindings carry the same chain-side address bytes as their token row (empty when unavailable):
-    `(WIRE,WIRE,native)`, `(ETHEREUM,ETH,native)`, `(ETHEREUM,LIQETH)`, `(ETHEREUM,USDC)`, `(ETHEREUM,USDT)`,
+    outpost non-native bindings carry the same chain-side address bytes as their token row (empty when unavailable):
+    `(WIRE,WIRE,native)`, `(WIRE,LIQETH)`, `(WIRE,LIQSOL)`,
+    `(ETHEREUM,ETH,native)`, `(ETHEREUM,LIQETH)`, `(ETHEREUM,USDC)`, `(ETHEREUM,USDT)`,
     `(SOLANA,SOL,native)`, `(SOLANA,LIQSOL)`, `(SOLANA,USDCSOL)`, `(SOLANA,USDTSOL)`.
+    The WIRE shadow bindings are non-native with empty contract addresses: they describe depot
+    collateral custody while the ETHEREUM and SOLANA bindings describe the tokens' origins.
 
-34. `sysio.swap::setconfig({fee_authority:"sysio", system_token:{sym:"9,WIRE", contract:"sysio.token"}})` —
+    **After all registry writes**, `OperatorRegistryConfig` calls `sysio.opreg::setconfig({...})`
+    with `[sysio.opreg@active]`. Every nonempty role requirement now has its chain, token and exact
+    binding registered. This also supports producer launch minima of 0.2 LIQETH and 5 LIQSOL on WIRE;
+    supplied minima are preserved, and an explicit empty list stays empty.
+
+| Field | Value | Notes |
+|---|---|---|
+| `max_available_producers` | `21` | |
+| `max_available_batch_ops` | `63` | |
+| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
+| `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
+| `terminate_max_consecutive_misses` | `5` | |
+| `terminate_max_pct_misses_24h` | `5` | |
+| `terminate_window_ms` | `86400000` | 24 h |
+| `req_prod_collat` | configured producer requirements, default `[]` | per-(chain,token) min-bond rows; production supplies launch minimums |
+| `req_batchop_collat` | configured batch-operator requirements, default `[]` | |
+| `req_uw_collat` | configured underwriter requirements, default `[]` | |
+
+35. `sysio.swap::setconfig({fee_authority:"sysio", system_token:{sym:"9,WIRE", contract:"sysio.token"}})` —
     `[sysio.swap@active]` — the depot-local AMM's fee authority and system token. `sysio.swap` trades on the
     depot only; it has no outpost participation and emits no OPP attestations.
-35. **Shadow liq symbols** — `sysio.liq::create({sym, chain_code, token_code})` — `[sysio.liq@active]`, one per
+36. **Shadow liq symbols** — `sysio.liq::create({sym, chain_code, token_code})` — `[sysio.liq@active]`, one per
     registered liq token: `{sym:"9,LIQETH", chain_code:slug("ETHEREUM"), token_code:slug("LIQETH")}` and
     `{sym:"9,LIQSOL", chain_code:slug("SOLANA"), token_code:slug("LIQSOL")}`. Syndicated outpost custody is
     minted 1:1 into these symbols.
@@ -456,29 +476,81 @@ contract/mint addresses via the same shapes.
 
 | Field | Value | Notes |
 |---|---|---|
-| `synd_fee_bps` / `desynd_fee_bps` | `0` / `0` | **(cluster; production: real fees)** |
+| `synd_fee_bps` / `desynd_fee_bps` | `0` / `5` | Syndication is always free. Desyndication takes floor(quantity × 5 / 10000) + desynd_fee_flat to recover external-chain gas for BOTH round-trip legs. A lone Ethereum round trip measured ≈507k gas; Solana measured 9k–104k lamports. Break-even sizing assumes a syndication of min_desyndicate. |
 | `synd_burst` / `synd_refill` | `1000000000000000` / same | one million tokens at 9 decimals per bucket and per-epoch refill **(cluster)** |
 | `desynd_burst` / `desynd_refill` | `1000000000000000` / same | likewise |
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |
-| `min_desyndicate` | `1000000` | required gross return floor: 0.001 at nine decimals, shared by both pairs; an arbitrary launch choice based on 0.001 SOL |
+| `min_desyndicate` | LIQETH: `100000000`; LIQSOL: `50000000` | Gross return floor, 0.1 ETH / 0.05 SOL at depot precision (9 decimals). |
+| `desynd_fee_flat` | LIQETH: `5000000`; LIQSOL: `100000` | Flat charge, 0.005 ETH / 0.0001 SOL; must be strictly below min_desyndicate. |
+
+Outpost minimum syndications are configured separately: 0.005 liqETH (5,000,000 depot units)
+and 0.0025 liqSOL (2,500,000 base units), each 1/20 of the pair’s gross return floor.
+`desyndicate(holder, quantity, max_fee)` caps the charge before funds move; callers derive
+the cap from `quotedesynd` or the live pair row.
 
 The tooling then verifies that every shadow symbol is at the depot frame's precision and that each
 `(chain, token)` pair is an active `TOKEN_KIND_LIQ` token with an active binding (otherwise `sysio.msgch`
 drops every `SYNDICATE_LIQ` of the pair).
-38. **Mock data — opt-in only, never production.** Both run inside the epoch-0 window:
+37b. **Launch-data (LCO) import — only with `--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file`.**
+    Each outpost's frozen pre-launch export is replayed inside the epoch-0 window, per chain:
+    - `sysio.synd::importsynd({chain_code, token_code, credits})` — `[sysio.synd@active]`, 50 credits a push —
+      each staker's principal at depot precision, keyed by its pubkey (EVM 33-byte compressed, SVM ed25519);
+    - `sysio.dclaim::importseed({chain, credits})` — `[sysio.dclaim@active]`, 500 credits a push — each
+      address's pretokens as WIRE, one pretoken per WIRE;
+    - `sysio.liq::regliqpool({...})` — `[sysio.liq@active]` — the chain's pool: booked custody less every
+      imported position as the liq side (on Solana exactly the export's `initialChainAmount`, the purchased
+      principal; custody slack is never minted, and the booked principal must not exceed `backingAvailable`),
+      `liq × native price ÷ highest tranche price` as the WIRE side (drained from the `sysio` treasury), the
+      caller's tuning.
+    Then `sysio.token::transfer` funds `sysio.dclaim` with every claim from the configured account, the
+    claims and positions on the depot are reconciled against the plan (`sysio.synd::parked` holds exactly the
+    positions whose pubkey has no `sysio.authex::links` row, and each linked account holds exactly the
+    positions linked to it), `sysio.dclaim::importdone` and (unless the mock import follows)
+    `sysio.synd::importdone` seal the imports, and a verify checks each imported shadow's outstanding equals
+    its booked custody. Each export is checked before anything runs: a Solana export must hash to its
+    `allocationHash`, its `initialChainAmount` must equal its wallets' purchased liqSOL, its
+    `backingAvailable` must be `poolBalance − unreportedLiqsolYield`, and against external outposts its
+    `programId` must be the targeted program; an Ethereum staker's pubkey must be its address's key; no
+    export list may name an address twice; every row's `totalPretokens` and every declared total must add
+    up (on Solana `poolPretokens` and `totalPretokensSold` included); and each pool must meet `sysio.swap`'s
+    own limits (seeds below 10^15, a share left for the creator). The claims, the T5 allotment and the
+    node-owner commitments must fit the 1,000,000,000 WIRE supply, or the bootstrap is refused before it
+    starts. Before the first import write, the funding account must hold every claim, `sysio` must keep its
+    T5 allotment and node-owner commitments, and no imported shadow may have supply yet. Placeholders stand
+    in for unset prices, tuning, the Ethereum booked custody and the funding account; external outposts
+    refuse them.
+    **(production: real exports and real values only.)**
+38. **Mock data — local `create` and opted-in flows only; refused against external outposts.** Both run inside the epoch-0 window:
     - `--enable-mock-liq-pools`: `sysio.liq::regliqpool` × 2 — `[sysio.liq@active]` — a `LIQETHP` / `LIQSOLP`
       yield pool per shadow on `sysio.swap`, each seeded with `10000000000` shadow and `10000000000` WIRE base
-      units, fee `30`, 30 s conversion horizon, 3000 bps depth cap, clip floor `1000`.
+      units, fee `500` (5 %), 30 s conversion horizon, 500 bps depth cap (`sysio.swap::setyield` refuses a cap above the fee, and 5 % sells a flow's reported yield in one tick), clip floor `1000`.
     - `--enable-mock-syndication-import`: `sysio.synd::importsynd` × 2 — one parked `100000000000` (100-token)
       position each of LIQSOL (ED key) and LIQETH (EM key) for an unlinked mock bonder — then
       `sysio.synd::importdone`, and a verify that both are parked with no custody mismatch.
-    - With either flag, outpost custody is then funded (Solana pool ATA, Ethereum `SyndicationPool`) to back
-      all outstanding mock shadow.
+    - `--enable-batch-operator-underwriting` with `--enable-mock-syndication-import`: one more
+      `sysio.synd::importsynd` per FUNDED bootstrap batch operator (the first
+      `batchOperatorUnderwriting.fundedOperatorCount` in label order, default all) per shadow — `100000000000`
+      each of LIQSOL to the operator's ED key and LIQETH to its EM key, liquid in its linked account — before `importdone`. Because those
+      keys exist only after operator provisioning, the import, its verify and the custody backing then run after
+      Stage 12's provisioning instead, still inside the epoch-0 window. The option also gives each operator a node-owner
+      `sysio.roa::addpolicy` RAM grant for its `sysio.bond` rows and runs the `batch_operator_plugin`
+      underwriter role on its node. Only the mock import is a dev/test setup;
+      the underwriting role also works with real liquid shadow balances.
+    - With either flag, or a launch-data import against local outposts, outpost custody is then funded (Solana
+      pool ATA, Ethereum `SyndicationPool`) to back all outstanding shadow.
+    - A shadow whose pool the launch-data import seeds gets no mock pool.
 
 ## Stage 12 — Operator provisioning + first epoch
 The genesis-replacing real producer schedule is already live. NOTHING here uses `forcereg`.
+
+Automatic syndication underwriting is a separate opt-in from OPP delivery.
+Enable `--enable-batch-operator-underwriting` when creating the depot, select the
+per-token caps (the defaults cover LIQSOL and LIQETH), and supply liquid shadow LIQ to the
+operators. The RAM grant and runtime role do not depend on mock imports. See
+[underwriting operations](syndication-underwriting-operations.md) for configuration,
+capital requirements, deployed-node recovery, and verification.
 
 39. `sysio.chains::setoutpost({code, outpost})` — `[sysio.chains@active]` — writes each outpost chain's remote
     addresses once the daemon artifacts are published: `ETHEREUM` gets `opp_addr` = `OPP` and
@@ -516,7 +588,9 @@ are prepared just before the provisioning above; the operator nodeop daemons sta
 infrastructure, before the first epoch.
 
 43. `sysio.epoch::schbatchgps({})` — `[sysio.epoch@active]` — initialize batch-operator groups from the
-    AVAILABLE (bootstrapped) batch ops. Local outposts are then seeded with that schedule before the first
+    AVAILABLE (bootstrapped) batch ops. The tooling then writes `<cluster-path>/wire-opreg-bootstrap.json`
+    (not a depot action): the cluster's label and AWS account, the bootstrapped operator roster with public
+    keys, this schedule and the epoch duration — see [`outpost/README.md`](outpost/README.md). Local outposts are then seeded with that schedule before the first
     envelope (chain-side, not depot actions): Ethereum `OPPInbound.installInitialRoster` replaces the
     provisional roster, and Solana `opp_bootstrap` seeds the outpost's operator registry. External outposts
     are seeded by their own operators.

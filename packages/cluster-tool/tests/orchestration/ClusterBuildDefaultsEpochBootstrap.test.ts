@@ -1,15 +1,17 @@
-import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
 
 import { collectStepNames } from "./clusterBuildFixture.js"
 
-/** The four EpochBootstrap steps, in the order the depot requires them. */
+/** The EpochBootstrap steps, in the order the depot requires them. */
 const ScheduleBatchGroupsStep = "schedule-batch-groups"
+const EmitWireOpregBootstrapStep = "emit-wire-opreg-bootstrap"
+const VerifyWireOpregBootstrapStep = "verify-wire-opreg-bootstrap"
 const SeedEthereumRosterStep = "seed-ethereum-roster"
 const SeedSolanaRosterStep = "seed-solana-roster"
 const BootstrapEpochStep = "bootstrap-epoch"
@@ -19,18 +21,7 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
 
   beforeEach(() => {
     environment = fixtureResolveEnvironment("epoch-bootstrap-")
-    externalConfigFile = Path.join(environment.rootPath, "external-outpost.json")
-    Fs.writeFileSync(
-      externalConfigFile,
-      JSON.stringify({
-        ethereum: {
-          addressFile: "outpost-addrs.json",
-          abiFiles: ["eth-abis/OPP.json"],
-          chainId: 11_155_111
-        },
-        solana: { idlFile: "solana-idls/liqsol_core.json" }
-      })
-    )
+    externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
   })
 
   afterEach(() => {
@@ -55,7 +46,7 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
     const names = collectStepNames(cluster.children)
     expect(names.indexOf(SeedEthereumRosterStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+      names.indexOf(VerifyWireOpregBootstrapStep) + 1
     )
     expect(names.indexOf(SeedSolanaRosterStep)).toBe(
       names.indexOf(SeedEthereumRosterStep) + 1
@@ -69,16 +60,34 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     // External outposts are seeded by their own operators, out of band.
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile,
-      // External mode has no local outpost to bond underwriter collateral on,
-      // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
-      underwriterCount: 0
+      externalOutpostConfig: externalConfigFile
     })
     const names = collectStepNames(cluster.children)
     expect(names).not.toContain(SeedEthereumRosterStep)
     expect(names).not.toContain(SeedSolanaRosterStep)
     expect(names.indexOf(BootstrapEpochStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+      names.indexOf(VerifyWireOpregBootstrapStep) + 1
     )
   })
+
+  it.each([false, true])(
+    "emits then verifies wire-opreg-bootstrap.json right after schbatchgps (external outposts: %s)",
+    async external => {
+      // The file names the window schbatchgps just built, so it follows that
+      // step immediately — in every cluster mode, ahead of anything that reads
+      // the schedule.
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          ...(external && { externalOutpostConfig: externalConfigFile })
+        }),
+        names = collectStepNames(cluster.children)
+      expect(names.filter(name => name === EmitWireOpregBootstrapStep)).toHaveLength(1)
+      expect(names.indexOf(EmitWireOpregBootstrapStep)).toBe(
+        names.indexOf(ScheduleBatchGroupsStep) + 1
+      )
+      expect(names.indexOf(VerifyWireOpregBootstrapStep)).toBe(
+        names.indexOf(EmitWireOpregBootstrapStep) + 1
+      )
+    }
+  )
 })

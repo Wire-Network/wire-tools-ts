@@ -15,7 +15,7 @@ The OPP message flow spans three chains:
   `sysio.opreg`, `sysio.chalg`, `sysio.synd`, `sysio.bond`, `sysio.liq`, `sysio.swap`
   (a depot-local AMM with no outpost participation), `sysio.andon`, `sysio.dclaim`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OutpostManager.sol`,
-  `SyndicationPool.sol`, `BAR.sol`, `StakingManager.sol` (an inert placeholder) (+ `liqEth`).
+  `SyndicationPool.sol`, `BAR.sol` (+ `liqEth`).
 - **Solana outpost** (`solana-test-validator`) — all four wire-solana Anchor programs
   loaded at genesis (`liqsol_core`, which hosts the OPP outpost interface, plus
   `liqsol_token` / `transfer_hook` / `validator_leaderboard`), with the liqsol
@@ -135,6 +135,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
+| `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
@@ -152,6 +153,8 @@ and outbound queue entries are intermediate checks.
 | `flow-liq-syndication` | Explicit governance resolution, full principal delivery through authenticated linking, and full reported-yield release |
 | `flow-liq-yield` | Actual bonder, parked credit delivered on linking, WIRE yield claim, and external redemption payout |
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
+| `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
+| `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -191,7 +194,7 @@ the successful runs above selected the installed pinned 4.2.0 toolchain explicit
 ### Removed reserve and swap flows
 
 The eight former reserve/swap flow packages, their dedicated helpers and bootstrap
-flags have been deleted. The 13 remaining flows exercise supported functionality.
+flags have been deleted. The 15 remaining flows exercise supported functionality.
 Syndication underwriting uses depot bond providers, without swap-underwriter daemons.
 
 ## Running flows
@@ -339,6 +342,31 @@ Rules of the road (binding for sessions/automation; see
   collision-proof via `BindConfig`, so parallelism is bounded only by host
   resources.
 
+### Service ports and automatic client ports
+
+`BindConfigProvider` selects automatic service ports outside the host's actual
+automatic client-port ranges, including both ports of the Solana RPC/PubSub pair
+and every port of its dynamic window. Fallback services use available ports from
+10001 through 65535 with a randomized starting point, excluding those ranges,
+the reserved Agave band, and live registry claims. Every candidate still passes
+the existing IPv4/IPv6 and transport-specific availability checks.
+
+Host observations are read-only: Linux uses
+`/proc/sys/net/ipv4/ip_local_port_range`; macOS reads the ordinary, high and low
+`net.inet.ip.portrange` bounds; Windows queries IPv4/IPv6 TCP/UDP ranges with
+`netsh`. Unreadable or unsupported settings and exhausted safe pools fail
+automatic allocation. A fully pinned plan does not require these observations.
+Keep these host settings stable while clusters are running. Explicit
+pinned ports/ranges retain their availability-checked behavior; an operator who
+pins inside an automatic client range accepts the source-port collision risk.
+Ports resolved on one machine must be reviewed against the destination machine's
+settings before external deployment.
+
+During Solana startup the harness observes `validator.log` every 100 ms and
+records the first bind error's assigned-port socket states/owners with
+`ss -tuapn` where available. That snapshot is retained in startup diagnostics
+even if the conflicting client exits before readiness times out.
+
 ## Launching a persistent test cluster
 
 For interactive work — poking the chains with `clio` or the debugging TUI —
@@ -356,7 +384,7 @@ between at random:
 | Starts | the WHOLE cluster, in dependency order | ONE daemon |
 | Needs | this repo installed + built | only that daemon's binary |
 | Ports/paths | re-read from `cluster-config.json` at launch | frozen from the config at emit time |
-| Registers with the bind registry | yes (`validate` + `registerResolved`) | **no** |
+| Registers with the bind registry | yes (`claimResolved`) | **no** |
 
 `run` is the local development path. `start.sh` exists for the **published
 artifact**: a consumer who unpacks
@@ -426,6 +454,12 @@ wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 
 ### Underwriting, syndication and the emergency stop
 
+Automatic underwriting requires `--enable-batch-operator-underwriting`, matching
+per-token exposure caps, and liquid shadow LIQ in the operator accounts. The role
+defaults to off even when OPP delivery works, except in a local `create`, which forces
+it on together with both mock inventories. See the
+[setup and existing-testnet recovery procedure](docs/syndication-underwriting-operations.md).
+
 Every `create` sets these up on the depot; no flag gates them, because a real
 depot needs them too:
 
@@ -434,9 +468,38 @@ depot needs them too:
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
-| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: no fees, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and shared 1,000,000-unit gross return minimum), then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+| `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: free syndication and desyndication charged at floor(quantity × 5 / 10000) plus a pair-specific flat fee, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and flat fees / gross minima of 5,000,000 / 100,000,000 for LIQETH and 100,000 / 50,000,000 for LIQSOL (9 decimals; flat < minimum; both round-trip legs’ gas: Ethereum ≈507k gas, Solana 9k–104k lamports)), with custody shortfall allowance 100 bps for LIQETH and zero for LIQSOL; then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
+
+Break-even sizing assumes a syndication of the pair's `min_desyndicate`.
+Outposts separately configure minimum syndications of 0.005 liqETH (5,000,000
+depot units) and 0.0025 liqSOL (2,500,000 base units), each 1/20 of the return
+minimum. Return Steps derive `max_fee` from the live pair immediately before
+submission; the contract refuses a higher charge before moving funds.
 
 Native action permissions are armed after the cord readers deploy and before registry setup or epoch traffic. Privileged `sysio.synd` can pull the cord without a contract-managed puller registry.
+
+### The LIQ kicker
+
+`sysio.kicker` pays governance-budgeted T5 WIRE gifts to LIQ holders through
+`sysio.liq::addyield` (wire-sysio `contracts/sysio.system/EMISSIONS.md`). The bootstrap
+follows `docs/platform-bootstrap-config.md` ("Kicker deployment and earmark"):
+
+| Phase | What it does |
+|---|---|
+| `Kicker` | every `create`, after `SyndicationConfig` and any `MockLiqPools`: deploys `sysio.kicker` through `setsyscode` (privileged, so its inline `sysio.token::transfer` may draw from `sysio` under `sysio@active`), reads the privilege back, then `setconfig` with a 1,000,000 WIRE budget, a 60 s minimum interval, an 86,400 s TWAP window and the contract's 5,000 bps spot-deviation guard (`Steps.registry.KickerConfiguration`; the contract default interval is one hour) |
+| `KickerPools` | only with `--enable-mock-liq-pools` (`addpool` refuses a token without its LIQ/WIRE yield pool): one `addpool` per LIQ token at the contract defaults, 200 bps, a one-WIRE `min_gift` and a mandatory 1,000-WIRE daily ceiling |
+
+The `--wire-build-path` build must carry `contracts/sysio.kicker/sysio.kicker.{wasm,abi}`.
+At the mock pools' 10-token supply a gift accrues about 0.2 WIRE a year, so no kick pays at
+the default minimum; a flow that exercises a payment lowers it with `setpool` and
+restores it.
+
+`addpool` checkpoints current LIQ supply in `kickpools.supply_snapshot`. Gifts use
+`min(supply_snapshot, current supply)`; `addyield` distributes over current supply.
+Full payments checkpoint current supply, while partial payments retain the smaller
+supply they priced. A zero snapshot only restarts the clock at current supply.
+At the 72-hour catch-up limit, a below-minimum gift forfeits and checkpoints only
+if the same interval at the same TWAP sized on current supply reaches `min_gift`.
 
 Each outpost gets its own emergency stop and per-transfer syndication maximum
 in local mode:
@@ -477,14 +540,16 @@ command comes first).
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
-| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
+| `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
-| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
-| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
+| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults). Give a remote outpost as an IP literal: `run` treats every host name as local, so it checks and registers a host name's ports on this host ([bind registry §6](docs/bind-registry/README.md#6-ports-a-client-must-never-take)) |
+| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
@@ -536,35 +601,75 @@ specs, so archives are sensitive; `cluster-keys.json` is NEVER included.
 
 ### External outpost clusters
 
-Point a cluster at Ethereum + Solana outposts that already run on real chains
-instead of the local anvil / solana-test-validator: pass
-`--external-outpost-config <file>` at `create` (the depot bootstraps normally but
-no local outpost is started or deployed), together with a `--bind-config` whose
-`anvil` / `solana` addresses are the REMOTE RPC endpoints. The
-`ExternalOutpostConfig` is fully self-described (RPC endpoints come from the bind
-config; the Solana program id is parsed from the IDL):
+Bootstrap a depot against Ethereum + Solana outposts that already run on their
+own chains, instead of the local anvil / solana-test-validator: pass
+`--external-outpost-config <file>` at `create`. The file is TRUSTED and holds
+values only — the outposts' real-world deployed addresses and public keys:
 
 ```json
 {
   "ethereum": {
-    "addressFile": "/opt/wire/eth/outpost-addrs.json",
-    "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
-    "chainId": 11155111
+    "chainId": 560048,
+    "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
+    "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
+    "liqEthAddresses": { "LiqEthToken": "0x…" }
   },
-  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+  "solana": {
+    "rpcUrl": "https://api.testnet.solana.com",
+    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+  }
 }
 ```
 
-Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
-values are rejected; syndication bond providers do not need a daemon.
+- `outpostAddresses` is the outpost deploy record (`outpost-addrs-<network>.json`)
+  and must carry `OPP`, `OPPInbound` and `BAR`. `liqEthAddresses` (the liqEth
+  deploy record) and `solana.mints` (`[{ code, mint, decimals }]`) are optional.
+- `rpcUrl` is the endpoint the operator daemons dial. Without it they dial the
+  bind config's `anvil` / `solana` address.
+- The platform's `docs/ops/cluster-inputs/external-outpost-config.json` is a
+  complete example (Hoodi + Solana testnet).
 
-At `create` the harness verifies the external endpoints are reachable
-(`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
-and gates bootstrap success on the depot's head block advancing AND on an
-outbound envelope being queued for every registered outpost — NOT on epoch
-distribution (there is no local chain to advance). A LOCAL cluster instead gates
-on `sysio.epoch::current_epoch_index` passing the bootstrap epoch. A remote
-`anvil`/`solana` bind address WITHOUT `--external-outpost-config` fails fast.
+What `create` does with it:
+
+- **Never contacts an outpost.** No anvil or solana-test-validator starts,
+  nothing is deployed and no endpoint is probed. The harness's own outpost
+  clients refuse to run in this mode.
+- **Builds the daemon artifacts from source.** The ABI files come from the
+  wire-ethereum build and the `liqsol_core` IDL from the wire-solana build, with
+  the config's addresses and program id overlaid — the same step a local cluster
+  runs.
+- **Syncs the batch operators without their daemon.** Each batch-operator node
+  starts without `batch_operator_plugin` (so without an outpost client), syncs
+  the depot chain and is stopped with the rest of the cluster. Its `start.sh`
+  carries the full daemon args, so the deployed node runs the plugin.
+- **Gates** success on the depot's head block advancing, an outbound envelope
+  being queued for every registered outpost, and every batch-operator node having
+  synced — not on epoch distribution (there is no local chain to advance). A LOCAL
+  cluster instead gates on `sysio.epoch::current_epoch_index` passing the
+  bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
+  `--external-outpost-config` fails fast.
+
+Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
+values are rejected. Manual syndication bond providers can submit actions directly;
+automatic underwriting runs in the batch operators only when explicitly enabled
+and funded, as described in the [underwriting setup](docs/syndication-underwriting-operations.md).
+
+### Bootstrapped operator roster (`wire-opreg-bootstrap.json`)
+
+Every bootstrap — `create` and every flow, local or `--external-outpost-config` —
+writes `<cluster-path>/wire-opreg-bootstrap.json` right after
+`sysio.epoch::schbatchgps`: the cluster's build `label` and `awsAccount`, each
+bootstrapped operator's WIRE account, operator type (`PRODUCER` / `BATCH` /
+`UNDERWRITER`) and public keys with their key types (`K1` / `BLS` / `EM` /
+`ED`), the initial batch-operator groups with the first active group, and the
+depot's epoch duration. `awsAccount` is `awsClusterNodeConfig.account` (or
+`null`); the cluster-tool writes `label: null` and the
+`create-wire-platform-cluster` workflow sets it after a successful create. It
+holds public data only. The
+`verify-wire-opreg-bootstrap` step checks it against `sysio.opreg` in the same
+bootstrap. Its JSON Schema, an example and the field reference are in
+[`docs/outpost/`](docs/outpost/README.md); the TypeScript codec is
+`WireOpregBootstrapSchemaCodec` (`@wireio/cluster-tool-shared`).
 
 ### Exporting a deployable external config
 
@@ -648,7 +753,7 @@ wire-cluster-tool create-api-node \
 
 | Emitted | What it is |
 |---|---|
-| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus any set `--query-engine-*` value as its `read-mode` / `query-*` line |
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP / vote-thread tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`, `query_engine_plugin`), plus `query-timeout-ms` (default 30000) and any other set `--query-engine-*` value as its `read-mode` / `query-*` line |
 | `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
 | `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
 
@@ -657,10 +762,12 @@ programmatic caller agree: `--chain-state-db-size-mb` (1024),
 `--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
 ENABLES the finality-status feature), `--enable-account-queries` (true; disable
 with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
-`--http-threads` (4), `--agent-name` (`wire-api-node`), and
+`--http-threads` (4), `--vote-threads` (4 — without it a non-producing node
+neither processes nor relays finalizer votes), `--agent-name` (`wire-api-node`), and
 `[--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...`
-(unset — an omitted one renders no line, leaving nodeop's `head` read mode and
-the plugin's own limit defaults in force).
+(`--query-engine-timeout-ms` 30000; every other one unset — an omitted one
+renders no line, leaving nodeop's `head` read mode and the plugin's own limit
+defaults in force).
 
 Flag names follow **nodeop's own option names** wherever one exists, so the ini
 line and the flag that produced it read the same — except the `--query-engine-*`
@@ -730,13 +837,15 @@ handled. Keep them in mind when touching any of these areas:
 - **Port selection vs port binding.** `BindConfigProvider.resolve` picks free ports,
   but a picked port is not *bound* until its daemon spawns (possibly minutes
   later). A second process resolving in that window would happily re-pick it.
-  Every resolving process therefore registers its full resolved `BindConfig`
-  in `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
+  Every resolving process therefore registers the ports it resolved in
+  `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
   releasing the host-global port lock; later resolvers read every LIVE
   registration into their exclusion set (dead-pid files are reaped —
-  `kill(pid, 0)` + a `/proc/<pid>/cmdline` recycled-pid guard). Files are
-  removed on process exit; `findAvailable` reads the registry but never
-  writes it.
+  `kill(pid, 0)`, plus a recycled-pid guard comparing `/proc/<pid>/cmdline`
+  with the executable the file records). Files are removed on process exit;
+  `findAvailable` reads the registry but never writes it. The file format and
+  lock are a language-neutral protocol that non-Node clients (wire-sysio's
+  Python test-port lease) implement too: [`docs/bind-registry/`](docs/bind-registry/README.md).
 - **Hardhat deploy shares the repo's compile cache.** The Ethereum outpost
   deploy (`npx hardhat run src/scripts/deployLocal.ts`) compiles-if-stale
   into `<wire-ethereum>/artifacts/` + `<wire-ethereum>/cache/`, which are

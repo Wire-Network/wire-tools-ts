@@ -1,19 +1,20 @@
 {
   "name": "@wireio/test-flow-liq-yield",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": true,
   "type": "commonjs",
   "description": "Flow: syndicated liqSOL is credited on the depot, its reported yield is minted, sold through sysio.swap and claimed as WIRE, and the position is redeemed on the outpost",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "test:unit": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.cjs --runInBand"
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/sdk-core": "^1.0.97",
-    "@wireio/opp-typescript-models": "^1.0.51"
+    "@wireio/sdk-core": "^1.0.105",
+    "@wireio/opp-typescript-models": "^1.0.56"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

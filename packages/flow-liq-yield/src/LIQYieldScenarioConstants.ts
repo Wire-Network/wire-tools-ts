@@ -2,8 +2,7 @@ import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   Constants as HarnessConstants,
   ProtocolTiming,
-  SolanaLiqSyndicationTool,
-  SolanaOutpostBootstrapper
+  SolanaLiqSyndicationTool
 } from "@wireio/cluster-tool"
 
 /**
@@ -24,10 +23,10 @@ export namespace LIQYieldScenarioConstants {
 
   /** Registered chain slug code of the Solana outpost — what `OutpostConfig.chain_code` stamps. */
   export const SolanaChainCode: bigint = BigInt(
-    SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
+    SlugName.from(HarnessConstants.SOLANA_CHAIN_CODENAME)
   )
   /** Depot token codename the outpost's REAL liqSOL mint is registered under. */
-  export const LIQTokenCodename = "LIQSOL"
+  export const LIQTokenCodename = HarnessConstants.LIQSOL_CODENAME
   /** {@link LIQTokenCodename}'s slug code — what `synd` and `report_liq_yield` stamp. */
   export const LIQTokenCode: bigint = BigInt(SlugName.from(LIQTokenCodename))
   /** The depot frame every liq token is registered at, which its shadow symbol carries. */
@@ -65,27 +64,8 @@ export namespace LIQYieldScenarioConstants {
 
   /** WIRE account that receives the opt-in imported bonder's Solana position. */
   export const BonderAccount = "liq.bonder"
-  /** Resource policy weight used for each flow identity. */
-  export const ResourceWeight = "25.0000 SYS"
   /** Queue work budget; each flow envelope holds one item. */
   export const CrankLimit = 100
-  /** sysio.bond::BPS_DENOMINATOR used by synd::fee_of. */
-  export const FeeDenominator = 10_000n
-
-  /** The separate addpolicy write's generated input for a flow account. */
-  export function resourcePolicy(
-    owner: string
-  ): SysioContracts.SysioRoaAddpolicyAction {
-    return {
-      owner,
-      issuer: HarnessConstants.BOOTSTRAP_NODE_OWNER,
-      net_weight: ResourceWeight,
-      cpu_weight: ResourceWeight,
-      ram_weight: ResourceWeight,
-      time_block: 0,
-      network_gen: 0
-    }
-  }
 
   /** Lamports the user's wallet is topped up to — the deposit plus fee + tx headroom. */
   export const UserFloorLamports = 20_000_000_000n

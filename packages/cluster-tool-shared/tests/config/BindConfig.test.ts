@@ -1,4 +1,6 @@
 import {
+  MaximumPort,
+  MinimumPort,
   BindConfigPortProtocol,
   BindConfigSchemaCodec,
   BindOptionsSchema,
@@ -280,5 +282,12 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
         }).success
       ).toBe(false)
     })
+  })
+})
+
+describe("port bounds", () => {
+  it("are 1 and 65535", () => {
+    expect(MinimumPort).toBe(1)
+    expect(MaximumPort).toBe(65_535)
   })
 })

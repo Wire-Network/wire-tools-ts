@@ -68,11 +68,12 @@ describe("Steps.registry", () => {
 
   describe("planMockLiqPools", () => {
     const LiqsolCode = "LIQSOL"
-    // The dev-config seeds; the pacing is the dev cluster's own (one-tick sales).
+    // The dev-config seeds; the horizon and fee are the dev cluster's own, and the
+    // clip cap is the fee, the widest sysio.swap::setyield accepts.
     const PoolSeed = 10_000_000_000
-    const PoolFee = 30
+    const PoolFee = 500
     const HorizonSec = 30
-    const DepthCapBps = 3000
+    const DepthCapBps = 500
     const ClipFloor = 1000
 
     it("returns a Phase of one Sysio regliqpool step per shadow", () => {
@@ -96,7 +97,26 @@ describe("Steps.registry", () => {
       })
     })
 
-    it("names each pair token after its shadow, seeds both legs equally, and paces for one-tick sales", () => {
+    it("seeds only the registrations it is given", () => {
+      const liqsol = Steps.registry.MockLiqPoolRegistrations.filter(
+          row => row.token_code === LiqsolCode
+        ),
+        phase = Steps.registry.planMockLiqPools(
+          newBuild(),
+          "MockLiqPools",
+          "seed the mock yield pools",
+          {},
+          liqsol
+        )
+      expect(phase.steps.map(step => [step.name, step.input])).toEqual([
+        [
+          "seed-liq-pool-solana-liqsol",
+          { kind: "LiqContractSteps.RegliqpoolInput", data: liqsol[0] }
+        ]
+      ])
+    })
+
+    it("names each pair token after its shadow, seeds both legs equally, and caps each clip at the fee", () => {
       const rows = Steps.registry.MockLiqPoolRegistrations
       expect(rows).toHaveLength(2)
       const liqsol = rows.find(row => row.token_code === LiqsolCode)
@@ -108,8 +128,84 @@ describe("Steps.registry", () => {
       expect(liqsol?.locked_shares).toBe(0)
       expect(liqsol?.conversion_horizon_sec).toBe(HorizonSec)
       expect(liqsol?.depth_cap_bps).toBe(DepthCapBps)
+      rows.forEach(row => expect(row.depth_cap_bps).toBeLessThanOrEqual(row.fee))
       expect(liqsol?.clip_floor).toBe(ClipFloor)
       expect(rows.find(row => row.pair_symbol === "9,LIQETHP")).toBeDefined()
+    })
+  })
+
+  describe("planKicker", () => {
+    it("deploys sysio.kicker through setsyscode, reads its privilege back, then configures it", () => {
+      const phase = Steps.registry.planKicker(
+        newBuild(),
+        "Kicker",
+        "deploy and configure the kicker",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "deploy-kicker",
+        "verify-kicker-privileged",
+        "configure-kicker"
+      ])
+      expect(phase.steps.every(step => step.actor === Report.Actor.Sysio)).toBe(true)
+      const [deploy, privileged, configure] = phase.steps
+      expect(deploy.input).toEqual(
+        expect.objectContaining({
+          kind: "ContractSteps.DeployInput",
+          contract: "kicker",
+          mode: Steps.contract.DeployMode.system
+        })
+      )
+      expect(privileged.input).toEqual({
+        kind: "ContractSteps.VerifyPrivilegedInput",
+        account: "sysio.kicker"
+      })
+      expect(configure.input).toEqual({
+        kind: "KickerContractSteps.SetconfigInput",
+        data: Steps.registry.KickerConfiguration
+      })
+    })
+
+    it("configures a one-million-WIRE budget, a one-minute minimum interval and the contract's 50 % spot guard", () => {
+      expect(Steps.registry.KickerConfiguration).toEqual({
+        cfg: {
+          budget_remaining: 1_000_000_000_000_000,
+          min_interval_sec: 60,
+          twap_window_sec: 86_400,
+          max_spot_deviation_bps: 5_000
+        }
+      })
+    })
+  })
+
+  describe("planKickerPools", () => {
+    it("adds one pool per shadow at the contract defaults: 200 bps, one-WIRE minimum, 1,000-WIRE daily ceiling", () => {
+      expect(Steps.registry.KickerPoolRegistrations).toEqual([
+        { sym: "LIQETH", rate_bps: 200, min_gift: 1_000_000_000, max_gift_per_day: 1_000_000_000_000 },
+        { sym: "LIQSOL", rate_bps: 200, min_gift: 1_000_000_000, max_gift_per_day: 1_000_000_000_000 }
+      ])
+    })
+
+    it("returns a Phase of one Sysio addpool step per shadow", () => {
+      const phase = Steps.registry.planKickerPools(
+        newBuild(),
+        "KickerPools",
+        "start each token's accrual",
+        {}
+      )
+      expect(phase).toBeInstanceOf(ClusterBuildPhase)
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "add-kicker-pool-liqeth",
+        "add-kicker-pool-liqsol"
+      ])
+      phase.steps.forEach((step, index) => {
+        expect(step.actor).toBe(Report.Actor.Sysio)
+        expect(step.input).toEqual({
+          kind: "KickerContractSteps.AddpoolInput",
+          data: Steps.registry.KickerPoolRegistrations[index]
+        })
+      })
     })
   })
 })
@@ -125,12 +221,38 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       ])
     })
 
-    it("charges no bootstrap fee and posts no bounty", () => {
+    it("charges no syndication fee and posts no bounty", () => {
       rows.forEach(row => {
+        expect(row.synd_fee_bps).toBe(Steps.registry.SyndicationFeeBps)
         expect(row.synd_fee_bps).toBe(0)
-        expect(row.desynd_fee_bps).toBe(0)
         expect(row.bounty).toBe(0)
       })
+    })
+
+    it("charges 5 bps plus the pair flat fee for both legs of gas", () => {
+      expect(Steps.registry.DesyndicationFeeBps).toBe(5)
+      rows.forEach(row => {
+        expect(row.desynd_fee_bps).toBe(Steps.registry.DesyndicationFeeBps)
+        expect(row.desynd_fee_bps).toBe(5)
+      })
+    })
+
+    /** Validator slashing is tolerated for LIQETH; other shadow tokens keep strict backing. */
+    it("configures a 1% shortfall allowance for LIQETH and zero for LIQSOL", () => {
+      const onePercentBps = 100
+      expect(Steps.registry.LiqEthCustodyShortfallBps).toBe(onePercentBps)
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            token_code: "LIQETH",
+            custody_shortfall_bps: onePercentBps
+          }),
+          expect.objectContaining({
+            token_code: "LIQSOL",
+            custody_shortfall_bps: 0
+          })
+        ])
+      )
     })
 
     it("sets both buckets far above any flow's amount, refilling in full each epoch", () => {
@@ -143,10 +265,13 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       })
     })
 
-    it("uses the same 0.001 SOL equivalent gross minimum for both shadow tokens", () => {
-      expect(Steps.registry.MinimumDesyndication).toBe(1_000_000)
+    it("pins pair-specific flat fees below the gross minimum", () => {
+      expect(rows.map(row => [row.desynd_fee_flat, row.min_desyndicate])).toEqual([
+        [5_000_000, 100_000_000],
+        [100_000, 50_000_000]
+      ])
       rows.forEach(row =>
-        expect(row.min_desyndicate).toBe(Steps.registry.MinimumDesyndication)
+        expect(Number(row.desynd_fee_flat)).toBeLessThan(Number(row.min_desyndicate))
       )
     })
 

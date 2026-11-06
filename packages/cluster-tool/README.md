@@ -24,7 +24,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 
 | Command | What it does |
 |---|---|
-| `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json`, then exit. |
+| `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json` / `wire-opreg-bootstrap.json`, then exit. |
 | `run` | Rehydrate keys from `cluster-keys.json`, RE-DERIVE topology from the config (never a stored launch command), relaunch `kiod` + every node, gate on liveness, block until Ctrl+C. |
 | `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
@@ -91,20 +91,103 @@ the path flags.
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
-| `--enable-mock-liq-pools` | | `false` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
-| `--enable-mock-syndication-import` | | `false` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
+| `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
+| `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](../../docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
-| `--query-engine-<limit>` | | plugin default | one per `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; any of the thirteen requires `--api-count` ≥ 1 |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
+| `--query-engine-<limit>` | | plugin default | one per other `query-*` limit (`worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes`), rendered as `query-<limit>` into the API nodes' config.ini only when set; passing any of the thirteen `--query-engine-*` flags requires `--api-count` ≥ 1 |
+| `--ethereum-read-block-tag` | | nodeop's own (`latest`) | block tag every operator daemon's Ethereum client reads what the outpost emitted at (`finalized`, `safe` or `latest`); renders `--outpost-ethereum-read-block-tag` only when set |
+| `--ethereum-read-confirmations` | | nodeop's own (`12`) | with `latest`: how many blocks deep the read is, the head counting as one; renders `--outpost-ethereum-read-confirmations` only when set; a whole number from 1 to 4294967295 (nodeop parses a `uint32`); refused beside another tag, when the config resolves and when it loads |
+| `--ethereum-read-max-finality-lag-sec` | | nodeop's own (`1152`) | with `latest`: seconds the finalized block may trail the head before reads fall back to it; renders `--outpost-ethereum-read-max-finality-lag-sec` only when set; a whole number from 1 to 4294967295 (nodeop parses a `uint32`); refused beside another tag, when the config resolves and when it loads |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
-| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
-| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
+| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts, from their trusted deployed addresses + public keys — never contacting them |
+| `--ethereum-bootstrap-json-file <file>` | | — | the frozen Ethereum outpost's pre-launch export (opp-snapshot `EthereumGenesisSnapshot`): import its staked liqETH, WIRE claims and LIQETH yield pool during epoch zero. See "Launch-data import" below |
+| `--solana-bootstrap-json-file <file>` | | — | the Solana outpost's genesis export (`SolanaGenesisSnapshot`): import its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero |
+| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` or `ethereumRead.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
+
+**Solana outpost launch state.** Against local outposts (no
+`--external-outpost-config`), `create` takes the new `liqsol_core` outpost out of
+pre-launch in the `SolanaOutpostLaunch` phase: `set_wire_state` Launching, then
+PostLaunch, both signed by the deployer (the liqsol `global_config.admin`), then a
+read-back that `GlobalState.wire_state` decodes to `{ postLaunch: {} }`. The phase
+runs right after the `SolanaOutpost` deploy and before any operator daemon starts
+the OPP exchange. PostLaunch is the only state in which the outpost queues
+`SYNDICATE_LIQ`, reports `LIQ_YIELD` and pays `DESYNDICATE_LIQ`; each of those
+also needs the liqSOL mint mapped to its depot token code on the outpost config
+(`set_token_address`), which this phase does not write. An external outpost is
+never flipped. Flows compose the same bootstrap without this phase: their outpost
+starts PreLaunch and the scenario drives the transition itself.
+
+**Automatic underwriting.** Against local outposts, `create` also forces on
+`--enable-batch-operator-underwriting`, `--enable-mock-syndication-import` and
+`--enable-mock-liq-pools`, whatever the command line or options file says. Every
+batch operator runs the underwriter role, the funded operators receive their
+epoch-zero LIQ credit, and the mock LIQ yield pools are seeded. The bootstrap backs
+all of that shadow with custody on the outposts it deployed, and verifies the backing
+before the first epoch. Ship the generated outpost state together with the depot: a
+fresh outpost deployment holds none of that backing.
+
+A local `create` therefore needs a nodeop built with the underwriter role. With
+`--external-outpost-config`, nothing is forced on, and `create` refuses either mock
+flag, because the harness cannot back shadow on outposts it did not deploy.
+Batch-operator underwriting stays available there as an explicit flag. Flows set
+these options in their scenario defaults instead.
+
+**Launch-data import.** `--ethereum-bootstrap-json-file` and
+`--solana-bootstrap-json-file` replay each outpost's frozen pre-launch export onto the
+depot inside the epoch-0 window, in the `LcoImport` phase group right after
+`SyndicationConfig`:
+
+- each staker's principal → `sysio.synd::importsynd`, keyed by its pubkey (50 per push);
+- each address's pretokens → `sysio.dclaim::importseed` at one pretoken per WIRE (500 per push);
+- the protocol-owned liq (booked custody less every staked position; on Solana exactly the
+  export's `initialChainAmount`, never the custody slack) → `sysio.liq::regliqpool`, its WIRE side
+  `liq × native price ÷ highest tranche price`;
+- then `sysio.dclaim` is funded with every claim, the claims and positions are reconciled
+  against the plan (`parked` holds exactly the unlinked positions, and each account an
+  authex link resolves to holds exactly its linked positions), both imports are sealed
+  (`sysio.synd` only when no mock import follows), and the result is verified.
+
+Each export is checked first: a Solana export must hash to its `allocationHash`, book exactly
+its wallets' purchased liqSOL as `initialChainAmount` and derive its `backingAvailable`; an
+Ethereum staker's pubkey must be its address's key; no export list may name an address twice;
+every declared total must add up; and each pool must meet `sysio.swap`'s limits (seeds below
+10^15, a clip cap of at most the fee). Against external outposts the Solana export must also come from the targeted
+`programId`. The bootstrap is refused before anything runs when the claims, the T5 allotment
+(the pools' WIRE included) and the node-owner commitments exceed the 1,000,000,000 WIRE supply.
+Before the first import write, `verify-lco-funding` checks the funding account holds every
+claim and `sysio` keeps its T5 allotment and node-owner commitments, and
+`verify-lco-shadows-unminted` checks no imported shadow has supply yet; the emission config's
+`t5_distributable` already excludes every seeded pool's WIRE.
+
+The prices, pool tuning and claim funding account come from the flag-less `lcoImport`
+member of a `--cluster-build-options-file` document (or a flow's scenario defaults):
+
+```json
+{
+  "lcoImport": {
+    "ethereum": { "nativePriceUsd": "400000000000", "highestTranchePriceUsd": "10000000",
+                  "pool": { "fee": 30, "conversion_horizon_sec": 86400, "depth_cap_bps": 30, "clip_floor": "1000" } },
+    "solana": { "nativePriceUsd": "20000000000" },
+    "dclaimFundingAccount": "sysio"
+  }
+}
+```
+
+Prices are USD with 8 decimals, and a misspelled member is an error. Any value nobody sets
+takes a named placeholder that the build logs and reports; `create` against external outposts
+refuses every placeholder. The mock pool of an imported shadow is skipped (a shadow has one
+pool), and against local outposts the imported shadow is backed in custody like mock shadow. The import's record,
+every pool and position as a `BootstrapPlatformConfig`, is written to
+`<cluster>/lco-import-bootstrap-platform-config.json`.
 
 ### `run` / `destroy`
 
@@ -183,19 +266,22 @@ passing a genesis.
 | `--enable-account-queries` | | `true` | `enable-account-queries` (negation is off — disable with `=false`) |
 | `--http-max-in-flight-requests` | | `100` | `http-max-in-flight-requests` |
 | `--http-threads` | | `4` | `http-threads` |
+| `--vote-threads` | | `4` | `vote-threads` — without it a non-producing node neither processes nor relays finalizer votes |
 | `--agent-name` | | `wire-api-node` | `agent-name` |
 | `--genesis-json` | | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | `read-mode` (`head` or `irreversible`) — only when set |
-| `--query-engine-<limit>` | | plugin default | `query-<limit>` — only when set; one flag per limit: `worker-threads`, `max-in-flight`, `max-query-bytes`, `timeout-ms`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes` |
+| `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` — always |
+| `--query-engine-<limit>` | | plugin default | `query-<limit>` — only when set; one flag per other limit: `worker-threads`, `max-in-flight`, `max-query-bytes`, `max-capture-ms`, `max-abi-bytes`, `max-scan-rows`, `max-raw-bytes`, `max-memory-bytes`, `max-groups`, `max-result-rows`, `max-response-bytes` |
 
 Flag names follow **nodeop's own option names**, so the ini line and the flag
 that produced it read the same — except the `--query-engine-*` flags, which are
 the spellings shared with `create` and render as nodeop's `read-mode` /
 `query-<limit>`. No flag carries a yargs `default:` — every default is applied
 by `ApiNodeConfig.resolve` (one home). Each `--help` line interpolates the
-constant it will apply, except on the thirteen `--query-engine-*` flags, which
-apply none: their `--help` says that omitting one leaves nodeop's (read mode)
-or the plugin's (limits) own default in force.
+constant it will apply — `--query-engine-timeout-ms` included — except on the
+other twelve `--query-engine-*` flags, which apply none: their `--help` says
+that omitting one leaves nodeop's (read mode) or the plugin's (limits) own
+default in force.
 
 Notes specific to this command:
 
@@ -207,11 +293,14 @@ Notes specific to this command:
   `trace_api_plugin` and `query_engine_plugin`: it owns `p2p-peer-address` AND
   `agent-name`, which would otherwise be accepted-and-ignored and the node would
   never sync.
-- **`query_engine_plugin` settings render only when set.** With no
-  `--query-engine-*` flag the artifact carries no `read-mode` line (nodeop's
-  default `head` applies) and no `query-*` line; a set flag renders its line,
-  and a deployment overlay that appends its own `read-mode` must then drop it
-  (nodeop refuses a key set twice). The artifact requires a nodeop built with
+- **`query_engine_plugin` settings render only when set — except the query
+  deadline.** With no `--query-engine-*` flag the artifact carries
+  `query-timeout-ms = 30000` (the plugin's own 1000 ms default would reject
+  every client `timeout_ms` above it), no `read-mode` line (nodeop's default
+  `head` applies) and no other `query-*` line; a set flag renders its line. A
+  deployment overlay must not append a key the artifact already carries —
+  `query-timeout-ms` always, `read-mode` when set — since nodeop refuses a key
+  set twice; pass the flag instead. The artifact requires a nodeop built with
   the plugin.
 - **`start.sh` capability-probes `--trace-no-abis` at run time.** Newer nodeop
   generations hard-fail `trace_api_plugin` init without it and older ones reject
@@ -268,9 +357,8 @@ wire-cluster-tool create-external-config \
 # reconstructed from the pattern) — NO plaintext keys.
 ```
 
-External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config`
-and a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
-endpoints:
+External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config`,
+the outposts' trusted deployed addresses + public keys (no file references):
 
 ```bash
 wire-cluster-tool create \
@@ -278,16 +366,19 @@ wire-cluster-tool create \
   --build-path              <wire-sysio>/build/release \
   --ethereum-path           <wire-ethereum> \
   --solana-path             <wire-solana> \
-  --external-outpost-config ~/external-outpost.json \
-  --bind-config             ~/external-bind-config.json
+  --external-outpost-config ~/external-outpost-config.json
 ```
 
-`create` verifies
-`eth_chainId` / Solana `getVersion`, then gates success on head-block advance
-**and** on an outbound envelope being queued for every registered outpost (not
-on epoch distribution — there is no local chain to advance an epoch on). A LOCAL
-cluster instead gates on `sysio.epoch::current_epoch_index` passing the
-bootstrap epoch. See the repo root README's "External outpost clusters" section.
+`create` never contacts either outpost. It builds the operator daemons' ABI /
+IDL files from the wire-ethereum / wire-solana builds with the config's
+addresses and program id overlaid, starts each batch-operator node WITHOUT
+`batch_operator_plugin` so it only syncs the depot chain, and gates success on
+head-block advance, an outbound envelope queued for every registered outpost,
+and every batch-operator node synced (not on epoch distribution — there is no
+local chain to advance an epoch on). The batch-operator `start.sh` scripts carry
+the full daemon args. A LOCAL cluster instead gates on
+`sysio.epoch::current_epoch_index` passing the bootstrap epoch. See the repo
+root README's "External outpost clusters" section for the file format.
 
 ---
 
@@ -326,6 +417,7 @@ After `create`:
 ├── cluster-config.json           # resolved config (paths, ports, binaries, signatureProvider, externalOutposts)
 ├── cluster-state.json            # node topology snapshot (re-derivable via NodeConfig.plan)
 ├── cluster-keys.json             # 0600 — producer node key sets + every operator account's keys
+├── wire-opreg-bootstrap.json     # bootstrapped operator roster + initial batch-operator schedule (public data; docs/outpost/)
 ├── genesis.json                  # shared chain genesis
 ├── external-cluster-config.json  # ONLY in a create-external-config output dir
 ├── wallet/                       # kiod wallet
@@ -343,8 +435,9 @@ After `create`:
 ```
 
 In external-outpost mode no local `anvil` / `solana-ledger` state is written
-(`cluster-state.json` records them as `null`); the operator-daemon artifacts come
-from the `--external-outpost-config` instead.
+(`cluster-state.json` records them as `null`); `ethereum-deployments/` holds the
+deploy records written from the `--external-outpost-config`, and `eth-abis/` /
+`solana-idls/` are built from source over them.
 
 ---
 
@@ -373,18 +466,27 @@ const build = await ClusterBuildDefaults.create({
 const report = await build.build()   // one Report.StepResult per Step
 ```
 
+`ClusterBuildDefaults.create(options, createOptions)` takes the caller's
+composition choices as its second argument: `createContext` builds a flow's own
+context, and `launchSolanaOutpost: true` (what the `create` command passes) adds
+the `SolanaOutpostLaunch` phase described under [`create`](#create).
+`enableAutomaticUnderwriting: true` (also passed by `create`) forces on the three
+automatic-underwriting options against local outposts.
+
 Persisted shapes + their validated codecs live in `@wireio/cluster-tool-shared`
 (`ClusterConfig` / `BindConfig` / `ClusterState` / `SignatureProviderConfig` /
 `ExternalOutpostConfig` / `ExternalClusterConfig`, each a `z.infer` of a zod
 schema behind `SchemaCodec.create<T>(schema)`).
 
 A flow is a `FlowScenario` composed onto the same engine via
-`FlowCLI.create(<Name>Scenario).run()`. See the 13 `flow-*` packages —
+`FlowCLI.create(<Name>Scenario).run()`. See the 15 `flow-*` packages —
 `flow-batch-operator-slashing`, `flow-batch-operator-termination`,
 `flow-emergency-stop`, `flow-emissions-soak`, `flow-liq-syndication`,
 `flow-liq-yield`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
 `flow-producer-registration`, `flow-syndication-challenge`,
-`flow-syndication-rate-limit`, `flow-syndication-underwriting` — for end-to-end examples.
+`flow-syndication-plugin-underwriting`, `flow-syndication-plugin-underwriting-cap`,
+`flow-syndication-rate-limit`,
+`flow-syndication-underwriting` — for end-to-end examples.
 
 ---
 
@@ -430,4 +532,4 @@ repo `CLAUDE.md` / `STYLE.md`).
 - **`@wireio/debugging-client-tool-tui`** — live debugging UI for a running cluster.
 - **`@wireio/debugging-server`** — the embedded JSON-RPC server that persists OPP envelopes.
 - **`@wireio/debugging-shared`** — shared OPP debugging types + storage paths.
-- **`flow-*` (13 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.
+- **`flow-*` (15 packages)** — end-to-end scenarios built on `FlowCLI` + this engine.

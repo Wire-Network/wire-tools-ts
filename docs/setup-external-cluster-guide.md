@@ -52,6 +52,9 @@ persists into `--cluster-path`:
 - `cluster-config.json` — the resolved config (bind, topology, paths, …).
 - `cluster-state.json` — secret-free topology snapshot.
 - `cluster-keys.json` — the signing keys (mode `0600`).
+- `wire-opreg-bootstrap.json` — the cluster's label and AWS account, the bootstrapped
+  operator roster and the initial batch-operator schedule (public data; see [`outpost/README.md`](outpost/README.md)).
+  `create-external-config` copies it into the external directory unchanged.
 - Deployed outpost artifacts — `data/eth-abis/`,
   `data/ethereum-deployments/outpost-addrs.json`, `data/solana-idls/`, the anvil
   dump (`data/anvil/anvil.json`), and the solana ledger (`data/solana-ledger/`).

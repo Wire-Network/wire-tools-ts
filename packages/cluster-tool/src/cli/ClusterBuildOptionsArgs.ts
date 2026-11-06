@@ -6,8 +6,12 @@ import { isString, Level, NestedError } from "@wireio/shared"
 import {
   AWSClusterNodeConfigSchemaCodec,
   AWSSSMSignatureProviderOptionsSchema,
+  BatchOperatorUnderwritingConfigSchema,
+  type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
   CollateralRequirementSchema,
+  EthereumReadBlockTag,
+  LcoImportOptionsSchema,
   NodeopReadMode,
   QueryEngineReadModeSchema,
   SchemaCodec,
@@ -16,6 +20,7 @@ import {
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
+  type LcoImportOptions,
   type QueryEngineConfig
 } from "@wireio/cluster-tool-shared"
 import { camelCase, defaultsDeep, identity, isPlainObject, range } from "lodash"
@@ -24,6 +29,7 @@ import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
 import { Constants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
+import { QueryEngineConfigProvider } from "../config/QueryEngineConfigProvider.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 
 /**
@@ -86,6 +92,15 @@ const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(
 const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(
   z.array(z.array(ChainTokenAmountSchema))
 )
+
+/** Validated codec for the flag-less `batchOperatorUnderwriting` member (every field optional). */
+const batchOperatorUnderwritingCodec =
+  SchemaCodec.create<BatchOperatorUnderwritingOptions>(
+    BatchOperatorUnderwritingConfigSchema.partial()
+  )
+
+/** Validated codec for the flag-less `lcoImport` member (every field optional). */
+const lcoImportCodec = SchemaCodec.create<LcoImportOptions>(LcoImportOptionsSchema)
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -253,20 +268,31 @@ export function describeQueryEngineReadModeFlag(): string {
   return `nodeop ${Constants.READ_MODE_OPTION} the API nodes' query engine serves at — ${QueryEngineReadModeSchema.options.join(" | ")}; omit for nodeop's default (${NodeopReadMode.head}); the plugin rejects ${NodeopReadMode.speculative}`
 }
 
+/** What an omitted `--query-engine-<limit>` leaves in force when the harness sets no default. */
+const PluginDefaultDescription = "the plugin's default"
+
 /**
  * The `describe` (`--help`) text of one `--query-engine-<limit>` flag — the
  * ONE wording both `create` and `create-api-node` register.
  *
- * Changing it changes the `--help` of every limit flag on both commands.
+ * Changing it changes the `--help` of every limit flag on both commands. The
+ * omitted-value text interpolates the harness default from
+ * `QueryEngineConfigProvider.createDefaultOptions` when the limit has one,
+ * else names the plugin's own default.
  *
- * @param option - The limit's own plugin option (its ini key), from
- *   `Constants.QUERY_ENGINE_LIMIT_OPTIONS`.
+ * @param limit - The limit's entry in `Constants.QUERY_ENGINE_LIMIT_OPTIONS`
+ *   (its `QueryEngineConfig` member and its plugin option / ini key).
  * @returns The flag's `describe` text.
  */
 export function describeQueryEngineLimitFlag(
-  option: Constants.QueryEngineLimitOption["option"]
+  limit: Constants.QueryEngineLimitOption
 ): string {
-  return `nodeop ${option} on the API nodes; omit for the plugin's default`
+  const omitted = asOption(
+    QueryEngineConfigProvider.createDefaultOptions()[limit.member]
+  )
+    .map(value => `${value}`)
+    .getOrElse(PluginDefaultDescription)
+  return `nodeop ${limit.option} on the API nodes; omit for ${omitted}`
 }
 
 /** Infer a leaf's yargs type from its default `value`, or its `explicitType` when `null`. */
@@ -422,16 +448,18 @@ function buildReportShape(): OptionShapeObject {
  * The `queryEngine` sub-tree: the API nodes' read mode (an UNSEEDED choice) and
  * one UNSEEDED number leaf per plugin limit. `optionalChoicesLeaf` /
  * `optionalLeaf`, never `leaf`: a seeded default would always reach the config
- * and override nodeop's / the plugin's own default, which is the ONE author.
+ * as a CALLER setting (tripping the at-least-one-API-node rule) and re-spell
+ * the defaults, whose ONE home is `QueryEngineConfigProvider.createDefaultOptions`
+ * (the query deadline) or nodeop / the plugin (everything else).
  */
 function buildQueryEngineShape(): OptionShapeObject {
   // Bound to a typed local, never spread inline: an object spread drops the
   // `Object.fromEntries` index signature, so the limit leaves would go
   // unchecked against `OptionShapeObject`.
   const limits: OptionShapeObject = Object.fromEntries(
-    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(({ member, option }) => [
-      member,
-      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(option))
+    Constants.QUERY_ENGINE_LIMIT_OPTIONS.map(limit => [
+      limit.member,
+      optionalLeaf(OptionLeafType.number, describeQueryEngineLimitFlag(limit))
     ])
   )
   return {
@@ -440,6 +468,29 @@ function buildQueryEngineShape(): OptionShapeObject {
       describeQueryEngineReadModeFlag()
     ),
     ...limits
+  }
+}
+
+/**
+ * The `ethereumRead` sub-tree: the operator daemons' Ethereum read confirmation —
+ * the block tag (an UNSEEDED choice), the confirmation depth and the
+ * finality-lag limit (UNSEEDED numbers). Never seeded: nodeop is the one author
+ * of the defaults, and an unset member renders nothing.
+ */
+function buildEthereumReadShape(): OptionShapeObject {
+  return {
+    blockTag: optionalChoicesLeaf(
+      Object.values(EthereumReadBlockTag),
+      `block tag the operator daemons read what the Ethereum outpost emitted at — ${Object.values(EthereumReadBlockTag).join(" | ")}; omit for nodeop's default (${EthereumReadBlockTag.latest}); applies to every operator daemon`
+    ),
+    confirmations: optionalLeaf(
+      OptionLeafType.number,
+      `with ${EthereumReadBlockTag.latest}: how many blocks deep the read is, the head counting as one; omit for nodeop's default`
+    ),
+    maxFinalityLagSec: optionalLeaf(
+      OptionLeafType.number,
+      `with ${EthereumReadBlockTag.latest}: seconds the finalized block may trail the head before reads fall back to it; omit for nodeop's default`
+    )
   }
 }
 
@@ -520,6 +571,8 @@ export function buildOptionShape(
     ),
     // ── query engine (API nodes; every leaf unseeded — see buildQueryEngineShape) ──
     [QueryEngineOptionKey]: buildQueryEngineShape(),
+    // ── Ethereum read confirmation (operator daemons; every leaf unseeded — see buildEthereumReadShape) ──
+    ethereumRead: buildEthereumReadShape(),
     // ── solana-test-validator tuning ──
     // optionalLeaf for the same reason as above: omitting the flag has to mean
     // "resolve the default", not "write 100 here", so the fallback stays in
@@ -546,11 +599,15 @@ export function buildOptionShape(
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
     enableMockLiqPools: leaf(
       false,
-      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap"
+      "seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) at bootstrap; forced on by a local create"
     ),
     enableMockSyndicationImport: leaf(
       false,
-      "import mock syndication positions for the bonder and back mock shadow at bootstrap"
+      "import mock syndication positions for the bonder and back mock shadow at bootstrap; forced on by a local create"
+    ),
+    enableBatchOperatorUnderwriting: leaf(
+      false,
+      "run the batch_operator_plugin underwriter role on every batch operator, bonding from its own account; forced on by a local create"
     ),
     bind: buildBindShape(defaults),
     bindConfig: optionalLeaf(
@@ -561,6 +618,15 @@ export function buildOptionShape(
     externalOutpostConfig: optionalLeaf(
       OptionLeafType.string,
       "path to an ExternalOutpostConfig JSON (ETH + SOL outposts already run on real chains)"
+    ),
+    // ── launch-data (LCO) import: each outpost's frozen pre-launch export ──
+    ethereumBootstrapJsonFile: optionalLeaf(
+      OptionLeafType.string,
+      "path to the frozen Ethereum outpost's pre-launch export (EthereumGenesisSnapshot): imports its staked liqETH, WIRE claims and LIQETH yield pool during epoch zero"
+    ),
+    solanaBootstrapJsonFile: optionalLeaf(
+      OptionLeafType.string,
+      "path to the Solana outpost's genesis export (SolanaGenesisSnapshot): imports its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero"
     ),
     // ── signature provider (how the cluster's own signing keys are handled) ──
     signatureProvider: {
@@ -575,6 +641,10 @@ export function buildOptionShape(
     requiredBatchOperatorCollateral: [],
     requiredUnderwriterCollateral: [],
     underwriterCollateral: [],
+    // ── batch-operator underwriting tuning (flag-less object → no flags) ──
+    batchOperatorUnderwriting: {},
+    // ── launch-data import pricing + pool tuning (flag-less object → no flags) ──
+    lcoImport: {},
     // ── outputs ──
     logging: buildLoggingShape(),
     report: buildReportShape()
@@ -937,9 +1007,15 @@ export function toClusterBuildOptions(
 /** The one non-flag member whose element type is `ChainTokenAmount[]`, not `CollateralRequirement`. */
 const UnderwriterCollateralKey = "underwriterCollateral" as const
 
+/** The non-flag member that is a `BatchOperatorUnderwritingOptions` object, not an array. */
+const BatchOperatorUnderwritingKey = "batchOperatorUnderwriting" as const
+
+/** The non-flag member that is an `LcoImportOptions` object, not an array. */
+const LcoImportKey = "lcoImport" as const
+
 /**
- * `ClusterBuildOptions` members with NO flag representation (object-arrays —
- * `buildOptionShape` declares them empty). They flow from a caller's `defaults`
+ * `ClusterBuildOptions` members with NO flag representation (object-arrays and
+ * objects — `buildOptionShape` declares them empty). They flow from a caller's `defaults`
  * (e.g. a `FlowScenario.defaults`, or a `--cluster-build-options-file`
  * document) straight into the resolved options.
  */
@@ -947,7 +1023,9 @@ const NonFlagOptionKeys = [
   "requiredProducerCollateral",
   "requiredBatchOperatorCollateral",
   "requiredUnderwriterCollateral",
-  UnderwriterCollateralKey
+  UnderwriterCollateralKey,
+  BatchOperatorUnderwritingKey,
+  LcoImportKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A `ClusterBuildOptions` member with no flag representation. */
@@ -995,7 +1073,7 @@ function documentPathLabel(path: string[]): string {
   return path.length === 0 ? "(root)" : path.join(".")
 }
 
-/** True when `key` is one of the flag-less object-array members. */
+/** True when `key` is one of the flag-less members. */
 function isNonFlagOptionKey(key: string): key is NonFlagOptionKey {
   return (NonFlagOptionKeys as ReadonlyArray<string>).includes(key)
 }
@@ -1036,22 +1114,30 @@ function assertDocumentLeafValue(
   return scalar
 }
 
-/** Decode one flag-less object-array member through its shared-schema codec. */
+/** Decode one flag-less member through its shared-schema codec. */
 function decodeNonFlagOption(
   key: NonFlagOptionKey,
   value: unknown
-): CollateralRequirement[] | ChainTokenAmount[][] {
+):
+  | CollateralRequirement[]
+  | ChainTokenAmount[][]
+  | BatchOperatorUnderwritingOptions
+  | LcoImportOptions {
   const text = JSON.stringify(value)
   return match(key)
     .with(UnderwriterCollateralKey, () =>
       underwriterCollateralCodec.deserialize(text)
     )
+    .with(BatchOperatorUnderwritingKey, () =>
+      batchOperatorUnderwritingCodec.deserialize(text)
+    )
+    .with(LcoImportKey, () => lcoImportCodec.deserialize(text))
     .otherwise(() => collateralRequirementsCodec.deserialize(text))
 }
 
 /**
- * Decode + assign one flag-less object-array member. The two codecs mirror the
- * two member shapes exactly, but TS cannot correlate the runtime dispatch inside
+ * Decode + assign one flag-less member. Each codec mirrors its member's shape
+ * exactly, but TS cannot correlate the runtime dispatch inside
  * {@link decodeNonFlagOption} with `K` — so the ONE cast lives here, at the
  * dispatch boundary.
  */

@@ -5,6 +5,7 @@ import {
   DefaultChainStateDbSizeMb,
   NodeopReadMode
 } from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool"
 import {
   ApiNodeConfig,
   type ApiNodeOptions,
@@ -45,8 +46,16 @@ describe("ApiNodeConfig", () => {
         enableAccountQueries: ApiNodeConfig.DefaultEnableAccountQueries,
         httpMaxInFlightRequests: ApiNodeConfig.DefaultHttpMaxInFlightRequests,
         httpThreads: ApiNodeConfig.DefaultHttpThreads,
+        voteThreads: ApiNodeConfig.DefaultVoteThreads,
         agentName: ApiNodeConfig.DefaultAgentName
       })
+    })
+
+    it("defaults vote-threads to 4, the value every cluster node's config.ini carries", () => {
+      expect(ApiNodeConfig.DefaultVoteThreads).toBe(4)
+      expect(ApiNodeConfig.DefaultVoteThreads).toBe(
+        Constants.NODEOP_EXTRA_ARGS.voteThreads
+      )
     })
 
     it("pins the ticket-baseline default VALUES (a change here changes every emitted config.ini)", () => {
@@ -68,7 +77,7 @@ describe("ApiNodeConfig", () => {
       expect(first.queryEngine).not.toBe(second.queryEngine)
     })
 
-    it("leaves every query-engine member unset (nodeop and the plugin own those defaults)", () => {
+    it("takes the query-engine defaults from QueryEngineConfigProvider (the query deadline; nodeop and the plugin own the rest)", () => {
       expect(createApiNodeDefaultOptions().queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
       )
@@ -94,6 +103,7 @@ describe("ApiNodeConfig", () => {
             enableAccountQueries: false,
             httpMaxInFlightRequests: 500,
             httpThreads: 16,
+            voteThreads: 8,
             agentName: "custom-api"
           }
         })
@@ -108,6 +118,7 @@ describe("ApiNodeConfig", () => {
         enableAccountQueries: false,
         httpMaxInFlightRequests: 500,
         httpThreads: 16,
+        voteThreads: 8,
         agentName: "custom-api"
       })
     })
@@ -129,15 +140,20 @@ describe("ApiNodeConfig", () => {
       expect(config.tuning.transactionFinalityStatusMaxStorageSizeGb).toBe(
         ApiNodeConfig.DefaultTransactionFinalityStatusMaxStorageSizeGb
       )
+      expect(config.tuning.voteThreads).toBe(ApiNodeConfig.DefaultVoteThreads)
     })
 
-    it("resolves an all-unset queryEngine when the caller supplies none", () => {
-      expect(ApiNodeConfig.resolve(validOptions()).queryEngine).toEqual(
+    it("resolves the default queryEngine (only the query deadline set) when the caller supplies none", () => {
+      const { queryEngine } = ApiNodeConfig.resolve(validOptions())
+      expect(queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
+      )
+      expect(queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
       )
     })
 
-    it("keeps a PARTIAL queryEngine's members and fills the rest unset (the second shallow pass)", () => {
+    it("keeps a PARTIAL queryEngine's members and fills the rest with the defaults (the second shallow pass)", () => {
       const config = ApiNodeConfig.resolve(
         validOptions({
           queryEngine: { readMode: NodeopReadMode.irreversible, maxGroups: 50 }

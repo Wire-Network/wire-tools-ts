@@ -11,6 +11,11 @@ type EpochStateQueryResult = Awaited<
   ReturnType<ClusterBuildContext["wire"]["getEpochState"]>
 >
 
+/** The depot's `epochcfg` query result, typed from the client that returns it. */
+type EpochConfigQueryResult = Awaited<
+  ReturnType<ClusterBuildContext["wire"]["getEpochConfig"]>
+>
+
 /** A `epochstate` singleton read stubbed onto a REAL context's memoized client. */
 function contextWithEpochState(
   ...rows: SysioContracts.SysioEpochEpochStateType[]
@@ -92,6 +97,22 @@ describe("Steps.contracts.sysio.epoch epochstate reads", () => {
         contextWithEpochState(epochStateRow(2, groups))
       )
     ).resolves.toEqual(groups[2])
+  })
+
+  it("readEpochConfig unwraps the epochcfg singleton row, absent when the table is empty", async () => {
+    const row: SysioContracts.SysioEpochEpochConfigType = {
+        epoch_duration_sec: 60,
+        operators_per_epoch: 3,
+        batch_operator_minimum_active: 9,
+        batch_op_groups: 3,
+        epoch_retention_envelope_log_count: 10
+      },
+      ctx = fixtureContext(),
+      configQuery = jest.spyOn(ctx.wire, "getEpochConfig")
+    configQuery.mockResolvedValueOnce({ rows: [row] } as EpochConfigQueryResult)
+    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx)).resolves.toBe(row)
+    configQuery.mockResolvedValueOnce({ rows: [] } as EpochConfigQueryResult)
+    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx)).resolves.toBeUndefined()
   })
 
   it("tolerates an epoch state that has no row yet", async () => {

@@ -10,6 +10,7 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
+  createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState,
@@ -159,9 +160,12 @@ export function makeFixtureCluster(): FixtureCluster {
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
+    batchOperatorUnderwriting: null,
+    lcoImport: null,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb,
-    queryEngine: createUnsetQueryEngineConfig()
+    queryEngine: createUnsetQueryEngineConfig(),
+    ethereumRead: createUnsetEthereumReadConfirmationConfig()
   }
 
   Fs.writeFileSync(

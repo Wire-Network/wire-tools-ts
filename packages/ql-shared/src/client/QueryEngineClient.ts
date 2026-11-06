@@ -17,10 +17,12 @@ import {
   QueryEngineMethod,
   QueryEngineRPC,
   QueryErrorKind,
+  QueryProbeRequestCodec,
   QueryRequestCodec,
   QueryResponseEnvelopeCodec,
   type QueryColumn,
   type QueryEngineErrorBody,
+  type QueryProbeRequest,
   type QueryRequest,
   type QueryRequestParams,
   type QueryResponseEnvelope,
@@ -114,6 +116,63 @@ export class QueryEngineClient {
   /** Fully-qualified execute URL (the one derivation). */
   get executeURL(): string {
     return new URL(QueryEngineRPC.ExecutePath, this.profile.endpoint).toString()
+  }
+
+  /**
+   * Check that the endpoint serves the query engine without running a query:
+   * one call to {@link QueryEngineRPC.ProbeMethod}, which the engine answers
+   * with METHOD_NOT_FOUND before reading any chain state. Never retried.
+   *
+   * @param signal - Caller cancellation.
+   * @throws QueryTransportError when nothing answers as the engine — unreachable,
+   *   a non-2xx status (a node without the plugin answers 404), a non-engine body,
+   *   or the transport timeout.
+   * @throws QueryEngineError when the engine answers with any other error.
+   */
+  async ping(signal?: AbortSignal): Promise<void> {
+    const requestId = this.config.createRequestId(),
+      ceilingMs = QueryEngineClient.transportCeilingMs(this.profile, null),
+      timeoutSignal = AbortSignal.timeout(ceilingMs)
+    let envelope: QueryResponseEnvelope
+    try {
+      envelope = await JsonRPCTransport.invoke<QueryProbeRequest, QueryResponseEnvelope>({
+        url: this.executeURL,
+        request: {
+          jsonrpc: JsonRPCProtocol.Version,
+          id: requestId,
+          method: QueryEngineRPC.ProbeMethod,
+          params: {}
+        },
+        requestSerializer: QueryProbeRequestCodec,
+        responseCodec: QueryResponseEnvelopeCodec,
+        fetchProvider: this.config.fetchProvider,
+        signal: AbortSignal.any([signal, timeoutSignal].filter(candidate => candidate != null))
+      })
+    } catch (error) {
+      throw QueryEngineClient.transportError(error, {
+        ceilingMs,
+        timedOut: timeoutSignal.aborted && !signal?.aborted
+      })
+    }
+    match(envelope)
+      .with({ error: { data: { kind: QueryErrorKind.METHOD_NOT_FOUND } } }, () =>
+        log.debug(`[${requestId}] ${this.executeURL} answered the engine probe`)
+      )
+      .with({ error: P.nonNullable }, failed => {
+        throw new QueryEngineError(failed.error.message, {
+          code: failed.error.code,
+          data: failed.error.data,
+          requestId
+        })
+      })
+      .with({ result: P.nonNullable }, () => {
+        throw new QueryTransportError(QueryEngineClient.ProbeExecutedMessage, {
+          url: this.executeURL,
+          status: null,
+          requestId
+        })
+      })
+      .exhaustive()
   }
 
   /**
@@ -308,7 +367,9 @@ export namespace QueryEngineClient {
   export const InvalidEnvelopeMessage = "invalid query.execute envelope"
   /** Message for a caller-abandoned execution. */
   export const CancelledMessage = "query cancelled"
-  /** Appended to INVALID_PARAMS when the request carried paging / deadline params (engine/client skew). */
+  /** Message of an endpoint that answered the engine probe with a result (no engine rejects it that way). */
+  export const ProbeExecutedMessage = `the endpoint answered ${QueryEngineRPC.ProbeMethod} with a result; it is not the query engine`
+  /** Appended to a pre-schema-1.1 engine's refusal of the paging / deadline params (engine/client skew). */
   export const UpgradeHint =
     `this node's query engine predates HTTP paging (response schema ${QueryEngineRPC.SchemaVersion}); ` +
     "upgrade nodeop to a wire-sysio build containing query_engine_plugin paging"
@@ -405,8 +466,8 @@ export namespace QueryEngineClient {
   }
 
   /**
-   * The typed error for an engine `error` member (INVALID_PARAMS on a paged
-   * request gets the upgrade hint).
+   * The typed error for an engine `error` member (a pre-schema-1.1 engine's
+   * refusal of the paging / deadline params gets the upgrade hint).
    *
    * @param body - The engine error member.
    * @param params - The params that were sent.
@@ -418,11 +479,32 @@ export namespace QueryEngineClient {
     params: QueryRequestParams,
     requestId: string
   ): QueryEngineError {
-    const pagedRequest =
-        params.limit != null || params.offset != null || params.timeout_ms != null,
-      hinted = body.data.kind === QueryErrorKind.INVALID_PARAMS && pagedRequest,
-      message = hinted ? `${body.message} — ${UpgradeHint}` : body.message
+    const message = isPrePagingRefusal(body, params)
+      ? `${body.message} — ${UpgradeHint}`
+      : body.message
     return new QueryEngineError(message, { code: body.code, data: body.data, requestId })
+  }
+
+  /**
+   * Whether an engine error is a pre-schema-1.1 engine refusing the paging /
+   * deadline params. That engine answers any params member beyond `query`
+   * with {@link QueryEngineRPC.InvalidParamsMessage}; a paging engine sends
+   * that message only for a missing or empty `query`, which the request codec
+   * never lets out. Every other INVALID_PARAMS on a paged request (a
+   * `timeout_ms` above `query-timeout-ms`, an out-of-range `limit`) is a
+   * paging engine's own verdict and gets no hint.
+   */
+  function isPrePagingRefusal(
+    body: QueryEngineErrorBody,
+    params: QueryRequestParams
+  ): boolean {
+    const pagedRequest =
+      params.limit != null || params.offset != null || params.timeout_ms != null
+    return (
+      body.data.kind === QueryErrorKind.INVALID_PARAMS &&
+      body.message === QueryEngineRPC.InvalidParamsMessage &&
+      pagedRequest
+    )
   }
 
   /**

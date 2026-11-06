@@ -303,3 +303,54 @@ describe("first post-bootstrap artifact growth", () => {
     expect(help).toContain("growth=first-epoch-boundary")
   })
 })
+
+/** Count a config's provisioned identities with the real monitor, in a separate ESM process. */
+function identityCount(config: Record<string, unknown>): number {
+  return Number(
+    execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+    const { provisionedIdentityCount } = await import(process.argv[1]);
+    console.log(provisionedIdentityCount(JSON.parse(process.argv[2])));
+  `,
+        pathToFileURL(MonitorScript).href,
+        JSON.stringify(config)
+      ],
+      { encoding: "utf8" }
+    ).trim()
+  )
+}
+
+describe("flow heartbeat bootstrap deadline topology", () => {
+  it("counts producers, batch operators and underwriters", () => {
+    expect(
+      identityCount({
+        producerCount: 3,
+        batchOperatorCount: 3,
+        underwriterCount: 0
+      })
+    ).toBe(6)
+    expect(identityCount({})).toBe(0)
+  })
+
+  it("counts each batch operator twice when it also underwrites", () => {
+    expect(
+      identityCount({
+        producerCount: 3,
+        batchOperatorCount: 3,
+        underwriterCount: 0,
+        batchOperatorUnderwriting: { fundedOperatorCount: 1, maxExposure: [] }
+      })
+    ).toBe(9)
+    expect(
+      identityCount({
+        producerCount: 3,
+        batchOperatorCount: 3,
+        batchOperatorUnderwriting: null
+      })
+    ).toBe(6)
+  })
+})

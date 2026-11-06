@@ -1,20 +1,20 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import { noop } from "lodash"
 import { SysioContracts } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
+
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Steps } from "@wireio/cluster-tool/orchestration"
+
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 const { SysioTokensChainkind } = SysioContracts
 const SolanaChainCode = "SOLANA"
 const SolanaMintTokenCodes = ["LIQSOL", "USDCSOL", "USDTSOL"]
 const ExpectedChainRegistrations = 3
-/** Depot shadow bindings must exist before operator collateral is configured. */
-const DepotShadowTokenCodes = ["LIQETH", "LIQSOL"]
-const DepotChainCode = "WIRE"
 
 enum ActionName {
   regchain = "regchain",
@@ -88,14 +88,6 @@ describe("Steps.registry.runSeedRegistry without sol-mock-mints.json (launch pol
       ).toBe("")
     })
     expect(recorded.regchain).toHaveLength(ExpectedChainRegistrations)
-    DepotShadowTokenCodes.forEach(code => {
-      expect(bindings.find(binding =>
-        binding.chain_code === DepotChainCode && binding.token_code === code
-      )).toMatchObject({ contract_addr: "", is_native: false })
-    })
-    expect(bindings.filter(binding =>
-      binding.chain_code === DepotChainCode && binding.is_native
-    ).map(binding => binding.token_code)).toEqual([DepotChainCode])
   })
 
   it("rejects when an already-aborted signal is supplied (nothing is pushed)", async () => {

@@ -237,6 +237,24 @@ describe("CatalogSlice", () => {
     state = CatalogSlice.reducer(state, CatalogActions.snapshotLoaded({ owner: null, snapshot }))
     expect(state.error).toBeNull()
   })
+
+  it("clears a dismissed error and leaves the rest of the state", () => {
+    const snapshot = { endpoint: ConnectionFixtures.Endpoint, owners: [], capturedAt: Fixture.At } as CatalogSnapshot
+    let state = CatalogSlice.reducer(undefined, CatalogActions.catalogReset(snapshot))
+    state = CatalogSlice.reducer(state, CatalogActions.catalogFailed({ owner: null, message: "abi missing" }))
+    state = CatalogSlice.reducer(state, CatalogActions.errorDismissed())
+    expect(state).toMatchObject({ snapshot, error: null, generation: 1 })
+  })
+
+  it("bumps the generation on every reset only", () => {
+    const snapshot = { endpoint: ConnectionFixtures.Endpoint, owners: [], capturedAt: Fixture.At } as CatalogSnapshot
+    let state = CatalogSlice.reducer(undefined, CatalogActions.catalogReset(snapshot))
+    expect(state.generation).toBe(1)
+    state = CatalogSlice.reducer(state, CatalogActions.snapshotLoaded({ owner: null, snapshot }))
+    expect(state.generation).toBe(1)
+    state = CatalogSlice.reducer(state, CatalogActions.catalogReset(snapshot))
+    expect(state.generation).toBe(2)
+  })
 })
 
 describe("History / Saved slices", () => {

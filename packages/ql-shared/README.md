@@ -51,8 +51,9 @@ pnpm --filter @wireio/ql-shared build
 ```
 
 The node must run `query_engine_plugin` with response schema `1.1` (HTTP paging). An older
-node answers paged requests with `INVALID_PARAMS`; the client reports that as "this node's
-query engine predates HTTP paging" rather than falling back.
+node refuses paged requests with `INVALID_PARAMS` ("Expected named query parameter"); the
+client reports that as "this node's query engine predates HTTP paging" rather than falling
+back. Any other `INVALID_PARAMS` comes from a paging node and is reported as the node sent it.
 
 ## Getting started
 
@@ -155,6 +156,7 @@ of Node builtins — `tests/barrel/BrowserSafeRoot.test.ts` bundles it for the b
 |---|---|
 | Transport failure naming two schema versions | The node's query engine is older or newer than response schema `1.1`; use a matching nodeop build |
 | `INVALID_PARAMS` with an upgrade hint | The node predates HTTP paging (`limit` / `offset` / `timeout_ms`) |
+| `INVALID_PARAMS`: `timeout_ms may only lower query-timeout-ms` | The profile's `queryTimeoutMs` (or the per-call timeout) is above the node's `query-timeout-ms`; lower it, or raise the node's |
 | `QUERY_LIMIT` with `data.limit = query-max-result-rows` | The page (or an "All rows" request) is larger than the node allows; use a smaller page |
 
 ## Related packages

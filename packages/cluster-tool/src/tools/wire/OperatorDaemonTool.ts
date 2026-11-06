@@ -1,32 +1,38 @@
 /**
- * OperatorDaemonTool — everything an OPERATOR nodeop daemon (batch operator /
- * underwriter) needs beyond the base node args: the OPP plugin set, the WIRE +
- * outpost `--signature-provider` specs (from the operator's {@link OperatorAccount}
- * in `ctx.keyStore`), the outpost client specs, and the deploy artifacts (ETH ABI
+ * OperatorDaemonTool — everything a batch-operator nodeop daemon needs beyond the base
+ * node args: the OPP plugin set, the WIRE + outpost `--signature-provider` specs (from
+ * the operator's {@link OperatorAccount} in `ctx.keyStore`), the outpost client specs,
+ * the optional underwriter role of the same plugin, and the deploy artifacts (ETH ABI
  * files with embedded addresses, the SOL program id + IDL).
  *
  * {@link planArtifactPreparation} is a Step (run once, after both outpost deploys) that
  * writes the cluster-local artifact files and stores the typed
- * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} /
- * {@link underwriterArgs} are PURE value builders the operator-node start runner
- * composes into `NodeopProcess` extra args.
+ * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} is the PURE value builder
+ * the operator-node start runner composes into `NodeopProcess` extra args.
  */
 
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { type ClusterConfig, NodeopReadMode } from "@wireio/cluster-tool-shared"
-import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType } from "@wireio/sdk-core"
+import {
+  type ClusterConfig,
+  type EthereumReadConfirmationConfig,
+  ExternalOutpostConfig,
+  NodeopReadMode
+} from "@wireio/cluster-tool-shared"
+import { OperatorType, type TokenAmount } from "@wireio/opp-typescript-models"
+import { Asset, KeyType, SlugName } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumReadConfirmationConfigProvider } from "../../config/EthereumReadConfirmationConfigProvider.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
+import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -61,6 +67,54 @@ export namespace OperatorDaemonTool {
     "sysio::cron_plugin"
   ] as const
 
+  // ── underwriter role on the batch-operator daemon ─────────────────────────
+
+  /**
+   * The shadow asset a configured exposure cap renders as: its base units at the liq-token
+   * precision, in its token's symbol (`10.000000000 LIQSOL`).
+   *
+   * @param cap - A `batchOperatorUnderwriting.maxExposure` entry.
+   * @return The asset.
+   */
+  export function exposureAsset(cap: TokenAmount): Asset {
+    return Asset.fromUnits(
+      cap.amount.toString(),
+      Constants.liqSymbol(SlugName.toString(Number(cap.tokenCode)))
+    )
+  }
+
+  /** What a batch operator underwrites with, beyond its own account and key. */
+  export interface BatchUnderwriting {
+    /**
+     * The `--batch-underwriter-max-exposure` caps, one asset per shadow token underwritten.
+     * Empty means the node does not run the underwriter role: with no cap the plugin would
+     * underwrite nothing.
+     */
+    readonly maxExposure: readonly Asset[]
+  }
+
+  /** A relay-only batch operator: no underwriter role. */
+  export const NoBatchUnderwriting: BatchUnderwriting = { maxExposure: [] }
+
+  /**
+   * The underwriting a cluster's batch operators run: its configured caps when
+   * `batchOperatorUnderwriting` is set, else {@link NoBatchUnderwriting}. Funded or not,
+   * every operator runs the role; an unfunded one holds nothing to bond.
+   *
+   * @param config - The resolved cluster config.
+   * @return The underwriting.
+   */
+  export function underwritingFromConfig(
+    config: ClusterConfig
+  ): BatchUnderwriting {
+    return config.batchOperatorUnderwriting == null
+      ? NoBatchUnderwriting
+      : {
+          maxExposure:
+            config.batchOperatorUnderwriting.maxExposure.map(exposureAsset)
+        }
+  }
+
   /** `plugins` with the external-debugging sink removed when the server is off. */
   const debuggingGatedPlugins = (
     plugins: readonly string[],
@@ -72,14 +126,23 @@ export namespace OperatorDaemonTool {
 
   // ── daemon tuning + protocol constants ────────────────────────────────────
 
-  /** batch_operator_plugin epoch poll interval (ms). */
+  /**
+   * batch_operator_plugin epoch poll interval (ms): one plugin pass. With the underwriter role
+   * on, it is the role's spacing while a request is in play, so paying a bond back takes two
+   * passes after its challenge window opens, one to approve and one to claim.
+   */
   export const BatchEpochPollMs = 15_000
+  /**
+   * The underwriter role's crank spacing while no envelope request is in play — the
+   * plugin's own `UNDERWRITER_IDLE_CRANK_INTERVAL = fc::minutes(5)`
+   * (wire-sysio `plugins/batch_operator_plugin/src/batch_operator_plugin.cpp`), not a flag
+   * this tool renders. Kept beside {@link BatchEpochPollMs} because both bound how soon the
+   * daemon acts; only `sysio.synd::crank` issues a request, so a syndication that arrives
+   * while nothing is in play can wait this long for one.
+   */
+  export const UnderwriterIdleCrankIntervalMs = 300_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 30_000
-  /** The `sysio.chains` codename identifying the ETH outpost. */
-  export const EthereumChainCodename = "ETHEREUM"
-  /** The `sysio.chains` codename identifying the SOL outpost. */
-  export const SolanaChainCodename = "SOLANA"
   /**
    * Outpost RPC client ids ARE the chain codes.
    *
@@ -89,9 +152,9 @@ export namespace OperatorDaemonTool {
    * id is invisible to them, and a batch operator that cannot reach an active
    * chain shuts down rather than relaying a partial epoch.
    */
-  export const EthereumClientId = EthereumChainCodename
+  export const EthereumClientId = Constants.ETHEREUM_CHAIN_CODENAME
   /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
-  export const SolanaClientId = SolanaChainCodename
+  export const SolanaClientId = Constants.SOLANA_CHAIN_CODENAME
   /** SOL inbound-delivery instruction the batch operator invokes. */
   export const SolanaEpochInInstruction = "epoch_in"
   /**
@@ -103,7 +166,8 @@ export namespace OperatorDaemonTool {
     SolanaEpochInInstruction
   ] as const
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
-  export const EthereumAbiContractNames = ["OPP", "OPPInbound", "BAR"] as const
+  export const EthereumAbiContractNames =
+    ExternalOutpostConfig.RequiredOutpostContractNames
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
@@ -113,10 +177,14 @@ export namespace OperatorDaemonTool {
 
   // ── network endpoints the daemon dials ─────────────────────────────────────
 
-  /** The chain endpoints + debugging sink an operator daemon dials. */
+  /**
+   * The chain endpoints + debugging sink an operator daemon dials, and the read
+   * confirmation its Ethereum client reads the outpost at.
+   */
   export interface OperatorDaemonNetwork {
     readonly ethereumRpcUrl: string
     readonly ethereumChainId: number
+    readonly ethereumRead: EthereumReadConfirmationConfig
     readonly solanaRpcUrl: string
     readonly debuggingServerUrl: string
     readonly debuggingServerEnabled: boolean
@@ -146,6 +214,7 @@ export namespace OperatorDaemonTool {
       ethereumChainId:
         config.externalOutposts?.ethereum.chainId ??
         AnvilProcess.DefaultChainId,
+      ethereumRead: config.ethereumRead,
       solanaRpcUrl:
         config.externalOutposts?.solana.rpcUrl ??
         toURL(
@@ -163,12 +232,18 @@ export namespace OperatorDaemonTool {
   // ── Step: prepare the daemon's deploy artifacts (filesystem writes) ────────
 
   /**
-   * Prepare the artifacts every operator daemon's command line references:
-   * generate `<dataPath>/eth-abis/<Name>.json` (`{contractName, address, abi}`,
-   * from the wire-ethereum hardhat artifacts + `outpost-addrs.json`), copy the
-   * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, resolve the SOL program id,
-   * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
-   * outpost deploys, before any operator node starts.
+   * Prepare the artifacts every operator daemon's command line references,
+   * built from source: generate `<dataPath>/eth-abis/<Name>.json`
+   * (`{contractName, address, abi}`, from the wire-ethereum hardhat artifacts +
+   * `outpost-addrs.json`), write the `liqsol_core` (OPP outpost) IDL to
+   * `<dataPath>/solana-idls/` with the SOL program id as its top-level
+   * `address`, and store the typed {@link OperatorDaemonArtifacts}.
+   *
+   * Local mode reads the addresses the outpost deploy wrote and the program id
+   * from the committed program keypair. External-outpost mode reads the
+   * addresses `ExternalOutpostSteps.planMaterialize` wrote from the trusted
+   * config, and overlays the config's `solana.programId`. Runs ONCE, before any
+   * operator node starts.
    */
   export function planArtifactPreparation<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -201,7 +276,7 @@ export namespace OperatorDaemonTool {
     // into THIS cluster's deployments dir — per-run, parallel-safe).
     const addressesFile = Path.join(
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-      "outpost-addrs.json"
+      EthereumOutpostBootstrapper.OutpostAddressesFile
     )
     Assert.ok(
       Fs.existsSync(addressesFile),
@@ -226,15 +301,23 @@ export namespace OperatorDaemonTool {
         `${contractName}.sol`,
         `${artifactContractName}.json`
       )
-      if (!Fs.existsSync(artifactFile)) return null
+      Assert.ok(
+        Fs.existsSync(artifactFile),
+        `prepareArtifacts: no ${contractName} ABI artifact at ${artifactFile} — is wire-ethereum built?`
+      )
       const artifact = JSON.parse(Fs.readFileSync(artifactFile, "utf-8")),
-        abiFile = Path.join(abiDir, `${contractName}.json`)
+        abiFile = Path.join(abiDir, `${contractName}.json`),
+        address = ethereumAddresses[contractName]
+      Assert.ok(
+        address != null,
+        `prepareArtifacts: ${addressesFile} has no ${contractName} address to embed in its ABI`
+      )
       Fs.writeFileSync(
         abiFile,
         JSON.stringify(
           {
             contractName,
-            address: ethereumAddresses[contractName],
+            address,
             abi: artifact.abi
           },
           null,
@@ -242,16 +325,14 @@ export namespace OperatorDaemonTool {
         )
       )
       return abiFile
-    }).filter(file => file != null)
-    Assert.ok(
-      ethereumAbiFiles.length > 0,
-      "prepareArtifacts: no ETH outpost ABI artifacts found"
-    )
+    })
 
-    // SOL program id (from the committed liqsol_core program keypair) + a
-    // cluster-local VERBATIM IDL copy so operator nodes read a stable path
+    // SOL program id — the external-outpost config's, else the committed
+    // liqsol_core program keypair's — written as the top-level `address` of a
+    // cluster-local copy of the built IDL, so operator nodes read a stable path
     // (nodeop accepts it via --solana-outpost-program-name liqsol_core).
     const solanaProgramId =
+      ctx.config.externalOutposts?.solana.programId ??
       SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
 
     const idlSource = SolanaOutpostProgramTool.programIdlFile(solanaPath),
@@ -270,7 +351,10 @@ export namespace OperatorDaemonTool {
       mkdirs(Path.join(dataPath, SolanaIdlSubpath)),
       SolanaIdlFilename
     )
-    Fs.copyFileSync(idlSource, solanaIdlFile)
+    Fs.writeFileSync(
+      solanaIdlFile,
+      JSON.stringify({ ...idl, address: solanaProgramId }, null, 2)
+    )
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
@@ -337,6 +421,7 @@ export namespace OperatorDaemonTool {
           String(network.ethereumChainId)
         ].join(",")
       ),
+      ...EthereumReadConfirmationConfigProvider.toArgs(network.ethereumRead),
       ...artifacts.ethereumAbiFiles.flatMap(file =>
         pair("--ethereum-abi-file", file)
       ),
@@ -359,13 +444,20 @@ export namespace OperatorDaemonTool {
    * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
    * the operator's own WIRE signature provider (its unique `wire` K1 — the
    * `account`'s active key) + batch plugin config + both outpost client
-   * specs.
+   * specs. With `underwriting`, the same node also runs the plugin's underwriter
+   * role as the SAME account (`--batch-underwriter-account`, permission `active`):
+   * the one WIRE provider above satisfies both roles, which the plugin resolves
+   * separately.
+   *
+   * @param underwriting - The underwriter role's caps; {@link NoBatchUnderwriting} for a
+   *   relay-only node.
    */
   export function batchOperatorArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
     network: OperatorDaemonNetwork,
-    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor,
+    underwriting: BatchUnderwriting
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.BATCH,
@@ -373,7 +465,7 @@ export namespace OperatorDaemonTool {
     )
     assertOutpostKeys(operator)
     return [
-      ...pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible),
+      ...batchOperatorSyncArgs(),
       ...pluginArgs(
         debuggingGatedPlugins(
           BatchOperatorPlugins,
@@ -389,6 +481,7 @@ export namespace OperatorDaemonTool {
         )
       ),
       ...pair("--batch-operator-account", operator.account),
+      ...underwriterArgs(operator, underwriting),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
         "--batch-delivery-timeout-ms",
@@ -407,6 +500,36 @@ export namespace OperatorDaemonTool {
       ...pair(
         "--solana-outpost-program-name",
         SolanaOutpostProgramTool.ProgramName
+      )
+    ]
+  }
+
+  /**
+   * The extra args a batch-operator node SYNCS with when its OPP daemon must not
+   * run — an external-outpost `create`, which never contacts the outposts: the
+   * node's read mode only. No `batch_operator_plugin`, no outpost client, no
+   * debugging sink. {@link batchOperatorArgs} starts with these, so a node
+   * synced this way relaunches on the same read mode with its daemon added.
+   *
+   * @returns The sync-only extra args.
+   */
+  export function batchOperatorSyncArgs(): string[] {
+    return pair(`--${Constants.READ_MODE_OPTION}`, NodeopReadMode.irreversible)
+  }
+
+  /**
+   * The underwriter role's flags: the operator's own account and one cap per token; none for a
+   * relay-only node.
+   */
+  function underwriterArgs(
+    operator: OperatorAccount,
+    underwriting: BatchUnderwriting
+  ): string[] {
+    if (underwriting.maxExposure.length === 0) return []
+    return [
+      ...pair("--batch-underwriter-account", operator.account),
+      ...underwriting.maxExposure.flatMap(cap =>
+        pair("--batch-underwriter-max-exposure", cap.toString())
       )
     ]
   }
@@ -465,7 +588,13 @@ export namespace OperatorDaemonTool {
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
       daemonArgs = match(operator.type)
         .with(OperatorType.BATCH, () =>
-          batchOperatorArgs(operator, artifacts, network, keySourceFor)
+          batchOperatorArgs(
+            operator,
+            artifacts,
+            network,
+            keySourceFor,
+            underwritingFromConfig(ctx.config)
+          )
         )
         .otherwise(() => {
           throw new Error(

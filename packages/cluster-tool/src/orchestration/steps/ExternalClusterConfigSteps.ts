@@ -9,7 +9,8 @@ import type {
   ClusterSignatureProviderConfig,
   ExternalClusterConfig,
   ExternalClusterConfigAccount,
-  ExternalOutpostConfig,
+  ExternalClusterConfigEthereum,
+  ExternalClusterConfigSolana,
   SignatureProviderConfig
 } from "@wireio/cluster-tool-shared"
 import {
@@ -34,7 +35,8 @@ import { DaemonConfig } from "../../config/DaemonConfig.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { StartScriptSteps } from "./StartScriptSteps.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
-import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
+import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
 import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -650,16 +652,6 @@ export namespace ExternalClusterConfigSteps {
       Path.relative(localConfig.clusterPath, ClusterState.keysFilePath(localConfig))
     )
     if (Fs.existsSync(externalKeysFile)) Fs.chmodSync(externalKeysFile, 0o600)
-
-    // External-outpost mode: copy the outpost artifact files (which may live
-    // OUTSIDE the local tree) INTO the external tree so it stays self-described.
-    if (localConfig.externalOutposts != null) {
-      const externalDataPath = Path.join(
-        externalClusterPath,
-        Path.relative(localConfig.clusterPath, localConfig.dataPath)
-      )
-      copyExternalOutpostFiles(externalDataPath, localConfig.externalOutposts)
-    }
   }
 
   // ── Stage 3: Rebind ────────────────────────────────────────────────────────
@@ -722,14 +714,6 @@ export namespace ExternalClusterConfigSteps {
         walletPath: rootSwap(localConfig.walletPath),
         bind: externalBind,
         report: { ...localConfig.report, path: rootSwap(localConfig.report.path) },
-        // external-outpost refs now point at their in-tree copies (Clone put them there).
-        externalOutposts:
-          localConfig.externalOutposts != null
-            ? inTreeExternalOutpost(
-                rootSwap(localConfig.dataPath),
-                localConfig.externalOutposts
-              )
-            : null,
         debuggingServerEnabled: noDebuggingServer ? false : localConfig.debuggingServerEnabled,
         // This tree IS the production-shaped one (SHARED-25 AC#4): stamping it
         // here — before the cluster-config.json write below, and therefore
@@ -763,14 +747,11 @@ export namespace ExternalClusterConfigSteps {
         getLogger(mergedConfig.report.basename)
       ),
       state = ClusterState.capture(mergedContext),
-      solanaIdlFile =
-        mergedConfig.externalOutposts != null
-          ? mergedConfig.externalOutposts.solana.idlFile
-          : Path.join(
-              mergedConfig.dataPath,
-              OperatorDaemonTool.SolanaIdlSubpath,
-              OperatorDaemonTool.SolanaIdlFilename
-            )
+      solanaIdlFile = Path.join(
+        mergedConfig.dataPath,
+        OperatorDaemonTool.SolanaIdlSubpath,
+        OperatorDaemonTool.SolanaIdlFilename
+      )
     ClusterState.save(mergedConfig, {
       ...state,
       solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null
@@ -796,12 +777,6 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /**
-   * The materialized ETH outpost address map — the artifact whose presence
-   * proves the outpost deploy published its results into this tree.
-   */
-  const ExternalOutpostAddressFilename = "outpost-addrs.json"
-
-  /**
    * Re-render EVERY daemon's `start.sh` against the merged (external) model.
    *
    * Two prerequisites make a node's argv resolvable, and a FRESH context has
@@ -811,9 +786,9 @@ export namespace ExternalClusterConfigSteps {
    *    providers, resolved from `ctx.keyStore`. Rehydrated from the cloned
    *    `cluster-keys.json` exactly as `ClusterManager.run` does.
    * 2. **Operator daemon artifacts.** An operator node's argv carries its OPP
-   *    daemon args, which assert `OperatorDaemonArtifactsKey`. `run` publishes
-   *    those first, branching on outpost mode — the external arm reads only the
-   *    cluster tree, the local arm reads the wire-ethereum tree.
+   *    daemon args, which assert `OperatorDaemonArtifactsKey`. They are built
+   *    here exactly as `run` builds them, in both outpost modes: from the
+   *    wire-ethereum / wire-solana builds over the tree's deploy records.
    *
    * Either prerequisite may be genuinely absent (a cluster cloned before its
    * outposts deployed, unreadable keys). That is NOT fatal to the rebind: the
@@ -871,7 +846,7 @@ export namespace ExternalClusterConfigSteps {
     // to a warning.
     const addressFile = Path.join(
       ClusterConfigProvider.ethereumDeploymentsPath(config),
-      ExternalOutpostAddressFilename
+      EthereumOutpostBootstrapper.OutpostAddressesFile
     )
     if (!Fs.existsSync(addressFile)) {
       log.warn(
@@ -879,15 +854,10 @@ export namespace ExternalClusterConfigSteps {
       )
       return
     }
-    // BOTH arms are reachable, and the LOCAL one is the common case: a plain
-    // local cluster cloned to external has `externalOutposts == null` (the
-    // field is set only when the SOURCE cluster was itself external-outpost),
-    // so it takes `runArtifactPreparation`. Verified on a real
-    // create-external-config run, which logged that arm's
-    // "[operator-daemon] artifacts ready" line.
-    await (config.externalOutposts != null
-      ? ExternalOutpostSteps.runPublishArtifacts(ctx, null, signal)
-      : OperatorDaemonTool.runArtifactPreparation(ctx, null, signal))
+    // One preparation for both outpost modes: the artifacts are built from
+    // source over the tree's deploy records (and, for an external-outpost
+    // cluster, the config's Solana program id).
+    await OperatorDaemonTool.runArtifactPreparation(ctx, null, signal)
     StartScriptSteps.writeAll(config, StartScriptSteps.resolveSources(ctx))
   }
 
@@ -898,8 +868,9 @@ export namespace ExternalClusterConfigSteps {
    * payload: the external bindings, every operator account's signature providers
    * (reflecting the SOURCE cluster's `signatureProvider.type` — see
    * {@link keyProviderFor}), the depot `epochDurationSec` + genesis path, and the
-   * ethereum/solana outpost references (from `config.externalOutposts` when the
-   * local cluster was created external, else derived from the cloned data dir).
+   * ethereum/solana outpost artifacts derived from the cloned data dir (with the
+   * chain id and RPC endpoints of `config.externalOutposts` when the local
+   * cluster was created external).
    *
    * SECRET-BEARING ONLY UNDER `KEY`: a KEY-provider cluster embeds every
    * operator's plaintext `privateKey` (testnet key material by design). Under
@@ -1139,131 +1110,57 @@ export namespace ExternalClusterConfigSteps {
       .exhaustive()
   }
 
-  /** Subpath (under the external data dir) for copied external-outpost artifacts. */
-  const ExternalOutpostSubpath = "external-outpost"
-
-  /** The in-tree path for a copied external-outpost artifact (self-contained tree). */
-  function inTreeExternalOutpostFile(
-    externalDataPath: string,
-    chain: string,
-    sourceFile: string
-  ): string {
-    return Path.join(
-      externalDataPath,
-      ExternalOutpostSubpath,
-      chain,
-      Path.basename(sourceFile)
-    )
-  }
-
   /**
-   * The external-outpost config with every FILE ref rewritten to its in-tree
-   * copy — and EVERY non-file field carried through untouched.
-   *
-   * The carry-through is a SPREAD, not a field list. Re-stating the non-file
-   * fields silently DROPPED any that the list had not been extended for: an
-   * authoritative `rpcUrl` (a real outpost endpoint no bind config can express)
-   * vanished from the merged config, so the rebound daemon scripts fell back to
-   * the bind-derived URL and a published tree dialed a local anvil that does not
-   * exist on the deploy host. Only the file refs are overridden here; the
-   * optional ones stay conditional so an ABSENT ref is not re-introduced.
+   * The ethereum outpost section — the cloned data dir's artifacts, with the
+   * chain id (and RPC endpoint, when set) of the source cluster's external-outpost
+   * config, else the local anvil's chain id.
    */
-  function inTreeExternalOutpost(
-    externalDataPath: string,
-    external: ExternalOutpostConfig
-  ): ExternalOutpostConfig {
-    const inTree = (chain: string, file: string): string =>
-      inTreeExternalOutpostFile(externalDataPath, chain, file)
-    return {
-      ethereum: {
-        ...external.ethereum,
-        addressFile: inTree("ethereum", external.ethereum.addressFile),
-        abiFiles: external.ethereum.abiFiles.map(file => inTree("ethereum", file)),
-        ...(external.ethereum.liqEthAddressFile != null
-          ? {
-              liqEthAddressFile: inTree(
-                "ethereum",
-                external.ethereum.liqEthAddressFile
-              )
-            }
-          : {})
-      },
-      solana: {
-        ...external.solana,
-        idlFile: inTree("solana", external.solana.idlFile),
-        ...(external.solana.mintsFile != null
-          ? { mintsFile: inTree("solana", external.solana.mintsFile) }
-          : {})
-      }
-    }
-  }
-
-  /**
-   * Copy an external-outpost config's referenced files INTO the external tree so
-   * the external directory stays fully self-described (packageable + portable)
-   * even when the originals live outside the local cluster tree.
-   *
-   * @param externalDataPath - The external cluster's data dir.
-   * @param external - The (absolute-ref) external-outpost config.
-   */
-  function copyExternalOutpostFiles(
-    externalDataPath: string,
-    external: ExternalOutpostConfig
-  ): void {
-    const copy = (chain: string, source: string): void => {
-      Assert.ok(
-        Fs.existsSync(source),
-        `create-external-config: external-outpost file not found: ${source}`
-      )
-      const destination = inTreeExternalOutpostFile(externalDataPath, chain, source)
-      Fs.mkdirSync(Path.dirname(destination), { recursive: true })
-      Fs.copyFileSync(source, destination)
-    }
-    copy("ethereum", external.ethereum.addressFile)
-    external.ethereum.abiFiles.forEach(file => copy("ethereum", file))
-    if (external.ethereum.liqEthAddressFile != null) {
-      copy("ethereum", external.ethereum.liqEthAddressFile)
-    }
-    copy("solana", external.solana.idlFile)
-    if (external.solana.mintsFile != null) copy("solana", external.solana.mintsFile)
-  }
-
-  /** The ethereum outpost section — from `externalOutposts`, else the cloned data dir. */
-  function ethereumSection(merged: ClusterConfig): ExternalOutpostConfig["ethereum"] {
-    if (merged.externalOutposts != null) {
-      return { ...merged.externalOutposts.ethereum }
-    }
-    const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(merged),
+  function ethereumSection(merged: ClusterConfig): ExternalClusterConfigEthereum {
+    const external = merged.externalOutposts?.ethereum,
+      deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(merged),
       abiDir = Path.join(merged.dataPath, OperatorDaemonTool.EthereumAbiSubpath),
       abiFiles = Fs.existsSync(abiDir)
         ? Fs.readdirSync(abiDir)
             .filter(file => file.endsWith(".json"))
             .map(file => Path.join(abiDir, file))
         : [],
-      liqEthAddressFile = Path.join(deploymentsDir, "liqeth-addrs.json")
+      liqEthAddressFile = Path.join(
+        deploymentsDir,
+        EthereumOutpostBootstrapper.LiqEthAddressesFile
+      )
     return {
-      addressFile: Path.join(deploymentsDir, ExternalOutpostAddressFilename),
+      addressFile: Path.join(
+        deploymentsDir,
+        EthereumOutpostBootstrapper.OutpostAddressesFile
+      ),
       abiFiles,
-      chainId: AnvilProcess.DefaultChainId,
+      chainId: external?.chainId ?? AnvilProcess.DefaultChainId,
+      ...(external?.rpcUrl != null ? { rpcUrl: external.rpcUrl } : {}),
       ...(Fs.existsSync(liqEthAddressFile) ? { liqEthAddressFile } : {})
     }
   }
 
-  /** The solana outpost section — from `externalOutposts`, else the cloned IDL (or none). */
-  function solanaSection(
-    merged: ClusterConfig
-  ): ExternalOutpostConfig["solana"] {
-    if (merged.externalOutposts != null) {
-      return { ...merged.externalOutposts.solana }
-    }
-    const idlFile = Path.join(
+  /**
+   * The solana outpost section — the cloned data dir's IDL (or none), with the
+   * RPC endpoint of the source cluster's external-outpost config when set.
+   */
+  function solanaSection(merged: ClusterConfig): ExternalClusterConfigSolana {
+    const rpcUrl = merged.externalOutposts?.solana.rpcUrl,
+      idlFile = Path.join(
         merged.dataPath,
         OperatorDaemonTool.SolanaIdlSubpath,
         OperatorDaemonTool.SolanaIdlFilename
       ),
-      mintsFile = Path.join(merged.dataPath, "sol-mock-mints.json")
+      mintsFile = Path.join(
+        merged.dataPath,
+        SolanaFundingTool.SolMockMintsFilename
+      )
     return Fs.existsSync(idlFile)
-      ? { idlFile, ...(Fs.existsSync(mintsFile) ? { mintsFile } : {}) }
+      ? {
+          idlFile,
+          ...(rpcUrl != null ? { rpcUrl } : {}),
+          ...(Fs.existsSync(mintsFile) ? { mintsFile } : {})
+        }
       : null
   }
 

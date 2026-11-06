@@ -98,7 +98,8 @@ export class NodeConfigIniRenderer implements Renderer {
         // The query-engine block rides the SAME predicate as the plugin line,
         // and the SAME helper as the standalone API-node ini, so the cluster
         // and standalone configs cannot spell an option differently. Only SET
-        // members render; an unset one leaves nodeop's / the plugin's default.
+        // members render (resolution always sets the query deadline); an unset
+        // one leaves nodeop's / the plugin's default.
         ...(NodeConfig.runsQueryEnginePlugin(node)
           ? QueryEngineConfigProvider.toIniLines(node.cluster.queryEngine)
           : []),

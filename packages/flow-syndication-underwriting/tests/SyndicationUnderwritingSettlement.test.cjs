@@ -27,9 +27,7 @@ for (const fault of ["none", "first", "second", "wallet", "fees"]) {
         config: { dataPath: "/tmp/unused-unit-wallet" }
       },
       build = ClusterBuild.forContext(ctx),
-      fee =
-        (Constants.Amount * BigInt(Constants.FeeBps)) /
-        SyndicationScenario.BasisPoints
+      fee = SyndicationScenario.feeOf(Constants.Amount, Constants.FeeBps)
     new SyndicationUnderwritingScenario().plan(build)
     ctx.outputs.set(Constants.Before, { holder: 0n, bonder: 0n, fees: 0n })
     mock.method(SyndicationScenario, "readEnvelope", async (_ctx, key) =>

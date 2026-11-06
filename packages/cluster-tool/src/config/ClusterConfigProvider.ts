@@ -2,7 +2,6 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
 import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
@@ -14,6 +13,7 @@ import {
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
+  type BatchOperatorUnderwritingConfig,
   type BindConfig,
   type BindOptions,
   type ClusterConfig,
@@ -23,11 +23,15 @@ import {
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
   type ExternalOutpostConfig,
-  type QueryEngineConfig
+  type LcoImportChainConfig,
+  type LcoImportChainOptions,
+  type LcoImportConfig,
+  type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
-import { KeyType } from "@wireio/sdk-core"
+import { TokenAmount } from "@wireio/opp-typescript-models"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
 import {
   ListenAllAddress,
@@ -58,6 +62,7 @@ import type {
 // module-init, so whichever module loads first the other is complete by the
 // time a value is dereferenced.
 import { NodeConfig } from "./NodeConfig.js"
+import { EthereumReadConfirmationConfigProvider } from "./EthereumReadConfirmationConfigProvider.js"
 import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
@@ -115,15 +120,19 @@ function assertApiCount(options: ClusterBuildOptions): number {
 
 /**
  * A query-engine setting with no API node to read it is a misconfiguration,
- * not a default: every set member requires at least one planned API node.
+ * not a default: every member the CALLER set requires at least one planned API
+ * node. The harness's own defaults
+ * (`QueryEngineConfigProvider.createDefaultOptions`) are not caller settings,
+ * so they never trip this on a cluster without API nodes.
  *
  * @param apiCount - The planned API-node count.
- * @param queryEngine - The resolved query-engine config.
+ * @param queryEngine - The caller's query-engine options.
+ * @returns The caller's options, for resolution.
  */
 function assertQueryEngineUse(
   apiCount: number,
-  queryEngine: QueryEngineConfig
-): void {
+  queryEngine: QueryEngineOptions = {}
+): QueryEngineOptions {
   const setMembers = Object.entries(queryEngine)
     .filter(([, value]) => value != null)
     .map(([member]) => member)
@@ -131,6 +140,7 @@ function assertQueryEngineUse(
     apiCount > 0 || setMembers.length === 0,
     `ClusterConfigProvider: query-engine settings (${setMembers.join(", ")}) require at least one API node — set apiCount (--api-count)`
   )
+  return queryEngine
 }
 
 /**
@@ -160,6 +170,134 @@ export namespace ClusterConfigProvider {
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
   export const DefaultUnderwriterCount = 0
+  /** The shadow token the default underwriting cap is held in. */
+  export const DefaultBatchUnderwriterExposureToken = Constants.LIQSOL_CODENAME
+  /**
+   * The default LIQSOL exposure cap of an underwriting batch operator, in base units: well
+   * above a flow's coverage and below the 100 LIQSOL mock import each funded operator holds.
+   * Lowering it below a request's coverage leaves that request unbonded.
+   */
+  export const DefaultBatchUnderwriterMaxExposureUnits = 10_000_000_000n
+  /** {@link DefaultBatchUnderwriterMaxExposureUnits} of {@link DefaultBatchUnderwriterExposureToken}. */
+  export const DefaultBatchUnderwriterMaxExposure: TokenAmount =
+    TokenAmount.create({
+      tokenCode: BigInt(SlugName.from(DefaultBatchUnderwriterExposureToken)),
+      amount: DefaultBatchUnderwriterMaxExposureUnits
+    })
+
+  /** Default outstanding coverage caps for both supported syndication shadows, at depot precision. */
+  export const DefaultBatchUnderwriterMaxExposures: readonly TokenAmount[] = [
+    DefaultBatchUnderwriterMaxExposure,
+    TokenAmount.create({
+      tokenCode: BigInt(SlugName.from("LIQETH")),
+      amount: DefaultBatchUnderwriterMaxExposureUnits
+    })
+  ]
+
+  /**
+   * Resolve the underwriter role's configuration: `null` when
+   * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
+   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps.
+   *
+   * @param options - The caller's options.
+   * @param batchOperatorCount - The resolved batch-operator roster size.
+   * @return The configuration, or `null` for relay-only operators.
+   * @throws If underwriting options are set with the role off, more operators are funded
+   *   than exist, or `maxExposure` is empty.
+   */
+  export function resolveBatchOperatorUnderwriting(
+    options: ClusterBuildOptions,
+    batchOperatorCount: number
+  ): BatchOperatorUnderwritingConfig {
+    if (options.enableBatchOperatorUnderwriting !== true) {
+      Assert.ok(
+        options.batchOperatorUnderwriting == null,
+        "ClusterConfigProvider: batchOperatorUnderwriting is set but enableBatchOperatorUnderwriting is off"
+      )
+      return null
+    }
+    const fundedOperatorCount =
+      options.batchOperatorUnderwriting?.fundedOperatorCount ??
+      batchOperatorCount
+    Assert.ok(
+      Number.isInteger(fundedOperatorCount) &&
+        fundedOperatorCount >= 0 &&
+        fundedOperatorCount <= batchOperatorCount,
+      `ClusterConfigProvider: batchOperatorUnderwriting.fundedOperatorCount ${fundedOperatorCount} must be 0..${batchOperatorCount}`
+    )
+    const maxExposure = options.batchOperatorUnderwriting?.maxExposure ?? [
+      ...DefaultBatchUnderwriterMaxExposures
+    ]
+    Assert.ok(
+      maxExposure.length > 0,
+      "ClusterConfigProvider: batchOperatorUnderwriting.maxExposure must name at least one cap"
+    )
+    return { fundedOperatorCount, maxExposure }
+  }
+  /**
+   * Resolve the launch-data (LCO) import: `null` without an export file, else each exported
+   * chain's absolute export path plus its pricing and pool tuning (`null` where unset — the
+   * import then takes a placeholder), and the claim funding account.
+   *
+   * @param options - The caller's options.
+   * @return The import configuration, or `null` when no export was given.
+   * @throws If `lcoImport` sets a chain whose export file is missing, or is set with no
+   *   export at all.
+   */
+  export function resolveLcoImport(
+    options: ClusterBuildOptions
+  ): LcoImportConfig {
+    const {
+      ethereumBootstrapJsonFile: ethereumFile,
+      solanaBootstrapJsonFile: solanaFile,
+      lcoImport = {}
+    } = options
+    Assert.ok(
+      lcoImport.ethereum == null || ethereumFile != null,
+      "ClusterConfigProvider: lcoImport.ethereum is set but ethereumBootstrapJsonFile is not"
+    )
+    Assert.ok(
+      lcoImport.solana == null || solanaFile != null,
+      "ClusterConfigProvider: lcoImport.solana is set but solanaBootstrapJsonFile is not"
+    )
+    if (ethereumFile == null && solanaFile == null) {
+      Assert.ok(
+        lcoImport.dclaimFundingAccount == null,
+        "ClusterConfigProvider: lcoImport is set but no bootstrap JSON file is"
+      )
+      return null
+    }
+    return {
+      ethereum: resolveLcoImportChain(ethereumFile, lcoImport.ethereum),
+      solana: resolveLcoImportChain(solanaFile, lcoImport.solana),
+      dclaimFundingAccount: lcoImport.dclaimFundingAccount ?? null
+    }
+  }
+
+  /**
+   * One chain's import: its export resolved absolute and its unset values `null` — explicit
+   * `null` because the slot is persisted to `cluster-config.json`.
+   */
+  function resolveLcoImportChain(
+    bootstrapJsonFile: string,
+    options: LcoImportChainOptions = {}
+  ): LcoImportChainConfig {
+    if (bootstrapJsonFile == null) {
+      return null
+    }
+    const {
+      nativePriceUsd = null,
+      highestTranchePriceUsd = null,
+      pool = null
+    } = options
+    return {
+      bootstrapJsonFile: Path.resolve(bootstrapJsonFile),
+      nativePriceUsd,
+      highestTranchePriceUsd,
+      pool
+    }
+  }
+
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   export const DefaultEpochDurationSec = 90
@@ -178,13 +316,16 @@ export namespace ClusterConfigProvider {
     // query-engine settings are arithmetic over the options, and rejecting here
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
-    const batchOperatorCount = assertBatchOperatorSchedule(options),
+    assertExternalOutpostMockData(options)
+    const lcoImport = resolveLcoImport(options),
+      batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
-      queryEngine = asOption(
-        QueryEngineConfigProvider.resolve(options.queryEngine)
-      )
-        .tap(resolved => assertQueryEngineUse(apiCount, resolved))
-        .get(),
+      queryEngine = QueryEngineConfigProvider.resolve(
+        assertQueryEngineUse(apiCount, options.queryEngine)
+      ),
+      ethereumRead = EthereumReadConfirmationConfigProvider.resolve(
+        options.ethereumRead
+      ),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -250,12 +391,18 @@ export namespace ClusterConfigProvider {
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
+      batchOperatorUnderwriting: resolveBatchOperatorUnderwriting(
+        options,
+        batchOperatorCount
+      ),
+      lcoImport,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,
       chainStateDbSizeMb:
         options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
       queryEngine,
+      ethereumRead,
       solanaSlotsPerEpoch:
         options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }
@@ -464,6 +611,33 @@ export namespace ClusterConfigProvider {
   }
 
   /**
+   * The {@link ClusterBuildOptions} members that seed mock shadow — refused
+   * against external outposts by {@link assertExternalOutpostMockData}.
+   */
+  export const MockDataOptionKeys = [
+    "enableMockLiqPools",
+    "enableMockSyndicationImport"
+  ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
+
+  /**
+   * Refuse mock data against EXTERNAL outposts. The mock LIQ pools and the mock
+   * syndication import mint shadow that the bootstrap backs with custody on the
+   * outposts, and the harness cannot fund or verify custody on outposts it did
+   * not deploy. Batch-operator underwriting stays the caller's choice: it is the
+   * real role, not mock data.
+   *
+   * @param options - The caller's options (its `externalOutpostConfig` and mock flags).
+   * @throws When external mode is combined with any {@link MockDataOptionKeys} member.
+   */
+  function assertExternalOutpostMockData(options: ClusterBuildOptions): void {
+    const requested = MockDataOptionKeys.filter(key => options[key] === true)
+    Assert.ok(
+      options.externalOutpostConfig == null || requested.length === 0,
+      `Mock data cannot be seeded against external outposts (${requested.join(", ")} set with externalOutpostConfig): the harness cannot back its shadow there.`
+    )
+  }
+
+  /**
    * Normalize + validate the caller's AWS placement: `null` when unset,
    * otherwise a config whose `regions` names at least one region (every secret
    * is replicated to EVERY region — there is no primary).
@@ -647,12 +821,13 @@ export namespace ClusterConfigProvider {
   }
 
   /**
-   * Load + validate an `--external-outpost-config` file (external-outpost mode),
-   * resolving its `*File`/`*Files` references to absolute paths relative to the
-   * config file's directory. Returns `null` for the standard local bootstrap.
+   * Load + validate an `--external-outpost-config` file (external-outpost mode).
+   * The file is trusted and carries values only, so the decoded config is
+   * returned as-is — every field, `rpcUrl` included. Returns `null` for the
+   * standard local bootstrap.
    *
    * @param file - Path to the `ExternalOutpostConfig` JSON (may be omitted).
-   * @returns The resolved config, or `null`.
+   * @returns The decoded config, or `null`.
    */
   async function loadExternalOutposts(
     file: string
@@ -660,29 +835,9 @@ export namespace ClusterConfigProvider {
     if (file == null) {
       return null
     }
-    const configFile = Path.resolve(file),
-      baseDir = Path.dirname(configFile),
-      config = ExternalOutpostConfigSchemaCodec.deserialize(
-        await Fsp.readFile(configFile, "utf-8")
-      ),
-      resolveRef = (ref: string): string =>
-        Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
-    return {
-      ethereum: {
-        addressFile: resolveRef(config.ethereum.addressFile),
-        abiFiles: config.ethereum.abiFiles.map(resolveRef),
-        chainId: config.ethereum.chainId,
-        ...(config.ethereum.liqEthAddressFile != null
-          ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
-          : {})
-      },
-      solana: {
-        idlFile: resolveRef(config.solana.idlFile),
-        ...(config.solana.mintsFile != null
-          ? { mintsFile: resolveRef(config.solana.mintsFile) }
-          : {})
-      }
-    }
+    return ExternalOutpostConfigSchemaCodec.deserialize(
+      await Fsp.readFile(Path.resolve(file), "utf-8")
+    )
   }
 
   /** Resolve + validate every binary path (the build-dir bins + PATH lookups). */
@@ -846,8 +1001,8 @@ export namespace ClusterConfigProvider {
    * Parse + rehydrate a persisted config via {@link ClusterConfigSchemaCodec} —
    * zod DECODE (`underwriterCollateral.amount` restored to a `TokenAmount`;
    * missing `signatureProvider`/`externalOutposts` filled by schema defaults).
-   * Does NOT re-claim ports (reload, not resolve) — `run` re-probes via
-   * `BindConfigProvider.validate`.
+   * Does NOT re-claim ports (reload, not resolve) — `run` re-claims them via
+   * `BindConfigProvider.claimResolved`.
    *
    * @param input - Raw JSON string.
    * @returns The rehydrated config.

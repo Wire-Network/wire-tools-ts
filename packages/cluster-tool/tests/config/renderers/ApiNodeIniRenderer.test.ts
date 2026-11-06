@@ -35,8 +35,10 @@ describe("ApiNodeIniRenderer", () => {
         "enable-account-queries = true",
         "http-max-in-flight-requests = 100",
         "http-threads = 4",
+        "vote-threads = 4",
         "agent-name = wire-api-node",
         `http-server-address = ${HttpServerAddress}`,
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`,
         "",
         "plugin = sysio::net_plugin",
         "plugin = sysio::chain_api_plugin",
@@ -83,6 +85,7 @@ describe("ApiNodeIniRenderer", () => {
         enableAccountQueries: false,
         httpMaxInFlightRequests: 500,
         httpThreads: 16,
+        voteThreads: 8,
         agentName: "custom-api"
       }
     })
@@ -92,6 +95,7 @@ describe("ApiNodeIniRenderer", () => {
     expect(ini).toContain("enable-account-queries = false")
     expect(ini).toContain("http-max-in-flight-requests = 500")
     expect(ini).toContain("http-threads = 16")
+    expect(ini).toContain("vote-threads = 8")
     expect(ini).toContain("agent-name = custom-api")
   })
 
@@ -139,13 +143,18 @@ describe("ApiNodeIniRenderer", () => {
         line.startsWith(ApiNodeIniRenderer.P2pPeerAddressOption)
       ),
       readModeIndex = lines.indexOf(readModeLine),
+      // The default query deadline renders too, in the plugin's option order.
+      timeoutIndex = lines.indexOf(
+        `query-timeout-ms = ${QueryEngineConfigProvider.DefaultTimeoutMs}`
+      ),
       maxGroupsIndex = lines.indexOf("query-max-groups = 50"),
       firstPluginIndex = lines.findIndex(line =>
         line.startsWith(`${ApiNodeIniRenderer.PluginOption} = `)
       )
     expect(lastPeerIndex).toBeGreaterThanOrEqual(0)
     expect(readModeIndex).toBe(lastPeerIndex + 1)
-    expect(maxGroupsIndex).toBe(readModeIndex + 1)
+    expect(timeoutIndex).toBe(readModeIndex + 1)
+    expect(maxGroupsIndex).toBe(timeoutIndex + 1)
     expect(maxGroupsIndex).toBeLessThan(firstPluginIndex)
     expect(
       lines.filter(line => line.startsWith(`${Constants.READ_MODE_OPTION} =`))
@@ -165,6 +174,9 @@ describe("ApiNodeIniRenderer", () => {
     const ini = render()
     expect(ini).toContain(
       `${ApiNodeIniRenderer.HttpThreadsOption} = ${ApiNodeConfig.DefaultHttpThreads}`
+    )
+    expect(ini).toContain(
+      `${ApiNodeIniRenderer.VoteThreadsOption} = ${ApiNodeConfig.DefaultVoteThreads}`
     )
     expect(ini).toContain(
       `${ApiNodeIniRenderer.AgentNameOption} = ${ApiNodeConfig.DefaultAgentName}`

@@ -18,6 +18,8 @@ import {
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
+import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
+import { formatWireAsset } from "../tools/wire/WireUserTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
@@ -27,6 +29,7 @@ import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisio
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
 import { Steps, SyndicationUserSteps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
@@ -48,8 +51,8 @@ const EpochAdvanceTargetIndex = 2
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
 const ProducerSysGrant = "1000000.0000 SYS"
-/** The WIRE emissions token supply (9-decimal). */
-const WireSupply = "1000000000.000000000 WIRE"
+/** The WIRE emissions token supply, as an asset. */
+const WireSupply = formatWireAsset(Constants.WIRE_SUPPLY)
 /** WIRE's ABI symbol — the system token every swap pair quotes its second leg in. */
 const WireSymbol = "9,WIRE"
 /**
@@ -59,8 +62,6 @@ const WireSymbol = "9,WIRE"
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
 const AndonPermissionRamWeight = "0.0100 SYS"
-/** This policy adds permission RAM only; it allocates no CPU or network weight. */
-const NoResourceWeight = "0.0000 SYS"
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -124,24 +125,113 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  * provisioned through the ONE
  * {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism
  * into per-account {@link OperatorAccount}s. Composed entirely from the
- * {@link Steps} palette. The CLI `create` command runs `create(options).build()`.
+ * {@link Steps} palette. The CLI `create` command and every flow compose it
+ * through {@link create}.
  */
 export namespace ClusterBuildDefaults {
-  /** Resolve config + context, compose the bootstrap phases, return the build. */
+  /**
+   * How a caller composes the bootstrap: the run's context, which create-only
+   * phases join it, and which create-only options are merged into the caller's
+   * before the config resolves.
+   *
+   * @typeParam C - The build's context type.
+   */
+  export interface CreateOptions<
+    C extends ClusterBuildContext = ClusterBuildContext
+  > {
+    /** Build the run's context from the resolved config (a flow's own context). */
+    createContext?: (config: ClusterConfig, log: Logger) => C
+    /**
+     * Take a LOCAL Solana outpost out of pre-launch (Launching, then
+     * PostLaunch) right after its deploy, before any operator daemon starts the
+     * OPP exchange. Set by the `wire-cluster-tool create` command only: flows
+     * start from a PreLaunch outpost and drive that transition in their own
+     * phases. External outposts are never flipped.
+     */
+    launchSolanaOutpost?: boolean
+    /**
+     * Bootstrap backed automatic underwriting against LOCAL outposts: merge
+     * {@link AutomaticUnderwritingOverrides} over the caller's options before the
+     * config resolves. Every batch operator then runs the underwriter role, the
+     * funded operators get their epoch-zero LIQ credit, the mock LIQ yield pools
+     * are seeded, and the bootstrap backs all of that shadow with verified
+     * custody on the outposts it just deployed. Set by the `wire-cluster-tool
+     * create` command only, with no opt-out. An `externalOutpostConfig` build
+     * keeps the caller's options. Flows declare these options in their
+     * scenario defaults.
+     */
+    enableAutomaticUnderwriting?: boolean
+  }
+
+  /**
+   * The {@link ClusterBuildOptions} members
+   * {@link CreateOptions.enableAutomaticUnderwriting} forces on. Changing this set
+   * changes what every local `wire-cluster-tool create` bootstraps.
+   */
+  export const AutomaticUnderwritingOverrides = {
+    enableBatchOperatorUnderwriting: true,
+    enableMockSyndicationImport: true,
+    enableMockLiqPools: true
+  } as const satisfies ClusterBuildOptions
+
+  /**
+   * Resolve config + context, compose the bootstrap phases, return the build.
+   *
+   * @param options - The cluster build options.
+   * @param createOptions - How the caller composes the bootstrap.
+   * @returns The composed build, not yet run.
+   */
   export async function create<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     options: ClusterBuildOptions = {},
-    createContext?: (config: ClusterConfig, log: Logger) => C
+    createOptions: CreateOptions<C> = {}
   ): Promise<ClusterBuild<C>> {
-    const cluster = await ClusterBuild.create<C>(options, [], createContext)
-    compose(cluster)
+    const {
+        createContext,
+        launchSolanaOutpost = false,
+        enableAutomaticUnderwriting = false
+      } = createOptions,
+      cluster = await ClusterBuild.create<C>(
+        mergeAutomaticUnderwriting(options, enableAutomaticUnderwriting),
+        [],
+        createContext
+      )
+    compose(cluster, launchSolanaOutpost)
     return cluster
   }
 
-  /** Compose every bootstrap phase onto `cluster` (order = the top-level sequence). */
+  /**
+   * Merge {@link AutomaticUnderwritingOverrides} over `options` when automatic
+   * underwriting is requested and the outposts are local (no
+   * `externalOutpostConfig`, whether passed as a flag or in an options file).
+   *
+   * @param options - The caller's cluster build options.
+   * @param enableAutomaticUnderwriting - {@link CreateOptions.enableAutomaticUnderwriting}.
+   * @return The merged options, or `options` itself when nothing applies.
+   */
+  export function mergeAutomaticUnderwriting(
+    options: ClusterBuildOptions,
+    enableAutomaticUnderwriting: CreateOptions["enableAutomaticUnderwriting"]
+  ): ClusterBuildOptions {
+    if (!enableAutomaticUnderwriting || options.externalOutpostConfig != null)
+      return options
+    log.info(
+      `local outposts: automatic underwriting on (${Object.keys(AutomaticUnderwritingOverrides).join(", ")})`
+    )
+    return { ...options, ...AutomaticUnderwritingOverrides }
+  }
+
+  /**
+   * Compose every bootstrap phase onto `cluster` (order = the top-level sequence).
+   *
+   * @param cluster - The build to compose onto.
+   * @param launchSolanaOutpost - Whether a local Solana outpost leaves pre-launch
+   *   at bootstrap ({@link CreateOptions.launchSolanaOutpost}).
+   */
   function compose<C extends ClusterBuildContext>(
-    cluster: ClusterBuild<C>
+    cluster: ClusterBuild<C>,
+    launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
       // Seeded by `ClusterBuild.create` from
@@ -152,19 +242,63 @@ export namespace ClusterBuildDefaults {
       ),
       bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
-      batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
+      batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
       producerNodes = plannedNodes.filter(
         node => node.role === NodeRole.producer
       ),
       apiNodes = plannedNodes.filter(node => node.role === NodeRole.api),
+      operatorNodes = plannedNodes.filter(node =>
+        NodeConfig.isOperatorRole(node.role)
+      ),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
-      // (`config.externalOutposts`), so skip the local anvil/validator starts +
-      // outpost deploys and publish the operator-daemon artifacts from the
-      // external config instead (verifying the endpoints are reachable).
-      isExternalOutpost = config.externalOutposts != null
+      // (`config.externalOutposts`, trusted), so skip the local anvil/validator
+      // starts + outpost deploys, record the config's deployed values instead,
+      // and never contact either outpost.
+      isExternalOutpost = config.externalOutposts != null,
+      // The launch-data import's plan, read from each outpost's export now so a bad export or
+      // (against external outposts) a placeholder or another outpost's export fails the
+      // build before anything runs.
+      lcoImportPlan = WireLcoImportTool.createPlan(config.lcoImport),
+      lcoPoolTokenCodes =
+        lcoImportPlan == null
+          ? []
+          : WireLcoImportTool.chainPlans(lcoImportPlan).map(
+              chainPlan => chainPlan.pool.tokenCode
+            ),
+      // A shadow has one pool: the launch-data import's replaces its mock one.
+      mockLiqPools = Steps.registry.MockLiqPoolRegistrations.filter(
+        registration => !lcoPoolTokenCodes.includes(registration.token_code)
+      ),
+      // The T5 DEX earmark: the WIRE side of every pool this bootstrap seeds.
+      dexEarmark =
+        (lcoImportPlan == null
+          ? 0n
+          : WireLcoImportTool.dexEarmark(lcoImportPlan)) +
+        (config.enableMockLiqPools
+          ? mockLiqPools.reduce(
+              (sum, registration) =>
+                sum + BigInt(registration.initial_wire_amount),
+              0n
+            )
+          : 0n),
+      // Local outposts were deployed empty, so the imported shadow is backed like mock shadow.
+      backLcoImport = lcoImportPlan != null && !isExternalOutpost
+    // Before anything runs: `verify-lco-funding` later checks what the treasury holds, but
+    // only after the bootstrap has already issued WIRE and deployed the contracts.
+    assertWireBudget(
+      lcoImportPlan == null
+        ? 0n
+        : WireLcoImportTool.planClaimTotal(lcoImportPlan),
+      dexEarmark
+    )
+    if (lcoImportPlan != null && isExternalOutpost) {
+      WireLcoImportTool.assertRealData(lcoImportPlan)
+      WireLcoImportTool.assertExportOutposts(
+        lcoImportPlan,
+        config.externalOutposts
+      )
+    }
     const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
       {
         owner: Constants.BOOTSTRAP_NODE_OWNER,
@@ -532,7 +666,8 @@ export namespace ClusterBuildDefaults {
       SysioContractName.swap,
       SysioContractName.liq,
       SysioContractName.bond,
-      SysioContractName.synd
+      SysioContractName.synd,
+      SysioContractName.councl
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -566,7 +701,7 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── OPP config + emissions + dclaim ──
+    // ── OPP config + emissions + snapshot attestation + dclaim ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "OPPConfig",
@@ -665,9 +800,9 @@ export namespace ClusterBuildDefaults {
       Steps.contracts.sysio.system.planSetemitcfg<C>(
         Actor.Sysio,
         "set-emit-config",
-        "set the emission config",
+        "set the emission config, the pools' WIRE outside the T5 distributable",
         {},
-        Constants.EMISSION_CONFIG_DEFAULTS
+        emissionConfig(dexEarmark)
       ),
       // Anchors node-owner vesting. Without it every `claimnodedis` aborts with
       // "emission state not initialized", so node owners register successfully but can
@@ -683,6 +818,23 @@ export namespace ClusterBuildDefaults {
         "init-t5",
         "seed t5_state at chain head time",
         {}
+      )
+    )
+    // `votesnaphash` refuses every vote until a quorum is set; harmless with no provider nodes.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "SnapshotAttestation",
+      "Configure sysio.system snapshot attestation"
+    ).push(
+      Steps.contracts.sysio.system.planSetsnpcfg<C>(
+        Actor.Sysio,
+        "configure-snapshot-attestation",
+        `attest a snapshot on ${Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS} matching provider votes every ${Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING} blocks`,
+        {},
+        {
+          min_providers: Constants.SNAPSHOT_ATTESTATION_MIN_PROVIDERS,
+          block_spacing: Constants.SNAPSHOT_ATTESTATION_BLOCK_SPACING
+        }
       )
     )
     ClusterBuildPhase.create<C>(
@@ -787,15 +939,15 @@ export namespace ClusterBuildDefaults {
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        {
-          owner: SysioContractAccount[SysioContractName.andon],
-          issuer: Constants.BOOTSTRAP_NODE_OWNER,
-          net_weight: NoResourceWeight,
-          cpu_weight: NoResourceWeight,
-          ram_weight: AndonPermissionRamWeight,
-          time_block: 0,
-          network_gen: 0
-        }
+        // This policy adds permission RAM only; it allocates no CPU or network weight.
+        SyndicationUserSteps.nodeOwnerPolicy(
+          SysioContractAccount[SysioContractName.andon],
+          {
+            net: Constants.NO_RESOURCE_WEIGHT,
+            cpu: Constants.NO_RESOURCE_WEIGHT,
+            ram: AndonPermissionRamWeight
+          }
+        )
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
@@ -852,31 +1004,19 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
-    //    verify the already-running remote outpost endpoints instead ──
+    //    record the trusted deployed values; the outposts are never contacted ──
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         prerequisites,
         "MaterializeExternalOutposts",
-        "Materialize the external outpost artifacts + verify the endpoints"
+        "Record the external outposts' deployed addresses (trusted, never contacted)"
       ).push(
-        // REPLACES the omitted ETH/SOL deploy phases: copy the config-referenced
-        // files into the canonical data dir so every downstream reader is unchanged.
+        // REPLACES the omitted ETH/SOL deploy phases: write the config's deployed
+        // values into the canonical deploy records so every downstream reader is unchanged.
         Steps.externalOutpost.planMaterialize<C>(
           Actor.Sysio,
-          "materialize-external-artifacts",
-          "copy the external-outpost config files into the canonical data dir",
-          {}
-        ),
-        Steps.externalOutpost.planVerifyEthereumEndpoint<C>(
-          Actor.EthereumOutpost,
-          "verify-ethereum-endpoint",
-          "the external Ethereum RPC reports the configured chain id",
-          {}
-        ),
-        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
-          Actor.SolanaOutpost,
-          "verify-solana-endpoint",
-          "the external Solana RPC responds to getVersion",
+          "materialize-external-outposts",
+          "write the external-outpost config's deployed addresses into the canonical deploy records",
           {}
         )
       )
@@ -947,6 +1087,15 @@ export namespace ClusterBuildDefaults {
           { timeoutMs: 900_000 }
         )
       )
+      // `create` only: the fresh outpost holds no pre-launch positions, so it
+      // goes PostLaunch here, before the operator daemons start OPP.
+      if (launchSolanaOutpost)
+        Steps.solanaOutpost.planLaunch<C>(
+          prerequisites,
+          "SolanaOutpostLaunch",
+          "Take the Solana outpost out of pre-launch (Launching, then PostLaunch)",
+          { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs }
+        )
     }
 
     // ── registry + syndication configuration ──
@@ -960,6 +1109,21 @@ export namespace ClusterBuildDefaults {
         "seed-registry",
         "register chains, tokens, chain-tokens",
         {}
+      ),
+      // Each depot shadow binding is a reported write, separate from its outpost origin.
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) =>
+        Steps.contracts.sysio.tokens.planRegctok<C>(
+          Actor.Sysio,
+          `regctok-WIRE-${tokenCodename}`,
+          `register depot collateral binding for ${tokenCodename}`,
+          {},
+          {
+            chain_code: SlugName.toString(Constants.WireChainCode),
+            token_code: tokenCodename,
+            contract_addr: "",
+            is_native: false
+          }
+        )
       )
     )
     // Collateral requirements reference registry rows and bindings, so configure them only
@@ -1015,30 +1179,64 @@ export namespace ClusterBuildDefaults {
       "Configure sysio.bond + each shadow pair on sysio.synd",
       {}
     )
-    // Mock shadow-liq yield pools — opt-in via `--enable-mock-liq-pools` (default
-    // off, so a real / external depot never mints unbacked shadow). Seeded HERE,
-    // pre-EpochBootstrap, because the contract gates `regliqpool` to the epoch-0
-    // bootstrap window, exactly like `regreserve`.
-    if (config.enableMockLiqPools) {
+    // The launch-data import of each outpost's frozen export: positions, WIRE claims and the
+    // LCO pool. Epoch-zero only (importsynd, regliqpool) and the first mint of each imported
+    // shadow; it seals sysio.synd's import unless the mock import follows and seals it.
+    if (lcoImportPlan != null) {
+      Steps.lcoImport.planImport<C>(
+        prerequisites,
+        "LcoImport",
+        "Import each outpost's frozen launch data during epoch zero",
+        {},
+        lcoImportPlan,
+        !config.enableMockSyndicationImport
+      )
+    }
+    // Mock shadow-liq yield pools — on for a local `create` (automatic underwriting)
+    // or a flow that opts in; refused for external outposts, so a real depot never
+    // mints unbacked shadow. Seeded HERE, pre-EpochBootstrap, because the contract
+    // gates `regliqpool` to the epoch-0 bootstrap window, exactly like `regreserve`.
+    if (config.enableMockLiqPools && mockLiqPools.length > 0) {
       Steps.registry.planMockLiqPools<C>(
         prerequisites,
         "MockLiqPools",
-        "Seed the 2 mock shadow-liq yield pools on sysio.swap",
-        {}
+        `Seed the ${mockLiqPools.length} mock shadow-liq yield pools on sysio.swap`,
+        {},
+        mockLiqPools
       )
     }
-    if (config.enableMockSyndicationImport) {
-      Steps.registry.planMockSyndicationImport<C>(
+    // The LIQ kicker, in the order `docs/platform-bootstrap-config.md` gives a
+    // deployment: deployed privileged and configured after the emission config
+    // (`Emissions`) and every `regliqpool`, then one `addpool` per LIQ token.
+    // Deploy + budget are registry setup a real depot performs too —
+    // unconditional; `addpool` needs the token's yield pool, so it rides
+    // exactly the bootstraps that seed the pools.
+    Steps.registry.planKicker<C>(
+      prerequisites,
+      "Kicker",
+      "Deploy sysio.kicker privileged and set its budget",
+      {}
+    )
+    if (config.enableMockLiqPools) {
+      Steps.registry.planKickerPools<C>(
         prerequisites,
-        "MockSyndicationImport",
-        "Import the mock bonder positions during epoch zero",
+        "KickerPools",
+        "Start each LIQ token's kicker accrual",
         {}
       )
     }
-    if (config.enableMockSyndicationImport || config.enableMockLiqPools) {
-      Steps.mockShadowBacking.planSolana<C>(prerequisites)
-      Steps.mockShadowBacking.planEthereum<C>(prerequisites)
-    }
+    // Underwriting batch operators are funded by the same epoch-zero import, to their own
+    // ED keys — which exist only once the operators are provisioned. The import (and the
+    // backing that must follow ALL mock shadow) then moves after that provisioning, still
+    // before `EpochBootstrap` closes the bootstrap window; every other cluster keeps it here.
+    const underwritingImport = isUnderwritingImport(config)
+    if (!underwritingImport)
+      planMockImportAndBacking<C>(
+        prerequisites,
+        config,
+        batchOperators,
+        backLcoImport
+      )
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -1049,7 +1247,8 @@ export namespace ClusterBuildDefaults {
 
     // The operator daemons' shared prerequisites: the in-process OPP debugging
     // sink (external_debugging_plugin posts every envelope there) + the deploy
-    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args reference.
+    // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args
+    // reference — built from source in both modes, over the deployed values.
     ClusterBuildPhase.create<C>(
       postContractDeployment,
       "OperatorDaemonPrerequisites",
@@ -1061,19 +1260,12 @@ export namespace ClusterBuildDefaults {
         "start the in-process OPP debugging server",
         {}
       ),
-      isExternalOutpost
-        ? Steps.externalOutpost.planPublishArtifacts<C>(
-            Actor.Sysio,
-            "publish-external-artifacts",
-            "publish ETH ABI + SOL IDL daemon artifacts from the external-outpost config",
-            {}
-          )
-        : OperatorDaemonTool.planArtifactPreparation<C>(
-            Actor.Sysio,
-            "prepare-daemon-artifacts",
-            "write ETH ABI + SOL IDL artifacts for operator daemons",
-            {}
-          ),
+      OperatorDaemonTool.planArtifactPreparation<C>(
+        Actor.Sysio,
+        "prepare-daemon-artifacts",
+        "write ETH ABI + SOL IDL artifacts for operator daemons",
+        {}
+      ),
       // Must follow the artifact step (it reads the published SOL program id)
       // and precede any daemon start: an operator skips a chain whose remote
       // addresses are still unset.
@@ -1124,6 +1316,22 @@ export namespace ClusterBuildDefaults {
       )
     }
 
+    if (config.batchOperatorUnderwriting != null)
+      Steps.registry.planBatchOperatorUnderwritingResources<C>(
+        postContractDeployment,
+        "BatchOperatorUnderwritingResources",
+        "Grant each underwriting batch operator RAM for its sysio.bond rows",
+        {},
+        batchOperators
+      )
+    if (underwritingImport)
+      planMockImportAndBacking<C>(
+        postContractDeployment,
+        config,
+        batchOperators,
+        backLcoImport
+      )
+
     // API nodes are mesh members that no bootstrap step reads, so they start
     // outside the bootstrap's finality-sensitive window, right before the
     // operators. Composed ONLY when planned, so a cluster without API nodes
@@ -1138,11 +1346,13 @@ export namespace ClusterBuildDefaults {
         () => Actor.Sysio
       )
     }
+    // Under an external-outpost config these start SYNC-ONLY — no
+    // batch_operator_plugin, no outpost client (NodeopProcessSteps.resolveStartArgs).
     planNodeStartGroup<C>(
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      plannedNodes.filter(node => NodeConfig.isOperatorRole(node.role)),
+      operatorNodes,
       () => Actor.BatchOperator
     )
 
@@ -1153,12 +1363,27 @@ export namespace ClusterBuildDefaults {
     const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
-      "Schedule groups + bootstrap epoch 0 → 1"
+      "Schedule groups, emit the opreg bootstrap roster, bootstrap epoch 0 → 1"
     ).push(
       Steps.contracts.sysio.epoch.planSchbatchgps<C>(
         Actor.Sysio,
         "schedule-batch-groups",
         "build the initial batch-operator schedule",
+        {}
+      ),
+      // Every mode: wire-opreg-bootstrap.json — the bootstrapped roster + the
+      // window schbatchgps just built (groups[k] serves epoch k + 1), emitted
+      // at the earliest point the schedule exists.
+      Steps.wireOpregBootstrap.planEmit<C>(
+        Actor.Sysio,
+        "emit-wire-opreg-bootstrap",
+        "write wire-opreg-bootstrap.json (bootstrapped operator roster + initial batch-operator schedule)",
+        {}
+      ),
+      Steps.wireOpregBootstrap.planVerify<C>(
+        Actor.Sysio,
+        "verify-wire-opreg-bootstrap",
+        "wire-opreg-bootstrap.json names exactly the depot's bootstrapped operators",
         {}
       )
     )
@@ -1231,6 +1456,24 @@ export namespace ClusterBuildDefaults {
           { timeoutMs: Steps.externalOutpost.OutboundEnvelopesTimeoutMs }
         )
       )
+      // The batch-operator nodes ran sync-only. Each must hold the whole
+      // bootstrap chain before create stops it: its start.sh is the relaunch
+      // form, which adds the OPP daemon to the chain synced here.
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "OperatorNodesSynced",
+        "Verify every batch-operator node synced the depot chain (started without its OPP daemon)"
+      ).push(
+        ...operatorNodes.map(node =>
+          Steps.processes.nodeop.planVerifySynced<C>(
+            Actor.BatchOperator,
+            `verify-${node.name}-synced`,
+            `${node.name} synced to the depot head`,
+            {},
+            node.name
+          )
+        )
+      )
     } else {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
@@ -1247,6 +1490,65 @@ export namespace ClusterBuildDefaults {
     }
 
     planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Whether the epoch-zero mock import also funds the batch operators, which moves it after
+   * their provisioning: both the import and batch-operator underwriting are on.
+   *
+   * @param config - The resolved cluster config.
+   * @return Whether the import funds the operators.
+   */
+  function isUnderwritingImport(config: ClusterConfig): boolean {
+    return (
+      config.enableMockSyndicationImport &&
+      config.batchOperatorUnderwriting != null
+    )
+  }
+
+  /**
+   * Plan the epoch-zero mock syndication import (with each FUNDED underwriting operator's
+   * credit — the first `batchOperatorUnderwriting.fundedOperatorCount` — when
+   * {@link isUnderwritingImport}) and the custody backing that must follow every shadow
+   * mint: mock shadow, and the launch-data import's when local outposts hold its custody.
+   * Each only when its option is on.
+   *
+   * @param parent - The PhaseGroup the phases join.
+   * @param config - The resolved cluster config.
+   * @param batchOperators - The bootstrap batch-operator labels.
+   * @param backLcoImport - Whether the launch-data import's shadow needs local custody too.
+   */
+  function planMockImportAndBacking<C extends ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    config: ClusterConfig,
+    batchOperators: readonly string[],
+    backLcoImport: boolean
+  ): void {
+    const underwritingImport = isUnderwritingImport(config)
+    if (config.enableMockSyndicationImport) {
+      Steps.registry.planMockSyndicationImport<C>(
+        parent,
+        "MockSyndicationImport",
+        underwritingImport
+          ? "Import the mock bonder and batch-operator underwriting positions during epoch zero"
+          : "Import the mock bonder positions during epoch zero",
+        {},
+        underwritingImport
+          ? batchOperators.slice(
+              0,
+              config.batchOperatorUnderwriting.fundedOperatorCount
+            )
+          : []
+      )
+    }
+    if (
+      config.enableMockSyndicationImport ||
+      config.enableMockLiqPools ||
+      backLcoImport
+    ) {
+      Steps.mockShadowBacking.planSolana<C>(parent)
+      Steps.mockShadowBacking.planEthereum<C>(parent)
+    }
   }
 
   /**
@@ -1379,6 +1681,55 @@ export namespace ClusterBuildDefaults {
       },
       epochAdvanceBudgetMs(ctx.config),
       ProtocolTiming.EpochVerifyPollIntervalMs
+    )
+  }
+
+  /**
+   * The bootstrap's emission config with the T5 DEX earmark carved out of `t5_distributable`
+   * (`t5_floor` unchanged). Every launch pool's WIRE side leaves the `sysio` treasury, so it
+   * must sit outside the distributable pool, or the epoch readiness gate later finds the
+   * treasury short by it (wire-sysio `docs/platform-bootstrap-config.md`, "T5 DEX earmark").
+   *
+   * @param dexEarmark - The WIRE subunits every seeded pool drains: the import's and the
+   *   mock ones that survive it.
+   * @returns The `system::setemitcfg` config.
+   * @throws If the earmark exceeds the T5 allotment.
+   */
+  export function emissionConfig(
+    dexEarmark: bigint
+  ): SysioContracts.SysioSystemEmissionConfigType {
+    const allotment = BigInt(
+      Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable
+    )
+    Assert.ok(
+      dexEarmark <= allotment,
+      `ClusterBuildDefaults: the pools' ${dexEarmark} WIRE subunits exceed the T5 allotment ${allotment}`
+    )
+    return {
+      ...Constants.EMISSION_CONFIG_DEFAULTS,
+      // A string: the difference need not fit a double exactly.
+      t5_distributable: (allotment - dexEarmark).toString()
+    }
+  }
+
+  /**
+   * Refuse a bootstrap whose WIRE commitments exceed the supply: the launch import's claims,
+   * the T5 distributable left after the earmark, every seeded pool's WIRE side and the most
+   * the node-owner tiers can vest.
+   *
+   * @param claims - The launch import's WIRE claims, in subunits.
+   * @param dexEarmark - The WIRE subunits every seeded pool drains.
+   * @throws If the commitments exceed {@link Constants.WIRE_SUPPLY}.
+   */
+  export function assertWireBudget(claims: bigint, dexEarmark: bigint): void {
+    const distributable = BigInt(emissionConfig(dexEarmark).t5_distributable),
+      nodeOwners = Constants.nodeOwnerCommitment(
+        Constants.EMISSION_CONFIG_DEFAULTS
+      ),
+      committed = claims + distributable + dexEarmark + nodeOwners
+    Assert.ok(
+      committed <= Constants.WIRE_SUPPLY,
+      `ClusterBuildDefaults: the bootstrap commits ${committed} WIRE subunits (claims ${claims}, T5 distributable ${distributable}, pools ${dexEarmark}, node owners ${nodeOwners}), beyond the ${Constants.WIRE_SUPPLY} supply`
     )
   }
 

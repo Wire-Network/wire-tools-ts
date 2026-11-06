@@ -1,6 +1,6 @@
 {
   "name": "@wireio/cluster-tool-shared",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "Shared zod schema-first shapes (persisted configs and wire envelopes) behind SchemaCodec",
   "private": false,
   "publishConfig": {
@@ -34,13 +34,14 @@
   },
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.42",
-    "@wireio/opp-typescript-models": "^1.0.51",
-    "@wireio/sdk-core": "^1.0.97",
-    "@wireio/shared": "^1.0.96",
+    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/sdk-core": "^1.0.105",
+    "@wireio/shared": "^1.0.105",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
+    "ajv": "^8.20.0",
     "ts-jest": "^29.4.6",
     "typescript": "^6.0.2"
   }

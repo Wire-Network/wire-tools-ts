@@ -5,10 +5,14 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  EthereumReadBlockTag,
+  ExternalOutpostConfigSchemaCodec,
   NodeopReadMode,
+  createUnsetEthereumReadConfirmationConfig,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { KeyType } from "@wireio/sdk-core"
+import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import {
@@ -16,10 +20,14 @@ import {
   ClusterConfigProvider,
   NodeConfig,
   NodeRole,
-  QueryEngineConfigProvider
+  QueryEngineConfigProvider,
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
+  ExternalOutpostChainId,
+  fixtureExternalOutpostConfig,
+  fixtureExternalOutposts,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
@@ -58,6 +66,166 @@ describe("ClusterConfigProvider", () => {
           solanaPath: "/s"
         })
       ).rejects.toThrow(/clusterPath is required/)
+    })
+  })
+
+  describe("resolveBatchOperatorUnderwriting", () => {
+    const cap = TokenAmount.create({
+      tokenCode: BigInt(SlugName.from("LIQSOL")),
+      amount: 2_010_000_000n
+    })
+
+    it("is null when the role is off", () => {
+      expect(
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting({}, 3)
+      ).toBeNull()
+    })
+
+    it("defaults to every operator funded with 10-token caps for both shadows", () => {
+      const resolved = ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+        { enableBatchOperatorUnderwriting: true },
+        3
+      )
+      expect(resolved).toEqual({
+        fundedOperatorCount: 3,
+        maxExposure: ClusterConfigProvider.DefaultBatchUnderwriterMaxExposures
+      })
+      expect(
+        ClusterConfigProvider.DefaultBatchUnderwriterMaxExposure.amount
+      ).toBe(10_000_000_000n)
+      expect(
+        resolved.maxExposure.map(cap => [
+          SlugName.toString(Number(cap.tokenCode)),
+          cap.amount
+        ])
+      ).toEqual([
+        ["LIQSOL", 10_000_000_000n],
+        ["LIQETH", 10_000_000_000n]
+      ])
+    })
+
+    it("carries a funded-operator count and caps", () => {
+      expect(
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: {
+              fundedOperatorCount: 1,
+              maxExposure: [cap]
+            }
+          },
+          3
+        )
+      ).toEqual({ fundedOperatorCount: 1, maxExposure: [cap] })
+    })
+
+    it("refuses tuning with the role off and more funded operators than exist", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          { batchOperatorUnderwriting: { fundedOperatorCount: 1 } },
+          3
+        )
+      ).toThrow(/enableBatchOperatorUnderwriting is off/)
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: { fundedOperatorCount: 4 }
+          },
+          3
+        )
+      ).toThrow(/must be 0\.\.3/)
+    })
+
+    it("refuses an empty exposure-cap list with the role on", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+          {
+            enableBatchOperatorUnderwriting: true,
+            batchOperatorUnderwriting: { maxExposure: [] }
+          },
+          3
+        )
+      ).toThrow(/maxExposure must name at least one cap/)
+    })
+
+    it("persists the typed config through cluster-config.json, bigints intact", () => {
+      const config = {
+          ...fixtureConfig(),
+          batchOperatorUnderwriting: {
+            fundedOperatorCount: 1,
+            maxExposure: [cap]
+          }
+        },
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize(config)
+        )
+      expect(reloaded.batchOperatorUnderwriting.fundedOperatorCount).toBe(1)
+      expect(reloaded.batchOperatorUnderwriting.maxExposure[0].amount).toBe(
+        2_010_000_000n
+      )
+    })
+  })
+
+  describe("resolveLcoImport", () => {
+    /** Pool tuning a caller sets. */
+    const pool = LiqPoolSpec.create({
+      fee: 25,
+      conversionHorizonSec: 3_600,
+      depthCapBps: 20,
+      clipFloor: 10n
+    })
+
+    it("is null without an export", () => {
+      expect(ClusterConfigProvider.resolveLcoImport({})).toBeNull()
+      expect(ClusterConfigProvider.resolveLcoImport({ lcoImport: {} })).toBeNull()
+    })
+
+    it("resolves each export absolute and leaves every unset value null", () => {
+      expect(
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "exports/solana.json",
+          lcoImport: {
+            solana: { nativePriceUsd: "15000000000", pool },
+            dclaimFundingAccount: "lco.treasury"
+          }
+        })
+      ).toEqual({
+        ethereum: null,
+        solana: {
+          bootstrapJsonFile: Path.resolve("exports/solana.json"),
+          nativePriceUsd: "15000000000",
+          highestTranchePriceUsd: null,
+          pool
+        },
+        dclaimFundingAccount: "lco.treasury"
+      })
+    })
+
+    it("refuses a chain's options without its export, and options with no export at all", () => {
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          solanaBootstrapJsonFile: "/exports/solana.json",
+          lcoImport: { ethereum: { nativePriceUsd: "1" } }
+        })
+      ).toThrow(/lcoImport\.ethereum is set but ethereumBootstrapJsonFile is not/)
+      expect(() =>
+        ClusterConfigProvider.resolveLcoImport({
+          lcoImport: { dclaimFundingAccount: "sysio" }
+        })
+      ).toThrow(/lcoImport is set but no bootstrap JSON file is/)
+    })
+
+    it("persists the import through cluster-config.json, its pool tuning intact", () => {
+      const lcoImport = ClusterConfigProvider.resolveLcoImport({
+          ethereumBootstrapJsonFile: "/exports/ethereum.json",
+          lcoImport: { ethereum: { pool } }
+        }),
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize({ ...fixtureConfig(), lcoImport })
+        )
+      expect(reloaded.lcoImport).toEqual(lcoImport)
+      expect(reloaded.lcoImport.ethereum.pool.clipFloor).toBe(10n)
     })
   })
 
@@ -122,6 +290,28 @@ describe("ClusterConfigProvider", () => {
       const reloaded = ClusterConfigProvider.loadSync(file)
       expect(reloaded.clusterPath).toBe(dir)
       expect(reloaded.bind.nodeop.ports.batch).toHaveLength(3)
+    })
+
+    it("refuses to load a read confirmation nodeop would refuse, a depth beside a non-latest tag", async () => {
+      const file = Path.join(dir, ClusterConfigProvider.ConfigFilename)
+      Fs.writeFileSync(
+        file,
+        JSON.stringify({
+          ...PersistedFixture,
+          clusterPath: dir,
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.safe,
+            confirmations: 12,
+            maxFinalityLagSec: null
+          }
+        })
+      )
+      expect(() => ClusterConfigProvider.loadSync(file)).toThrow(
+        /applies only to the latest block tag/
+      )
+      await expect(ClusterConfigProvider.load(file)).rejects.toThrow(
+        /applies only to the latest block tag/
+      )
     })
   })
 
@@ -205,14 +395,7 @@ describe("ClusterConfigProvider", () => {
           regions: ["us-east-1", "eu-west-1"],
           ssm: null
         },
-        externalOutposts: {
-          ethereum: {
-            addressFile: "/x/outpost-addrs.json",
-            abiFiles: ["/x/eth-abis/OPP.json"],
-            chainId: 1
-          },
-          solana: { idlFile: "/x/idl.json" }
-        }
+        externalOutposts: fixtureExternalOutposts()
       })
       const round = ClusterConfigProvider.deserialize(
         ClusterConfigProvider.serialize(cfg)
@@ -227,7 +410,10 @@ describe("ClusterConfigProvider", () => {
         "us-east-1",
         "eu-west-1"
       ])
-      expect(round.externalOutposts?.ethereum.chainId).toBe(1)
+      expect(round.externalOutposts).toEqual(fixtureExternalOutposts())
+      expect(round.externalOutposts?.ethereum.chainId).toBe(
+        ExternalOutpostChainId
+      )
     })
   })
 
@@ -560,8 +746,13 @@ describe("ClusterConfigProvider", () => {
       expect(config.apiCount).toBe(ClusterConfigProvider.DefaultApiCount)
       expect(ClusterConfigProvider.DefaultApiCount).toBe(0)
       expect(config.bind.nodeop.ports.api).toEqual([])
+      // The harness default deadline is not a caller setting, so it does not
+      // demand an API node.
       expect(config.queryEngine).toEqual(
         QueryEngineConfigProvider.createDefaultOptions()
+      )
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
       )
     })
 
@@ -586,7 +777,7 @@ describe("ClusterConfigProvider", () => {
       }
     )
 
-    it("persists the query-engine config — unset by default, caller values when set", async () => {
+    it("persists the query-engine config — the defaults, caller values when set", async () => {
       const config = await ClusterConfigProvider.resolve({
         ...baseOptions(),
         apiCount: 1,
@@ -598,6 +789,53 @@ describe("ClusterConfigProvider", () => {
       expect(config.queryEngine.readMode).toBe(NodeopReadMode.irreversible)
       expect(config.queryEngine.maxResultRows).toBe(500)
       expect(config.queryEngine.workerThreads).toBeNull()
+      expect(config.queryEngine.timeoutMs).toBe(
+        QueryEngineConfigProvider.DefaultTimeoutMs
+      )
+    })
+
+    it("leaves the Ethereum read confirmation unset by default, so nodeop's defaults govern", async () => {
+      const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.ethereumRead).toEqual(
+        createUnsetEthereumReadConfirmationConfig()
+      )
+    })
+
+    it("persists a caller's Ethereum read confirmation", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        ethereumRead: { blockTag: EthereumReadBlockTag.safe }
+      })
+      expect(config.ethereumRead).toEqual({
+        blockTag: EthereumReadBlockTag.safe,
+        confirmations: null,
+        maxFinalityLagSec: null
+      })
+    })
+
+    it("rejects a confirmation depth beside a non-latest tag before any port is claimed", async () => {
+      const bindResolve = jest.spyOn(BindConfigProvider, "resolve")
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.finalized,
+            confirmations: 12
+          }
+        })
+      ).rejects.toThrow(/applies only to the latest block tag/)
+      expect(bindResolve).not.toHaveBeenCalled()
+    })
+
+    it("rejects a caller query deadline when no API node is planned", async () => {
+      await expect(
+        ClusterConfigProvider.resolve({
+          ...baseOptions(),
+          queryEngine: { timeoutMs: QueryEngineConfigProvider.DefaultTimeoutMs }
+        })
+      ).rejects.toThrow(
+        /query-engine settings \(timeoutMs\) require at least one API node/
+      )
     })
 
     it("rejects query-engine settings when no API node is planned", async () => {
@@ -738,18 +976,7 @@ describe("ClusterConfigProvider", () => {
 
     beforeEach(() => {
       environment = fixtureResolveEnvironment("external-underwriters-")
-      externalConfigFile = Path.join(environment.rootPath, "external.json")
-      Fs.writeFileSync(
-        externalConfigFile,
-        JSON.stringify({
-          ethereum: {
-            addressFile: "outpost-addrs.json",
-            abiFiles: ["eth-abis/OPP.json"],
-            chainId: 11_155_111
-          },
-          solana: { idlFile: "solana-idls/liqsol_core.json" }
-        })
-      )
+      externalConfigFile = fixtureExternalOutpostConfig(environment.rootPath)
     })
 
     afterEach(() => {
@@ -798,6 +1025,140 @@ describe("ClusterConfigProvider", () => {
       expect(config.underwriterCount).toBe(
         ClusterConfigProvider.DefaultUnderwriterCount
       )
+    })
+  })
+
+  describe("external-outpost config loading", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-outpost-load-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    it("carries the trusted config verbatim — every value, rpcUrl included", async () => {
+      const outposts = fixtureExternalOutposts()
+      outposts.ethereum.rpcUrl = "https://ethereum-rpc.external.example/"
+      outposts.solana.rpcUrl = "https://solana-rpc.external.example/"
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        ExternalOutpostConfigSchemaCodec.serialize(outposts)
+      )
+      const config = await ClusterConfigProvider.resolve({
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        externalOutpostConfig: configFile
+      })
+      expect(config.externalOutposts).toEqual(outposts)
+    })
+
+    it("refuses a config that fails the schema", async () => {
+      const configFile = Path.join(environment.rootPath, "outposts.json")
+      Fs.writeFileSync(
+        configFile,
+        JSON.stringify({ ethereum: { chainId: 1 }, solana: {} })
+      )
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          buildPath: environment.buildPath,
+          ethereumPath: "/fake/eth",
+          solanaPath: "/fake/sol",
+          externalOutpostConfig: configFile
+        })
+      ).rejects.toThrow()
+    })
+  })
+
+  describe("external outposts vs mock data", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("external-mock-data-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base options for a LOCAL-outpost resolve over the sandbox. */
+    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...extra
+      }
+    }
+
+    /** Base options for an EXTERNAL-outpost resolve. */
+    function externalOptions(
+      extra: ClusterBuildOptions = {}
+    ): ClusterBuildOptions {
+      return localOptions({
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        ...extra
+      })
+    }
+
+    it("refuses exactly the two mock-data options", () => {
+      expect(ClusterConfigProvider.MockDataOptionKeys).toEqual([
+        "enableMockLiqPools",
+        "enableMockSyndicationImport"
+      ])
+    })
+
+    it("refuses before resolving anything else, so no port is claimed", async () => {
+      // `buildPath` is asserted before `resolveBind`; omitting it fails there
+      // unless the mock-data refusal runs first.
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          externalOutpostConfig: fixtureExternalOutpostConfig(
+            environment.rootPath
+          ),
+          enableMockLiqPools: true
+        })
+      ).rejects.toThrow(/Mock data cannot be seeded against external outposts/)
+    })
+
+    it.each(ClusterConfigProvider.MockDataOptionKeys)(
+      "refuses %s, naming it",
+      async key => {
+        await expect(
+          ClusterConfigProvider.resolve(externalOptions({ [key]: true }))
+        ).rejects.toThrow(
+          new RegExp(
+            `Mock data cannot be seeded against external outposts \\(${key} `
+          )
+        )
+      }
+    )
+
+    it("keeps batch-operator underwriting the caller's choice", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        externalOptions({ enableBatchOperatorUnderwriting: true })
+      )
+      expect(config.batchOperatorUnderwriting).not.toBeNull()
+      expect(config.enableMockLiqPools).toBe(false)
+    })
+
+    it("allows both mock flags against LOCAL outposts", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({
+          enableMockLiqPools: true,
+          enableMockSyndicationImport: true
+        })
+      )
+      expect(config.enableMockLiqPools).toBe(true)
+      expect(config.enableMockSyndicationImport).toBe(true)
     })
   })
 

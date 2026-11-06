@@ -1,6 +1,8 @@
 import Assert from "node:assert"
-import { SysioContracts } from "@wireio/sdk-core"
+
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
+
 import {
   ClusterBuildPhase,
   FlowScenario,
@@ -8,17 +10,19 @@ import {
   Report,
   WireCollateralTool,
   WireOperatorProvisioningTool,
+  Constants as DepotConstants,
   matchesProtoEnum,
+  slugValue,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
+
 import { CollateralLifecycleScenarioConstants as Constants } from "./CollateralLifecycleScenarioConstants.js"
 
 const { SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
-
 
 /** The depositor's node-owner-generated WIRE account, resolved from the key store by its label. */
 function depositorAccount(ctx: ClusterBuildContext): string {
@@ -31,8 +35,14 @@ function depositorAccount(ctx: ClusterBuildContext): string {
  * when its Step returns.
  */
 async function assertDepositorActive(ctx: ClusterBuildContext): Promise<void> {
-  const operator = await WireCollateralTool.readOperatorRow(ctx, Constants.DepositorLabel)
-  Assert.ok(operator != null, `${Constants.DepositorLabel} missing from sysio.opreg::operators`)
+  const operator = await WireCollateralTool.readOperatorRow(
+    ctx,
+    Constants.DepositorLabel
+  )
+  Assert.ok(
+    operator != null,
+    `${Constants.DepositorLabel} missing from sysio.opreg::operators`
+  )
   Assert.ok(
     matchesProtoEnum(
       operator.status,
@@ -72,17 +82,35 @@ export class CollateralLifecycleScenario extends FlowScenario {
     // One daemon started outside `NodeConfig.plan` — its ports are reserved with every planned
     // node so they reach the port registry, rather than being picked when it spawns.
     adHocCount: Constants.AdHocDaemonCount,
+    // Exercise registry-before-config bootstrap with the producer launch minima as well as
+    // the batch operator's WIRE minimum. Genesis producers bypass collateral eligibility.
+    requiredProducerCollateral: [
+      {
+        chainCode: DepotConstants.WireChainCode,
+        tokenCode: SlugName.from(DepotConstants.liqTokenCode(DepotConstants.ETHEREUM_CHAIN_CODENAME)),
+        minimumBond: Constants.ProducerLiqEthMinimumBond
+      },
+      {
+        chainCode: DepotConstants.WireChainCode,
+        tokenCode: SlugName.from(DepotConstants.LIQSOL_CODENAME),
+        minimumBond: Constants.ProducerLiqSolMinimumBond
+      }
+    ],
     // Without a requirement `meets_role_min` refuses every non-bootstrapped batch operator,
     // so the ACTIVE assertion is meaningful only against a minimum the flow installs.
-    requiredBatchOperatorCollateral: [WireCollateralTool.createWireRequirement(Constants.MinimumBond)]
+    requiredBatchOperatorCollateral: [
+      WireCollateralTool.createWireRequirement(Constants.MinimumBond)
+    ]
   }
 
   plan(cluster: ClusterBuild): void {
     // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`),
     // so the Step ceiling cannot diverge from the poll deadline it wraps.
     const remitClaimStepOptions = {
-        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(cluster.context.config.epochDurationSec)
-      }
+      timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
+        cluster.context.config.epochDurationSec
+      )
+    }
 
     // ── 1. Provision the non-bootstrapped depositor (the ONE mechanism) ──
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
@@ -164,8 +192,33 @@ export class CollateralLifecycleScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "remainder-keeps-active",
-        "the remainder meets the minimum; the operator stays OPERATOR_STATUS_ACTIVE",
-        assertDepositorActive
+        "the unreserved WIRE bond meets the minimum; the operator stays OPERATOR_STATUS_ACTIVE",
+        async ctx => {
+          await assertDepositorActive(ctx)
+          const account = depositorAccount(ctx),
+            balance = await WireCollateralTool.readBalance(
+              ctx,
+              account,
+              WireCollateralTool.WireTokenCode
+            ),
+            requests = await WireCollateralTool.readWithdrawRequests(
+              ctx,
+              account
+            ),
+            reserved = requests
+              .filter(
+                request =>
+                  slugValue(request.chain_code) ===
+                    DepotConstants.WireChainCode &&
+                  BigInt(slugValue(request.token_code)) ===
+                    WireCollateralTool.WireTokenCode
+              )
+              .reduce((sum, request) => sum + BigInt(request.amount), 0n)
+          Assert.ok(
+            balance - reserved >= Constants.MinimumBond,
+            `Withdrawal must retain the minimum available WIRE bond; balance=${balance}, reserved=${reserved}`
+          )
+        }
       )
     )
 
@@ -204,7 +257,9 @@ export class CollateralLifecycleScenario extends FlowScenario {
         `the (WIRE, WIRE) balance row holds exactly ${Constants.ExpectedRemainingBalance}`,
         {},
         Constants.DepositorLabel,
-        WireCollateralTool.createWireCollateral(Constants.ExpectedRemainingBalance)
+        WireCollateralTool.createWireCollateral(
+          Constants.ExpectedRemainingBalance
+        )
       )
     )
 

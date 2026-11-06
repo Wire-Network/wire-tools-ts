@@ -3,7 +3,7 @@ import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
-import { flatten } from "lodash"
+import { flatten, negate } from "lodash"
 import { match } from "ts-pattern"
 import {
   getLogger,
@@ -21,7 +21,7 @@ import {
   SysioContracts
 } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
-import { scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
+import { assetUnits, scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
 import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
@@ -167,16 +167,19 @@ export class WireClient {
     account: string,
     table: string
   ): WireClient.TableQuery<any, any> {
+    const rowsQuery = (
+      args: WireClient.TableQueryArgs
+    ): WireClient.TableRowsQuery => ({
+      account,
+      scope: args.scope ?? account,
+      table,
+      limit: args.limit,
+      lowerBound: args.lowerBound,
+      upperBound: args.upperBound
+    })
     return {
-      query: (args = {}) =>
-        this.getTableRows({
-          account,
-          scope: args.scope ?? account,
-          table,
-          limit: args.limit,
-          lowerBound: args.lowerBound,
-          upperBound: args.upperBound
-        })
+      query: (args = {}) => this.getTableRows(rowsQuery(args)),
+      queryAll: (args = {}) => this.getAllTableRows(rowsQuery(args))
     }
   }
 
@@ -402,6 +405,19 @@ export class WireClient {
   }
 
   /**
+   * Whether `account` is privileged (GET /v1/chain/get_account's `privileged`).
+   * A privileged contract's inline actions skip the authorization check, which
+   * is what lets `sysio.kicker` draw from `sysio` under `sysio@active`.
+   *
+   * @param account - The account to read.
+   * @returns True iff the chain marks the account privileged.
+   */
+  async isPrivileged(account: string): Promise<boolean> {
+    const { privileged } = await this.api.v1.chain.get_account(account)
+    return privileged === true
+  }
+
+  /**
    * GET /v1/chain/get_producer_schedule — the ACTIVE schedule, plus the pending / proposed ones
    * while a change is in flight — projected onto plain producer names the way {@link getInfo}
    * projects its scalars (sdk-core answers with `Name`-typed entries). A proposed schedule
@@ -447,7 +463,40 @@ export class WireClient {
     const rows = (result.rows ?? []).map((row: any) =>
       row != null && typeof row === "object" && "value" in row ? row.value : row
     )
-    return { rows: rows as Row[], more: result.more ?? false }
+    return {
+      rows: rows as Row[],
+      more: result.more ?? false,
+      nextKey: result.next_key?.toString()
+    }
+  }
+
+  /**
+   * Every row of a raw table read, page by page: each page resumes at the previous page's
+   * `next_key` until the node reports no `more`. ESCAPE HATCH like {@link getTableRows};
+   * prefer `getSysioContract(name).tables.<table>.queryAll(...)`.
+   *
+   * @param query - The read: its `limit` is the page size, its bounds the key range.
+   * @returns Every row in the range, in key order.
+   * @throws When a page reports `more` without a resume key past its own lower bound.
+   */
+  async getAllTableRows<Row = unknown>(
+    query: WireClient.TableRowsQuery
+  ): Promise<Row[]> {
+    const page = await this.getTableRows<Row>(query)
+    if (!page.more) {
+      return page.rows
+    }
+    Assert.ok(
+      page.nextKey != null && page.nextKey !== query.lowerBound,
+      `WireClient: ${query.account}::${query.table} reported more rows but no resume key past ${query.lowerBound}`
+    )
+    return [
+      ...page.rows,
+      ...(await this.getAllTableRows<Row>({
+        ...query,
+        lowerBound: page.nextKey
+      }))
+    ]
   }
 
   /** Real WIRE token balance (raw 9-decimal base units), or 0n when no row. */
@@ -458,9 +507,7 @@ export class WireClient {
       "WIRE"
     )) as Asset[]
     if (!rows || rows.length === 0) return 0n
-    const [amount] = rows[0].toString().split(" ")
-    const [whole, frac = ""] = amount.split(".")
-    return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
+    return assetUnits(rows[0].toString())
   }
 
   /**
@@ -596,20 +643,47 @@ export class WireClient {
 
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
   async getTransaction(id: string): Promise<WireClient.GetTransactionResponse> {
-    const resp = await fetch(
-      `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id })
-      }
+    return this.postTraceApi<WireClient.GetTransactionResponse>(
+      "/v1/trace_api/get_transaction_trace",
+      { id },
+      `get_transaction(${id})`
     )
+  }
+
+  /**
+   * Fetch a block's executed transactions, inline actions included, via
+   * /v1/trace_api/get_block.
+   *
+   * @param blockNum - The block's height.
+   * @return The traced block, or `null` while the node has not traced it.
+   */
+  async getBlockTrace(
+    blockNum: number
+  ): Promise<WireClient.GetBlockTraceResponse> {
+    return this.postTraceApi<WireClient.GetBlockTraceResponse>(
+      "/v1/trace_api/get_block",
+      { block_num: blockNum },
+      `get_block_trace(${blockNum})`
+    )
+  }
+
+  /** POST to a trace-API route, whose 404 means the node holds no such trace (`null`). */
+  private async postTraceApi<T>(
+    route: string,
+    body: object,
+    label: string
+  ): Promise<T> {
+    const resp = await fetch(`${this.config.nodeopUrl}${route}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
     return (await match(resp)
       .with({ ok: true }, r => r.json())
       .with({ status: 404 }, () => Promise.resolve(null))
       .otherwise(() => {
-        throw new Error(`get_transaction(${id}) failed: HTTP ${resp.status}`)
-      })) as WireClient.GetTransactionResponse | null
+        throw new Error(`${label} failed: HTTP ${resp.status}`)
+      })) as T
   }
 
   /** Wait for head to advance past the current head. */
@@ -664,13 +738,23 @@ export class WireClient {
       ),
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
-          // Pre-inclusion retry ONLY — a throwing `send` produced no
-          // transaction id, so there is nothing to double-apply. Deliberately
-          // NOT fused with the finality wait; fusing them is the defect above.
+          // Pre-inclusion retry ONLY of a push proven not applied: its connection failed or
+          // the node rejected it (`ClioRunner.isProvenUnapplied`). Anything else may have
+          // reached the node and is never re-sent: clio would sign it again as a second
+          // transaction. Deliberately NOT fused with the finality wait; fusing them is the
+          // defect above.
           result = await retry(send, {
             maxAttempts: WireClient.PushMaxAttempts,
             delayMs: WireClient.FinalityRetryDelayMs,
-            label
+            label,
+            checkResult: negate(ClioRunner.isProvenUnapplied)
+          }).catch(error => {
+            throw ClioRunner.isProvenUnapplied(error)
+              ? error
+              : new NestedError(
+                  `${label}: the push may have reached the node, so it is not re-sent; read its outcome on the chain before running it again`,
+                  { cause: error }
+                )
           }),
           transactionId = WireClient.getTransactionId(result)
         // Nothing reached the chain: no id, or `setContract`'s settled-no-op
@@ -1090,6 +1174,8 @@ export namespace WireClient {
   export interface TableQueryResult<Row> {
     rows: Row[]
     more: boolean
+    /** The lower bound the next page starts at, when the node returned one. */
+    nextKey?: string
   }
   export interface TableQuery<
     Name extends SysioContractName,
@@ -1098,6 +1184,11 @@ export namespace WireClient {
     query(
       args?: TableQueryArgs
     ): Promise<TableQueryResult<TableRow<Name, Table>>>
+    /**
+     * Every row in the range, read page by page ({@link WireClient.getAllTableRows});
+     * `limit` is the page size.
+     */
+    queryAll(args?: TableQueryArgs): Promise<TableRow<Name, Table>[]>
   }
   export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {
@@ -1199,9 +1290,10 @@ export namespace WireClient {
   }
 
   /**
-   * Attempts for a push that THREW — i.e. produced no transaction id, so there
-   * is nothing to double-apply. Separate from {@link FinalityMaxAttempts},
-   * which bounds proven-safe re-pushes; fusing the two is the original defect.
+   * Attempts for a push the node rejected or never received, so there is nothing to
+   * double-apply (an ambiguous failure is never re-sent). Separate from
+   * {@link FinalityMaxAttempts}, which bounds proven-safe re-pushes; fusing the two is
+   * the original defect.
    */
   export const PushMaxAttempts = 3
 
@@ -1315,6 +1407,29 @@ export namespace WireClient {
     id: string
     block_num: number
     block_time: string
+  }
+  /** One executed action in a trace-API response, inline actions and notifications included. */
+  export interface TraceAction {
+    receiver: string
+    account: string
+    name: string
+    /** The action data, decoded with the ABI in effect when it ran; each action has its own type. */
+    params?: unknown
+  }
+  /** One transaction in a traced block; failed transactions are never traced. */
+  export interface TraceTransaction extends GetTransactionResponse {
+    actions: TraceAction[]
+  }
+  /** Whether the trace API holds a block as final. */
+  export enum BlockTraceStatus {
+    irreversible = "irreversible",
+    pending = "pending"
+  }
+  /** The `/v1/trace_api/get_block` response. */
+  export interface GetBlockTraceResponse {
+    number: number
+    status: BlockTraceStatus
+    transactions: TraceTransaction[]
   }
 
   /**

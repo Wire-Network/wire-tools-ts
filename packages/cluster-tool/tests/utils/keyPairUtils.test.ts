@@ -220,6 +220,15 @@ describe("keyPairUtils", () => {
       expect(ethereumSigner(keyPair, provider).address).toBe(wallet.address)
     })
 
+    it("without a provider, still signs offline — the same signature as the source wallet", async () => {
+      const wallet = anvilWallet(2),
+        signer = ethereumSigner(ethereumKeyPairFromWallet(wallet))
+      expect(signer.provider).toBeNull()
+      expect(await signer.signMessage("createlink")).toBe(
+        await wallet.signMessage("createlink")
+      )
+    })
+
     it("derives the 33-byte compressed secp256k1 public key", () => {
       const keyPair = ethereumKeyPairFromWallet(anvilWallet(2))
       expect(ethereumCompressedPubkey(keyPair).byteLength).toBe(33)

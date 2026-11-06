@@ -87,3 +87,23 @@ export type QueryRequest = z.infer<typeof QueryRequestSchema>
 export const QueryRequestCodec = SchemaCodec.create<QueryRequest>(
   QueryRequestSchema
 )
+
+/**
+ * The engine probe: a request for {@link QueryEngineRPC.ProbeMethod}, a method
+ * the engine does not serve. It carries an `id` (so the engine answers) and
+ * empty params (the engine rejects the method before reading them).
+ */
+export const QueryProbeRequestSchema = z.strictObject({
+  jsonrpc: JsonRPCVersionSchema,
+  id: QueryRequestIdSchema,
+  method: z.literal(QueryEngineRPC.ProbeMethod),
+  params: z.strictObject({})
+})
+
+/** An engine probe request. */
+export type QueryProbeRequest = z.infer<typeof QueryProbeRequestSchema>
+
+/** Validating codec for {@link QueryProbeRequestSchema}. */
+export const QueryProbeRequestCodec = SchemaCodec.create<QueryProbeRequest>(
+  QueryProbeRequestSchema
+)
