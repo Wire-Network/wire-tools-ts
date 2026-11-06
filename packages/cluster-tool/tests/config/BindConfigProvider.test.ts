@@ -498,6 +498,33 @@ describe("BindConfigProvider", () => {
   })
 
   describe("Solana RPC/WebSocket pair", () => {
+    it.each([
+      ["automatic candidate", () => BindConfigProvider.ServicePortFirst],
+      ["earlier daemon default", () => BindConfigProvider.DefaultKiod],
+      [
+        "companion at an earlier daemon default",
+        () =>
+          BindConfigProvider.DefaultKiod - BindConfigProvider.SolanaWsPortOffset
+      ]
+    ])("honors a pinned pair overlapping %s", async (_, preferred) => {
+      const rpc = await BindConfigProvider.findAvailableSolanaRpc(preferred())
+      await BindConfigProvider.clearPortLocks()
+      const config = await BindConfigProvider.resolve(
+          { solana: { ports: { http: rpc } } },
+          {}
+        ),
+        ports = BindConfigProvider.allPorts(config)
+      expect(config.solana.ports.http).toBe(rpc)
+      expect(new Set(ports).size).toBe(ports.length)
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.findAvailable(rpc)).not.toBe(rpc)
+      expect(
+        await BindConfigProvider.findAvailable(
+          rpc + BindConfigProvider.SolanaWsPortOffset
+        )
+      ).not.toBe(rpc + BindConfigProvider.SolanaWsPortOffset)
+    })
+
     it("redraws the RPC preference when only its companion is occupied", async () => {
       const rpc = await BindConfigProvider.findAvailableSolanaRpc()
       await BindConfigProvider.clearPortLocks()
