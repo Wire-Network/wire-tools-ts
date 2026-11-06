@@ -1,8 +1,6 @@
 import Assert from "node:assert"
-
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
-
 import {
   ClusterBuildPhase,
   FlowScenario,
@@ -18,7 +16,6 @@ import {
   type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
-
 import { CollateralLifecycleScenarioConstants as Constants } from "./CollateralLifecycleScenarioConstants.js"
 
 const { SysioOpregOperatorstatus } = SysioContracts
@@ -82,20 +79,6 @@ export class CollateralLifecycleScenario extends FlowScenario {
     // One daemon started outside `NodeConfig.plan` — its ports are reserved with every planned
     // node so they reach the port registry, rather than being picked when it spawns.
     adHocCount: Constants.AdHocDaemonCount,
-    // Exercise registry-before-config bootstrap with the producer launch minima as well as
-    // the batch operator's WIRE minimum. Genesis producers bypass collateral eligibility.
-    requiredProducerCollateral: [
-      {
-        chainCode: DepotConstants.WireChainCode,
-        tokenCode: SlugName.from(DepotConstants.liqTokenCode(DepotConstants.ETHEREUM_CHAIN_CODENAME)),
-        minimumBond: Constants.ProducerLiqEthMinimumBond
-      },
-      {
-        chainCode: DepotConstants.WireChainCode,
-        tokenCode: SlugName.from(DepotConstants.LIQSOL_CODENAME),
-        minimumBond: Constants.ProducerLiqSolMinimumBond
-      }
-    ],
     // Without a requirement `meets_role_min` refuses every non-bootstrapped batch operator,
     // so the ACTIVE assertion is meaningful only against a minimum the flow installs.
     requiredBatchOperatorCollateral: [

@@ -22,6 +22,7 @@ import {
   type ClusterSignatureProviderConfig,
   type ClusterSignatureProviderOptions,
   type ClusterTopologyOptions,
+  type CollateralRequirement,
   type ExternalOutpostConfig,
   type LcoImportChainConfig,
   type LcoImportChainOptions,
@@ -192,6 +193,34 @@ export namespace ClusterConfigProvider {
       tokenCode: BigInt(SlugName.from("LIQETH")),
       amount: DefaultBatchUnderwriterMaxExposureUnits
     })
+  ]
+
+  /** The launch minimum LIQETH bond of a non-bootstrapped producer: 0.2 LIQETH, in depot base units. */
+  export const DefaultProducerMinimumBondLiqEth = 200_000_000
+  /** The launch minimum LIQSOL bond of a non-bootstrapped producer: 5 LIQSOL, in depot base units. */
+  export const DefaultProducerMinimumBondLiqSol = 5_000_000_000
+
+  /**
+   * The default `requiredProducerCollateral`, written to `sysio.opreg::setconfig`'s
+   * `req_prod_collat`: the launch minimum for a non-bootstrapped producer, BOTH shadow liq tokens
+   * bonded on WIRE. Bootstrapped genesis producers are exempt. Governance can change it on chain,
+   * and an explicit `requiredProducerCollateral` replaces it.
+   */
+  export const DefaultRequiredProducerCollateral: readonly CollateralRequirement[] = [
+    {
+      chainCode: Constants.WireChainCode,
+      tokenCode: Number(
+        SlugName.from(Constants.liqTokenCode(Constants.ETHEREUM_CHAIN_CODENAME))
+      ),
+      minimumBond: DefaultProducerMinimumBondLiqEth
+    },
+    {
+      chainCode: Constants.WireChainCode,
+      tokenCode: Number(
+        SlugName.from(Constants.liqTokenCode(Constants.SOLANA_CHAIN_CODENAME))
+      ),
+      minimumBond: DefaultProducerMinimumBondLiqSol
+    }
   ]
 
   /**
@@ -376,7 +405,9 @@ export namespace ClusterConfigProvider {
         options.requiredBatchOperatorCollateral ?? [],
       requiredUnderwriterCollateral:
         options.requiredUnderwriterCollateral ?? [],
-      requiredProducerCollateral: options.requiredProducerCollateral ?? [],
+      requiredProducerCollateral: options.requiredProducerCollateral ?? [
+        ...DefaultRequiredProducerCollateral
+      ],
       underwriterCollateral: options.underwriterCollateral ?? null,
       // Genesis authority = the well-known dev BIOS key pair, matching the
       // long-green bootstrap (the real finalizer policy is set later via

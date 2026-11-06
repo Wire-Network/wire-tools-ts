@@ -24,11 +24,20 @@ import {
 } from "./EthereumOutpostBootstrapper.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
+import type { StepInput } from "../StepRunner.js"
 
 /** Steps that deploy + seed the Ethereum (anvil) outpost. */
 export namespace EthereumOutpostSteps {
   /** Subpath (under the cluster data dir) for the annotated accounts file. */
   const AnvilDataSubpath = "anvil"
+
+  /** Already-booked local fixture shadow, seeded before subsequent custody funding. */
+  export interface DeployInput extends StepInput {
+    /** Discriminator for the deployment step's reported input. */
+    readonly kind: "EthereumOutpostSteps.DeployInput"
+    /** Planned imported shadow obligation in depot units. */
+    readonly mockSyndicatedPrincipal: bigint
+  }
 
   /**
    * Derive the PROVISIONAL batch-operator roster the outpost is constructed with
@@ -155,7 +164,8 @@ export namespace EthereumOutpostSteps {
    * (`Steps.processes.anvil.start` must precede this in the phase): deploy the
    * `wire-ethereum` contracts and write the annotated
    * accounts file (later phases re-read `accounts.json` / `outpost-addrs.json`
-   * from disk). Input-less — paths + the anvil port come from `ctx.config`.
+   * from disk). Paths and the anvil port come from `ctx.config`; the planned
+   * mock shadow obligation is supplied before the one-shot pool initialization.
    */
   export function planDeploy<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -163,14 +173,15 @@ export namespace EthereumOutpostSteps {
     actor: Report.Actor,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
+    options: ClusterBuildStepOptions,
+    mockSyndicatedPrincipal = 0n
+  ): ClusterBuildStep<C, DeployInput> {
+    return ClusterBuildStep.create<C, DeployInput>(
       actor,
       name,
       description,
       options,
-      null,
+      { kind: "EthereumOutpostSteps.DeployInput", mockSyndicatedPrincipal },
       runDeploy
     )
   }
@@ -203,7 +214,7 @@ export namespace EthereumOutpostSteps {
   /** Named runner — `EthereumOutpostBootstrapper.bootstrap` against the run anvil. */
   export async function runDeploy<C extends ClusterBuildContext>(
     ctx: C,
-    _input: null,
+    input: DeployInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
@@ -211,9 +222,10 @@ export namespace EthereumOutpostSteps {
       ctx.config.batchOperatorCount,
       ctx.config.underwriterCount
     )
-    await new EthereumOutpostBootstrapper(
-      bootstrapperOptions(ctx, await resolveInitialRoster(ctx))
-    ).bootstrap()
+    await new EthereumOutpostBootstrapper({
+      ...bootstrapperOptions(ctx, await resolveInitialRoster(ctx)),
+      mockSyndicatedPrincipal: input.mockSyndicatedPrincipal
+    }).bootstrap()
   }
 
   /**

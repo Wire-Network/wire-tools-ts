@@ -45,9 +45,4 @@ export namespace CollateralLifecycleScenarioConstants {
    * so the operator stays ACTIVE on the remainder while the bond alone clears it.
    */
   export const MinimumBond = ExpectedRemainingBalance
-
-  /** Producer launch minimum: 0.2 LIQETH, held as depot shadow collateral. */
-  export const ProducerLiqEthMinimumBond = 200_000_000
-  /** Producer launch minimum: 5 LIQSOL, held as depot shadow collateral. */
-  export const ProducerLiqSolMinimumBond = 5_000_000_000
 }

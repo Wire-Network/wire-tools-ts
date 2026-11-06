@@ -90,7 +90,6 @@ export namespace EthereumSyndicationTool {
   /** `SyndicationPool` functions the tool encodes, by ABI name. */
   export enum PoolFunction {
     syndicate = "syndicate",
-    initializeSyndication = "initializeSyndication",
     pause = "pause",
     unpause = "unpause",
     payPendingDesyndication = "payPendingDesyndication"
@@ -129,9 +128,7 @@ export namespace EthereumSyndicationTool {
     custodyShortfallBps(): Promise<bigint>
     syndicatedPrincipal(): Promise<bigint>
     outpostChainCode(): Promise<bigint>
-    pendingDesyndications(
-      requestId: bigint
-    ): Promise<[string, bigint, bigint]>
+    pendingDesyndications(requestId: bigint): Promise<[string, bigint, bigint]>
     maxSyndicationPerTransfer(): Promise<bigint>
     yieldDeadband(): Promise<bigint>
     liqTokenCode(): Promise<bigint>
@@ -303,10 +300,7 @@ export namespace EthereumSyndicationTool {
   ): ethers.BaseContract {
     return loadOutpostContract<object>(
       ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.LiqEthAddressesFile
-      ),
+      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
       DepositManagerContractName,
       [...DepositManagerArtifactSubpath],
       runner
@@ -327,10 +321,7 @@ export namespace EthereumSyndicationTool {
   ): LiqEthTokenView & ethers.BaseContract {
     return loadOutpostContract<LiqEthTokenView>(
       ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.LiqEthAddressesFile
-      ),
+      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
       LiqEthTokenContractName,
       [...LiqEthTokenArtifactSubpath],
       runner,
@@ -643,9 +634,10 @@ export namespace EthereumSyndicationTool {
    * @param requestId - The depot request id.
    * @returns The stored release, or `undefined`.
    */
-  export async function readPendingDesyndication<
-    C extends ClusterBuildContext
-  >(ctx: C, requestId: bigint): Promise<PendingDesyndication> {
+  export async function readPendingDesyndication<C extends ClusterBuildContext>(
+    ctx: C,
+    requestId: bigint
+  ): Promise<PendingDesyndication> {
     const [recipient, depotAmount, reason] = await loadSyndicationPool(
       ctx,
       ctx.ethereum.provider
@@ -681,7 +673,9 @@ export namespace EthereumSyndicationTool {
     account: string,
     blockTag?: ethers.BlockTag
   ): Promise<bigint> {
-    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account, { blockTag })
+    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account, {
+      blockTag
+    })
   }
 
   /**
@@ -764,18 +758,22 @@ export namespace EthereumSyndicationTool {
       poolAddress = ethers.getAddress(await pool.getAddress()),
       transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
       transfers = receipt.logs
-        .filter(event =>
-          ethers.getAddress(event.address) === tokenAddress &&
-          event.topics[0] === transferTopic
+        .filter(
+          event =>
+            ethers.getAddress(event.address) === tokenAddress &&
+            event.topics[0] === transferTopic
         )
         .map(event => token.interface.parseLog(event))
-        .filter(event =>
-          ethers.getAddress(event.args.from) === poolAddress &&
-          ethers.getAddress(event.args.to) === ethers.getAddress(payment.args.recipient) &&
-          BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+        .filter(
+          event =>
+            ethers.getAddress(event.args.from) === poolAddress &&
+            ethers.getAddress(event.args.to) ===
+              ethers.getAddress(payment.args.recipient) &&
+            BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
         )
     Assert.strictEqual(
-      transfers.length, 1,
+      transfers.length,
+      1,
       `EthereumSyndicationTool: expected exactly one matching liqETH transfer for request ` +
         `${payment.args.requestId}, found ${transfers.length}`
     )
@@ -858,15 +856,16 @@ export namespace EthereumSyndicationTool {
       authority = await pool.authority()
     // The pool must answer to THIS manager, or its answer is about another pool.
     Assert.ok(
-      ethers.getAddress(authority) === ethers.getAddress(await manager.getAddress()),
+      ethers.getAddress(authority) ===
+        ethers.getAddress(await manager.getAddress()),
       `EthereumSyndicationTool: SyndicationPool's authority is ${authority}, not the deployed ` +
         `${OutpostManagerAuthorityContractName} ${await manager.getAddress()}`
     )
     const [immediate] = await manager.canCall(
-        account,
-        await pool.getAddress(),
-        pool.interface.getFunction(functionName).selector
-      )
+      account,
+      await pool.getAddress(),
+      pool.interface.getFunction(functionName).selector
+    )
     return immediate
   }
 
@@ -956,65 +955,6 @@ export namespace EthereumSyndicationTool {
     ctx: C
   ): Promise<bigint> {
     return loadSyndicationPool(ctx, ctx.ethereum.provider).syndicatedPrincipal()
-  }
-
-  /** Input to the bootstrap-only principal seed, after custody funding. */
-  export interface InitializeSyndicationInput extends StepInput {
-    readonly kind: "EthereumSyndicationTool.InitializeSyndicationInput"
-    readonly ethereumHdIndex: number
-    readonly initialPrincipal: bigint
-  }
-
-  /** Plan one manager transaction seeding principal without changing pool configuration. */
-  export function planInitializeSyndication<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
-    initialPrincipal: bigint
-  ): ClusterBuildStep<C, InitializeSyndicationInput> {
-    return ClusterBuildStep.create<C, InitializeSyndicationInput>(
-      actor, name, description, options,
-      { kind: "EthereumSyndicationTool.InitializeSyndicationInput", ethereumHdIndex, initialPrincipal },
-      runInitializeSyndication
-    )
-  }
-
-  /** ONE restricted reinitializer, routed through the manager by its configuration signer. */
-  export async function runInitializeSyndication<C extends ClusterBuildContext>(
-    ctx: C,
-    input: InitializeSyndicationInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    Assert.ok(input.initialPrincipal >= 0n, "initial principal must not be negative")
-    const signer = hdWallet(ctx, input.ethereumHdIndex),
-      pool = loadSyndicationPool(ctx, signer),
-      manager = loadOutpostContract<object>(
-        ctx.config.ethereumPath,
-        readDeployAddresses(ctx, EthereumOutpostBootstrapper.OutpostAddressesFile),
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
-        signer,
-        EthereumOutpostBootstrapper.OutpostManagerContractName,
-        EthereumOutpostBootstrapper.OutpostManagerArtifactName
-      ),
-      configuration = await Promise.all([
-        pool.outpostChainCode(), pool.liqTokenCode(),
-        pool.liqTokenPrecision(), pool.yieldDeadband()
-      ])
-    await send(signer, {
-      to: manager.target,
-      data: manager.interface.encodeFunctionData(ManagerFunction.execute, [
-        await pool.getAddress(),
-        pool.interface.encodeFunctionData(PoolFunction.initializeSyndication, [
-          ...configuration, input.initialPrincipal
-        ])
-      ])
-    }, "EthereumSyndicationTool.planInitializeSyndication")
   }
 
   // ── Step: liqETH allowance for the pool (`approve`) ──────────────────────

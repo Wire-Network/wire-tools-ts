@@ -263,6 +263,10 @@ before the first node-owner link in Stage 10 and operator `createlink` calls in 
     have been registered in step 34. `sysio.opreg::setconfig` validates every collateral reference,
     including depot shadow tokens; the `OperatorRegistryConfig` phase follows `Registry`.
 
+`req_prod_collat` is the launch minimum a non-bootstrapped producer must bond, both rows at once, in
+depot base units at precision 9. Production uses these values; the council can change them later with
+`setconfig`. Bootstrapped genesis producers are exempt.
+
 22. **Genesis producer operators** — `sysio.opreg::regoperator({account:<producer>,
     type:OPERATOR_TYPE_PRODUCER, is_bootstrapped:true})` — `[sysio.opreg@active]` — one call per producer
     account (`defproducera … defproduceru`). Registered here rather than in Stage 5 because `sysio.opreg` is
@@ -457,7 +461,8 @@ contract/mint addresses via the same shapes.
 | `terminate_max_consecutive_misses` | `5` | |
 | `terminate_max_pct_misses_24h` | `5` | |
 | `terminate_window_ms` | `86400000` | 24 h |
-| `req_prod_collat` | configured producer requirements, default `[]` | per-(chain,token) min-bond rows; production supplies launch minimums |
+| `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
+| `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
 | `req_batchop_collat` | configured batch-operator requirements, default `[]` | |
 | `req_uw_collat` | configured underwriter requirements, default `[]` | |
 

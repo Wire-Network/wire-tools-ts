@@ -718,11 +718,8 @@ export namespace ClusterBuildDefaults {
     // The opreg half of genesis-producer registration — deferred to here because sysio.opreg is
     // only deployed by `OPPContracts` above. Bootstrapped operators use the default configuration
     // until the registry rows exist and `OperatorRegistryConfig` installs collateral requirements.
-    // Bootstrapped by fiat:
-    // genesis producers post no collateral, `req_prod_collat` ships empty, and `meets_role_min`
-    // refuses an empty requirement vector by design (SEC-22) — so a non-bootstrapped
-    // registration would sit UNKNOWN forever and never become schedulable. They are also exempt
-    // from `termcheck`, which is what a genesis backstop is for.
+    // Bootstrapped producers post no collateral and are exempt from the launch minima
+    // and termcheck. Non-bootstrapped producers must meet both configured shadow-token minima.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "GenesisProducerOperators",
@@ -1036,7 +1033,8 @@ export namespace ClusterBuildDefaults {
           Actor.EthereumOutpost,
           "deploy-ethereum",
           "deploy + seed the Ethereum outpost",
-          { timeoutMs: 900_000 }
+          { timeoutMs: 900_000 },
+          ethereumMockPrincipal(config, lcoImportPlan, mockLiqPools)
         ),
         verifyStep<C>(
           Actor.EthereumOutpost,
@@ -1504,6 +1502,43 @@ export namespace ClusterBuildDefaults {
       config.enableMockSyndicationImport &&
       config.batchOperatorUnderwriting != null
     )
+  }
+
+  /**
+   * Book the local Ethereum fixture's entire shadow obligation in its single pool initialization.
+   * LCO custody already includes its positions and pool; mock pools replaced by LCO are excluded.
+   * The later backing phase compares this seed against measured depot outstanding before funding.
+   *
+   * @param config - The resolved cluster options controlling mock imports and underwriting.
+   * @param lcoImportPlan - The launch-data import, whose custody already includes its positions.
+   * @param mockLiqPools - Mock pools remaining after launch-data pool replacement.
+   * @returns The full planned Ethereum shadow obligation in depot units.
+   */
+  export function ethereumMockPrincipal(
+    config: ClusterConfig,
+    lcoImportPlan: WireLcoImportTool.Plan,
+    mockLiqPools: readonly SysioContracts.SysioLiqRegliqpoolAction[]
+  ): bigint {
+    const fundedOperators = isUnderwritingImport(config)
+        ? Constants.batchOperatorLabels(config.batchOperatorCount).slice(
+            0,
+            config.batchOperatorUnderwriting.fundedOperatorCount
+          ).length
+        : 0,
+      imported = config.enableMockSyndicationImport
+        ? Steps.registry.MockSyndicationImportCredits.filter(
+            credit => credit.chain_code === Constants.ETHEREUM_CHAIN_CODENAME
+          ).reduce((sum, credit) => sum + BigInt(credit.amount), 0n) *
+          BigInt(1 + fundedOperators)
+        : 0n,
+      pools = config.enableMockLiqPools
+        ? mockLiqPools
+            .filter(
+              pool => pool.chain_code === Constants.ETHEREUM_CHAIN_CODENAME
+            )
+            .reduce((sum, pool) => sum + BigInt(pool.initial_chain_amount), 0n)
+        : 0n
+    return (lcoImportPlan?.ethereum?.pool.custodyTotal ?? 0n) + imported + pools
   }
 
   /**

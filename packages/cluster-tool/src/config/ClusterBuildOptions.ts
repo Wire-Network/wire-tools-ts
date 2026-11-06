@@ -127,6 +127,10 @@ export interface ClusterBuildOptions {
   terminateMaxPercentMisses24h?: number
   terminateWindowMs?: number
   // collateral
+  /**
+   * Per-(chain, token) minimum bonds a non-bootstrapped producer must post. Omit for
+   * `ClusterConfigProvider.DefaultRequiredProducerCollateral`, the launch minimum.
+   */
   requiredProducerCollateral?: CollateralRequirement[]
   requiredBatchOperatorCollateral?: CollateralRequirement[]
   requiredUnderwriterCollateral?: CollateralRequirement[]
