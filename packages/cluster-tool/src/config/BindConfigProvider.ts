@@ -271,6 +271,14 @@ export namespace BindConfigProvider {
       // resolved it but hasn't bound its daemons yet (they spawn minutes
       // later). Dead registrants are reaped during the read.
       claimed = readRegistryPortExclusions(),
+      // Solana is resolved after the nodeops: their automatic picks must not
+      // consume its caller-pinned RPC or implicit WebSocket port first. Keep
+      // these separate from claims so explicit conflicting pins still fail.
+      solanaRpcPin = options.solana?.ports?.http,
+      pinnedSolanaPorts =
+        solanaRpcPin == null
+          ? []
+          : [solanaRpcPin, solanaRpcPin + SolanaWsPortOffset],
       claim = async (
         callerPin: number | null,
         fallbackDefault: number | null,
@@ -280,7 +288,9 @@ export namespace BindConfigProvider {
         const port = await pickPort(
           callerPin,
           fallbackDefault,
-          claimed,
+          callerPin == null
+            ? new Set([...claimed, ...pinnedSolanaPorts])
+            : claimed,
           daemon,
           protocol,
           callerPin == null ? readAutomaticPortRangesOnce() : null
