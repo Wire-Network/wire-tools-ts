@@ -43,14 +43,23 @@ describe("ClusterBuildDefaults — launch-data import", () => {
       buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol",
-      ethereumBootstrapJsonFile: fixture.write("ethereum.json", ethereumSnapshot()),
+      ethereumBootstrapJsonFile: fixture.write(
+        "ethereum.json",
+        ethereumSnapshot()
+      ),
       solanaBootstrapJsonFile: fixture.write("solana.json", solanaSnapshot())
     }
   }
 
   it("composes no import without an export", async () => {
-    const options = omit(baseOptions(), "ethereumBootstrapJsonFile", "solanaBootstrapJsonFile"),
-      names = collectPhaseNames((await ClusterBuildDefaults.create(options)).children)
+    const options = omit(
+        baseOptions(),
+        "ethereumBootstrapJsonFile",
+        "solanaBootstrapJsonFile"
+      ),
+      names = collectPhaseNames(
+        (await ClusterBuildDefaults.create(options)).children
+      )
     expect(names).not.toContain("LcoImport")
   })
 
@@ -58,18 +67,66 @@ describe("ClusterBuildDefaults — launch-data import", () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions()),
       names = collectPhaseNames(cluster.children),
       steps = collectStepNames(cluster.children)
-    expect(names.indexOf("LcoImport")).toBe(names.indexOf("SyndicationConfig") + 1)
-    expect(names.slice(names.indexOf("LcoImport") + 1, names.indexOf("LcoImport") + 5)).toEqual([
+    expect(names.indexOf("LcoImport")).toBe(
+      names.indexOf("SyndicationConfig") + 1
+    )
+    expect(
+      names.slice(
+        names.indexOf("LcoImport") + 1,
+        names.indexOf("LcoImport") + 5
+      )
+    ).toEqual([
       "LcoImportPlan",
       "LcoImportEthereum",
       "LcoImportSolana",
       "LcoImportSeal"
     ])
-    expect(names.indexOf("LcoImportSeal")).toBeLessThan(names.indexOf("EpochBootstrap"))
+    expect(names.indexOf("LcoImportSeal")).toBeLessThan(
+      names.indexOf("EpochBootstrap")
+    )
     expect(steps).toContain("seal-lco-syndication")
-    expect(names.indexOf("MockShadowBackingSolana")).toBeGreaterThan(names.indexOf("LcoImportSeal"))
+    expect(names.indexOf("MockShadowBackingSolana")).toBeGreaterThan(
+      names.indexOf("LcoImportSeal")
+    )
     expect(names).toContain("MockShadowBackingEthereum")
     expect(names).not.toContain("MockLiqPools")
+  })
+
+  it.each([false, true])(
+    "seeds the LCO custody once with additional mock imports=%s",
+    async enableMockSyndicationImport => {
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          enableMockLiqPools: true,
+          enableMockSyndicationImport
+        }),
+        deploy = findPhase(cluster.children, "EthereumOutpost").steps.find(
+          step => step.name === "deploy-ethereum"
+        )
+      // Fixture: 4.5 LIQETH staked plus 2 LIQETH LCO custody. Its LCO pool replaces the mock pool.
+      expect(deploy.input).toEqual({
+        kind: "EthereumOutpostSteps.DeployInput",
+        mockSyndicatedPrincipal:
+          6_500_000_000n + (enableMockSyndicationImport ? 100_000_000_000n : 0n)
+      })
+    }
+  )
+
+  it("combines LCO custody and funded underwriting imports without the replaced mock pool", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+        ...baseOptions(),
+        enableMockLiqPools: true,
+        enableMockSyndicationImport: true,
+        enableBatchOperatorUnderwriting: true,
+        batchOperatorUnderwriting: { fundedOperatorCount: 1 }
+      }),
+      deploy = findPhase(cluster.children, "EthereumOutpost").steps.find(
+        step => step.name === "deploy-ethereum"
+      )
+    expect(deploy.input).toEqual({
+      kind: "EthereumOutpostSteps.DeployInput",
+      mockSyndicatedPrincipal: 206_500_000_000n
+    })
   })
 
   it("leaves the syndication seal to the mock import that follows it", async () => {
@@ -81,7 +138,9 @@ describe("ClusterBuildDefaults — launch-data import", () => {
       steps = collectStepNames(cluster.children)
     expect(steps).not.toContain("seal-lco-syndication")
     expect(steps).toContain("seal-mock-syndication-import")
-    expect(names.indexOf("MockSyndicationImport")).toBeGreaterThan(names.indexOf("LcoImportSeal"))
+    expect(names.indexOf("MockSyndicationImport")).toBeGreaterThan(
+      names.indexOf("LcoImportSeal")
+    )
   })
 
   it("carves every seeded pool's WIRE out of the T5 distributable it configures", async () => {
@@ -108,7 +167,9 @@ describe("ClusterBuildDefaults — launch-data import", () => {
       kind: "SystemContractSteps.SetemitcfgInput",
       data: ClusterBuildDefaults.emissionConfig(dexEarmark)
     })
-    expect(ClusterBuildDefaults.emissionConfig(dexEarmark).t5_distributable).toBe(
+    expect(
+      ClusterBuildDefaults.emissionConfig(dexEarmark).t5_distributable
+    ).toBe(
       (
         BigInt(Constants.EMISSION_CONFIG_DEFAULTS.t5_distributable) - dexEarmark
       ).toString()
@@ -138,7 +199,10 @@ describe("ClusterBuildDefaults — launch-data import", () => {
         exported.purchasers[0].totalPretokens = pretokens
         return ClusterBuildDefaults.create({
           ...omit(baseOptions(), "solanaBootstrapJsonFile"),
-          ethereumBootstrapJsonFile: fixture.write(`claims-${claims}.json`, exported)
+          ethereumBootstrapJsonFile: fixture.write(
+            `claims-${claims}.json`,
+            exported
+          )
         })
       }
     expect(room).toBe(283_500_000n * 10n ** 9n)
@@ -182,7 +246,9 @@ describe("ClusterBuildDefaults — launch-data import", () => {
   })
 
   it("refuses placeholders and another program's export against external outposts, and imports real values without backing them", async () => {
-    const externalOutpostConfig = fixtureExternalOutpostConfig(environment.rootPath)
+    const externalOutpostConfig = fixtureExternalOutpostConfig(
+      environment.rootPath
+    )
     await expect(
       ClusterBuildDefaults.create({
         ...baseOptions(),

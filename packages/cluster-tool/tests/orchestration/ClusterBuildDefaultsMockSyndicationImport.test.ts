@@ -4,7 +4,11 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-import { collectPhaseNames, collectStepNames } from "./clusterBuildFixture.js"
+import {
+  collectPhaseNames,
+  collectStepNames,
+  findPhase
+} from "./clusterBuildFixture.js"
 
 describe("ClusterBuildDefaults — mock syndication import", () => {
   let environment: ResolveEnvironment
@@ -49,6 +53,15 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
           enableMockLiqPools
         }),
         names = collectPhaseNames(cluster.children)
+      const deploy = findPhase(cluster.children, "EthereumOutpost").steps.find(
+        step => step.name === "deploy-ethereum"
+      )
+      expect(deploy.input).toEqual({
+        kind: "EthereumOutpostSteps.DeployInput",
+        mockSyndicatedPrincipal:
+          (enableMockSyndicationImport ? 100_000_000_000n : 0n) +
+          (enableMockLiqPools ? 10_000_000_000n : 0n)
+      })
       expect(names.includes("MockSyndicationImport")).toBe(
         enableMockSyndicationImport
       )
@@ -135,6 +148,38 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
     }
   )
 
+  it.each([0, 3])(
+    "books the bonder plus %s funded operators with mock pool custody",
+    async fundedOperatorCount => {
+      const cluster = await ClusterBuildDefaults.create({
+          clusterPath: Path.join(environment.rootPath, "cluster-funded"),
+          buildPath: environment.buildPath,
+          ethereumPath: "/fake/ethereum",
+          solanaPath: "/fake/solana",
+          enableMockSyndicationImport: true,
+          enableMockLiqPools: true,
+          enableBatchOperatorUnderwriting: true,
+          batchOperatorCount: 3,
+          batchOperatorUnderwriting: { fundedOperatorCount }
+        }),
+        deploy = findPhase(cluster.children, "EthereumOutpost").steps.find(
+          step => step.name === "deploy-ethereum"
+        ),
+        steps = collectStepNames(cluster.children)
+      expect(deploy.input).toEqual({
+        kind: "EthereumOutpostSteps.DeployInput",
+        mockSyndicatedPrincipal:
+          100_000_000_000n * BigInt(1 + fundedOperatorCount) + 10_000_000_000n
+      })
+      expect(
+        steps.filter(
+          name =>
+            name.startsWith("import-underwriting-") && name.endsWith("-liqeth")
+        )
+      ).toHaveLength(fundedOperatorCount)
+    }
+  )
+
   it("imports credits only for the funded operators; every operator gets its RAM grant", async () => {
     const cluster = await ClusterBuildDefaults.create({
         clusterPath: Path.join(environment.rootPath, "cluster-funded-one"),
@@ -147,6 +192,14 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
       }),
       steps = collectStepNames(cluster.children)
     expect(cluster.config.batchOperatorUnderwriting.fundedOperatorCount).toBe(1)
+    const deploy = findPhase(cluster.children, "EthereumOutpost").steps.find(
+      step => step.name === "deploy-ethereum"
+    )
+    // The bonder and the one funded operator each import 100 LIQETH.
+    expect(deploy.input).toEqual({
+      kind: "EthereumOutpostSteps.DeployInput",
+      mockSyndicatedPrincipal: 200_000_000_000n
+    })
     expect(
       steps.filter(name => name.startsWith("import-underwriting-"))
     ).toEqual([

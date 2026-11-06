@@ -83,6 +83,8 @@ export interface EthereumOutpostBootstrapperOptions {
    * account maps to a pre-funded anvil account.
    */
   accountCount?: number
+  /** Prebooked fixture principal in depot units; zero for a cluster without imported shadow. */
+  mockSyndicatedPrincipal?: bigint
 }
 
 /** Resolved {@link EthereumOutpostBootstrapper} config. */
@@ -223,7 +225,8 @@ export class EthereumOutpostBootstrapper {
         deployerPrivateKey,
         localDir,
         panicAccount,
-        initialRoster
+        initialRoster,
+        this.config.mockSyndicatedPrincipal
       )
     log.info(
       `[ethereum] initial batch-operator roster: ${initialRoster.groups
@@ -637,6 +640,7 @@ export namespace EthereumOutpostBootstrapper {
    * @param deploymentsPath - This cluster's deploy-artifact dir.
    * @param panicAccount - The panic account's address.
    * @param initialRoster - The WNE-41 roster `OPPInbound.initialize` seats.
+   * @param mockSyndicatedPrincipal - Planned local fixture shadow in depot units, seeded once during deployment.
    * @returns The config object written as `outpost.json`.
    */
   export function outpostDeployConfig(
@@ -644,7 +648,8 @@ export namespace EthereumOutpostBootstrapper {
     deployerPrivateKey: string,
     deploymentsPath: string,
     panicAccount: string,
-    initialRoster: EthereumOutpostInitialRoster
+    initialRoster: EthereumOutpostInitialRoster,
+    mockSyndicatedPrincipal = 0n
   ) {
     return {
       url: rpcUrl,
@@ -660,7 +665,8 @@ export namespace EthereumOutpostBootstrapper {
       epochDurationSec: initialRoster.epochDurationSec,
       panicAccount,
       maxSyndicationPerTransfer: MaxSyndicationPerTransferWei,
-      yieldDeadband: YieldDeadbandDepotUnits
+      yieldDeadband: YieldDeadbandDepotUnits,
+      mockSyndicatedPrincipal: mockSyndicatedPrincipal.toString()
     }
   }
 
@@ -734,7 +740,8 @@ export namespace EthereumOutpostBootstrapper {
    *  anvil's `--accounts` so every generated account is pre-funded. */
   export function createDefaultOptions(): Partial<EthereumOutpostBootstrapperOptions> {
     return {
-      accountCount: AnvilProcess.AccountCount
+      accountCount: AnvilProcess.AccountCount,
+      mockSyndicatedPrincipal: 0n
     }
   }
 

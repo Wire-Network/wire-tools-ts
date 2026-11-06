@@ -133,7 +133,10 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           anvilDataPath: "/tmp/anvil",
           rpcUrl,
           deploymentsPath,
-          initialRoster: { groups: [[AnvilAccount0Address]], epochDurationSec: 0 }
+          initialRoster: {
+            groups: [[AnvilAccount0Address]],
+            epochDurationSec: 0
+          }
         })
     ).toThrow(/epochDurationSec must be positive/)
   })
@@ -152,13 +155,21 @@ describe("EthereumOutpostBootstrapper.initialBatchOperatorGroups", () => {
 
   it("builds the BatchOperatorGroups tuple: EVM-kinded, checksummed, anchored at epoch 0", () => {
     const tuple = EthereumOutpostBootstrapper.initialBatchOperatorGroups(
-      seed([[AnvilAccount1Address.toLowerCase()], [AnvilAccount2Address, AnvilAccount1Address]], 1)
+      seed(
+        [
+          [AnvilAccount1Address.toLowerCase()],
+          [AnvilAccount2Address, AnvilAccount1Address]
+        ],
+        1
+      )
     )
     expect(tuple).toEqual({
       activeGroupIndex: 1,
       epochIndex: EthereumOutpostBootstrapper.InitialRosterAnchorEpochIndex,
       groups: [
-        { operators: [{ kind: ChainKind.EVM, address_: AnvilAccount1Address }] },
+        {
+          operators: [{ kind: ChainKind.EVM, address_: AnvilAccount1Address }]
+        },
         {
           operators: [
             { kind: ChainKind.EVM, address_: AnvilAccount2Address },
@@ -183,7 +194,10 @@ describe("EthereumOutpostBootstrapper.initialBatchOperatorGroups", () => {
       [[], /at least one batch-operator group/],
       [[[]], /group 0 is empty/],
       [[[AnvilAccount1Address], []], /group 1 is empty/],
-      [[["not-an-address"]], /group 0 member 'not-an-address' is not an EVM address/],
+      [
+        [["not-an-address"]],
+        /group 0 member 'not-an-address' is not an EVM address/
+      ],
       [[[ethers.ZeroAddress]], /group 0 contains the zero address/],
       [
         [[AnvilAccount1Address, AnvilAccount1Address.toLowerCase()]],
@@ -191,17 +205,23 @@ describe("EthereumOutpostBootstrapper.initialBatchOperatorGroups", () => {
       ]
     ] as const) {
       expect(() =>
-        EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed([...groups.map(group => [...group])]))
+        EthereumOutpostBootstrapper.initialBatchOperatorGroups(
+          seed([...groups.map(group => [...group])])
+        )
       ).toThrow(reason)
     }
   })
 
   it("rejects a non-positive epoch duration and an out-of-range active slot", () => {
     expect(() =>
-      EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed([[AnvilAccount1Address]], 0, 0))
+      EthereumOutpostBootstrapper.initialBatchOperatorGroups(
+        seed([[AnvilAccount1Address]], 0, 0)
+      )
     ).toThrow(/epochDurationSec must be a positive integer/)
     expect(() =>
-      EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed([[AnvilAccount1Address]], 1))
+      EthereumOutpostBootstrapper.initialBatchOperatorGroups(
+        seed([[AnvilAccount1Address]], 1)
+      )
     ).toThrow(/activeGroupIndex 1 is out of range for 1 group/)
   })
 })
@@ -214,7 +234,9 @@ describe("EthereumOutpostBootstrapper.oppBootstrap", () => {
     )
   })
   beforeEach(() => {
-    deploymentsPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "eth-opp-bootstrap-"))
+    deploymentsPath = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "eth-opp-bootstrap-")
+    )
   })
   afterEach(() => {
     Fs.rmSync(deploymentsPath, { recursive: true, force: true })
@@ -237,13 +259,21 @@ describe("EthereumOutpostBootstrapper.oppBootstrap", () => {
     })
     await expect(
       bootstrapper.oppBootstrap({ window, activeGroupIndex: 0 })
-    ).rejects.toThrow(/outpost-addrs\.json is missing — the Ethereum outpost deploy must precede the roster seed/)
+    ).rejects.toThrow(
+      /outpost-addrs\.json is missing — the Ethereum outpost deploy must precede the roster seed/
+    )
   })
 
   it("validates the seed before touching the chain", async () => {
     Fs.writeFileSync(
-      Path.join(deploymentsPath, EthereumOutpostBootstrapper.OutpostAddressesFile),
-      JSON.stringify({ OutpostManager: AnvilAccount0Address, OPPInbound: AnvilAccount1Address })
+      Path.join(
+        deploymentsPath,
+        EthereumOutpostBootstrapper.OutpostAddressesFile
+      ),
+      JSON.stringify({
+        OutpostManager: AnvilAccount0Address,
+        OPPInbound: AnvilAccount1Address
+      })
     )
     const window: EthereumOutpostInitialRoster = {
       groups: [[AnvilAccount1Address]],
@@ -313,10 +343,26 @@ describe("EthereumOutpostBootstrapper deploy configs", () => {
       // deployOutpost.ts accepts digits only; 1,000 liqETH in wei and 0.01
       // liqETH in depot units.
       maxSyndicationPerTransfer: "1000000000000000000000",
-      yieldDeadband: "10000000"
+      yieldDeadband: "10000000",
+      mockSyndicatedPrincipal: "0"
     })
     expect(ethers.parseEther("1000").toString()).toBe(
       config.maxSyndicationPerTransfer
+    )
+  })
+
+  it("preserves principal above the safe integer range across JSON deployment config", () => {
+    const principal = 9_007_199_254_740_993n,
+      config = EthereumOutpostBootstrapper.outpostDeployConfig(
+        rpcUrl,
+        AnvilAccount0PrivateKey,
+        deploymentsPath,
+        panicAccount,
+        roster,
+        principal
+      )
+    expect(JSON.parse(JSON.stringify(config)).mockSyndicatedPrincipal).toBe(
+      "9007199254740993"
     )
   })
 

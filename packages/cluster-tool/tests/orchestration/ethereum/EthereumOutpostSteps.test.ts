@@ -14,15 +14,21 @@ import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
 /** A batch `OperatorAccount` under an explicit chain account name, with its OWN EM key. */
-const batchOperator = (label: string, account: string, ethereumHdIndex: number) =>
-  fixtureOperatorAccount(label, OperatorType.BATCH, account, ethereumHdIndex)
+const batchOperator = (
+  label: string,
+  account: string,
+  ethereumHdIndex: number
+) => fixtureOperatorAccount(label, OperatorType.BATCH, account, ethereumHdIndex)
 
 /** The depot's epoch duration for the seed cases. */
 const SeedEpochDurationSec = 60
 
 /** A context over the persisted fixture, optionally reshaped for a case. */
 const context = (overrides: Parameters<typeof fixtureConfig>[0] = {}) =>
-  new ClusterBuildContext(fixtureConfig(overrides), getLogger("eth-outpost-test"))
+  new ClusterBuildContext(
+    fixtureConfig(overrides),
+    getLogger("eth-outpost-test")
+  )
 
 /**
  * The address the harness will later generate the operator's EM key for —
@@ -37,7 +43,7 @@ const expectedOperatorAddress = (index: number): string =>
   ).address
 
 describe("Steps.ethereumOutpost.deploy", () => {
-  it("builds an input-less deploy step with a runner", () => {
+  it("defaults a fresh pool to zero booked fixture principal", () => {
     const step = Steps.ethereumOutpost.planDeploy(
       Report.Actor.EthereumOutpost,
       "deploy-ethereum-outpost",
@@ -45,8 +51,22 @@ describe("Steps.ethereumOutpost.deploy", () => {
       {}
     )
     expect(step.actor).toBe(Report.Actor.EthereumOutpost)
-    expect(step.input).toBeNull()
+    expect(step.input).toEqual({
+      kind: "EthereumOutpostSteps.DeployInput",
+      mockSyndicatedPrincipal: 0n
+    })
     expect(typeof step.runner).toBe("function")
+  })
+
+  it("carries the planned fixture principal into deployment", () => {
+    const step = Steps.ethereumOutpost.planDeploy(
+      Report.Actor.EthereumOutpost,
+      "deploy",
+      "deploy",
+      {},
+      110_000_000_000n
+    )
+    expect(step.input.mockSyndicatedPrincipal).toBe(110_000_000_000n)
   })
 })
 
@@ -207,7 +227,11 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
       SeedEpochDurationSec
     )
     expect(seed.window.groups).toEqual([
-      [operators[1].ethereum.address, operators[0].ethereum.address, operators[2].ethereum.address]
+      [
+        operators[1].ethereum.address,
+        operators[0].ethereum.address,
+        operators[2].ethereum.address
+      ]
     ])
     // A rotated depot cursor rides through untouched.
     expect(
@@ -233,7 +257,10 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
   })
 
   it("throws a DISTINCT error when a scheduled operator carries no Ethereum key", () => {
-    const keyless = { ...batchOperator("batchop.a", "wireno.aaaaa", 1), ethereum: undefined }
+    const keyless = {
+      ...batchOperator("batchop.a", "wireno.aaaaa", 1),
+      ethereum: undefined
+    }
     expect(() =>
       EthereumOutpostSteps.resolveOppBootstrapSeed(
         [keyless],
