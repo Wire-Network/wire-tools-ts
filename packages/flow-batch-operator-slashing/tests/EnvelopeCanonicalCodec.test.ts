@@ -7,6 +7,7 @@ import {
   parseChainTip,
   type TaggedEnvelopeInput
 } from "@wireio/test-flow-batch-operator-slashing/EnvelopeCanonicalCodec.js"
+import { SlashingScenarioConstants } from "@wireio/test-flow-batch-operator-slashing/SlashingScenarioConstants.js"
 
 /** keccak-timestamp shared by every pinned vector (matches `GOLDEN_TS_MS` in the C++ suite). */
 const GOLDEN_TS_MS = 1_775_612_516_983n
@@ -124,13 +125,21 @@ describe("EnvelopeCanonicalCodec", () => {
       epochIndex: 7,
       epochEnvelopeIndex: 1,
       epochTimestampMs: GOLDEN_TS_MS,
-      payloadVersion: 0,
+      payloadVersion: SlashingScenarioConstants.EnvelopeVersion,
       tag: "canonical",
       previousMessageId: new Uint8Array(0),
       previousEnvelopeHash: new Uint8Array(0)
     }
     const encode = (over: Partial<TaggedEnvelopeInput>): Envelope =>
       Envelope.fromBinary(encodeTaggedEnvelope({ ...baseInput, ...over }))
+
+    it.each([
+      SlashingScenarioConstants.ConsensusEnvelopeTag,
+      ...SlashingScenarioConstants.EnvelopeTags
+    ])("emits supported V1 for the live scenario tag %s", tag => {
+      const env = encode({ tag })
+      expect(env.messages[0].payload.version).toBe(1)
+    })
 
     it("carries previous_envelope_hash from the inbound envelope tip", () => {
       // Regression guard for the [P1] fix: the envelope chain was previously left empty, so
@@ -148,7 +157,7 @@ describe("EnvelopeCanonicalCodec", () => {
       const previousMessageId = tipWithSequence(4n)
       const env = encode({ previousMessageId })
       const derived = deriveSemanticHeader({
-        version: 0,
+        version: baseInput.payloadVersion,
         attestations: [
           { type: AttestationType.UNSPECIFIED, data: utf8("canonical") }
         ],
