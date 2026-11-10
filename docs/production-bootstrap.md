@@ -122,7 +122,9 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 - **RAM** — the `sysio.*` contracts bill their rows to the `sysio` pool, so an account needs only the
   `newaccount_ram` (1144 bytes) its creation transfers from `sysio`. The exception is rows any account
   may create for free: an issuer's own `sysio.bond` `requests` / `escrows` rows stay issuer-paid (the
-  depot's syndication requests are issued by privileged `sysio.synd`, which bills `sysio`).
+  depot's syndication requests are issued by privileged `sysio.synd`, which bills `sysio`). Bond rows
+  use the request issuer's payer too: OPP underwriters need no extra bond-row RAM because their
+  issuer is privileged, independently of the underwriter account's own privilege.
 - **`sysio.andon`** is the one account granted RAM: its native `pull` / `clear` permissions and action
   links are billed to it by the chain, beyond its code + abi gift. Stage 10 raises its limit by `10400`
   bytes with `sysio::setacctram`.
@@ -514,8 +516,9 @@ drops every `SYNDICATE_LIQ` of the pair).
       each of LIQSOL to the operator's ED key and LIQETH to its EM key, liquid in its linked account — before `importdone`. Because those
       keys exist only after operator provisioning, the import, its verify and the custody backing then run after
       Stage 12's provisioning instead, still inside the epoch-0 window. The option also runs the
-      `batch_operator_plugin` underwriter role on each operator's node; its `sysio.bond` `bonds` rows bill
-      the `sysio` pool, so the operator needs no RAM. Only the mock import is a dev/test setup;
+      `batch_operator_plugin` underwriter role on each operator's node. For these OPP requests the
+      issuer is privileged `sysio.synd`, so `bonds` rows bill the `sysio` pool and the operator needs
+      no extra bond-row RAM grant. Only the mock import is a dev/test setup;
       the underwriting role also works with real liquid shadow balances.
     - With either flag, or a launch-data import against local outposts, outpost custody is then funded (Solana
       pool ATA, Ethereum `SyndicationPool`) to back all outstanding shadow.
