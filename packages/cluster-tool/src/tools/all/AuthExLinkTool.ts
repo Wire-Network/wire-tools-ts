@@ -60,13 +60,8 @@ export namespace AuthExLinkTool {
     hashBytes.forEach((byte, index) => {
       mapped[index] = 33 + (byte % 94)
     })
-    const hexPayload = ethers.toUtf8Bytes(ethers.hexlify(mapped).slice(2)),
-      signature64 = privateKey.signMessage(Bytes.from(hexPayload)),
-      publicKeyBytes = privateKey.toPublic().data.array,
-      signature96 = new Uint8Array(96)
-    signature96.set(publicKeyBytes, 0)
-    signature96.set(signature64.data.array, 32)
-    return new Signature(KeyType.ED, Bytes.from(signature96))
+    const hexPayload = ethers.toUtf8Bytes(ethers.hexlify(mapped).slice(2))
+    return privateKey.signMessage(Bytes.from(hexPayload))
   }
 
   /**

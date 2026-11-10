@@ -855,13 +855,17 @@ describe("NodeConfig", () => {
       expect(genesis.initial_finalizer_key).toBeUndefined()
     })
 
-    it("does not emit the removed base_per_transaction_net_usage parameter", () => {
+    it("does not emit the removed net usage parameters", () => {
       const genesis = JSON.parse(
         ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
       )
       expect(genesis.initial_configuration.net_usage_leeway).toBe(500)
-      expect(genesis.initial_configuration).not.toHaveProperty(
-        "base_per_transaction_net_usage"
+      ;[
+        "base_per_transaction_net_usage",
+        "context_free_discount_net_usage_num",
+        "context_free_discount_net_usage_den"
+      ].forEach(parameter =>
+        expect(genesis.initial_configuration).not.toHaveProperty(parameter)
       )
     })
   })

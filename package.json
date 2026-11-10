@@ -21,7 +21,7 @@
     "@types/node": "25.5.0",
     "@types/proper-lockfile": "^4.1.4",
     "@wireio/opp-typescript-models": "^1.0.56",
-    "@wireio/sdk-core": "^1.0.109",
+    "@wireio/sdk-core": "^1.0.110",
     "@wireio/shared": "^1.0.109",
     "@wireio/shared-node": "^1.0.109",
     "antlr-ng": "1.0.10",

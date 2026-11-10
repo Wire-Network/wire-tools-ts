@@ -327,22 +327,18 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         "the full principal reaches the linked holder and underwriting capital is returned",
         async ctx => {
           const accounts = UnderwritingSteps.fundedOperatorAccounts(ctx),
-            before = ctx.outputs.assert(Constants.EthereumBefore)
+            before = ctx.outputs.assert(Constants.EthereumBefore),
+            principal = before.holder + plan.amount
+          // Waits on the holder's credit, not the envelope row: the operators' housekeeping
+          // prunes a released envelope once its approval is acknowledged.
           await pollUntil(
-            "Ethereum envelope fully released",
-            async () => {
-              const row = await WireSyndicationTool.readEnvelope(
+            "Ethereum principal reaches the linked holder",
+            async () =>
+              (await WireSyndicationTool.readLiqBalance(
                 ctx,
-                chain,
-                token,
-                ctx.outputs.assert(plan.firstEpoch)
-              )
-              return (
-                row != null &&
-                BigInt(row.released) ===
-                  BigInt(row.synd_total) + BigInt(row.yield_total)
-              )
-            },
+                Constants.EthereumUser,
+                token
+              )) >= principal,
             UnderwritingSteps.DaemonEffectBudgetMs,
             SyndicationScenario.PollMs
           )
@@ -357,24 +353,13 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
               Constants.EthereumUser,
               token
             ),
-            before.holder + plan.amount,
-            "the holder must receive its entire LIQETH principal"
+            principal,
+            "the holder must hold exactly its LIQETH principal"
           )
           Assert.equal(
             balances.reduce((sum, balance) => sum + balance, 0n),
             before.operators,
             "all operator LIQETH underwriting capital must be returned"
-          )
-          const envelope = await WireSyndicationTool.readEnvelope(
-            ctx,
-            chain,
-            token,
-            ctx.outputs.assert(plan.firstEpoch)
-          )
-          Assert.equal(BigInt(envelope.synd_total), plan.amount)
-          Assert.equal(
-            BigInt(envelope.released),
-            BigInt(envelope.synd_total) + BigInt(envelope.yield_total)
           )
           const outstanding = await WireSyndicationTool.readOutstanding(
             ctx,
