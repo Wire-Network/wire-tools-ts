@@ -105,12 +105,12 @@ describe("ApiNodeStartScriptRenderer", () => {
    * stderr — `execFileSync` folds a non-zero exit into a throw whose payload
    * carries the captured streams.
    */
-  function captureFailure(scriptFile: string, emptyPath: string): string {
+  function captureFailure(scriptFile: string, noNodeopPath: string): string {
     return Either.try(() =>
       execFileSync(bashPath, [scriptFile], {
         encoding: "utf8",
         stdio: "pipe",
-        env: { PATH: emptyPath }
+        env: { PATH: noNodeopPath }
       })
     ).match({
       // execFileSync throws an Error CARRYING the captured streams.
@@ -272,19 +272,26 @@ describe("ApiNodeStartScriptRenderer", () => {
     Fs.writeFileSync(scriptFile, render())
     // bash is invoked by ABSOLUTE path so the empty PATH below cannot make this
     // fail as an ENOENT on the interpreter — the only thing left to fail is the
-    // script's own guard. The empty dir also removes the `command -v nodeop`
-    // fallback, so all three resolution branches genuinely miss.
-    const emptyPath = Path.join(dir, "empty-path")
-    Fs.mkdirSync(emptyPath, { recursive: true })
+    // script's own guard. The dir holds only `dirname`, which the script's first
+    // line needs (bash >= 5.3 refuses the `cd ""` its absence would produce), so
+    // the `command -v nodeop` fallback and all three resolution branches miss.
+    const noNodeopPath = Path.join(dir, "no-nodeop-path")
+    Fs.mkdirSync(noNodeopPath, { recursive: true })
+    Fs.symlinkSync(
+      execFileSync("sh", ["-c", "command -v dirname"], {
+        encoding: "utf8"
+      }).trim(),
+      Path.join(noNodeopPath, "dirname")
+    )
     expect(() =>
       execFileSync(bashPath, [scriptFile], {
         encoding: "utf8",
         stdio: "pipe",
-        env: { PATH: emptyPath }
+        env: { PATH: noNodeopPath }
       })
     ).toThrow()
 
-    const failure = captureFailure(scriptFile, emptyPath)
+    const failure = captureFailure(scriptFile, noNodeopPath)
     expect(failure).toContain(StartScriptVariable.WIRE_PREFIX_PATH)
     expect(failure).toContain("WIRE_BUILD_PATH")
   })
