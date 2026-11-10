@@ -705,7 +705,7 @@ export namespace ClusterBuildDefaults {
     ClusterBuildPhase.create<C>(
       prerequisites,
       "OPPConfig",
-      "Configure sysio.epoch + sysio.opreg"
+      "Configure sysio.epoch"
     ).push(
       Steps.contracts.sysio.epoch.planSetconfig<C>(
         Actor.Sysio,
@@ -713,20 +713,13 @@ export namespace ClusterBuildDefaults {
         "set the global epoch config",
         {},
         epochConfig(config)
-      ),
-      Steps.contracts.sysio.opreg.planSetconfig<C>(
-        Actor.Sysio,
-        "configure-opreg",
-        "set the operator-registry config",
-        {},
-        operatorRegistryConfig(config)
       )
     )
     // The opreg half of genesis-producer registration — deferred to here because sysio.opreg is
-    // only deployed by `OPPContracts` and configured by `OPPConfig` above. Bootstrapped by fiat:
-    // genesis producers post no collateral, and `meets_role_min` exempts a bootstrapped operator
-    // from `req_prod_collat` (by default the launch minimum a non-bootstrapped producer must
-    // bond). They are also exempt from `termcheck`, which is what a genesis backstop is for.
+    // only deployed by `OPPContracts` above. Bootstrapped operators use the default configuration
+    // until the registry rows exist and `OperatorRegistryConfig` installs collateral requirements.
+    // Bootstrapped producers post no collateral and are exempt from the launch minima
+    // and termcheck. Non-bootstrapped producers must meet both configured shadow-token minima.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "GenesisProducerOperators",
@@ -1114,6 +1107,36 @@ export namespace ClusterBuildDefaults {
         "seed-registry",
         "register chains, tokens, chain-tokens",
         {}
+      ),
+      // Each depot shadow binding is a reported write, separate from its outpost origin.
+      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([, tokenCodename]) =>
+        Steps.contracts.sysio.tokens.planRegctok<C>(
+          Actor.Sysio,
+          `regctok-WIRE-${tokenCodename}`,
+          `register depot collateral binding for ${tokenCodename}`,
+          {},
+          {
+            chain_code: SlugName.toString(Constants.WireChainCode),
+            token_code: tokenCodename,
+            contract_addr: "",
+            is_native: false
+          }
+        )
+      )
+    )
+    // Collateral requirements reference registry rows and bindings, so configure them only
+    // after seeding. Genesis producers are bootstrapped and do not require collateral.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "OperatorRegistryConfig",
+      "Configure sysio.opreg collateral requirements"
+    ).push(
+      Steps.contracts.sysio.opreg.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-opreg",
+        "set the operator-registry config",
+        {},
+        operatorRegistryConfig(config)
       )
     )
     // The shadow-liq system, in the order sysio.liq's README gives a deployment:
