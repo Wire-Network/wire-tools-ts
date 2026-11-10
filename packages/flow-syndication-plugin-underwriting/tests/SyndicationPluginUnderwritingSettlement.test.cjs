@@ -701,8 +701,9 @@ test("Ethereum setup verifies funded capital and refuses a one-unit custody shor
   await Assert.rejects(runner(ctx, all, "ethereum-underwriting-funded"))
 })
 
-for (const short of [0n, 1n]) {
-  test(`Ethereum settlement verifies actual wallet principal (${short} units short)`, async () => {
+// The envelope may already be pruned by then, so settlement waits on the holder's credit.
+for (const fault of ["none", "over-credit", "capital"]) {
+  test(`Ethereum settlement waits for the holder's principal without reading the envelope: ${fault}`, async () => {
     const { ctx, all } = planned(),
       plan = Constants.EthereumPlan,
       capital = 100_000_000_000n,
@@ -712,14 +713,21 @@ for (const short of [0n, 1n]) {
       operators: capital * BigInt(operatorCount)
     })
     ctx.outputs.set(plan.firstEpoch, 2)
+    let holderReads = 0
+    // The first holder read precedes the release; every later one follows it.
     mock.method(WireSyndicationTool, "readLiqBalance", async (_ctx, account) =>
-      account === Constants.EthereumUser ? plan.amount - short : capital
+      account === Constants.EthereumUser
+        ? holderReads++ === 0
+          ? 0n
+          : plan.amount + (fault === "over-credit" ? 1n : 0n)
+        : capital -
+          (fault === "capital" && account === operatorAccount(2) ? 1n : 0n)
     )
-    mock.method(WireSyndicationTool, "readEnvelope", async () => ({
-      synd_total: plan.amount.toString(),
-      yield_total: "0",
-      released: plan.amount.toString()
-    }))
+    const envelope = mock.method(
+      WireSyndicationTool,
+      "readEnvelope",
+      async () => undefined
+    )
     mock.method(WireSyndicationTool, "readOutstanding", async () => outstanding)
     mock.method(WireSyndicationTool, "readMismatches", async () => [])
     mock.method(WireSyndicationTool, "readCord", async () => undefined)
@@ -733,11 +741,16 @@ for (const short of [0n, 1n]) {
       "readSyndicatedPrincipal",
       async () => outstanding
     )
-    if (short === 0n) await runner(ctx, all, "ethereum-settled")()
+    const run = runner(ctx, all, "ethereum-settled")
+    if (fault === "none") await run()
     else
       await Assert.rejects(
-        runner(ctx, all, "ethereum-settled"),
-        /entire LIQETH principal/
+        run,
+        fault === "over-credit"
+          ? /exactly its LIQETH principal/
+          : /operator LIQETH underwriting capital/
       )
+    Assert.ok(holderReads >= 2, "the step must poll the holder's balance")
+    Assert.equal(envelope.mock.callCount(), 0)
   })
 }
