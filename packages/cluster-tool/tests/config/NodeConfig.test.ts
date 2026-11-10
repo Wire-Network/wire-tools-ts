@@ -868,6 +868,16 @@ describe("NodeConfig", () => {
         expect(genesis.initial_configuration).not.toHaveProperty(parameter)
       )
     })
+
+    it("renders the notify CPU stipend", () => {
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
+      expect(genesis.initial_configuration.notify_cpu_stipend).toBe(
+        Constants.NOTIFY_CPU_STIPEND
+      )
+      expect(Constants.NOTIFY_CPU_STIPEND).toBe(100)
+    })
   })
 })
 

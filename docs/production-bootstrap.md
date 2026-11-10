@@ -606,6 +606,7 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
 | `net_usage_leeway` | `500` | `max_inline_action_depth` | `10` |
 | `target_block_cpu_usage_pct` | `10` | `max_authority_depth` | `10` |
 | `max_transaction_cpu_usage` | `375000` | `max_block_cpu_usage` | `400000` |
+| `notify_cpu_stipend` | `100` | | |
 
 ### nodeop arguments & topology
 - Extra args (every node, every phase — the ini is read by both launch forms, so only phase-independent

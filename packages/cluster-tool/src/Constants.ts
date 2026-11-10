@@ -253,6 +253,12 @@ export namespace Constants {
   export const MAX_BLOCK_CPU_USAGE = 400_000
   /** Maximum transaction CPU usage (microseconds). */
   export const MAX_TRANSACTION_CPU_USAGE = 375_000
+  /**
+   * Genesis `notify_cpu_stipend` (microseconds): the CPU of a notified contract
+   * that whoever pays for the notifying action covers. Matches wire-sysio's
+   * default; governance changes it through `setparams`.
+   */
+  export const NOTIFY_CPU_STIPEND = 100
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
   /**

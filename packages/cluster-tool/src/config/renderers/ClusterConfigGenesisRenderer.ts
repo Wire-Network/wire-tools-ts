@@ -40,7 +40,8 @@ export class ClusterConfigGenesisRenderer implements Renderer {
           max_transaction_delay: 3_888_000,
           max_inline_action_size: 524_287,
           max_inline_action_depth: 10,
-          max_authority_depth: 10
+          max_authority_depth: 10,
+          notify_cpu_stipend: Constants.NOTIFY_CPU_STIPEND
         }
       },
       null,
