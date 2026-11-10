@@ -34,9 +34,9 @@
   "dependencies": {
     "@wireio/debugging-client-shared": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/opp-typescript-models": "^1.0.57",
     "@wireio/sdk-core": "^1.0.110",
-    "@wireio/shared": "^1.0.109",
+    "@wireio/shared": "^1.0.110",
     "get-port": "^7.2.0",
     "lodash": "^4.17.21",
     "ts-pattern": "^5.9.0",
