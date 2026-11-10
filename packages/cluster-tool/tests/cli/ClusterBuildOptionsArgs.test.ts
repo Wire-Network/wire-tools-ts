@@ -12,7 +12,10 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
-import { QueryEngineConfigProvider } from "@wireio/cluster-tool/config"
+import {
+  ClusterConfigProvider,
+  QueryEngineConfigProvider
+} from "@wireio/cluster-tool/config"
 import {
   applyClusterBuildOptionsArgs,
   AWSClusterNodeConfigFlag,
@@ -685,7 +688,9 @@ describe("register → parse round-trip", () => {
 
     const options = toClusterBuildOptions(argv)
     expect(options.clusterPath).toBe(Path.resolve(RequiredPaths.clusterPath))
-    expect(options.epochDurationSec).toBe(60)
+    expect(options.epochDurationSec).toBe(
+      ClusterConfigProvider.DefaultEpochDurationSec
+    )
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
     expect(options.enableMockLiqPools).toBe(false)

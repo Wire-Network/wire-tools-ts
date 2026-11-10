@@ -685,13 +685,8 @@ export namespace SystemContractSteps {
   }
 
   /**
-   * `sysio.system::setacctram` — set an account's native RAM limit directly.
-   *
-   * The bypass around the ROA/RAM market, and the only route available to a GENESIS producer: it
-   * is created with `newaccount` rather than sponsored through `roa::newuser`, so it holds no
-   * RAM allocation, and `regfinkey` bills the `finalizers` + `finkeys` rows to the producer
-   * itself. Without this the registration aborts with "Account using more than allotted RAM
-   * usage" and the producer can never become schedulable.
+   * `sysio.system::setacctram` — set an account's native RAM limit directly, outside the
+   * ROA/RAM market. The limit is ABSOLUTE; `WireClient.grantRam` is the additive form.
    *
    * Governance-signed (`sysio@active`).
    */

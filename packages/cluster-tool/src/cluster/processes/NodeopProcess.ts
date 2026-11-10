@@ -284,9 +284,9 @@ export class NodeopProcess extends ManagedProcess {
     // no slot for, silently, with every assertion satisfied.
     if (node.producers.length > 0) {
       // Matched on EITHER identifier, because `producers` is not uniformly one of them: a planned
-      // producer node carries labels (and a producer never calls `roa::newuser`, so its label IS
-      // its account), while the bios node carries the on-chain genesis producer name `sysio` under
-      // the operator labelled `node_bios`. Requiring labels alone rejects the bios node outright.
+      // producer node carries labels (a producer's label IS its account), while the bios node
+      // carries the on-chain genesis producer name `sysio` under the operator labelled
+      // `node_bios`. Requiring labels alone rejects the bios node outright.
       const { operators = [] } = options,
         unmatched = node.producers.filter(
           producer =>

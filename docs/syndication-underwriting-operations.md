@@ -11,8 +11,8 @@ daemon count and must remain zero.
 
 A local `create` (no `--external-outpost-config`) forces
 `--enable-batch-operator-underwriting` on. Against external outposts, add the flag to
-the `create` command. Either way, it grants each batch operator RAM for bond rows and
-adds the following to its runtime arguments, including the generated `start.sh`:
+the `create` command. Either way, it adds the following to each batch operator's
+runtime arguments, including the generated `start.sh`:
 
 ```text
 --batch-underwriter-account <that operator's WIRE account>
@@ -80,11 +80,9 @@ means relay-only. Inspect the actual deployed `start.sh`, service argv and
 logs for underwriting startup or skip messages. An old package or startup script
 does not acquire the role merely because newer source has been deployed elsewhere.
 
-1. Give each intended underwriting account enough RAM for bond rows and liquid
-   `sysio.liq` inventory. Bootstrap grants an additional node-owner RAM policy
-   with `ram_weight: "25.0000 SYS"`, zero NET/CPU weights, `time_block: 0` and
-   `network_gen: 0` via `sysio.roa::addpolicy`, signed by the policy issuer. Use
-   the deployment's resource issuer and confirm its available allocation.
+1. Give each intended underwriting account liquid `sysio.liq` inventory. It needs
+   no RAM or resource policy: `sysio.bond` bills its `bonds` rows to the `sysio`
+   pool, and CPU/NET are billed to the contract.
 2. Add these settings to each intended operator's deployed `config.ini`, or the
    equivalent flags to its service command:
 
@@ -120,7 +118,7 @@ does not acquire the role merely because newer source has been deployed elsewher
    then actual wallet credit after linking a parked recipient.
 
 If an enabled, funded operator still waits, inspect its logs for a pulled Andon
-cord, insufficient RAM, cap exhaustion, signer failure, or an unreadable/mismatched
+cord, cap exhaustion, signer failure, or an unreadable/mismatched
 outpost envelope digest. Verification uses the outpost's retained record:
 Solana keeps only the last 10 envelope records, so an old request may already be
 unverifiable by the time configuration is repaired. Missing records require

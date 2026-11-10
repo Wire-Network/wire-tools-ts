@@ -68,7 +68,7 @@ describe("scripts/scan-key-material.mjs", () => {
         operators: [
           {
             label: "batchop.a",
-            account: "wireno.x3f9k",
+            account: "acct.x3f9k",
             wire: {
               publicKey: "PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV",
               awsSecretId: "/wire/test/batchop.a/K1"

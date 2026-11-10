@@ -85,4 +85,54 @@ export namespace AccountSteps {
       input.publicKey
     )
   }
+
+  /** Input for {@link planRamGrant}. */
+  export interface RamGrantInput extends StepInput {
+    readonly kind: "AccountSteps.RamGrantInput"
+    /** The account whose RAM limit is raised. */
+    readonly account: string
+    /** Bytes added to the account's current RAM limit. */
+    readonly ramBytes: number
+  }
+
+  /**
+   * Raise an account's RAM limit by `ramBytes`, as `sysio` (`sysio::setacctram`)
+   * — for a system contract account whose own native permissions and action
+   * links outgrow its code + abi allowance (`sysio.andon`).
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param account - The account whose RAM limit is raised.
+   * @param ramBytes - Bytes added to the account's current RAM limit.
+   * @returns The definition step.
+   */
+  export function planRamGrant<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    ramBytes: number
+  ): ClusterBuildStep<C, RamGrantInput> {
+    return ClusterBuildStep.create<C, RamGrantInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "AccountSteps.RamGrantInput", account, ramBytes },
+      runRamGrant
+    )
+  }
+
+  /** Named runner — `WireClient.grantRam`. */
+  export async function runRamGrant<C extends ClusterBuildContext>(
+    ctx: C,
+    input: RamGrantInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire.grantRam(input.account, input.ramBytes)
+  }
 }

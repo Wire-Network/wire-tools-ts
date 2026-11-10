@@ -2,7 +2,6 @@ import { Keypair } from "@solana/web3.js"
 import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { Wallet } from "ethers"
-import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationUserSteps } from "@wireio/cluster-tool/orchestration/steps"
 import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
@@ -75,26 +74,6 @@ describe("SyndicationUserSteps Ethereum link", () => {
     ).rejects.toThrow()
     expect(readWallet).not.toHaveBeenCalled()
     expect(link).not.toHaveBeenCalled()
-  })
-})
-
-describe("SyndicationUserSteps.nodeOwnerPolicy", () => {
-  it("builds the node owner's addpolicy with the given weights", () => {
-    expect(
-      SyndicationUserSteps.nodeOwnerPolicy("op", {
-        net: "0.0000 SYS",
-        cpu: "1.0000 SYS",
-        ram: "2.0000 SYS"
-      })
-    ).toEqual({
-      owner: "op",
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "0.0000 SYS",
-      cpu_weight: "1.0000 SYS",
-      ram_weight: "2.0000 SYS",
-      time_block: 0,
-      network_gen: 0
-    })
   })
 })
 

@@ -6,18 +6,13 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
-import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
 import { formatWireAsset } from "../tools/wire/WireUserTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
@@ -31,7 +26,7 @@ import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps, SyndicationUserSteps } from "./steps/index.js"
+import { Steps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
 const log = getLogger(__filename)
@@ -57,11 +52,11 @@ const WireSupply = formatWireAsset(Constants.WIRE_SUPPLY)
 const WireSymbol = "9,WIRE"
 /**
  * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
- * and `clear`, which move no funds; its resource policy pays for them.
+ * and `clear`, which move no funds and are billed to `sysio.andon`.
  */
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
-const AndonPermissionRamWeight = "0.0100 SYS"
+const AndonPermissionRamBytes = 10_400
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -234,13 +229,6 @@ export namespace ClusterBuildDefaults {
     launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
-      // Seeded by `ClusterBuild.create` from
-      // `ClusterConfigProvider.resolveWithBiosKeys` — its `wire` key IS the
-      // bootstrap node owner's account authority.
-      nodeOwner = cluster.context.keyStore.assertOperator(
-        Constants.BOOTSTRAP_NODE_OWNER
-      ),
-      bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
@@ -299,19 +287,6 @@ export namespace ClusterBuildDefaults {
         config.externalOutposts
       )
     }
-    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
-      {
-        owner: Constants.BOOTSTRAP_NODE_OWNER,
-        tier: NodeOwnerTier.T1,
-        eth_pub_key: bootstrapNodeOwnerEth.publicKey,
-        // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
-        // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
-        // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
-        // this key can satisfy the account's `active` authority BY ITSELF —
-        // i.e. it must be exactly the `newnameduser.pubkey` below.
-        wire_pub_key: nodeOwner.wire.publicKey,
-        eth_address: bootstrapNodeOwnerEth.nativeAddress
-      }
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -854,68 +829,6 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── the bootstrap node owner (issues every subsequent resource policy) ──
-    // Mirrors the OPP NFT-claim depot path (`newnameduser` + `nodeownreg`, the
-    // SAME actions flow-node-owner-nft exercises) rather than the admin
-    // `forcereg` shortcut. Registering at tier 1 allocates the ROA reserve
-    // that `WireUserTool.provisionWireUser` (and every `addpolicy` issued as
-    // `Constants.BOOTSTRAP_NODE_OWNER`) draws from.
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BootstrapNodeOwner",
-      "Create + register the bootstrap node owner"
-    ).push(
-      Steps.contracts.sysio.roa.planNewnameduser<C>(
-        Actor.Sysio,
-        "create-node-owner",
-        `create ${Constants.BOOTSTRAP_NODE_OWNER} with pool-gifted RAM`,
-        {},
-        {
-          account: Constants.BOOTSTRAP_NODE_OWNER,
-          // The account AUTHORITY — `newnameduser` sets this as the new
-          // account's owner/active key, and every subsequent action signed as
-          // BOOTSTRAP_NODE_OWNER (`roa::newuser` for every operator account,
-          // `roa::addpolicy`) is authorized by it. Its private half is imported
-          // into the kiod wallet by `KeySteps.runCreateWallet`.
-          pubkey: nodeOwner.wire.publicKey,
-          tier: NodeOwnerTier.T1
-        }
-      ),
-      Steps.contracts.sysio.roa.planNodeownreg<C>(
-        Actor.Sysio,
-        "register-node-owner",
-        `register ${Constants.BOOTSTRAP_NODE_OWNER} at tier 1`,
-        {},
-        bootstrapNodeOwnerRegistration
-      ),
-      // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
-      // silently-unregistered owner would otherwise surface much later as a
-      // cryptic "Only Node Owners can issue policies" on the first addpolicy.
-      verifyStep<C>(
-        Actor.Sysio,
-        "verify-node-owner",
-        "the nodeowners row exists (else surface the audit rejection)",
-        async ctx => {
-          const registered = await readNodeOwner(
-            ctx.wire,
-            Constants.BOOTSTRAP_NODE_OWNER
-          )
-          if (registered == null) {
-            const audit = await readNodeOwnerReg(
-              ctx.wire,
-              Constants.BOOTSTRAP_NODE_OWNER
-            )
-            Assert.fail(
-              `bootstrap node owner ${Constants.BOOTSTRAP_NODE_OWNER} was not registered by nodeownreg` +
-                (audit == null
-                  ? " (no audit row found)"
-                  : ` (rejected: status=${audit.status}, reason=${audit.reason})`)
-            )
-          }
-        }
-      )
-    )
-
     // ── the depot's emergency stop ──
     // Provision the panic delegate before referencing it in native authorities.
     // Arm both action links before traffic; privileged sysio.synd needs no registry.
@@ -938,20 +851,13 @@ export namespace ClusterBuildDefaults {
       "EmergencyStop",
       "Arm sysio.andon with native pull and clear permissions"
     ).push(
-      SyndicationUserSteps.planResourcePolicy<C>(
+      Steps.account.planRamGrant<C>(
         Actor.Sysio,
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        // This policy adds permission RAM only; it allocates no CPU or network weight.
-        SyndicationUserSteps.nodeOwnerPolicy(
-          SysioContractAccount[SysioContractName.andon],
-          {
-            net: Constants.NO_RESOURCE_WEIGHT,
-            cpu: Constants.NO_RESOURCE_WEIGHT,
-            ram: AndonPermissionRamWeight
-          }
-        )
+        SysioContractAccount[SysioContractName.andon],
+        AndonPermissionRamBytes
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
@@ -1291,14 +1197,6 @@ export namespace ClusterBuildDefaults {
       )
     }
 
-    if (config.batchOperatorUnderwriting != null)
-      Steps.registry.planBatchOperatorUnderwritingResources<C>(
-        postContractDeployment,
-        "BatchOperatorUnderwritingResources",
-        "Grant each underwriting batch operator RAM for its sysio.bond rows",
-        {},
-        batchOperators
-      )
     if (underwritingImport)
       planMockImportAndBacking<C>(
         postContractDeployment,

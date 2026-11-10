@@ -19,7 +19,7 @@
       }
     },
     {
-      "accountName": "wireno.na1ct",
+      "accountName": "batchop.a",
       "type": "BATCH",
       "keys": {
         "wire": {
@@ -39,7 +39,7 @@
       }
     },
     {
-      "accountName": "wireno.ppjmp",
+      "accountName": "batchop.b",
       "type": "BATCH",
       "keys": {
         "wire": {
@@ -59,7 +59,7 @@
       }
     },
     {
-      "accountName": "wireno.wanbf",
+      "accountName": "batchop.c",
       "type": "BATCH",
       "keys": {
         "wire": {
@@ -83,13 +83,13 @@
     "activeGroupIndex": 0,
     "groups": [
       [
-        "wireno.na1ct"
+        "batchop.a"
       ],
       [
-        "wireno.wanbf"
+        "batchop.c"
       ],
       [
-        "wireno.ppjmp"
+        "batchop.b"
       ]
     ]
   }

@@ -1,5 +1,5 @@
 import Assert from "node:assert"
-import { Either } from "@3fv/prelude-ts"
+import { asOption, Either } from "@3fv/prelude-ts"
 import { ethers } from "ethers"
 import { range, uniq } from "lodash"
 import { match } from "ts-pattern"
@@ -200,22 +200,17 @@ export namespace KeySteps {
       // constants. Under SSM `resolveWithBiosKeys` GENERATES these, and
       // `genesis.initial_key` carries the generated public half — so importing
       // `DEV_K1_PRIVATE_KEY` here left the wallet unable to sign as `sysio` for
-      // every bootstrap action (setcode, feature activation, setprodkeys) or as
-      // the node owner for `roa::newuser`. Under KEY/KIOD the seeded values ARE
-      // the dev keys, so this is byte-identical there.
-      genesisKeys = [NodeConfig.BiosName, Constants.BOOTSTRAP_NODE_OWNER]
-        .map(label => ctx.keyStore.operator(label))
-        .filter(identity => identity != null)
-        .flatMap(identity =>
+      // every bootstrap action (setcode, feature activation, setprodkeys).
+      // Under KEY/KIOD the seeded values ARE the dev keys, so this is
+      // byte-identical there.
+      genesisKeys = asOption(ctx.keyStore.operator(NodeConfig.BiosName))
+        .map(identity =>
           [identity.wire?.privateKey, identity.wireFinalizer?.privateKey].filter(
             isNotEmpty
           )
         )
-    // DEDUPED: `kiod` rejects a re-import with `key_exist_exception`, and the
-    // genesis identities legitimately SHARE a key under KEY/KIOD —
-    // `resolveWithBiosKeys` hands back the same dev pair for both the bios node
-    // and the bootstrap node owner. Under SSM they are distinct generated keys,
-    // so the set is a no-op there.
+        .getOrElse([])
+    // DEDUPED: `kiod` rejects a re-import with `key_exist_exception`.
     //
     // Each batch/underwriter operator's UNIQUE wire key is imported by its own
     // materialize step.
@@ -233,7 +228,7 @@ export namespace KeySteps {
    * created, and deliberately NOT at publication time: a producer node's keys
    * are imported into the kiod wallet and rendered into its `config.ini` right
    * after generation, and an operator's identity sets its ON-CHAIN authority
-   * (`roa::newuser`) and both authex links, all long before its publish step
+   * (`newaccount`) and both authex links, all long before its publish step
    * runs. Adopting at publish time would leave SSM holding key B while the
    * wallet, the chain authority, both links and the emitted external config all
    * held key A — silently, and only on the SECOND create in an account.
@@ -536,9 +531,8 @@ export namespace KeySteps {
   /**
    * Whether the bootstrap's own publish phases cover `label` — true for every
    * identity {@link signatureProviderKeyPublications} enumerates from the
-   * config (the genesis identity, the bootstrap node owner, every genesis
-   * producer account (under its publication label), the bootstrapped batch
-   * operators and underwriters). A FLOW-provisioned operator is never in
+   * config (the genesis identity, every genesis producer account (under its
+   * publication label), the bootstrapped batch operators and underwriters). A FLOW-provisioned operator is never in
    * that set, so its provisioning phase publishes its keys itself; the two
    * mechanisms therefore never plan the same parameter twice.
    *
@@ -558,7 +552,7 @@ export namespace KeySteps {
   /**
    * Enumerate every generated signing key to publish for an SSM cluster —
    * plan-time fan-out over {@link SignatureProviderKeyIdentity} rows: the
-   * genesis identity (bios K1/BLS) and the bootstrap node owner (K1), every
+   * genesis identity (bios K1/BLS), every
    * genesis producer account (K1/BLS, under the publication label
    * `NodeConfig.producerPublicationLabel` derives), and every
    * batch/underwriter operator (K1 wire / EM ethereum / ED solana).
@@ -592,13 +586,6 @@ export namespace KeySteps {
           publicationLabel: NodeConfig.BiosName,
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1, KeyType.BLS]
-        },
-        // The bootstrap node owner — signs `roa::newuser` for every operator.
-        {
-          label: Constants.BOOTSTRAP_NODE_OWNER,
-          publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
-          publishPhase: SignatureKeyPublishPhase.beforeNodes,
-          keyTypes: [KeyType.K1]
         },
         // Producer ACCOUNTS — a producing node renders every `--signature-provider` spec from a
         // hosted account's `publicationLabel` (the block-signing K1 from its first hosted

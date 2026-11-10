@@ -99,7 +99,7 @@ describe("KeyMaterialPatterns", () => {
           operators: [
             {
               label: "batchop.a",
-              account: "wireno.x3f9k",
+              account: "acct.x3f9k",
               solana: {
                 type: KeyType.ED,
                 publicKey: ed.toPublic().toString(),

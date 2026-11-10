@@ -229,13 +229,6 @@ export namespace Constants {
   export const ROA_TOTAL_SYS = "75496.0000 SYS"
   /** `bytes_per_unit` for `activateroa`; must divide `newaccount_ram` (1144). */
   export const ROA_BYTES_PER_UNIT = 104
-  export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
-  export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
-  /** A resource weight that allocates nothing — for a policy that grants only another resource. */
-  export const NO_RESOURCE_WEIGHT = "0.0000 SYS"
-
-  /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
-  export const BOOTSTRAP_NODE_OWNER = "wireno"
 
   /**
    * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
@@ -250,9 +243,9 @@ export namespace Constants {
   /** Producer-handoff timeout (seconds). */
   export const PRODUCER_HANDOFF_TIMEOUT_S = 90
   /** Maximum block CPU usage (microseconds). */
-  export const MAX_BLOCK_CPU_USAGE = 400_000
+  export const MAX_BLOCK_CPU_USAGE = 200_000
   /** Maximum transaction CPU usage (microseconds). */
-  export const MAX_TRANSACTION_CPU_USAGE = 375_000
+  export const MAX_TRANSACTION_CPU_USAGE = 150_000
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
   /**
@@ -471,10 +464,9 @@ export namespace Constants {
 
   /**
    * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
-   * The label is the operator's `ClusterKeyStore` key and its SSM secret-id
-   * `{account}` segment. It does NOT exist on chain — the on-chain account name
-   * is node-owner-generated (`wireno.<random>`, `OperatorAccount.account`), and
-   * its suffix is nonce-derived entropy, so it cannot be requested.
+   * The label is the operator's `ClusterKeyStore` key, its SSM secret-id
+   * `{account}` segment, and the WIRE account name `sysio` creates for it
+   * (`OperatorAccount.account`).
    *
    * @param index - Zero-based operator index.
    * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).

@@ -3,7 +3,7 @@ import { OperatorType, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Logger } from "@wireio/shared"
 
-import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
+import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { Steps, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { WireCollateralTool } from "@wireio/cluster-tool/tools/wire"
@@ -807,7 +807,7 @@ describe("WireCollateralTool", () => {
         WireCollateralTool.readBalance(ctx, account, BigInt(LiqEthCode))
       ).resolves.toBe(0n)
       await expect(
-        WireCollateralTool.readBalance(ctx, `${Constants.BOOTSTRAP_NODE_OWNER}.other`, BigInt(WireCode))
+        WireCollateralTool.readBalance(ctx, "acct.other", BigInt(WireCode))
       ).resolves.toBe(0n)
     })
   })

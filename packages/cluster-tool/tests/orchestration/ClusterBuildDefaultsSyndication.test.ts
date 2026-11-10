@@ -53,7 +53,6 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
     expectInOrder(names, [
       "OPPContracts",
       "OPPCodeGrants",
-      "BootstrapNodeOwner",
       "PanicAccount",
       "EmergencyStop",
       "Registry",
@@ -61,9 +60,6 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       "SyndicationConfig",
       "EpochBootstrap"
     ])
-    expect(names.indexOf("PanicAccount")).toBe(
-      names.indexOf("BootstrapNodeOwner") + 1
-    )
     expect(names.indexOf("EmergencyStop")).toBe(
       names.indexOf("PanicAccount") + 1
     )
@@ -128,16 +124,9 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       throw new Error("missing emergency stop phase")
     expect(phase.steps).toHaveLength(5)
     expect(phase.steps[0].input).toEqual({
-      kind: "SyndicationUserSteps.ResourcePolicyInput",
-      data: {
-        owner: "sysio.andon",
-        issuer: "wireno",
-        net_weight: "0.0000 SYS",
-        cpu_weight: "0.0000 SYS",
-        ram_weight: "0.0100 SYS",
-        time_block: 0,
-        network_gen: 0
-      }
+      kind: "AccountSteps.RamGrantInput",
+      account: "sysio.andon",
+      ramBytes: 10_400
     })
     expect(
       BigInt(Name.from(Constants.PANIC_ACCOUNT).value.toString())

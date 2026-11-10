@@ -3,7 +3,6 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { ClioRunner } from "../../clients/wire/clio/ClioRunner.js"
 import { Constants } from "../../Constants.js"
-import { SyndicationUserSteps } from "../../orchestration/steps/SyndicationUserSteps.js"
 
 const log = getLogger(__filename)
 
@@ -40,8 +39,7 @@ export function formatWireAsset(rawAmount: bigint): string {
 
 /**
  * Provision a WIRE user account for a flow scenario: create the account
- * under the dev K1 key (idempotent across re-runs), attach the standard
- * resource policy from the bootstrap node owner, and optionally fund it
+ * under the dev K1 key (idempotent across re-runs) and optionally fund it
  * with WIRE from the `sysio` treasury.
  *
  * This is flow-layer provisioning (composed from a flow's `beforeAll`),
@@ -81,18 +79,6 @@ export async function provisionWireUser(
     }
     log.debug(`provisionWireUser: account ${account} already exists — reusing`)
   }
-
-  // Resource policy so the account can push its own actions.
-  await wire.invoke<SysioContracts.SysioRoaAddpolicyAction>(
-    "sysio.roa",
-    "addpolicy",
-    SyndicationUserSteps.nodeOwnerPolicy(account, {
-      net: Constants.DEFAULT_RESOURCE_WEIGHT,
-      cpu: Constants.DEFAULT_RESOURCE_WEIGHT,
-      ram: Constants.DEFAULT_RAM_WEIGHT
-    }),
-    [{ actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }]
-  )
 
   if (fundWireAmount > 0n) {
     const quantity = formatWireAsset(fundWireAmount)
