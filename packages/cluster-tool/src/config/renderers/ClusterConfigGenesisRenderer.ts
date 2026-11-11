@@ -7,7 +7,7 @@ import type { Renderer } from "../../utils/Renderer.js"
  * authority comes from the CONFIG — `initialKey` (bios K1) + the optional
  * `initialFinalizerKey` (bios BLS), both resolved by
  * `ClusterConfigProvider.resolveWithBiosKeys` before this renderer runs — plus
- * the cluster_manager CPU overrides in `initial_configuration`. `new Date()` is
+ * the block and transaction CPU limits in `initial_configuration`. `new Date()` is
  * the real harness path (genesis timestamp).
  *
  * NOTE: `initial_key` is part of the chain's identity. A `KEY` / `KIOD` cluster
@@ -36,7 +36,6 @@ export class ClusterConfigGenesisRenderer implements Renderer {
           max_transaction_cpu_usage: Constants.MAX_TRANSACTION_CPU_USAGE,
           min_transaction_cpu_usage: 100,
           max_transaction_lifetime: 3_600,
-          deferred_trx_expiration_window: 600,
           max_transaction_delay: 3_888_000,
           max_inline_action_size: 524_287,
           max_inline_action_depth: 10,

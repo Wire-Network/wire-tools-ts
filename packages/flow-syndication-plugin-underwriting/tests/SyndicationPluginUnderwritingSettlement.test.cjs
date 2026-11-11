@@ -41,7 +41,7 @@ const {
     Constants.Plan.feeBps
   ),
   operatorCount = 3,
-  operatorAccount = index => `wireno.op${index}`
+  operatorAccount = index => `acct.op${index}`
 
 /** Flatten the planned flow so tests exercise the actual verification runners. */
 function steps(node) {
@@ -107,7 +107,6 @@ test("after setup the flow pushes no underwriter action and provisions no bonder
       "SolanaLiqSyndicationTool.SyndInput",
       "SyndicationUserSteps.LinkSolanaKeyInput",
       "AccountSteps.CreateKeyedInput",
-      "SyndicationUserSteps.ResourcePolicyInput",
       "SyndicationUserSteps.LinkEthereumKeyInput",
       "EthereumSyndicationTool.DepositLiqEthInput",
       "EthereumSyndicationTool.ApproveLiqEthInput",

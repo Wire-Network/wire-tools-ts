@@ -1188,8 +1188,6 @@ describe("ClusterConfigProvider", () => {
         await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
       expect(resolved.biosWire).toBe(KeyGenerator.BiosK1Key)
       expect(resolved.biosFinalizer).toBe(KeyGenerator.BiosBLSKey)
-      // the bootstrap node owner's authority is the same dev K1 under KEY
-      expect(resolved.nodeOwnerWire).toBe(KeyGenerator.BiosK1Key)
     })
 
     it("KEY mode's genesis authority stays byte-identical to the historical bootstrap", async () => {
@@ -1197,6 +1195,21 @@ describe("ClusterConfigProvider", () => {
         await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
       expect(config.initialKey).toBe(KeyGenerator.BiosK1Key.publicKey)
       expect(config.initialFinalizerKey).toBe(KeyGenerator.BiosBLSKey.publicKey)
+    })
+
+    it("defaults the depot epoch to 300 seconds when the caller names none", async () => {
+      const { config } =
+        await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
+      expect(ClusterConfigProvider.DefaultEpochDurationSec).toBe(300)
+      expect(config.epochDurationSec).toBe(300)
+    })
+
+    it("keeps a caller's epoch duration over the default", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 60
+      })
+      expect(config.epochDurationSec).toBe(60)
     })
 
     it("plain resolve already carries the same genesis publics (config-only facade)", async () => {

@@ -441,7 +441,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         ctx.keyStore.setOperator({
           label,
           publicationLabel: label,
-          account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
+          account: `acct.${label.replace(/[^a-z1-5]/g, "")}`,
           type:
             batchOperatorLabel != null
               ? OperatorType.BATCH
@@ -560,48 +560,34 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   }
 
   /**
-   * Append the two GENESIS identities `ClusterBuild.seedGenesisAccounts` puts in
-   * the operator map — the bios node (K1 + BLS) and the bootstrap node owner
-   * (K1 alone) — to the persisted cluster keys.
+   * Append the GENESIS identity `ClusterBuild.seedGenesisAccount` puts in the
+   * operator map — the bios node (K1 + BLS) — to the persisted cluster keys.
    *
-   * They are the reason the emit guard cannot be a flat curve list: they live in
-   * the operator map like every batch operator but publish DIFFERENT curves, so
-   * a "operators publish K1/EM/ED" set refuses the bios BLS that create really
-   * did publish.
+   * It is the reason the emit guard cannot be a flat curve list: it lives in the
+   * operator map like every batch operator but publishes DIFFERENT curves, so a
+   * "operators publish K1/EM/ED" set refuses the bios BLS that create really did
+   * publish.
    */
-  function injectGenesisAccounts() {
+  function injectGenesisAccount() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config)
-    keys.operators.push(
-      {
-        label: NodeConfig.BiosName,
-        publicationLabel: NodeConfig.BiosName,
-        account: NodeConfig.BiosProducer,
-        type: OperatorType.UNKNOWN,
-        wire: {
-          type: KeyType.K1,
-          publicKey: "PUB_K1_bios",
-          awsSecretId: secretId(NodeConfig.BiosName, KeyType.K1)
-        },
-        wireFinalizer: {
-          type: KeyType.BLS,
-          publicKey: "PUB_BLS_bios",
-          proofOfPossession: "SIG_BLS_bios",
-          awsSecretId: secretId(NodeConfig.BiosName, KeyType.BLS)
-        }
+    keys.operators.push({
+      label: NodeConfig.BiosName,
+      publicationLabel: NodeConfig.BiosName,
+      account: NodeConfig.BiosProducer,
+      type: OperatorType.UNKNOWN,
+      wire: {
+        type: KeyType.K1,
+        publicKey: "PUB_K1_bios",
+        awsSecretId: secretId(NodeConfig.BiosName, KeyType.K1)
       },
-      {
-        label: Constants.BOOTSTRAP_NODE_OWNER,
-        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
-        account: Constants.BOOTSTRAP_NODE_OWNER,
-        type: OperatorType.UNKNOWN,
-        wire: {
-          type: KeyType.K1,
-          publicKey: "PUB_K1_owner",
-          awsSecretId: secretId(Constants.BOOTSTRAP_NODE_OWNER, KeyType.K1)
-        }
+      wireFinalizer: {
+        type: KeyType.BLS,
+        publicKey: "PUB_BLS_bios",
+        proofOfPossession: "SIG_BLS_bios",
+        awsSecretId: secretId(NodeConfig.BiosName, KeyType.BLS)
       }
-    )
+    })
     ClusterState.saveKeys(config, keys)
   }
 
@@ -752,7 +738,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           .filter(node => NodeConfig.isOperatorRole(node.role))
           .map(node => node.batchOperatorLabel ?? node.underwriterLabel),
         // Producer ACCOUNTS are persisted operators too (each owns a finalizer key), and their
-        // handle IS their on-chain name — a producer never goes through `roa::newuser`. They are
+        // handle IS their on-chain name in this fixture. They are
         // what makes the `handles !== accounts` assertion below meaningful rather than trivially
         // true: the batch/underwriter halves differ, the producer halves do not.
         ...planned
@@ -1624,12 +1610,12 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
   })
 
-  // The genesis identities are in the operator map but publish DIFFERENT curves
-  // than a batch operator (bios K1+BLS, node owner K1). Emit refused the bios
-  // BLS — a parameter create HAD published — so every SSM create-external-config
-  // died at Emit. The fixture never seeded them, which is why nothing caught it.
-  it("emits the genesis identities' SSM refs (bios K1+BLS, node owner K1)", async () => {
-    injectGenesisAccounts()
+  // The genesis identity is in the operator map but publishes DIFFERENT curves
+  // than a batch operator (bios K1+BLS). Emit refused the bios BLS — a parameter
+  // create HAD published — so every SSM create-external-config died at Emit. The
+  // fixture never seeded it, which is why nothing caught it.
+  it("emits the genesis identity's SSM refs (bios K1+BLS)", async () => {
+    injectGenesisAccount()
     const emitted = await emitWithProvider(SSMProvider),
       secretIdsFor = (accountName: string) =>
         emitted.accounts.operators
@@ -1646,9 +1632,6 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(secretIdsFor(NodeConfig.BiosProducer)).toEqual([
       "/wire/test/node_bios/BLS",
       "/wire/test/node_bios/K1"
-    ])
-    expect(secretIdsFor(Constants.BOOTSTRAP_NODE_OWNER)).toEqual([
-      "/wire/test/wireno/K1"
     ])
   })
 
@@ -1698,7 +1681,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   // walker rather than a curve list: every emitted ref exists in it, and every
   // publication is reachable by the handle+curve the emit side looks up with.
   it("emits only refs the publication walker actually wrote", async () => {
-    injectGenesisAccounts()
+    injectGenesisAccount()
     injectProducerAccounts()
     const emitted = await emitWithProvider(SSMProvider),
       published = new Set(

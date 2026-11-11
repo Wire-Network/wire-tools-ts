@@ -1,7 +1,6 @@
 import { ethers } from "ethers"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { Constants } from "@wireio/cluster-tool/Constants"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import {
   EthereumOutpostBootstrapper,
@@ -50,9 +49,9 @@ function newSolanaKeyPair(): SolanaKeyPair {
  *
  * @param label - the harness-side handle; also seeds the placeholder K1 strings.
  * @param type - the proto {@link OperatorType} this identity is provisioned as.
- * @param account - the ON-CHAIN WIRE account name. Defaults to a
- *   node-owner-sponsored spelling that is deliberately DISTINCT from `label`,
- *   so a test that confuses the two still fails.
+ * @param account - the ON-CHAIN WIRE account name. Defaults to a spelling
+ *   that is deliberately DISTINCT from `label`, so a test that confuses the
+ *   two still fails.
  * @param ethereumHdIndex - anvil HD index the EM pair derives from. Defaults to
  *   one shared index; a suite that needs operators with DISTINCT Ethereum
  *   addresses (a roster seats one address per member) passes its own.
@@ -61,7 +60,7 @@ function newSolanaKeyPair(): SolanaKeyPair {
 export function fixtureOperatorAccount(
   label: string,
   type: OperatorType,
-  account = `${Constants.BOOTSTRAP_NODE_OWNER}.${label}`,
+  account = `acct.${label}`,
   ethereumHdIndex = AnvilHdIndex
 ): OperatorAccount {
   let ethereum: EthereumKeyPair, solana: SolanaKeyPair

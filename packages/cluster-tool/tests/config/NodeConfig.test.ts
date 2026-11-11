@@ -482,7 +482,7 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the generated account)", () => {
+    it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the account)", () => {
       const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
       expect(ini).toContain(
@@ -821,12 +821,40 @@ describe("NodeConfig", () => {
   })
 
   describe("genesis renderer (via ClusterConfigProvider.genesis)", () => {
-    it("renders valid genesis.json with the dev initial_key + CPU overrides", () => {
+    it("renders valid genesis.json with the dev initial_key + CPU limits", () => {
       const genesis = JSON.parse(
         ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
       )
       expect(genesis.initial_key).toMatch(/^SYS/)
-      expect(genesis.initial_configuration.max_block_cpu_usage).toBe(400_000)
+      expect(genesis.initial_configuration.max_block_cpu_usage).toBe(200_000)
+      expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(
+        150_000
+      )
+    })
+
+    it("renders only parameters the chain's config defines", () => {
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
+      // Each key is a wire-sysio `chain_config` member, in its declaration order. The chain
+      // skips a key it does not know, so a stray one would read as configured and do nothing.
+      // `max_action_return_value_size` and the KV size limits keep wire-sysio's defaults.
+      expect(Object.keys(genesis.initial_configuration)).toEqual([
+        "max_block_net_usage",
+        "target_block_net_usage_pct",
+        "max_transaction_net_usage",
+        "net_usage_leeway",
+        "max_block_cpu_usage",
+        "target_block_cpu_usage_pct",
+        "max_transaction_cpu_usage",
+        "min_transaction_cpu_usage",
+        "max_transaction_lifetime",
+        "max_transaction_delay",
+        "max_inline_action_size",
+        "max_inline_action_depth",
+        "max_authority_depth",
+        "notify_cpu_stipend"
+      ])
     })
 
     it("takes initial_key + initial_finalizer_key from the CONFIG, not a constant", () => {
@@ -961,8 +989,8 @@ describe("NodeConfig — ad-hoc nodes", () => {
     })
 
     it("carries the key-store LABEL in producers, exactly as a planned node does", () => {
-      // A sponsored producer's on-chain name is depot-generated; the fixture's default account
-      // is deliberately distinct from the label so a confusion of the two is observable.
+      // The fixture's default account is deliberately distinct from the label so a confusion of
+      // the two is observable.
       //
       // `producers` is resolved against ClusterKeyStore, which is keyed by LABEL only, and is read
       // that way by the key-store lookup, the SSM secret-id renderer and start.sh. An account here
@@ -1002,18 +1030,6 @@ describe("NodeConfig — ad-hoc nodes", () => {
       expect(node.producers).toEqual([])
       expect(node.batchOperatorLabel).toBeNull()
       expect(node.underwriterLabel).toBe("uwrit.x")
-    })
-
-    it("refuses a producer that has no on-chain account yet", () => {
-      // Between materialization and sponsored creation `account` is absent by design; a node
-      // composed then would carry `--producer-name undefined`.
-      const unsponsored = {
-        ...fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
-        account: undefined
-      }
-      expect(() => NodeConfig.createAdHoc(cluster, unsponsored, ports)).toThrow(
-        /has no on-chain account/
-      )
     })
 
     it("refuses an operator type no node role realizes", () => {

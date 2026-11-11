@@ -57,7 +57,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   return {
     label,
     publicationLabel: label,
-    account: `wireno.${label}`,
+    account: `acct.${label}`,
     type,
     wire: {
       type: KeyType.K1,
@@ -252,10 +252,10 @@ describe("OperatorDaemonTool", () => {
           OperatorDaemonTool.NoBatchUnderwriting
         )
       expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
-        `${OperatorDaemonTool.EthereumClientId},eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
+        `${OperatorDaemonTool.EthereumClientId},eth-acct.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
       ])
       expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
-        `${OperatorDaemonTool.SolanaClientId},sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
+        `${OperatorDaemonTool.SolanaClientId},sol-acct.batchopcccc,${ExternalSolanaRpcUrl}`
       ])
     })
   })
@@ -360,9 +360,9 @@ describe("OperatorDaemonTool", () => {
       expect(providers.length).toBe(3)
       // Provider NAMES are built from the CHAIN account, not the durable handle.
       expect(providers[1]).toMatch(
-        /^eth-wireno\.batchopaaaa,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
+        /^eth-acct\.batchopaaaa,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
       )
-      expect(providers[2]).toMatch(/^sol-wireno\.batchopaaaa,solana,solana,/)
+      expect(providers[2]).toMatch(/^sol-acct\.batchopaaaa,solana,solana,/)
     })
 
     it("configures the batch plugin + both outpost clients + artifacts", () => {

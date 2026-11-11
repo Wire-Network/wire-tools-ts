@@ -329,7 +329,12 @@ export namespace ClusterConfigProvider {
 
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
-  export const DefaultEpochDurationSec = 90
+  /**
+   * The depot's minimum epoch duration (`sysio.epoch::epochcfg.epoch_duration_sec`) when a
+   * caller names none — the cadence a deployed cluster runs at. A flow pins its own, shorter,
+   * duration in its `Scenario.defaults`.
+   */
+  export const DefaultEpochDurationSec = 300
 
   /**
    * Resolve defaults → validate → return a ready config (the only forward
@@ -452,8 +457,6 @@ export namespace ClusterConfigProvider {
     biosWire: WireKeyPair
     /** The bios node's finality (BLS) key — genesis `initial_finalizer_key`. */
     biosFinalizer: WireFinalizerKeyPair
-    /** The bootstrap node owner's account-authority (K1) key. */
-    nodeOwnerWire: WireKeyPair
   }
 
   /**
@@ -462,10 +465,7 @@ export namespace ClusterConfigProvider {
    * `ClusterManager.launch` writes `genesis.json` (and every node's
    * `config.ini`) BEFORE `build.build()` runs, and both renderers see only a
    * `ClusterConfig` — so the keys have to exist at CONFIG-RESOLUTION time, not
-   * in a build phase. The bootstrap node owner's key rides along for the same
-   * reason: it is the `roa::newnameduser` account authority AND must be in the
-   * kiod wallet before the first `roa::newuser`, which happens in the very first
-   * phases.
+   * in a build phase.
    *
    * - `KEY` / `KIOD` → the well-known dev bios keys, byte-identical to every
    *   historical cluster: same `genesis.json`, same chain id, same wallet
@@ -477,7 +477,7 @@ export namespace ClusterConfigProvider {
    *   authority is part of the chain's identity.
    *
    * @param options - Caller options.
-   * @returns The resolved config plus the bios + node-owner key material.
+   * @returns The resolved config plus the bios key material.
    */
   export async function resolveWithBiosKeys(
     options: ClusterBuildOptions
@@ -487,8 +487,7 @@ export namespace ClusterConfigProvider {
       return {
         config,
         biosWire: KeyGenerator.BiosK1Key,
-        biosFinalizer: KeyGenerator.BiosBLSKey,
-        nodeOwnerWire: KeyGenerator.BiosK1Key
+        biosFinalizer: KeyGenerator.BiosBLSKey
       }
     }
     // Only K1 + BLS are resolved here, so the EM backend (the one member that
@@ -498,7 +497,7 @@ export namespace ClusterConfigProvider {
         sysUtil: Path.join(config.buildPath, KeyGenerator.SysUtilSubpath),
         ethereumMnemonic: null
       },
-      [biosWire, biosFinalizer, nodeOwnerWire] = await Promise.all([
+      [biosWire, biosFinalizer] = await Promise.all([
         adoptOrCreateKey(
           config,
           KeyType.K1,
@@ -512,13 +511,6 @@ export namespace ClusterConfigProvider {
           NodeConfig.BiosName,
           keyContext,
           "bios node finality (BLS) — genesis initial_finalizer_key"
-        ),
-        adoptOrCreateKey(
-          config,
-          KeyType.K1,
-          Constants.BOOTSTRAP_NODE_OWNER,
-          keyContext,
-          "bootstrap node owner account authority (K1)"
         )
       ])
     return {
@@ -528,8 +520,7 @@ export namespace ClusterConfigProvider {
         initialFinalizerKey: biosFinalizer.publicKey
       },
       biosWire,
-      biosFinalizer,
-      nodeOwnerWire
+      biosFinalizer
     }
   }
 

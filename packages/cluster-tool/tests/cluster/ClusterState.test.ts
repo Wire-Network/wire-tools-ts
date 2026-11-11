@@ -21,8 +21,8 @@ import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccount
 
 /** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
 const BatchOperatorLabel = "batchopaaaa"
-/** The node-owner-generated chain account the sponsored-creation step adopts. */
-const BatchOperatorAccount = "wireno.x3f9k"
+/** The operator's on-chain account — deliberately distinct from its label. */
+const BatchOperatorAccount = "acct.x3f9k"
 /**
  * The ONE batch-operator identity every case here seeds and asserts against —
  * a single instance, so its derived EM/ED keys stay stable across the capture /
@@ -211,14 +211,6 @@ describe("ClusterState", () => {
       expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/not found/)
     })
 
-    it("refuses to capture an operator whose sponsored-creation step never ran", () => {
-      const ctx = seededContext()
-      // Re-set the operator WITHOUT an `account` — the materialize-only state.
-      const { account: _dropped, ...materialized } =
-        ctx.keyStore.assertOperator(BatchOperatorLabel)
-      ctx.keyStore.setOperator(materialized)
-      expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
-    })
   })
 
   describe("§5.6 — an SSM cluster persists key REFERENCES, never key material", () => {

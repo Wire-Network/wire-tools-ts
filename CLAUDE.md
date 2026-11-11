@@ -328,7 +328,7 @@ custody), `--enable-mock-syndication-import` (default off, forced on by a local
 `create`, refused with `--external-outpost-config` — import the mock
 bonder's LIQSOL/LIQETH positions during epoch zero and back all mock shadow), `--enable-batch-operator-underwriting` (default off, forced on by a local `create` — every batch-operator
 daemon also runs the `batch_operator_plugin` underwriter role from its own account
-and gets a node-owner RAM grant for its `sysio.bond` rows; with the import on, each
+(its `sysio.bond` rows bill the `sysio` pool, so it needs no RAM); with the import on, each
 funded operator's ED and EM keys also get an epoch-zero LIQSOL and LIQETH credit, and the
 import moves after operator provisioning), `--api-count <N>` (default 0 — plan N API nodes:
 non-producing nodeops in the p2p mesh, port pairs under `bind.nodeop.ports.api`,
@@ -457,9 +457,10 @@ funded, with caps of 10 LIQSOL and 10 LIQETH.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
-unconditionally: `PanicAccount` + `EmergencyStop` (after `BootstrapNodeOwner`: the
-panic account `Constants.PANIC_ACCOUNT`, funded native `pull`/`clear` permissions
-and action links) and `SyndicationConfig` (after `ShadowLiqTokens`:
+unconditionally: `PanicAccount` + `EmergencyStop` (the panic account
+`Constants.PANIC_ACCOUNT`, then native `pull`/`clear` permissions and action links
+on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers) and
+`SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
 `Steps.registry.SyndicationConfigRegistrations`: free syndication;
 desyndication = floor(quantity × 5 / 10000) + flat fee, recovering gas for both

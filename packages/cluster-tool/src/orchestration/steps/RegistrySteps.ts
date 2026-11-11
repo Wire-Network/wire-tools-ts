@@ -36,7 +36,6 @@ import { BondContractSteps } from "./contracts/sysio/BondContractSteps.js"
 import { KickerContractSteps } from "./contracts/sysio/KickerContractSteps.js"
 import { LiqContractSteps } from "./contracts/sysio/LiqContractSteps.js"
 import { SyndContractSteps } from "./contracts/sysio/SyndContractSteps.js"
-import { SyndicationUserSteps } from "./SyndicationUserSteps.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
@@ -376,114 +375,6 @@ export namespace RegistrySteps {
             }
           ]
         }
-      },
-      signal
-    )
-  }
-
-  /**
-   * RAM weight an underwriting batch operator receives, from the bootstrap node owner, for its
-   * `sysio.bond` rows: its sponsored account's RAM is spent on registration, and a bond row
-   * (~1.3 KB) does not fit in what is left. Lowering it lets `sysio.bond::accept` fail with
-   * insufficient RAM.
-   */
-  export const BatchOperatorUnderwritingRamWeight = Constants.DEFAULT_RAM_WEIGHT
-
-  /**
-   * One Phase granting every underwriting batch operator the RAM its bond rows need: one
-   * `sysio.roa::addpolicy` Step per operator, issued by the bootstrap node owner.
-   *
-   * @param batchOperatorLabels - The underwriting operators, already provisioned.
-   */
-  export function planBatchOperatorUnderwritingResources<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    parent: ClusterBuildParent<C>,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    batchOperatorLabels: readonly string[]
-  ): ClusterBuildPhase<C> {
-    return ClusterBuildPhase.create<C>(
-      parent,
-      name,
-      description,
-      batchOperatorLabels.map(label =>
-        planBatchOperatorUnderwritingResource<C>(
-          Report.Actor.Sysio,
-          `underwriting-ram-${label}`,
-          `grant ${label} RAM for its sysio.bond rows`,
-          options,
-          label
-        )
-      )
-    )
-  }
-
-  /**
-   * One `sysio.roa::addpolicy` granting a batch operator its underwriting RAM.
-   *
-   * @param actor - Report actor.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step options.
-   * @param label - The batch operator's durable handle in `ctx.keyStore`.
-   * @return The Step.
-   */
-  export function planBatchOperatorUnderwritingResource<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    label: string
-  ): ClusterBuildStep<C, BatchOperatorResourcesInput> {
-    return ClusterBuildStep.create<C, BatchOperatorResourcesInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "RegistrySteps.BatchOperatorResourcesInput", label },
-      runBatchOperatorUnderwritingResources
-    )
-  }
-
-  /** Input of one {@link planBatchOperatorUnderwritingResources} Step. */
-  export interface BatchOperatorResourcesInput extends StepInput {
-    readonly kind: "RegistrySteps.BatchOperatorResourcesInput"
-    /** The batch operator's durable handle in `ctx.keyStore`. */
-    readonly label: string
-  }
-
-  /** The `addpolicy` that grants a batch operator account its underwriting RAM. */
-  export function batchOperatorUnderwritingPolicy(
-    owner: string
-  ): SysioContracts.SysioRoaAddpolicyAction {
-    return SyndicationUserSteps.nodeOwnerPolicy(owner, {
-      // No NET / CPU beyond what the operator already relays with.
-      net: Constants.NO_RESOURCE_WEIGHT,
-      cpu: Constants.NO_RESOURCE_WEIGHT,
-      ram: BatchOperatorUnderwritingRamWeight
-    })
-  }
-
-  /** Named runner — resolve the operator's generated account, then ONE `addpolicy`. */
-  export async function runBatchOperatorUnderwritingResources<
-    C extends ClusterBuildContext
-  >(
-    ctx: C,
-    input: BatchOperatorResourcesInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await SyndicationUserSteps.runResourcePolicy(
-      ctx,
-      {
-        kind: "SyndicationUserSteps.ResourcePolicyInput",
-        data: batchOperatorUnderwritingPolicy(
-          ctx.keyStore.assertOperator(input.label).account
-        )
       },
       signal
     )

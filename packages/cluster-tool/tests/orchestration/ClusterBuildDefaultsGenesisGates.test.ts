@@ -1,7 +1,7 @@
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, SysioContracts } from "@wireio/sdk-core"
-import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
+import { ProtocolTiming } from "@wireio/cluster-tool"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
@@ -114,17 +114,17 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       }
     )
 
-    it("seeds the bios producer + the bootstrap node owner as key-store OPERATORS", async () => {
+    it("seeds the bios producer as the ONE key-store OPERATOR", async () => {
       const { keyStore } = (await ClusterBuildDefaults.create(baseOptions()))
         .context
-      const bios = keyStore.assertOperator(NodeConfig.BiosName),
-        nodeOwner = keyStore.assertOperator(Constants.BOOTSTRAP_NODE_OWNER)
+      const bios = keyStore.assertOperator(NodeConfig.BiosName)
       // KEY mode → the well-known dev bios pair, byte-identical to history
       expect(bios.wire.publicKey).toBe(KeyGenerator.BiosK1Key.publicKey)
       expect(bios.wireFinalizer?.publicKey).toBe(
         KeyGenerator.BiosBLSKey.publicKey
       )
-      expect(nodeOwner.wire.publicKey).toBe(KeyGenerator.BiosK1Key.publicKey)
+      expect(bios.account).toBe(NodeConfig.BiosProducer)
+      expect(keyStore.operators).toEqual([bios])
     })
 
     it("NEVER pushes the bios keys as a NODE key set (that would add a finalizer)", async () => {
@@ -133,16 +133,13 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       expect(keyStore.nodes).toHaveLength(0)
     })
 
-    it("types both seeded accounts UNKNOWN so neither reaches the producer schedule", async () => {
+    it("types the seeded account UNKNOWN so it never reaches the producer schedule", async () => {
       const { keyStore } = (await ClusterBuildDefaults.create(baseOptions()))
         .context
       // `ConsensusSteps.runSetProducerKeys` builds `setprodkeys` from this list.
       expect(keyStore.operatorsByType(OperatorType.PRODUCER)).toHaveLength(0)
       expect(
         keyStore.assertOperator(NodeConfig.BiosName).type
-      ).toBe(OperatorType.UNKNOWN)
-      expect(
-        keyStore.assertOperator(Constants.BOOTSTRAP_NODE_OWNER).type
       ).toBe(OperatorType.UNKNOWN)
     })
 

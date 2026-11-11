@@ -37,9 +37,9 @@ type EpochConfigQueryResult = Awaited<
 
 /** Bootstrap batch operators: dot-free labels (they seed the K1 placeholder) + 12-char accounts. */
 const BatchOperators = [
-  { label: "batchopa", account: "wireno.a1b2c", ethereumHdIndex: 1 },
-  { label: "batchopb", account: "wireno.d3e4f", ethereumHdIndex: 2 },
-  { label: "batchopc", account: "wireno.g5h1i", ethereumHdIndex: 3 }
+  { label: "batchopa", account: "acct.a1b2c", ethereumHdIndex: 1 },
+  { label: "batchopb", account: "acct.d3e4f", ethereumHdIndex: 2 },
+  { label: "batchopc", account: "acct.g5h1i", ethereumHdIndex: 3 }
 ] as const
 
 /** The window `schbatchgps` builds over {@link BatchOperators} (one per epoch). */
@@ -409,7 +409,7 @@ describe("Steps.wireOpregBootstrap", () => {
       const ctx = await emitted(context => [
         ...depotRows(context),
         // Not bootstrapped / not a roster type — both outside the roster.
-        fixtureOperatorRow("wireno.z1z2z", SysioOpregOperatortype.OPERATOR_TYPE_BATCH, {
+        fixtureOperatorRow("acct.z1z2z", SysioOpregOperatortype.OPERATOR_TYPE_BATCH, {
           is_bootstrapped: false
         }),
         fixtureOperatorRow("sysio", SysioOpregOperatortype.OPERATOR_TYPE_UNKNOWN)
@@ -420,7 +420,7 @@ describe("Steps.wireOpregBootstrap", () => {
     it("fails when a bootstrapped depot operator is missing from the roster", async () => {
       const ctx = await emitted(context => [
         ...depotRows(context),
-        fixtureOperatorRow("wireno.z1z2z", SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
+        fixtureOperatorRow("acct.z1z2z", SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
       ])
       await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).rejects.toThrow(
         /not the depot's set of bootstrapped operators/

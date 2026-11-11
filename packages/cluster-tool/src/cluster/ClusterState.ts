@@ -70,9 +70,8 @@ export interface ClusterKeysOperatorEntry {
    */
   publicationLabel: string
   /**
-   * WIRE account name ON CHAIN — `wireno.<random>` for batch/underwriter
-   * operators (node-owner-sponsored; the suffix is nonce-derived entropy and is
-   * not choosable), the deterministic `defproducer*` name for producers.
+   * WIRE account name ON CHAIN — the operator's `label` (`batchop.a`,
+   * `defproducera`); `sysio` for the bios node.
    */
   account: string
   /** Operator role (batch operator / underwriter / producer). */
@@ -390,15 +389,7 @@ export namespace ClusterState {
           wireFinalizer: toCustody(nodeName, nodeKeys.keys.wireFinalizer)
         }
       }),
-      // Every persisted operator carries its on-chain name: `account` is
-      // optional on `OperatorAccount` only for the window between an OPP
-      // operator's materialize and sponsored-creation steps, both of which run
-      // long before this capture.
       operators: ctx.keyStore.operators.map(operator => {
-        Assert.ok(
-          isNotEmpty(operator.account),
-          `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
-        )
         // Custody is keyed by the RECORDED `publicationLabel` — the label whose
         // parameter actually holds these keys: the node's name for a node's sole
         // hosted producer (it signs and votes with the node's keys), the

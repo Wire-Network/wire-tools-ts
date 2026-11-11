@@ -266,15 +266,15 @@ describe("Steps.keys", () => {
       publications = Steps.keys.signatureProviderKeyPublications(config)
 
     it("enumerates the GENESIS identity, every producer ACCOUNT, and every operator — a SHARED node publishes nothing under its own name", () => {
-      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 21 producer ACCOUNTS × K1+BLS
-      // (42) + 3 batch operators × 3 K1/EM/ED (9) = 54.
+      // Fixture topology: bios K1+BLS (2) + 21 producer ACCOUNTS × K1+BLS (42) + 3 batch
+      // operators × 3 K1/EM/ED (9) = 53.
       //
       // All 21 accounts share ONE node, so each owns its finalizer key (a shared one would fail
       // `regfinkey`'s global uniqueness check), and BOTH halves of an account's set are
       // published under ITS label, because custody is per-identity — the K1 it shares with its
       // node is republished here rather than referenced across labels.
       const producerAccounts = producerNodesOf(config).flatMap(node => node.producers)
-      expect(publications).toHaveLength(12 + producerAccounts.length * 2)
+      expect(publications).toHaveLength(11 + producerAccounts.length * 2)
       producerNodesOf(config).forEach(node =>
         expect(
           publications.filter(
@@ -386,14 +386,6 @@ describe("Steps.keys", () => {
           `/wire/test/${NodeConfig.BiosName}/BLS`
         ])
       )
-    })
-
-    it("PUBLISHES the bootstrap node owner's K1 — it signs roa::newuser for every operator", () => {
-      const ownerKeys = publications.filter(
-        publication => publication.label === Constants.BOOTSTRAP_NODE_OWNER
-      )
-      expect(ownerKeys).toHaveLength(1)
-      expect(ownerKeys[0].keyType).toBe(KeyType.K1)
     })
 
     /** The spec scheme prefix a rendered SSM `--signature-provider` carries before its id. */
@@ -577,8 +569,7 @@ describe("Steps.keys", () => {
       )
       expect(children).toContain(phase)
       expect(phase.name).toBe("PublishNodeSignatureProviderKeys")
-      // Genesis (bios K1+BLS, node owner K1) + 1 producer node (K1+BLS) + every producer
-      // ACCOUNT (K1+BLS each).
+      // Genesis (bios K1+BLS) + every producer ACCOUNT (K1+BLS each).
       // The bios entries MUST be here and not in the operator phase: that phase
       // composes after BiosNode has already started, so publishing them there
       // would leave the bios daemon fetching parameters that do not yet exist.
@@ -590,7 +581,6 @@ describe("Steps.keys", () => {
       expect(phase.steps.map(step => step.name)).toEqual([
         "publish-node_bios-K1",
         "publish-node_bios-BLS",
-        "publish-wireno-K1",
         // No `publish-node_00-*`: a producer node publishes nothing under its own name.
         ...producerAccounts.flatMap(label => [
           `publish-${label}-K1`,
@@ -850,9 +840,9 @@ describe("Steps.keys", () => {
     const config = ssmConfig({ clusterPath: "/tmp/wire-cluster-roundtrip" }),
       publications = Steps.keys.signatureProviderKeyPublications(config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(config),
-      // Opaque, node-owner-generated, and only in existence mid-build. A secret
-      // id rendered from THIS is the exact defect present on master.
-      GeneratedAccount = "wireno.x3f9k"
+      // An on-chain account that differs from its handle. A secret id rendered
+      // from THIS instead of the handle is the defect the suite pins.
+      ChainAccount = "acct.x3f9k"
 
     it("an OPERATOR daemon resolves the very id publication wrote", () => {
       const label = Constants.batchOperatorLabel(0),
@@ -883,10 +873,10 @@ describe("Steps.keys", () => {
       )
     })
 
-    it("NEVER resolves an operator's key from its generated chain account", () => {
+    it("NEVER resolves an operator's key from its chain account", () => {
       // The regression this pins is silent and expensive: publication writes
       // `/wire/<cluster>/batchop.a/K1` while a consumer rendering from the
-      // chain account reads `/wire/<cluster>/wireno.x3f9k/K1` — ParameterNotFound
+      // chain account reads `/wire/<cluster>/acct.x3f9k/K1` — ParameterNotFound
       // at daemon start, invisible under KEY mode (the default), fatal on a
       // real SSM cluster.
       const published = publications.find(
@@ -894,7 +884,7 @@ describe("Steps.keys", () => {
           publication.label === Constants.batchOperatorLabel(0) &&
           publication.keyType === KeyType.K1
       )
-      expect(keySourceFor(GeneratedAccount, KeyType.K1).awsSecretId).not.toBe(
+      expect(keySourceFor(ChainAccount, KeyType.K1).awsSecretId).not.toBe(
         published.secretId
       )
     })
@@ -944,7 +934,7 @@ describe("Steps.keys", () => {
       ctx.keyStore.setOperator({
         label: "batchop.a",
         publicationLabel: "batchop.a",
-        account: "wireno.x3f9k",
+        account: "acct.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
@@ -1060,7 +1050,7 @@ describe("Steps.keys", () => {
       ctx.keyStore.setOperator({
         label: "batchop.a",
         publicationLabel: "batchop.a",
-        account: "wireno.x3f9k",
+        account: "acct.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
@@ -1289,7 +1279,7 @@ describe("Steps.keys", () => {
       ctx.keyStore.setOperator({
         label: "batchop.a",
         publicationLabel: "batchop.a",
-        account: "wireno.x3f9k",
+        account: "acct.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,

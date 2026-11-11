@@ -286,13 +286,6 @@ export class LIQYieldScenario extends FlowScenario {
         Constants.UserAccount,
         HarnessConstants.DEV_K1_PUBLIC_KEY
       ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.User,
-        "user-resource-policy",
-        "allocate resources to the yield recipient",
-        depotWriteStepOptions,
-        SyndicationScenario.resourcePolicy(Constants.UserAccount)
-      ),
       SolanaFundingTool.planKeypairAirdrop(
         Actor.User,
         "airdrop-user",
@@ -315,13 +308,6 @@ export class LIQYieldScenario extends FlowScenario {
         depotWriteStepOptions,
         Constants.BonderAccount,
         HarnessConstants.DEV_K1_PUBLIC_KEY
-      ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.Underwriter,
-        "bonder-resource-policy",
-        "allocate resources to the bonder",
-        depotWriteStepOptions,
-        SyndicationScenario.resourcePolicy(Constants.BonderAccount)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.Underwriter,

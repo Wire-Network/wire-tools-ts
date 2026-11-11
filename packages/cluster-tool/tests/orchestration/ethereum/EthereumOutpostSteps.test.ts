@@ -191,15 +191,15 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
 
   it("maps every window slot, in slot order, to its members' EM addresses", () => {
     const operators = [
-      batchOperator("batchop.a", "wireno.aaaaa", 1),
-      batchOperator("batchop.b", "wireno.bbbbb", 2),
-      batchOperator("batchop.c", "wireno.ccccc", 3)
+      batchOperator("batchop.a", "acct.aaaaa", 1),
+      batchOperator("batchop.b", "acct.bbbbb", 2),
+      batchOperator("batchop.c", "acct.ccccc", 3)
     ]
     // The depot's window orders by ACCOUNT NAME, which need not follow the
     // harness's label order — exactly the gap the seed exists to close.
     const seed = EthereumOutpostSteps.resolveOppBootstrapSeed(
       operators,
-      [["wireno.ccccc"], ["wireno.aaaaa"], ["wireno.bbbbb"]],
+      [["acct.ccccc"], ["acct.aaaaa"], ["acct.bbbbb"]],
       0,
       SeedEpochDurationSec
     )
@@ -216,13 +216,13 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
 
   it("keeps member order within a multi-member slot and carries the depot's active slot", () => {
     const operators = [
-      batchOperator("batchop.a", "wireno.aaaaa", 1),
-      batchOperator("batchop.b", "wireno.bbbbb", 2),
-      batchOperator("batchop.c", "wireno.ccccc", 3)
+      batchOperator("batchop.a", "acct.aaaaa", 1),
+      batchOperator("batchop.b", "acct.bbbbb", 2),
+      batchOperator("batchop.c", "acct.ccccc", 3)
     ]
     const seed = EthereumOutpostSteps.resolveOppBootstrapSeed(
       operators,
-      [["wireno.bbbbb", "wireno.aaaaa", "wireno.ccccc"]],
+      [["acct.bbbbb", "acct.aaaaa", "acct.ccccc"]],
       0,
       SeedEpochDurationSec
     )
@@ -237,7 +237,7 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
     expect(
       EthereumOutpostSteps.resolveOppBootstrapSeed(
         operators,
-        [["wireno.aaaaa"], ["wireno.bbbbb"]],
+        [["acct.aaaaa"], ["acct.bbbbb"]],
         1,
         SeedEpochDurationSec
       ).activeGroupIndex
@@ -245,30 +245,30 @@ describe("Steps.ethereumOutpost.oppBootstrap", () => {
   })
 
   it("throws when a scheduled account is not a provisioned batch operator", () => {
-    const operators = [batchOperator("batchop.a", "wireno.aaaaa", 1)]
+    const operators = [batchOperator("batchop.a", "acct.aaaaa", 1)]
     expect(() =>
       EthereumOutpostSteps.resolveOppBootstrapSeed(
         operators,
-        [["wireno.aaaaa"], ["wireno.zzzzz"]],
+        [["acct.aaaaa"], ["acct.zzzzz"]],
         0,
         SeedEpochDurationSec
       )
-    ).toThrow(/wireno\.zzzzz not found among provisioned batch operators/)
+    ).toThrow(/acct\.zzzzz not found among provisioned batch operators/)
   })
 
   it("throws a DISTINCT error when a scheduled operator carries no Ethereum key", () => {
     const keyless = {
-      ...batchOperator("batchop.a", "wireno.aaaaa", 1),
+      ...batchOperator("batchop.a", "acct.aaaaa", 1),
       ethereum: undefined
     }
     expect(() =>
       EthereumOutpostSteps.resolveOppBootstrapSeed(
         [keyless],
-        [["wireno.aaaaa"]],
+        [["acct.aaaaa"]],
         0,
         SeedEpochDurationSec
       )
-    ).toThrow(/wireno\.aaaaa has no Ethereum key/)
+    ).toThrow(/acct\.aaaaa has no Ethereum key/)
   })
 })
 

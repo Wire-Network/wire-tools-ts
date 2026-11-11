@@ -11,7 +11,6 @@ import {
   ClusterBuildStep,
   outputKey,
   Steps,
-  SyndicationUserSteps,
   type StepInput
 } from "../orchestration/index.js"
 import { verifyStep, pollUntil } from "../orchestration/StepTools.js"
@@ -57,13 +56,6 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         SyndicationScenario.WriteOptions,
         EthereumRoundTripScenario.Holder,
         Constants.DEV_K1_PUBLIC_KEY
-      ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.User,
-        "holder-resources",
-        "allocate destination resources",
-        SyndicationScenario.WriteOptions,
-        SyndicationScenario.resourcePolicy(EthereumRoundTripScenario.Holder)
       ),
       EthereumSyndicationTool.planDepositLiqEth(
         Actor.User,

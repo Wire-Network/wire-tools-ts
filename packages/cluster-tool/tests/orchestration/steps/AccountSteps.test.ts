@@ -48,3 +48,40 @@ describe("Steps.account.createKeyed", () => {
     expect(step.input.creator).toBe("creatoracct")
   })
 })
+
+describe("Steps.account.ramGrant", () => {
+  it("carries the account and the bytes added to its RAM limit", () => {
+    const step = Steps.account.planRamGrant(
+      Report.Actor.Sysio,
+      "fund-andon-permission-ram",
+      "fund RAM for sysio.andon native permissions",
+      {},
+      "sysio.andon",
+      10_400
+    )
+    expect(step.actor).toBe(Report.Actor.Sysio)
+    expect(step.input).toEqual({
+      kind: "AccountSteps.RamGrantInput",
+      account: "sysio.andon",
+      ramBytes: 10_400
+    })
+    expect(step.runner).toBe(Steps.account.runRamGrant)
+  })
+
+  it("performs one grant through the WIRE client and refuses an aborted run", async () => {
+    const grantRam = jest.fn().mockResolvedValue(undefined),
+      ctx = { wire: { grantRam } } as never,
+      input = {
+        kind: "AccountSteps.RamGrantInput" as const,
+        account: "sysio.andon",
+        ramBytes: 10_400
+      }
+    await Steps.account.runRamGrant(ctx, input, new AbortController().signal)
+    expect(grantRam).toHaveBeenCalledTimes(1)
+    expect(grantRam).toHaveBeenCalledWith("sysio.andon", 10_400)
+    await expect(
+      Steps.account.runRamGrant(ctx, input, AbortSignal.abort())
+    ).rejects.toThrow()
+    expect(grantRam).toHaveBeenCalledTimes(1)
+  })
+})

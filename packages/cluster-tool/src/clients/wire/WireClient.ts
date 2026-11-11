@@ -360,6 +360,38 @@ export class WireClient {
     )
   }
 
+  /**
+   * Raise `account`'s RAM limit by `ramBytes` (`sysio::setacctram`, signed
+   * `sysio@active`), waiting for finality. `setacctram` sets an absolute limit,
+   * so the grant is the account's current limit plus `ramBytes`.
+   *
+   * For a system contract account whose own native permissions and action
+   * links outgrow its code + abi allowance (`sysio.andon`). The `sysio.*`
+   * contracts bill their rows to `sysio`, and CPU and NET are billed to the
+   * contract an action runs on, so no other account needs a grant.
+   *
+   * @param account - The account whose RAM limit is raised.
+   * @param ramBytes - Bytes added to the account's current RAM limit.
+   * @returns The `setacctram` push response.
+   */
+  async grantRam(
+    account: string,
+    ramBytes: number
+  ): Promise<API.v1.SendTransactionResponse> {
+    Assert.ok(
+      Number.isSafeInteger(ramBytes) && ramBytes > 0,
+      `grantRam: ${account}'s grant must be a positive byte count (got ${ramBytes})`
+    )
+    const ramQuota = await this.getRamQuota(account)
+    Assert.ok(
+      ramQuota >= 0,
+      `grantRam: ${account} has an unlimited RAM limit, so there is nothing to grant`
+    )
+    return this.getSysioContract(SysioContractName.system).actions.setacctram.invoke(
+      { account, ram_bytes: ramQuota + ramBytes }
+    )
+  }
+
   /** The chain's supported protocol features (POST /v1/producer/get_supported_protocol_features). */
   async getSupportedProtocolFeatures(): Promise<WireClient.ProtocolFeature[]> {
     const response = await fetch(
@@ -415,6 +447,17 @@ export class WireClient {
   async isPrivileged(account: string): Promise<boolean> {
     const { privileged } = await this.api.v1.chain.get_account(account)
     return privileged === true
+  }
+
+  /**
+   * `account`'s RAM limit in bytes (GET /v1/chain/get_account's `ram_quota`).
+   *
+   * @param account - The account to read.
+   * @returns The limit, or `-1` when the account is unlimited.
+   */
+  async getRamQuota(account: string): Promise<number> {
+    const { ram_quota: ramQuota } = await this.api.v1.chain.get_account(account)
+    return Number(ramQuota)
   }
 
   /**

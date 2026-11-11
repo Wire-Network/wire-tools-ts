@@ -29,22 +29,21 @@ import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
 import { Constants } from "../Constants.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { QueryEngineConfigProvider } from "../config/QueryEngineConfigProvider.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 
 /**
  * CLI-layer defaults for the {@link ClusterBuildOptions} topology / epoch leaves
- * — the values the `wire-cluster-tool` CLI and every `flow-*` executable have
- * always used (a minimal single-node test cluster on a 60s epoch). These are the
- * flag defaults; a caller's `defaults` (a flow's `Scenario.defaults`) or an
- * explicit flag overrides them.
+ * — the values the `wire-cluster-tool` CLI and every `flow-*` executable use
+ * (a minimal single-node cluster). These are the flag defaults; a caller's
+ * `defaults` (a flow's `Scenario.defaults`) or an explicit flag overrides them.
  *
- * NOTE: these are intentionally the *CLI* defaults and are distinct from
- * `ClusterConfigProvider.Default*` (the resolve-time fallbacks used when an option is
- * fully unset), which differ for producer count (21) and epoch duration (90s).
- * The CLI has always pinned 1 / 60 here; changing them would silently alter the
- * topology + cadence of every flow. Leave them unless the divergence is being
- * resolved deliberately.
+ * NOTE: the topology members are intentionally the *CLI* defaults and are distinct
+ * from `ClusterConfigProvider.Default*` (the resolve-time fallbacks used when an
+ * option is fully unset), which differ for producer count (21). Changing them would
+ * silently alter the topology of every flow. The epoch duration is the one resolve-time
+ * default the CLI shares: every flow pins its own in `Scenario.defaults`.
  */
 const CliDefault = {
   nodeCount: 1,
@@ -53,7 +52,7 @@ const CliDefault = {
   underwriterCount: 0,
   apiCount: 0,
   adHocCount: 0,
-  epochDurationSec: 60
+  epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
 } as const
 
 /** The dedicated `--signature-provider-ssm` flag: inline JSON, or a file path when the value doesn't start with `{`. */

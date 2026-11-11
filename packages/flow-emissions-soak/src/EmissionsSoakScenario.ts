@@ -316,7 +316,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         EmissionsSoakScenarioSteps.planProvisionClaimer(
           Actor.User,
           `provision-${identity.wireAccount}`,
-          `provision ${identity.wireAccount} (account + resource policy)`,
+          `provision ${identity.wireAccount}`,
           actionOptions,
           identity.wireAccount
         )

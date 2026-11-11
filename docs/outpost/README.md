@@ -51,7 +51,7 @@ private key or secret reference is ever written to it.
       }
     },
     {
-      "accountName": "wireno.a1b2c",
+      "accountName": "batchop.a",
       "type": "BATCH",
       "keys": {
         "wire":     { "type": "K1", "publicKey": "PUB_K1_…" },
@@ -62,7 +62,7 @@ private key or secret reference is ever written to it.
   ],
   "batchOperatorGroups": {
     "activeGroupIndex": 0,
-    "groups": [["wireno.a1b2c"], ["wireno.d3e4f"], ["wireno.g5h1i"]]
+    "groups": [["batchop.a"], ["batchop.b"], ["batchop.c"]]
   }
 }
 ```
