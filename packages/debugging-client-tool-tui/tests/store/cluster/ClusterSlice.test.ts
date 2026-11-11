@@ -5,6 +5,7 @@ import {
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
@@ -98,7 +99,12 @@ const stubConfig: ClusterConfig = {
   underwriterCollateral: null,
   initialKey: null,
   initialFinalizerKey: null,
-  signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  signatureProvider: {
+    type: SignatureProviderType.KEY,
+    ssm: null,
+    kms: null,
+    batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+  },
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
