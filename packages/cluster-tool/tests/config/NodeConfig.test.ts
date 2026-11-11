@@ -838,7 +838,7 @@ describe("NodeConfig", () => {
       )
       // Each key is a wire-sysio `chain_config` member, in its declaration order. The chain
       // skips a key it does not know, so a stray one would read as configured and do nothing.
-      // The members after `max_authority_depth` keep wire-sysio's defaults.
+      // `max_action_return_value_size` and the KV size limits keep wire-sysio's defaults.
       expect(Object.keys(genesis.initial_configuration)).toEqual([
         "max_block_net_usage",
         "target_block_net_usage_pct",
@@ -852,7 +852,8 @@ describe("NodeConfig", () => {
         "max_transaction_delay",
         "max_inline_action_size",
         "max_inline_action_depth",
-        "max_authority_depth"
+        "max_authority_depth",
+        "notify_cpu_stipend"
       ])
     })
 
@@ -894,6 +895,16 @@ describe("NodeConfig", () => {
       ].forEach(parameter =>
         expect(genesis.initial_configuration).not.toHaveProperty(parameter)
       )
+    })
+
+    it("renders the notify CPU stipend", () => {
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
+      expect(genesis.initial_configuration.notify_cpu_stipend).toBe(
+        Constants.NOTIFY_CPU_STIPEND
+      )
+      expect(Constants.NOTIFY_CPU_STIPEND).toBe(100)
     })
   })
 })
