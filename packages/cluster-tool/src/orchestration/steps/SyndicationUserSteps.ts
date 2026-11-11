@@ -3,11 +3,9 @@ import Assert from "node:assert"
 import { Base58, KeyType, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
-import { WireClient } from "../../clients/wire/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
 import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
-import { Constants } from "../../Constants.js"
 import { privateKeyFromNativeString } from "../../utils/keyPairUtils.js"
 import {
   ClusterBuildStep,
@@ -24,76 +22,6 @@ import type { Report } from "../../report/Report.js"
  * `SYNDICATE_LIQ`.
  */
 export namespace SyndicationUserSteps {
-  /** The NET / CPU / RAM weights of one node-owner resource policy, as `SYS` assets. */
-  export interface PolicyWeights {
-    readonly net: string
-    readonly cpu: string
-    readonly ram: string
-  }
-
-  /**
-   * The `sysio.roa::addpolicy` the bootstrap node owner issues to `owner`: the ONE builder of
-   * a node-owner policy, so every flow account and harness account is funded the same way.
-   *
-   * @param owner - The account receiving the resources.
-   * @param weights - Its NET / CPU / RAM weights.
-   * @return The action payload.
-   */
-  export function nodeOwnerPolicy(
-    owner: string,
-    weights: PolicyWeights
-  ): SysioContracts.SysioRoaAddpolicyAction {
-    return {
-      owner,
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: weights.net,
-      cpu_weight: weights.cpu,
-      ram_weight: weights.ram,
-      time_block: 0,
-      network_gen: 0
-    }
-  }
-
-  /** Resource allocation carried by its own on-chain write. */
-  export interface ResourcePolicyInput extends StepInput {
-    readonly kind: "SyndicationUserSteps.ResourcePolicyInput"
-    readonly data: SysioContracts.SysioRoaAddpolicyAction
-  }
-
-  /** Plan one resource policy for an already-created flow account. */
-  export function planResourcePolicy<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioRoaAddpolicyAction
-  ): ClusterBuildStep<C, ResourcePolicyInput> {
-    return ClusterBuildStep.create<C, ResourcePolicyInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "SyndicationUserSteps.ResourcePolicyInput", data },
-      runResourcePolicy
-    )
-  }
-
-  /** Perform ONE addpolicy, signed by the policy issuer. */
-  export async function runResourcePolicy<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ResourcePolicyInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContracts.SysioContractName.roa)
-      .actions.addpolicy.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.data.issuer)
-      })
-  }
-
   /** Input for {@link planLinkSolanaKey}. */
   export interface LinkSolanaKeyInput extends StepInput {
     readonly kind: "SyndicationUserSteps.LinkSolanaKeyInput"

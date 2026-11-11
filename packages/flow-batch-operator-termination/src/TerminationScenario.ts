@@ -37,7 +37,7 @@ const log = getLogger(__filename)
 const { SysioOpregActiontype, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
-/** The doomed operator's node-owner-generated WIRE account, resolved from the key store by its label. */
+/** The doomed operator's WIRE account, resolved from the key store by its label. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
 }

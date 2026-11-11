@@ -21,7 +21,7 @@ import { CollateralLifecycleScenarioConstants as Constants } from "./CollateralL
 const { SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
-/** The depositor's node-owner-generated WIRE account, resolved from the key store by its label. */
+/** The depositor's WIRE account, resolved from the key store by its label. */
 function depositorAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DepositorLabel).account
 }

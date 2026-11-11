@@ -593,7 +593,7 @@ describe("WireClient", () => {
 
     it("round-trips distinct accounts to distinct bounds", () => {
       expect(WireClient.nameKeyBound("account", "wirercpt")).not.toBe(
-        WireClient.nameKeyBound("account", "wireno.aaa")
+        WireClient.nameKeyBound("account", "acct.aaa")
       )
     })
   })
@@ -881,6 +881,68 @@ describe("WireClient", () => {
         .spyOn(client.api.v1.chain, "get_account")
         .mockResolvedValue({ privileged: false } as never)
       expect(await client.isPrivileged("alice")).toBe(false)
+    })
+  })
+
+  describe("getRamQuota", () => {
+    it("reads get_account's ram_quota for the named account as a number", async () => {
+      const client = new WireClient(config),
+        getAccount = jest
+          .spyOn(client.api.v1.chain, "get_account")
+          .mockResolvedValue({ ram_quota: "5432" } as never)
+      expect(await client.getRamQuota("sysio.andon")).toBe(5432)
+      expect(getAccount).toHaveBeenCalledWith("sysio.andon")
+    })
+
+    it("reports an unlimited account as -1", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client.api.v1.chain, "get_account")
+        .mockResolvedValue({ ram_quota: -1 } as never)
+      expect(await client.getRamQuota("sysio")).toBe(-1)
+    })
+  })
+
+  describe("grantRam", () => {
+    /** A client whose RAM read and `setacctram` push are doubled at their seams. */
+    function grantClient(ramQuota: number) {
+      const client = new WireClient(config),
+        system = client.getSysioContract(SysioContracts.SysioContractName.system),
+        setacctram = jest
+          .spyOn(system.actions.setacctram, "invoke")
+          .mockResolvedValue(undefined)
+      jest.spyOn(client, "getRamQuota").mockResolvedValue(ramQuota)
+      jest.spyOn(client, "getSysioContract").mockReturnValue(system as never)
+      return { client, setacctram }
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("sets the limit to the current quota plus the grant, as sysio", async () => {
+      const { client, setacctram } = grantClient(250_000)
+      await client.grantRam("sysio.andon", 10_400)
+      expect(setacctram).toHaveBeenCalledTimes(1)
+      // No authorization override: the invoker signs as the contract account, `sysio@active`.
+      expect(setacctram).toHaveBeenCalledWith({
+        account: "sysio.andon",
+        ram_bytes: 260_400
+      })
+    })
+
+    it("refuses an account with an unlimited RAM limit", async () => {
+      const { client, setacctram } = grantClient(-1)
+      await expect(client.grantRam("sysio", 10_400)).rejects.toThrow(
+        /unlimited RAM limit/
+      )
+      expect(setacctram).not.toHaveBeenCalled()
+    })
+
+    it.each([0, -1, 1.5])("refuses a grant of %p bytes", async ramBytes => {
+      const { client, setacctram } = grantClient(250_000)
+      await expect(client.grantRam("sysio.andon", ramBytes)).rejects.toThrow(
+        /positive byte count/
+      )
+      expect(setacctram).not.toHaveBeenCalled()
     })
   })
 

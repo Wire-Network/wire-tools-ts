@@ -174,7 +174,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /**
    * The operator's row on `sysio.opreg::operators`, by durable `label` handle
-   * (resolved to its node-owner-generated `account` via `ctx.keyStore`).
+   * (resolved to its `account` via `ctx.keyStore`).
    *
    * @param ctx - The build context.
    * @param label - The operator's durable harness `label` handle.

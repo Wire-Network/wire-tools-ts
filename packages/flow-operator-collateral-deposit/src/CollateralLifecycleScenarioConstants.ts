@@ -7,7 +7,7 @@
  * with the epoch duration and survives extended epochs.
  */
 export namespace CollateralLifecycleScenarioConstants {
-  /** The flow's NON-bootstrapped batch operator's durable harness `label` handle (its on-chain `account` is node-owner-generated). */
+  /** The flow's NON-bootstrapped batch operator's durable harness `label` handle, which is also its on-chain `account`. */
   export const DepositorLabel = "depositor"
   /**
    * Anvil-mnemonic HD index for the depositor's ETH identity (past every bootstrap slot). The

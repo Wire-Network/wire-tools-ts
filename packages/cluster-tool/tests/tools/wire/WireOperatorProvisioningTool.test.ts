@@ -1,5 +1,5 @@
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report } from "@wireio/cluster-tool/report"
@@ -74,14 +74,14 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
     expect(phase.steps.map(step => step.actor)).toEqual([Report.Actor.Producer])
   })
 
-  it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {
+  it("a bootstrap batch/uw Phase (no funding) creates the account, authex-links both chains, registers", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
       { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
     ])
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"
@@ -105,185 +105,98 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 })
 
-/** A generated `wireno.<suffix>`-style chain account for the sponsored-creation tests. */
-const GeneratedAccount = "wireno.x3f9k"
-/** The operator's DURABLE handle — the keystore key, never the sponsor nonce. */
+/** The operator's durable handle — the keystore key and its on-chain account. */
 const OperatorHandle = "batchopaaaa"
-/** A FOREIGN sponsors row's nonce — never the one this operator's `newuser` minted. */
-const DecoyNonce = "zzzzzzzzzzzz"
-/** The account the foreign row carries — adopting it means the nonce predicate never ran. */
-const DecoyAccount = "wireno.decoy"
 
 /**
- * A REAL {@link ClusterBuildContext} whose `sponsors` table behaves like the
- * depot: a row appears ONLY for a nonce that `newuser` was actually called
- * with, AHEAD of it a foreign operator's row (the roster is shared, scoped to
- * the node owner) so the read-back's nonce predicate is genuinely exercised — a
- * read that returned `rows[0]` would adopt {@link DecoyAccount}. `emitRow` off
- * makes every read miss, which is how the "no row after newuser" case is
- * exercised without contriving a nonce value.
+ * A REAL {@link ClusterBuildContext} holding one materialized batch operator,
+ * with the two chain writes its provisioning performs doubled at their seams.
  *
  * Every double is a `jest.spyOn` against the real member it replaces, so the
- * doubled signatures are the shipped ones — a contract-client or key-store
- * change breaks this fixture instead of sliding past a hand-built stand-in.
- * `getSysioContract` mints a fresh Proxy (and a fresh invoker cache) per call,
- * so the two clients spied here are ALSO pinned as its return values.
+ * doubled signatures are the shipped ones — a client or key-store change breaks
+ * this fixture instead of sliding past a hand-built stand-in. `getSysioContract`
+ * mints a fresh Proxy (and a fresh invoker cache) per call, so the client spied
+ * here is ALSO pinned as its return value.
  */
-function fakeSponsorContext(emitRow = true) {
-  const nonces: string[] = [],
-    ctx = fixtureContext(),
+function fakeOperatorContext() {
+  const ctx = fixtureContext(),
     { keyStore } = ctx
   keyStore.setOperator({
     label: OperatorHandle,
     publicationLabel: OperatorHandle,
+    account: OperatorHandle,
     type: OperatorType.BATCH,
     wire: { type: KeyType.K1, publicKey: "PUB_K1_op", privateKey: "PVT_K1_op" }
   })
 
-  const roa = ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa),
-    opreg = ctx.wire.getSysioContract(
+  const opreg = ctx.wire.getSysioContract(
       SysioContracts.SysioContractName.opreg
     ),
-    newuserInvoke = jest
-      .spyOn(roa.actions.newuser, "invoke")
-      .mockImplementation(async data => {
-        nonces.push(data.nonce)
-        return undefined
-      }),
+    createAccount = jest
+      .spyOn(ctx.wire, "createAccount")
+      .mockResolvedValue(undefined),
     regoperatorInvoke = jest
       .spyOn(opreg.actions.regoperator, "invoke")
-      .mockResolvedValue(undefined),
-    sponsorsQuery = jest
-      .spyOn(roa.tables.sponsors, "query")
-      .mockImplementation(async args => ({
-        scope: args.scope,
-        rows: emitRow
-          ? [
-              { nonce: DecoyNonce, username: DecoyAccount },
-              ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
-            ]
-          : [],
-        more: false
-      }))
-  jest
-    .spyOn(ctx.wire, "getSysioContract")
-    .mockImplementation(name =>
-      name === SysioContracts.SysioContractName.roa ? roa : opreg
-    )
-  return { ctx, keyStore, nonces, newuserInvoke, regoperatorInvoke, sponsorsQuery }
+      .mockResolvedValue(undefined)
+  jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(opreg as never)
+  return { ctx, keyStore, createAccount, regoperatorInvoke }
 }
 
-/** The step input every sponsored-creation test drives the runner with. */
-const SponsoredInput = {
-  kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput" as const,
-  label: OperatorHandle
-}
+describe("WireOperatorProvisioningTool.runAccountCreation", () => {
+  /** The step input every account-creation test drives the runner with. */
+  const CreateInput = {
+    kind: "WireOperatorProvisioningTool.CreateAccountInput" as const,
+    label: OperatorHandle
+  }
 
-describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
-  it("invokes roa::newuser as the node owner and adopts the generated name into account", async () => {
-    const { ctx, keyStore, newuserInvoke } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
+  afterEach(() => jest.restoreAllMocks())
+
+  it("creates the operator's account as sysio, owned by its own wire key", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
+    await WireOperatorProvisioningTool.runAccountCreation(
       ctx,
-      SponsoredInput,
+      CreateInput,
       new AbortController().signal
     )
-    expect(newuserInvoke).toHaveBeenCalledTimes(1)
-    const [data, options] = newuserInvoke.mock.calls[0]
-    expect(data.creator).toBe(Constants.BOOTSTRAP_NODE_OWNER)
-    expect(data.pubkey).toBe("PUB_K1_op")
-    expect(options).toEqual({
-      authorization: [
-        { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
-      ]
-    })
-    const operator = keyStore.assertOperator(OperatorHandle)
-    // The read-back lands on account; the durable handle is untouched.
-    expect(operator.account).toBe(GeneratedAccount)
-    expect(operator.label).toBe(OperatorHandle)
+    expect(createAccount).toHaveBeenCalledTimes(1)
+    expect(createAccount).toHaveBeenCalledWith(
+      "sysio",
+      OperatorHandle,
+      "PUB_K1_op",
+      "PUB_K1_op"
+    )
   })
 
-  it("passes a FRESH single-use nonce — never the operator's durable handle", async () => {
-    const { ctx, newuserInvoke } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    const [{ nonce }] = newuserInvoke.mock.calls[0]
-    expect(nonce).not.toBe(OperatorHandle)
-    expect(nonce).toMatch(/^[a-z1-5]{12}$/)
-    expect(Name.isValid(nonce)).toBe(true)
-  })
-
-  it("mints a DIFFERENT nonce on every run (no reuse across operators)", async () => {
-    const first = fakeSponsorContext(),
-      second = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      first.ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      second.ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    expect(first.nonces[0]).not.toBe(second.nonces[0])
-  })
-
-  it("reads the sponsors table back BY THE MINTED NONCE, with an explicit row limit", async () => {
-    const { ctx, keyStore, sponsorsQuery } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    // ONE read — the pre-check is gone, so the only query is the read-back.
-    expect(sponsorsQuery).toHaveBeenCalledTimes(1)
-    const [args] = sponsorsQuery.mock.calls[0]
-    expect(args.scope).toBe(Constants.BOOTSTRAP_NODE_OWNER)
-    expect(args.limit).toBeGreaterThan(0)
-    // The foreign row precedes this operator's in the returned page, so the
-    // adopted account proves the NONCE selected the row — a read that took
-    // `rows[0]` (or dropped the predicate) would have adopted the decoy.
-    const operator = keyStore.assertOperator(OperatorHandle)
-    expect(operator.account).toBe(GeneratedAccount)
-    expect(operator.account).not.toBe(DecoyAccount)
-  })
-
-  it("propagates a failed sponsors read instead of treating it as 'no row yet'", async () => {
-    const { ctx, sponsorsQuery } = fakeSponsorContext()
-    sponsorsQuery.mockRejectedValueOnce(
-      new Error("Contract Table Query Exception: Table sponsors is not specified in the ABI")
-    )
+  it("propagates a failed newaccount", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
+    createAccount.mockRejectedValueOnce(new Error("account_name_exists_exception"))
     await expect(
-      WireOperatorProvisioningTool.runSponsoredAccountCreation(
+      WireOperatorProvisioningTool.runAccountCreation(
         ctx,
-        SponsoredInput,
+        CreateInput,
         new AbortController().signal
       )
-    ).rejects.toThrow(/Contract Table Query Exception/)
+    ).rejects.toThrow(/account_name_exists_exception/)
   })
 
-  it("throws when no sponsors row exists for the minted nonce after newuser", async () => {
-    const { ctx } = fakeSponsorContext(false)
+  it("refuses an operator that was never materialized", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
     await expect(
-      WireOperatorProvisioningTool.runSponsoredAccountCreation(
+      WireOperatorProvisioningTool.runAccountCreation(
         ctx,
-        SponsoredInput,
+        { ...CreateInput, label: "missingop" },
         new AbortController().signal
       )
-    ).rejects.toThrow(/no sponsors row for nonce/)
+    ).rejects.toThrow(/missingop/)
+    expect(createAccount).not.toHaveBeenCalled()
   })
 })
 
 describe("WireOperatorProvisioningTool.runRegistration", () => {
-  it("registers the operator's RESOLVED account, not its durable handle", async () => {
-    const { ctx, keyStore, regoperatorInvoke } = fakeSponsorContext()
-    keyStore.setOperator({
-      ...keyStore.assertOperator(OperatorHandle),
-      account: GeneratedAccount
-    })
+  afterEach(() => jest.restoreAllMocks())
+
+  it("registers the operator's account on sysio.opreg", async () => {
+    const { ctx, regoperatorInvoke } = fakeOperatorContext()
     await WireOperatorProvisioningTool.runRegistration(
       ctx,
       {
@@ -298,8 +211,7 @@ describe("WireOperatorProvisioningTool.runRegistration", () => {
     // `account:` is the GENERATED ABI field on `opreg::regoperator` — it never
     // renames with the harness, and it carries the on-chain account.
     const [data] = regoperatorInvoke.mock.calls[0]
-    expect(data.account).toBe(GeneratedAccount)
-    expect(data.account).not.toBe(OperatorHandle)
+    expect(data.account).toBe(OperatorHandle)
     expect(data.is_bootstrapped).toBe(true)
     expect(data.type).toBe(SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
   })
@@ -341,7 +253,7 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
     expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
     // every depot-side step still runs.
-    expect(kinds).toContain("WireOperatorProvisioningTool.SponsoredAccountCreationInput")
+    expect(kinds).toContain("WireOperatorProvisioningTool.CreateAccountInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.RegistrationInput")
   })
 })
@@ -428,14 +340,14 @@ describe("WireOperatorProvisioningTool.planProducerIdentityPhase", () => {
 
 /**
  * A COLLATERAL-BACKED producer: a PRODUCER spec with no `producerNodeIndex`. It takes the same
- * route every other bonded operator does — unique keys, a node-owner-sponsored account, authex
+ * route every other bonded operator does — unique keys, an account of its own, authex
  * links on both chains, `opreg::regoperator` — and its identity step additionally mints the
  * finalizer key a producer needs to hold a rank position at all.
  */
 describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no producerNodeIndex)", () => {
   const signal = new AbortController().signal
 
-  it("takes the OPP-operator route: unique identity, sponsored account, authex links, regoperator", () => {
+  it("takes the OPP-operator route: unique identity, its own account, authex links, regoperator", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       fakeParent(),
       "flow",
@@ -452,7 +364,7 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
     )
     expect(firstPhaseStepKinds(group)).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"
@@ -571,8 +483,8 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       expect(stored.type).toBe(OperatorType.PRODUCER)
       expect(stored.wire.publicKey).toBe("PUB_K1_flowprod")
       expect(stored.wireFinalizer.publicKey).toBe("PUB_BLS_flowprod")
-      // `account` stays unset until the sponsored-creation step adopts the generated name.
-      expect(stored.account).toBeUndefined()
+      // `sysio` creates the account under the handle itself.
+      expect(stored.account).toBe("flowprod")
       // Both the controller key and the finalizer key reach the wallet, so a KIOD node can vote.
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_flowprod")
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_BLS_flowprod")
@@ -594,11 +506,12 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       expect(requested).toHaveLength(3)
       expect(requested).not.toContain(KeyType.BLS)
       expect(ctx.keyStore.assertOperator("batchopaaaa").wireFinalizer).toBeUndefined()
+      expect(ctx.keyStore.assertOperator("batchopaaaa").account).toBe("batchopaaaa")
       expect(addPrivateKey).toHaveBeenCalledTimes(1)
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_batchopaaaa")
     })
 
-    it("rejects a handle longer than 12 chars — it is a node-directory and SSM path segment", async () => {
+    it("rejects a handle longer than 12 chars — it is the operator's WIRE account name", async () => {
       const { ctx } = materializationContext()
       await expect(
         WireOperatorProvisioningTool.runIdentityMaterialization(
@@ -611,7 +524,24 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
           },
           signal
         )
-      ).rejects.toThrow(/must be 1\.\.12 chars/)
+      ).rejects.toThrow(/must be a valid WIRE name/)
+    })
+
+    it("rejects a handle outside the WIRE name alphabet before any key is generated", async () => {
+      const { ctx, adopt } = materializationContext()
+      await expect(
+        WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          {
+            kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+            label: "Batch_Op9",
+            type: OperatorType.BATCH,
+            ethereumHdIndex: 1
+          },
+          signal
+        )
+      ).rejects.toThrow(/must be a valid WIRE name/)
+      expect(adopt).not.toHaveBeenCalled()
     })
   })
 })
@@ -684,7 +614,7 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
     )
     const stored = ctx.keyStore.assertOperator("defproducera")
     expect(stored.type).toBe(OperatorType.PRODUCER)
-    // A producer never goes through roa::newuser: its on-chain name IS its handle.
+    // `sysio` creates the account under the handle itself.
     expect(stored.account).toBe("defproducera")
     expect(stored.publicationLabel).toBe("node_00")
     expect(stored.wire).toEqual(NodeKeys.keys.wire)
@@ -844,7 +774,7 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
       "KeySteps.PublishSignatureProviderKeyInput",
       "KeySteps.PublishSignatureProviderKeyInput",
       "KeySteps.PublishSignatureProviderKeyInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"

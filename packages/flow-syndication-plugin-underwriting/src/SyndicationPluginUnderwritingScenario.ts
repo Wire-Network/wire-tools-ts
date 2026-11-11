@@ -206,13 +206,6 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         Constants.EthereumUser,
         HarnessConstants.DEV_K1_PUBLIC_KEY
       ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.User,
-        "resources-ethereum-user",
-        "allocate recipient resources",
-        SyndicationScenario.WriteOptions,
-        SyndicationScenario.resourcePolicy(Constants.EthereumUser)
-      ),
       SyndicationUserSteps.planLinkEthereumKey(
         Actor.User,
         "link-ethereum-user",

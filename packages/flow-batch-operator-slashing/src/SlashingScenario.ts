@@ -40,9 +40,10 @@ async function verifyElectorateRegistered(
     .getSysioContract(SysioContractName.system)
     .tables.nodecount.query({ limit: 1 })
   Assert.ok(rows.length === 1, "nodecount singleton row missing")
-  Assert.ok(
-    Number(rows[0].t1_count) >= Constants.Tier1VoterNames.length,
-    `nodecount.t1_count ${rows[0].t1_count} < ${Constants.Tier1VoterNames.length} registered voters`
+  Assert.strictEqual(
+    Number(rows[0].t1_count),
+    Constants.Tier1ElectorateNames.length,
+    "nodecount.t1_count is not the flow's registered electorate — the dispute quorum depends on it"
   )
 }
 
@@ -211,13 +212,13 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       setup,
       "ProvisionVoters",
-      "Create + register the 3 Tier-1 voters (the dispute electorate)"
+      "Create + register the 4 Tier-1 node owners of the dispute electorate (3 voters, 1 abstainer)"
     ).push(
-      ...Constants.Tier1VoterNames.flatMap(voter => [
+      ...Constants.Tier1ElectorateNames.flatMap(voter => [
         DisputeSteps.planNewnameduser(
           Actor.User,
           `create-${voter}`,
-          `create Tier-1 voter account ${voter}`,
+          `create Tier-1 node owner account ${voter}`,
           {},
           voter,
           NodeOwnerTier.T1
@@ -234,7 +235,7 @@ export class SlashingScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "electorate-registered",
-        "nodecount.t1_count covers the 3 registered voters",
+        "nodecount.t1_count covers the 4 registered node owners",
         verifyElectorateRegistered
       )
     )
@@ -422,9 +423,9 @@ export class SlashingScenario extends FlowScenario {
       "VoteAndResolve",
       "The 3 Tier-1 owners vote the canonical checksum; chkdispute resolves the dispute + unpauses"
     ).push(
-      // All provisioned Tier-1 owners vote for the canonical checksum — 3 votes
-      // clears the live quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the
-      // 3 voters + the bootstrap owner wireno).
+      // Every voter votes for the canonical checksum — 3 votes clears the live
+      // quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the 3 voters + the
+      // abstainer).
       ...Constants.Tier1VoterNames.map(voter =>
         DisputeSteps.planVotedispute(
           Actor.User,

@@ -204,9 +204,8 @@ export namespace EmissionsSoakScenarioSteps {
   }
 
   /**
-   * Provision a controlled staker's WIRE account under the dev K1 key with the
-   * standard resource policy (the account must host its authex link + pclaim
-   * row) — the harness's ONE user-provisioning mechanism, unfunded.
+   * Provision a controlled staker's WIRE account under the dev K1 key — the
+   * harness's ONE user-provisioning mechanism, unfunded.
    */
   export function planProvisionClaimer<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -227,7 +226,7 @@ export namespace EmissionsSoakScenarioSteps {
     )
   }
 
-  /** Named runner — `provisionWireUser` (create account + resource policy). */
+  /** Named runner — `provisionWireUser` (create the account). */
   export async function runProvisionClaimer<C extends ClusterBuildContext>(
     ctx: C,
     input: ProvisionClaimerInput,

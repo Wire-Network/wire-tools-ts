@@ -538,7 +538,7 @@ command comes first).
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
-| `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
+| `--epoch-duration-sec` | | `300` | minimum epoch duration in seconds (60 is the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
 | `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |

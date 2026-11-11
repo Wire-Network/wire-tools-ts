@@ -496,8 +496,7 @@ export namespace NodeConfig {
 
   /**
    * The process label + node-dir name of an ad-hoc node, keyed by its
-   * operator's durable `label` handle (deterministic + human-navigable; the
-   * `account` is node-owner-generated and not path-safe to rely on).
+   * operator's durable `label` handle.
    *
    * @param label - The operator's durable handle (`batchop.a`, `flowprod`, …).
    * @returns The `node_<label>` process label / directory name.
@@ -527,23 +526,16 @@ export namespace NodeConfig {
   ): NodeConfig {
     const shared = { index: AdHocIndex, name: adHocNodeName(operator.label), ports },
       descriptor: NodeDescriptor = match(operator.type)
-        .with(OperatorType.PRODUCER, () => {
-          Assert.ok(
-            operator.account != null,
-            `NodeConfig.createAdHoc: producer ${operator.label} has no on-chain account to produce for`
-          )
-          return {
-            ...shared,
-            role: NodeRole.producer,
-            // The key-store LABEL, exactly as `plan` stores it. `producers` is resolved against
-            // `ClusterKeyStore`, which is keyed by label only, and a sponsored producer's on-chain
-            // account is generated at run time -- so an account here reads as a label that resolves
-            // to nothing. The account is carried by the OperatorAccount itself.
-            producers: [operator.label],
-            batchOperatorLabel: null,
-            underwriterLabel: null
-          }
-        })
+        .with(OperatorType.PRODUCER, () => ({
+          ...shared,
+          role: NodeRole.producer,
+          // The key-store LABEL, exactly as `plan` stores it: `producers` is resolved against
+          // `ClusterKeyStore`, which is keyed by label. The account is carried by the
+          // OperatorAccount itself.
+          producers: [operator.label],
+          batchOperatorLabel: null,
+          underwriterLabel: null
+        }))
         .with(OperatorType.BATCH, () => ({
           ...shared,
           role: NodeRole.batch_operator,

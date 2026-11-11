@@ -87,7 +87,7 @@ the path flags.
 | `--producer-count` | `-p` | `1` | producer **accounts** registered on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; swap-underwriter daemons have been removed, so any nonzero value is rejected |
-| `--epoch-duration-sec` | | `60` | minimum epoch duration (the depot floor) |
+| `--epoch-duration-sec` | | `300` | minimum epoch duration (60 is the depot floor) |
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |

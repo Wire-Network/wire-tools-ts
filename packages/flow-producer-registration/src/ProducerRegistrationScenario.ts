@@ -4,7 +4,6 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
   ClusterBuildStep,
-  SyndicationScenario,
   SyndicationUserSteps,
   Constants as DepotConstants,
   Constants as ClusterToolConstants,
@@ -283,7 +282,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
           label: Constants.ProducerLabel,
           type: OperatorType.PRODUCER,
           // No `producerNodeIndex` — that is what routes this through the collateral-backed
-          // path (sponsored account, authex links, regoperator) instead of the genesis one.
+          // path (its own keys and account, authex links, regoperator) instead of the genesis one.
           ethereumHdIndex: Constants.ProducerEthereumHdIndex,
           isBootstrapped: false
         }
@@ -360,13 +359,6 @@ export class ProducerRegistrationScenario extends FlowScenario {
         {},
         Constants.FundingAccount,
         ClusterToolConstants.DEV_K1_PUBLIC_KEY
-      ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.Producer,
-        "funding-resources",
-        "allocate funding account resources",
-        {},
-        SyndicationScenario.resourcePolicy(Constants.FundingAccount)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.Producer,

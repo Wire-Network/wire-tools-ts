@@ -1003,12 +1003,12 @@ export namespace ExternalClusterConfigSteps {
    *
    * Deriving the covered set — rather than re-stating a curve list at the emit
    * site — is what makes the guard true by construction. The operator map is NOT
-   * homogeneous: batch operators and underwriters publish K1/EM/ED, the genesis
-   * identity (`node_bios`) publishes K1/BLS, and the bootstrap node owner
-   * publishes K1 alone. A hand-maintained "operators publish K1/EM/ED" set is
-   * right for the first class and wrong for the other two — it refused the
-   * genesis identity's BLS, a parameter create had genuinely published, and
-   * failed every SSM `create-external-config` at the Emit stage.
+   * homogeneous: batch operators and underwriters publish K1/EM/ED, and the
+   * genesis identity (`node_bios`) publishes K1/BLS. A hand-maintained
+   * "operators publish K1/EM/ED" set is right for the first class and wrong for
+   * the second — it refused the genesis identity's BLS, a parameter create had
+   * genuinely published, and failed every SSM `create-external-config` at the
+   * Emit stage.
    *
    * @param config - The SOURCE cluster's resolved config.
    * @returns A resolver from `(publication label, curve)` to its publication.

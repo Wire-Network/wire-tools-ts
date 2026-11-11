@@ -58,39 +58,28 @@ describe("ClusterKeyStore", () => {
 })
 
 describe("ClusterKeyStore account-handle keying", () => {
-  it("keys operators by the DURABLE handle — the generated account is not a key", () => {
+  it("keys operators by the DURABLE handle — the on-chain account is not a key", () => {
     const store = new ClusterKeyStore().setOperator({
       label: "batchop.a",
       publicationLabel: "batchop.a",
-      account: "wireno.x3f9k",
+      account: "acct.x3f9k",
       type: OperatorType.BATCH,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
     })
-    expect(store.assertOperator("batchop.a").account).toBe("wireno.x3f9k")
-    expect(store.operator("wireno.x3f9k")).toBeUndefined()
+    expect(store.assertOperator("batchop.a").account).toBe("acct.x3f9k")
+    expect(store.operator("acct.x3f9k")).toBeUndefined()
   })
 
-  it("setOperator must not default account := label (materialized, pre-sponsored-creation)", () => {
-    const store = new ClusterKeyStore().setOperator({
-      label: "batchop.a",
-      publicationLabel: "batchop.a",
-      type: OperatorType.BATCH,
-      wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
-    })
-    expect(store.assertOperator("batchop.a").label).toBe("batchop.a")
-    expect(store.assertOperator("batchop.a").account).toBeUndefined()
-  })
-
-  it("setOperator with the same handle REPLACES the entry (sponsored-creation account write-back)", () => {
+  it("setOperator with the same handle REPLACES the entry", () => {
     const store = new ClusterKeyStore()
       .setOperator(fixtureOperatorAccount("batchop.a", OperatorType.BATCH))
       .setOperator({
         ...fixtureOperatorAccount("batchop.a", OperatorType.BATCH),
-        account: "wireno.q8m2c"
+        account: "acct.q8m2c"
       })
     expect(store.operators.length).toBe(1)
-    // The write-back changes ONLY the chain account — the handle is the key.
-    expect(store.assertOperator("batchop.a").account).toBe("wireno.q8m2c")
+    // The replacement changes ONLY the chain account — the handle is the key.
+    expect(store.assertOperator("batchop.a").account).toBe("acct.q8m2c")
     expect(store.assertOperator("batchop.a").label).toBe("batchop.a")
   })
 

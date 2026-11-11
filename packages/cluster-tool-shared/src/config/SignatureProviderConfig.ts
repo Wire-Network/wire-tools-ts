@@ -129,7 +129,7 @@ export type SignatureProviderConfigOf<T extends SignatureProviderType> = Extract
  * Pattern placeholders — `{cluster}` (the AWS account the cluster runs in:
  * `dev` / `sandbox` / `test` / `prod`, sourced from `AWSClusterNodeConfig.account`),
  * `{account}` (the key's DURABLE handle — an operator handle like `batchop.a`
- * or a node name like `node_00`, NEVER the generated `wireno.…` chain account),
+ * or a node name like `node_00`),
  * `{keyType}`, and the OPTIONAL `{version}`. The default pattern is the
  * 4-segment `/wire/{cluster}/{account}/{keyType}`; `{version}` is SUPPORTED but
  * is not part of it. An unknown or unfilled placeholder fails fast at

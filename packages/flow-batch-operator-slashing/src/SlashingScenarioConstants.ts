@@ -80,14 +80,22 @@ export namespace SlashingScenarioConstants {
   export const TerminateMaxPercentMisses24h = 99
 
   /**
-   * Tier-1 node owners provisioned as the dispute electorate. Names MUST be
-   * 2-6 chars — `sysio.roa::valid_name_for_tier` rejects longer Tier-1 names
-   * (NAME_INVALID, a soft-fail that never registers and never bumps
-   * `nodecount.t1_count`). The bootstrap node owner `wireno` is ALSO Tier-1,
-   * so the live `nodecount.t1_count` = these 3 + wireno = 4, and the fast-path
-   * quorum is Q = floor(4/2)+1 = 3 — voting all 3 of these owners clears it.
+   * Tier-1 node owners that vote the dispute. Names MUST be 2-6 chars —
+   * `sysio.roa::valid_name_for_tier` rejects longer Tier-1 names (NAME_INVALID,
+   * a soft-fail that never registers and never bumps `nodecount.t1_count`).
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
+  /**
+   * A Tier-1 node owner that never votes. It makes the electorate 4, so the
+   * fast-path quorum is Q = floor(4/2)+1 = 3 and the dispute resolves only once
+   * every one of {@link Tier1VoterNames} has voted.
+   */
+  export const Tier1AbstainerName = "abstn"
+  /** The dispute electorate: every Tier-1 node owner the flow registers. */
+  export const Tier1ElectorateNames = [
+    ...Tier1VoterNames,
+    Tier1AbstainerName
+  ] as const
 
 
   /** The operator delivering the canonical checksum (NOT slashed). */

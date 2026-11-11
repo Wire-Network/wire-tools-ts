@@ -32,10 +32,10 @@ const AnvilMnemonic =
 /**
  * A fully-keyed OperatorAccount fixture for the given label/type — REAL
  * (decodable) ethereum + solana keys, since `resolveOperatorDaemonArgs`
- * threads them through `KeyGenerator.toSignatureProvider`. `account` is the
- * DISTINCT `roa::newuser`-generated chain name, never the durable handle: a
- * fixture where the two are the same string cannot fail on a label/account
- * swap at a chain boundary (mirrors the helper in `OperatorDaemonTool.test.ts`).
+ * threads them through `KeyGenerator.toSignatureProvider`. `account` is
+ * DISTINCT from the durable handle: a fixture where the two are the same
+ * string cannot fail on a label/account swap at a chain boundary (mirrors the
+ * helper in `OperatorDaemonTool.test.ts`).
  */
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   const wallet = ethers.HDNodeWallet.fromMnemonic(
@@ -46,7 +46,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   return {
     label,
     publicationLabel: label,
-    account: `wireno.${label}`,
+    account: `acct.${label}`,
     type,
     wire: {
       type: KeyType.K1,
@@ -589,7 +589,7 @@ describe("Steps.processes.nodeop", () => {
       expect(args).toEqual(
         expect.arrayContaining([
           "--batch-operator-account",
-          "wireno.batchopaaaa"
+          "acct.batchopaaaa"
         ])
       )
       // The depot matches this argv against `sysio.opreg::operators`, which is

@@ -320,8 +320,8 @@ export namespace NodeopProcessSteps {
   /**
    * A producer node's hosted accounts, in `node.producers` order.
    *
-   * A producer never goes through `roa::newuser`, so its handle IS its on-chain name and the
-   * store is keyed by it directly. Each account was materialized with the node's K1 — and the
+   * A producer's handle IS its on-chain name and the store is keyed by it directly. Each
+   * account was materialized with the node's K1 — and the
    * node's BLS when it is the node's sole producer, else a BLS of its own — by
    * `WireOperatorProvisioningTool.runProducerMaterialization`, so nothing is synthesized
    * here — an absent entry means that provisioning step never ran and must fail loudly rather
