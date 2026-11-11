@@ -148,7 +148,10 @@ Flow packages depend on the harness via `workspace:*`.
 claim creates a fresh account; existing names reject with `ACCOUNT_EXISTS` (7),
 including matching public keys. Direct rejection fixtures and the real BAR → OPP
 path remain separate checks. Slashing creates its fresh voter accounts through
-that same single `nodeownreg` action. No external payload or SDK shape changes.
+that same single `nodeownreg` action. Its self-inline `nodeownfin` continuation is
+internal to ROA; these scenarios keep the existing SDK call and payload. Claim
+traces no longer emit a separate `newnameduser` action; assertions read the
+owner/audit tables rather than depending on that trace.
 
 ### LIQ settlement audit — syndication-underwriting
 
