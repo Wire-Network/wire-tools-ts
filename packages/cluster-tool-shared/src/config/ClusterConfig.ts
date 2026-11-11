@@ -293,6 +293,8 @@ export const ClusterConfigSchema = z.object({
   enableMockLiqPools: z.boolean().default(false),
   /** Opt-in bootstrap import of mock bonder positions, with custody backing. */
   enableMockSyndicationImport: z.boolean().default(false),
+  /** Local-validator-only fixed $100 oracle fixture; production outpost code is unchanged. */
+  enableSolanaFixedPriceOracle: z.boolean().default(false),
   /**
    * The `batch_operator_plugin` underwriter role every batch-operator daemon runs
    * (`--enable-batch-operator-underwriting`), or `null` for relay-only operator nodes.

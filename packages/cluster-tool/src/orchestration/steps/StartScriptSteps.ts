@@ -13,6 +13,7 @@ import {
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { StartScriptRenderer } from "../../config/renderers/StartScriptRenderer.js"
 import { Report } from "../../report/Report.js"
+import { SolanaFixedPriceOracleTool } from "../../tools/solana/SolanaFixedPriceOracleTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
@@ -131,7 +132,8 @@ export namespace StartScriptSteps {
         // argv with no `--upgradeable-program`, so a script-started validator
         // comes up WITHOUT the opp-outpost program — surfacing as a
         // one-direction OPP circulation stall, never a startup error.
-        programs: SolanaValidatorProcessSteps.resolvePrograms(config)
+        programs: SolanaValidatorProcessSteps.resolvePrograms(config),
+        extraArgs: SolanaFixedPriceOracleTool.accountArgs(config)
       },
       {
         binary: config.executables.solanaTestValidator,

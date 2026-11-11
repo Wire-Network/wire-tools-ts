@@ -133,6 +133,10 @@ jobs:
             pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile
           fi
 
+      - name: Setup Rust for oracle fixture unit tests
+        if: steps.detect.outputs.changed == 'true'
+        run: rustup toolchain install 1.90.0 --profile minimal
+
       - name: Gate — the updated ranges must install, build and test
         if: steps.detect.outputs.changed == 'true'
         env:

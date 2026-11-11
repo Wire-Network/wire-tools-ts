@@ -12,6 +12,9 @@
     "lib",
     "bin",
     "src",
+    "resources/fixed-price-oracle/Cargo.toml",
+    "resources/fixed-price-oracle/Cargo.lock",
+    "resources/fixed-price-oracle/src",
     "README.md"
   ],
   "bin": {
@@ -27,6 +30,7 @@
     "prepare": "pnpm run build",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:unit": "cargo +1.90.0 test --locked --manifest-path resources/fixed-price-oracle/Cargo.toml",
     "clean": "rm -rf lib"
   },
   "dependencies": {

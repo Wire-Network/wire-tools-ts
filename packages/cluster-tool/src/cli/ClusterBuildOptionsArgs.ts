@@ -582,6 +582,10 @@ export function buildOptionShape(
       OptionLeafType.number,
       "solana-test-validator --slots-per-epoch; omit for the default (100 — agave's own default leaves the chain at epoch 0, which the liqsol surface cannot initialize against)"
     ),
+    enableSolanaFixedPriceOracle: leaf(
+      false,
+      "preload the local $100 Chainlink CPI fixture; unavailable for external outposts"
+    ),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,
