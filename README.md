@@ -150,7 +150,6 @@ including matching public keys. Direct rejection fixtures and the real BAR → O
 path remain separate checks. Slashing creates its fresh voter accounts through
 that same single `nodeownreg` action. No external payload or SDK shape changes.
 
-
 ### LIQ settlement audit — syndication-underwriting
 
 A successful syndication finishes only when its fee-adjusted principal is liquid

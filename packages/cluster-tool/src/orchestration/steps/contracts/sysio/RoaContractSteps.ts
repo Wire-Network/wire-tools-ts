@@ -55,8 +55,8 @@ export namespace RoaContractSteps {
 
   /**
    * `sysio.roa::newnameduser` — create a privileged fixture account with a
-   * finite, pool-gifted RAM allocation (the create step the depot inline-sends
-   * for a real NFT claim).
+   * finite, pool-gifted RAM allocation. NFT claims use nodeownreg instead;
+   * accounts created separately are ineligible for that claim path.
    */
   export function planNewnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
