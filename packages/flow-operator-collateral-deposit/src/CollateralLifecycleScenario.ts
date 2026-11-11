@@ -105,8 +105,8 @@ export class CollateralLifecycleScenario extends FlowScenario {
         {
           label: Constants.DepositorLabel,
           type: OperatorType.BATCH,
-          ethereumHdIndex: Constants.DepositorEthereumHdIndex,
           isBootstrapped: false,
+          fundEthereumWei: Constants.DepositorFundEthereumWei,
           airdropSolanaLamports: Constants.DepositorAirdropLamports
         }
       ]

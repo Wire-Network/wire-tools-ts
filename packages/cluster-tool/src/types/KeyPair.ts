@@ -6,17 +6,23 @@ import { KeyType } from "@wireio/sdk-core"
  *
  * Custody is a real runtime alternative, not an optionality convenience:
  * - `privateKey` — the Wire-canonical key material itself. Present in memory
- *   for every key the run generates OR adopts, and the persisted form under a
- *   `KEY` / `KIOD` signature provider.
+ *   for every key the run generates OR adopts from SSM / a KEY cluster's own
+ *   `cluster-keys.json`, and the persisted form under a `KEY` / `KIOD`
+ *   signature provider.
  * - `awsSecretId` — the SSM parameter id the key material lives under. The
  *   persisted form under an `SSM` signature provider, where `cluster-keys.json`
  *   carries NO key material at all (§5.6) and a rehydrated pair is refs-only:
  *   the daemon's `--signature-provider …,SSM:<id>` spec is what fetches the key
  *   at startup, so nothing downstream of `ClusterState.loadKeys` may read
  *   `privateKey`.
+ * - `awsKmsKeyId` (+ `awsKmsRegion`, {@link KeyPairAddress} — EM only) — the
+ *   AWS KMS key the secret lives in and NEVER leaves: the pair carries no
+ *   `privateKey` even in memory, every signature is a remote `KMS::Sign`
+ *   (`keyPairUtils.ethereumSigner`), and the daemon's spec is
+ *   `…,KMS:<region>:<keyId>`.
  *
  * `ClusterState`'s per-curve schemas enforce the exactly-one rule on the
- * persisted records; in memory both slots are simply absent-able.
+ * persisted records; in memory the slots are simply absent-able.
  */
 export interface KeyPairCommon<T extends KeyType = KeyType> {
   readonly type: T
@@ -30,9 +36,16 @@ export interface KeyPairProofOfPossession {
   readonly proofOfPossession: string
 }
 
-/** The EM-only {@link KeyPair} extension: the address derived from the key. */
+/**
+ * The EM-only {@link KeyPair} extension: the address derived from the key, plus
+ * the THIRD custody form — an AWS KMS key reference (`awsKmsKeyId` is any
+ * `KeyId` KMS accepts, an alias name for harness-rendered keys; `awsKmsRegion`
+ * the ONE region it lives in). Both are present or both absent.
+ */
 export interface KeyPairAddress {
   readonly address: string
+  readonly awsKmsKeyId?: string
+  readonly awsKmsRegion?: string
 }
 
 /**

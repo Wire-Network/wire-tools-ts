@@ -3,11 +3,15 @@ import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
   ethereumCompressedPubkey,
+  ethereumKeyPairFromKmsPublicKey,
   ethereumKeyPairFromWallet,
   ethereumPrivateKeyFromWallet,
+  ethereumPrivateKeyHex,
   ethereumPublicKeyFromWallet,
+  ethereumSdkPrivateKey,
   ethereumSigner,
   ethereumUncompressedPublicKeyHex,
+  isKmsCustodied,
   keyPairFromPrivate,
   privateKeyFromNativeString,
   solanaKeypair,
@@ -17,16 +21,31 @@ import {
 } from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 
-/** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic =
-  "test test test test test test test test test test test junk"
+/** A fresh random ethers wallet — the only kind the harness ever holds. */
+function randomWallet(): ethers.HDNodeWallet {
+  return ethers.Wallet.createRandom()
+}
 
-function anvilWallet(index: number): ethers.HDNodeWallet {
-  return ethers.HDNodeWallet.fromMnemonic(
-    ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-    `m/44'/60'/0'/0/${index}`
+/** The ONE region a KMS key lives in, and the alias the harness renders for it. */
+const KmsRegion = "us-east-1"
+const KmsAliasName = "alias/wire/test/batchop-a/EM"
+
+/** The compressed secp256k1 point KMS reports for `wallet` (via `GetPublicKey`). */
+function compressedPointOf(wallet: ethers.HDNodeWallet): Uint8Array {
+  return ethers.getBytes(
+    ethers.SigningKey.computePublicKey(wallet.signingKey.publicKey, true)
+  )
+}
+
+/** A KMS-custodied EM pair whose public identity is `wallet`'s — no material. */
+function kmsPairOf(wallet: ethers.HDNodeWallet): EthereumKeyPair {
+  return ethereumKeyPairFromKmsPublicKey(
+    compressedPointOf(wallet),
+    KmsRegion,
+    KmsAliasName
   )
 }
 
@@ -73,7 +92,7 @@ describe("keyPairUtils", () => {
 
     it("round-trips every key type through toNativeString (K1 WIF / EM 0x-hex / ED base58 / BLS PVT_BLS_)", () => {
       const k1 = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY),
-        em = ethereumPrivateKeyFromWallet(anvilWallet(0)),
+        em = ethereumPrivateKeyFromWallet(randomWallet()),
         ed = PrivateKey.generate(KeyType.ED),
         bls = PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY)
       // Inferred tuple types — an explicit PrivateKey annotation would force the
@@ -92,7 +111,7 @@ describe("keyPairUtils", () => {
     })
 
     it("accepts an EM hex value without the 0x prefix", () => {
-      const em = ethereumPrivateKeyFromWallet(anvilWallet(1)),
+      const em = ethereumPrivateKeyFromWallet(randomWallet()),
         bareHex = em.toNativeString().slice(2)
       expect(privateKeyFromNativeString(KeyType.EM, bareHex).toString()).toBe(
         em.toString()
@@ -143,7 +162,7 @@ describe("keyPairUtils", () => {
     })
 
     it("rebuilds an EM pair INCLUDING its 0x address, from the 0x-hex secret", () => {
-      const wallet = anvilWallet(7),
+      const wallet = randomWallet(),
         generated = ethereumKeyPairFromWallet(wallet),
         pair = keyPairFromPrivate(
           KeyType.EM,
@@ -163,13 +182,14 @@ describe("keyPairUtils", () => {
 
   // ── live ethers wallet → typed EM keys ──
   describe("ethereumPrivateKeyFromWallet", () => {
-    it("derives a PVT_EM_ key deterministically per HD index", () => {
-      const key = ethereumPrivateKeyFromWallet(anvilWallet(0))
+    it("derives the SAME PVT_EM_ key from one wallet, and a different one from another", () => {
+      const wallet = randomWallet(),
+        key = ethereumPrivateKeyFromWallet(wallet)
       expect(key.toString()).toMatch(/^PVT_EM_/)
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(0)).toString()).toBe(
+      expect(ethereumPrivateKeyFromWallet(wallet).toString()).toBe(
         key.toString()
       )
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(1)).toString()).not.toBe(
+      expect(ethereumPrivateKeyFromWallet(randomWallet()).toString()).not.toBe(
         key.toString()
       )
     })
@@ -177,7 +197,7 @@ describe("keyPairUtils", () => {
 
   describe("ethereumPublicKeyFromWallet", () => {
     it("yields a PUB_EM_ key matching the one derived from the private key", () => {
-      const wallet = anvilWallet(3),
+      const wallet = randomWallet(),
         fromWallet = ethereumPublicKeyFromWallet(wallet).toString(),
         fromPrivate = ethereumPrivateKeyFromWallet(wallet).toPublic().toString()
       expect(fromWallet).toMatch(/^PUB_EM_/)
@@ -187,7 +207,7 @@ describe("keyPairUtils", () => {
 
   describe("ethereumKeyPairFromWallet", () => {
     it("builds an EthereumKeyPair carrying pub/priv/address from a wallet", () => {
-      const wallet = anvilWallet(35),
+      const wallet = randomWallet(),
         keyPair = ethereumKeyPairFromWallet(wallet)
       expect(keyPair.type).toBe(KeyType.EM)
       expect(keyPair.publicKey).toMatch(/^PUB_EM_/)
@@ -214,31 +234,148 @@ describe("keyPairUtils", () => {
       provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${port}`)
     })
 
-    it("reconstructs a signer whose address matches the stored EM key pair", () => {
-      const wallet = anvilWallet(2),
-        keyPair: EthereumKeyPair = ethereumKeyPairFromWallet(wallet)
-      expect(ethereumSigner(keyPair, provider).address).toBe(wallet.address)
+    it("reconstructs a LOCAL signer — an ethers.Wallet on the provider — whose address matches the stored EM key pair", async () => {
+      const wallet = randomWallet(),
+        keyPair: EthereumKeyPair = ethereumKeyPairFromWallet(wallet),
+        signer = await ethereumSigner(keyPair, provider)
+      expect(signer).toBeInstanceOf(ethers.Wallet)
+      expect(signer.provider).toBe(provider)
+      await expect(signer.getAddress()).resolves.toBe(wallet.address)
     })
 
     it("without a provider, still signs offline — the same signature as the source wallet", async () => {
-      const wallet = anvilWallet(2),
-        signer = ethereumSigner(ethereumKeyPairFromWallet(wallet))
+      const wallet = randomWallet(),
+        signer = await ethereumSigner(ethereumKeyPairFromWallet(wallet))
       expect(signer.provider).toBeNull()
       expect(await signer.signMessage("createlink")).toBe(
         await wallet.signMessage("createlink")
       )
     })
 
+    it("ethereumPrivateKeyHex is the 0x-hex secret the source wallet was built from", () => {
+      const wallet = randomWallet()
+      expect(ethereumPrivateKeyHex(ethereumKeyPairFromWallet(wallet))).toBe(
+        wallet.privateKey
+      )
+    })
+
     it("derives the 33-byte compressed secp256k1 public key", () => {
-      const keyPair = ethereumKeyPairFromWallet(anvilWallet(2))
+      const keyPair = ethereumKeyPairFromWallet(randomWallet())
       expect(ethereumCompressedPubkey(keyPair).byteLength).toBe(33)
+    })
+  })
+
+  // ── the KMS custody form: a key reference, never material ──
+  describe("isKmsCustodied", () => {
+    it("is true for a pair carrying a KMS key reference, false for material and SSM refs", () => {
+      const wallet = randomWallet(),
+        generated = ethereumKeyPairFromWallet(wallet),
+        ssmRefsOnly: EthereumKeyPair = {
+          type: KeyType.EM,
+          publicKey: generated.publicKey,
+          address: generated.address,
+          awsSecretId: "/wire/test/batchop.a/EM"
+        }
+      expect(isKmsCustodied(kmsPairOf(wallet))).toBe(true)
+      expect(isKmsCustodied(generated)).toBe(false)
+      expect(isKmsCustodied(ssmRefsOnly)).toBe(false)
+    })
+  })
+
+  describe("ethereumKeyPairFromKmsPublicKey", () => {
+    it("builds the pair's PUBLIC identity from the compressed point — PUB_EM_, the checksummed address, the key ref, and NO privateKey", () => {
+      const wallet = randomWallet(),
+        pair = kmsPairOf(wallet)
+      expect(pair.type).toBe(KeyType.EM)
+      expect(pair.publicKey).toMatch(/^PUB_EM_/)
+      // The same PUB_EM_ a local wallet derives — the point IS the identity.
+      expect(pair.publicKey).toBe(ethereumPublicKeyFromWallet(wallet).toString())
+      expect(pair.address).toBe(wallet.address)
+      expect(pair.address).toBe(
+        ethers.computeAddress(ethers.hexlify(compressedPointOf(wallet)))
+      )
+      expect(pair.awsKmsRegion).toBe(KmsRegion)
+      expect(pair.awsKmsKeyId).toBe(KmsAliasName)
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(pair).not.toHaveProperty("awsSecretId")
+    })
+  })
+
+  describe("ethereumSigner (KMS arm) + the material derivations on a KMS pair", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    it("signs through KMSClientProvider.createSigner with the pair's region + key id and the provider", async () => {
+      const wallet = randomWallet(),
+        pair = kmsPairOf(wallet),
+        provider = new ethers.JsonRpcProvider(),
+        kmsSigner = new ethers.VoidSigner(wallet.address, provider),
+        createSigner = jest
+          .spyOn(KMSClientProvider, "createSigner")
+          .mockResolvedValue(kmsSigner)
+      try {
+        await expect(ethereumSigner(pair, provider)).resolves.toBe(kmsSigner)
+        expect(createSigner).toHaveBeenCalledTimes(1)
+        expect(createSigner).toHaveBeenCalledWith(
+          KmsRegion,
+          KmsAliasName,
+          provider
+        )
+      } finally {
+        provider.destroy()
+      }
+    })
+
+    it("forwards an ABSENT provider to the KMS arm (offline signing)", async () => {
+      const createSigner = jest
+        .spyOn(KMSClientProvider, "createSigner")
+        .mockResolvedValue(new ethers.VoidSigner(randomWallet().address))
+      await ethereumSigner(kmsPairOf(randomWallet()))
+      expect(createSigner).toHaveBeenCalledWith(
+        KmsRegion,
+        KmsAliasName,
+        undefined
+      )
+    })
+
+    it("ethereumPrivateKeyHex / ethereumSdkPrivateKey THROW naming the KMS custody — the secret never leaves KMS", () => {
+      const pair = kmsPairOf(randomWallet())
+      expect(() => ethereumPrivateKeyHex(pair)).toThrow(
+        new RegExp(
+          `${pair.address} carries no key material \\(it is custodied by AWS KMS ${KmsAliasName}\\)`
+        )
+      )
+      expect(() => ethereumSdkPrivateKey(pair)).toThrow(
+        /custodied by AWS KMS .* — sign through ethereumSigner instead/
+      )
+    })
+
+    it("names the SSM reference (not KMS) for a refs-only SSM pair that lacks material", () => {
+      const generated = ethereumKeyPairFromWallet(randomWallet()),
+        ssmRefsOnly: EthereumKeyPair = {
+          type: KeyType.EM,
+          publicKey: generated.publicKey,
+          address: generated.address,
+          awsSecretId: "/wire/test/batchop.a/EM"
+        }
+      expect(() => ethereumPrivateKeyHex(ssmRefsOnly)).toThrow(
+        /it is referenced by \/wire\/test\/batchop\.a\/EM/
+      )
+    })
+
+    it("ethereumCompressedPubkey + ethereumUncompressedPublicKeyHex render from the STORED public key of a KMS pair", () => {
+      const wallet = randomWallet(),
+        pair = kmsPairOf(wallet)
+      expect(ethereumCompressedPubkey(pair)).toEqual(compressedPointOf(wallet))
+      expect(ethereumUncompressedPublicKeyHex(pair)).toBe(
+        ethereumUncompressedPublicKeyHex(ethereumKeyPairFromWallet(wallet))
+      )
     })
   })
 
   // ── public-key derivations that survive SSM (refs-only) custody ──
   describe("ethereumUncompressedPublicKeyHex", () => {
     it("matches the value derived from the private key (0x + 128 hex, no 04)", () => {
-      const wallet = anvilWallet(4),
+      const wallet = randomWallet(),
         keyPair = ethereumKeyPairFromWallet(wallet),
         fromPrivate = `0x${new ethers.SigningKey(wallet.privateKey).publicKey.slice(4)}`
       expect(ethereumUncompressedPublicKeyHex(keyPair)).toBe(fromPrivate)
@@ -248,7 +385,7 @@ describe("keyPairUtils", () => {
     })
 
     it("renders from a REFS-ONLY pair (awsSecretId, no privateKey)", () => {
-      const wallet = anvilWallet(4),
+      const wallet = randomWallet(),
         generated = ethereumKeyPairFromWallet(wallet),
         refsOnly: EthereumKeyPair = {
           type: KeyType.EM,
@@ -313,8 +450,8 @@ describe("keyPairUtils", () => {
       })
     })
 
-    it("parses the PUB_* string form (an anvil wallet's EM key round-trips)", () => {
-      const publicKey = ethereumPublicKeyFromWallet(anvilWallet(3)),
+    it("parses the PUB_* string form (a random wallet's EM key round-trips)", () => {
+      const publicKey = ethereumPublicKeyFromWallet(randomWallet()),
         wireKey = wireKeyFromPublicKey(publicKey.toString())
       expect(wireKey.keyType).toBe(WireKeyType.EM)
       expect(wireKey.key).toEqual(publicKey.data.array)

@@ -17,14 +17,29 @@ const { SysioContractName } = SysioContracts
  * message format + per-chain hash/encoding requirements.
  */
 export namespace AuthExLinkTool {
-  /** Parameters for {@link createLink}. */
-  export interface LinkParams {
-    chainKind: ChainKind
+  /**
+   * Ethereum (EM) link parameters: the key's Wire-canonical public key
+   * (`PUB_EM_…`, read off the stored pair) and ANY ethers signer for it — a
+   * local `ethers.Wallet` or the KMS signer `keyPairUtils.ethereumSigner`
+   * builds, whose secret never leaves AWS. Nothing here derives the public key
+   * from the signer, so a material-less signer links exactly like a wallet.
+   */
+  export interface EthereumLinkParams {
+    chainKind: ChainKind.EVM
+    account: string
+    publicKey: string
+    signer: ethers.Signer
+  }
+
+  /** Solana (ED) link parameters: the ed25519 private key signs the mapped digest. */
+  export interface SolanaLinkParams {
+    chainKind: ChainKind.SVM
     account: string
     privateKey: PrivateKey
-    /** For ETH: the ethers wallet (compressed-pubkey derivation must match). */
-    ethereumWallet?: ethers.BaseWallet
   }
+
+  /** Parameters for {@link createLink}, discriminated on `chainKind`. */
+  export type LinkParams = EthereumLinkParams | SolanaLinkParams
 
   /** Build the authex `createlink` message: `<pubkey>|<account>|<chainKind>|<nonce>|createlink auth`. */
   function buildLinkMessage(
@@ -36,13 +51,18 @@ export namespace AuthExLinkTool {
     return `${publicKeyString}|${account}|${chainKind}|${nonce}|createlink auth`
   }
 
-  /** Sign for Ethereum (EM) — keccak256(message), no EIP-191 prefix. */
+  /**
+   * Sign for Ethereum (EM) — the signer's `signMessage` over the keccak256
+   * digest of the message (ethers applies the EIP-191 prefix to the 32 digest
+   * bytes; the KMS signer does the same, so both custody forms produce the
+   * signature the authex contract recovers).
+   */
   async function signEthereumMessage(
     message: string,
-    ethereumWallet: ethers.BaseWallet
+    signer: ethers.Signer
   ): Promise<Signature> {
     const digest = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(message)))
-    return Signature.fromHex(await ethereumWallet.signMessage(digest), KeyType.EM)
+    return Signature.fromHex(await signer.signMessage(digest), KeyType.EM)
   }
 
   /**
@@ -69,17 +89,18 @@ export namespace AuthExLinkTool {
    * Invokes `sysio.authex::createlink`, authorized by `account@active`.
    */
   export async function createLink(wire: WireClient, params: LinkParams): Promise<void> {
-    const { chainKind, account, privateKey, ethereumWallet } = params,
-      publicKey =
-        chainKind === ChainKind.EVM && ethereumWallet
-          ? ethereumPublicKeyFromWallet(ethereumWallet)
-          : privateKey.toPublic(),
-      publicKeyString = publicKey.toString(),
+    // Native discriminated-union narrowing: ts-pattern cannot prove
+    // exhaustiveness over the proto `ChainKind` enum's members.
+    const { chainKind, account } = params,
+      publicKeyString =
+        params.chainKind === ChainKind.EVM
+          ? params.publicKey
+          : params.privateKey.toPublic().toString(),
       nonce = Date.now(),
       message = buildLinkMessage(publicKeyString, account, chainKind, nonce),
-      signature = await (chainKind === ChainKind.EVM && ethereumWallet
-        ? signEthereumMessage(message, ethereumWallet)
-        : signSolanaMessage(privateKey, message))
+      signature = await (params.chainKind === ChainKind.EVM
+        ? signEthereumMessage(message, params.signer)
+        : signSolanaMessage(params.privateKey, message))
 
     await wire.getSysioContract(SysioContractName.authex).actions.createlink.invoke(
       {

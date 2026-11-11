@@ -17,6 +17,7 @@ import {
   ExternalClusterConfigSchemaCodec,
   type ExternalOutpostConfig,
   NodeopReadMode,
+  SignatureProviderKeyPolicy,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { ClusterState, Constants } from "@wireio/cluster-tool"
@@ -33,6 +34,7 @@ import {
   QueryEngineConfigProvider,
   StartScriptRenderer
 } from "@wireio/cluster-tool/config"
+import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 import {
   ClusterBuild,
   ClusterBuildPhaseGroup,
@@ -60,23 +62,38 @@ const External = Steps.externalClusterConfig,
   // Provider overrides for the provider-type-aware emit (Item 1).
   KeyProvider: ClusterSignatureProviderConfig = {
     type: SignatureProviderType.KEY,
-    ssm: null
+    ssm: null,
+    kms: null,
+    batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
   },
   KiodProvider: ClusterSignatureProviderConfig = {
     type: SignatureProviderType.KIOD,
-    ssm: null
+    ssm: null,
+    kms: null,
+    batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
   },
   SSMRegions = ["us-east-1", "eu-west-1"],
   SSMSecretIdPattern = "/wire/{cluster}/{account}/{keyType}",
   SSMProvider: ClusterSignatureProviderConfig = {
     type: SignatureProviderType.SSM,
-    ssm: { awsRegions: SSMRegions, awsSecretIdPattern: SSMSecretIdPattern }
+    ssm: { awsRegions: SSMRegions, awsSecretIdPattern: SSMSecretIdPattern },
+    kms: null,
+    batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+  },
+  // The ONE region the KMS keys live in (a replication region) + the alias pattern.
+  KmsRegion = SSMRegions[0],
+  KmsAliasPattern = "alias/wire/{cluster}/{account}/{keyType}",
+  // An SSM cluster whose EM keys AWS KMS custodies.
+  KMSProvider: ClusterSignatureProviderConfig = {
+    ...SSMProvider,
+    kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion }
   },
   // The SOURCE cluster's AWS placement — `{cluster}` renders its ACCOUNT.
   SourceAWSClusterNodeConfig: AWSClusterNodeConfig = {
     account: AWSAccountName.test,
     regions: SSMRegions,
-    ssm: null
+    ssm: null,
+    kms: null
   },
   // The SSM `{cluster}` create published under — the AWS account, NOT
   // basename(localDir).
@@ -693,6 +710,34 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     }
     ClusterState.saveKeys(config, keys)
     return { label, account, privateKey, proofOfPossession }
+  }
+
+  /**
+   * Replace every OPP operator's persisted EM record with the KMS custody form an
+   * SSM + kms `create` persists (`ClusterState.keyCustodyFor`): the public
+   * identity plus `awsKmsRegion` + `awsKmsKeyId`, NO material. Returns the
+   * aliases injected, keyed exactly as the ONE renderer renders them.
+   */
+  function injectKmsEthereumRefs(): string[] {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config),
+      aliases = keys.operators
+        .filter(entry => entry.ethereum != null)
+        .map(entry => {
+          const alias = `alias/wire/${SourceClusterLabel}/${KMSClientProvider.aliasAccountSegment(
+            entry.publicationLabel
+          )}/EM`
+          entry.ethereum = {
+            type: KeyType.EM,
+            publicKey: entry.ethereum.publicKey,
+            address: entry.ethereum.address,
+            awsKmsRegion: KmsRegion,
+            awsKmsKeyId: alias
+          }
+          return alias
+        })
+    ClusterState.saveKeys(config, keys)
+    return aliases
   }
 
   beforeEach(() => {
@@ -1607,6 +1652,56 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runRebind(ctx, null, signal)
     await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
       /not SSM-published/
+    )
+  })
+
+  it("emits KMS providers for the EM keys of an SSM + kms cluster — region + alias from the RECORD, no SSM ref, no material; K1 / ED stay SSM refs", async () => {
+    const aliases = injectKmsEthereumRefs(),
+      emitted = await emitWithProvider(KMSProvider)
+    expect(aliases.length).toBeGreaterThan(0)
+    const emProviders = emitted.accounts.operators.flatMap(op =>
+      op.keyProviders.filter(provider => provider.type === KeyType.EM)
+    )
+    expect(emProviders).toHaveLength(aliases.length)
+    expect(
+      emProviders.flatMap(provider =>
+        provider.providerType === SignatureProviderType.KMS
+          ? [provider.awsKmsKeyId]
+          : []
+      )
+    ).toEqual(aliases)
+    emProviders.forEach(provider => {
+      expect(provider).toMatchObject({
+        providerType: SignatureProviderType.KMS,
+        type: KeyType.EM,
+        awsKmsRegion: KmsRegion
+      })
+      expect(provider.publicKey).toMatch(/^PUB_EM_/)
+      expect(provider).not.toHaveProperty("privateKey")
+      expect(provider).not.toHaveProperty("awsSecretId")
+      expect(provider).not.toHaveProperty("awsRegions")
+    })
+    // Every other curve is still the SSM ref the publication walker wrote.
+    emitted.accounts.operators
+      .flatMap(op => op.keyProviders.filter(provider => provider.type !== KeyType.EM))
+      .forEach(provider =>
+        expect(provider.providerType).toBe(SignatureProviderType.SSM)
+      )
+    const fileText = Fs.readFileSync(externalConfigFile(), "utf-8")
+    expect(fileText).not.toContain("PVT_")
+    expect(fileText).not.toContain("privateKey")
+  })
+
+  it("refuses a KMS-custodied EM key whose record carries no KMS reference — never a dangling or invented ref", async () => {
+    // The persisted records still carry the KEY form (no `awsKmsKeyId`): under
+    // an SSM + kms provider that pair is KMS-custodied, and the emit has no
+    // reference to put in its entry.
+    const ctx = runContext(externalBindFile, KMSProvider)
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
+      /key EM is KMS-custodied but its record carries no KMS reference/
     )
   })
 

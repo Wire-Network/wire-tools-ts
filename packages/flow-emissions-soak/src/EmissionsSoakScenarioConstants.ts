@@ -59,12 +59,12 @@ export namespace EmissionsSoakScenarioConstants {
   /** WIRE-account prefix for controlled stakers (`soak.sa`, `soak.sb`, …). */
   export const ControlledStakerAccountPrefix = "soak.s"
   /**
-   * Anvil-mnemonic HD index base for the controlled stakers' ETH wallets —
-   * deterministic derivation keeps private keys out of step inputs / the
-   * report. Base 40 sits past every bootstrap operator slot, the shared swap
-   * user (32), and the collateral-deposit flow's depositor (35).
+   * Handle prefix of the controlled stakers' persisted Ethereum wallets
+   * (`controlled-staker-0`, `controlled-staker-1`, …) — random wallets the
+   * pre-bootstrap stage generates; a step runner reads one back by its handle,
+   * so no key material rides step inputs or the report.
    */
-  export const ControlledStakerEthereumHdIndexBase = 40
+  export const ControlledStakerWalletNamePrefix = "controlled-staker-"
   /** Per controlled staker, source-decimal (18) amount on the ETH side (100e18). */
   export const ControlledStakerSourceUnits = 100_000_000_000_000_000_000n
   /** EVM source-decimal (1e18) → WIRE-atomic (1e9) conversion divisor. */

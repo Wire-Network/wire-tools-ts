@@ -140,6 +140,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
+| `flow-batch-operator-prefunding` | `@wireio/test-flow-batch-operator-prefunding` | The pre-funded launch: batch-operator keys pre-created and persisted before the cluster, frozen into the launch-data exports, adopted by the bootstrap (`adoptOnly`), credited by the import, and bonding a user's Ethereum syndication from the first epochs |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
@@ -512,7 +513,7 @@ in local mode:
 
 | Phase | What it does |
 |---|---|
-| `EthereumOutpost` | the deploy config names `panicAccount` (anvil HD index 49, granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
+| `EthereumOutpost` | the phase first creates and funds (`anvil_setBalance`) two persisted random wallets — the outpost DEPLOYER and the PANIC account (`EthereumWallet.DeployerWalletName` / `PanicWalletName`) — then the deploy config names `panicAccount` (granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
 | `SolanaLiqsolSurface` | `set-max-syndication --fresh` right after `init-global-config` (a new outpost's maximum is 0, which refuses every `synd`), then `set_panic` naming the harness panic keypair (`<cluster>/data/sol-panic-keypair.json`), then `verify-emergency-stop` |
 
 ### Common options (every command)

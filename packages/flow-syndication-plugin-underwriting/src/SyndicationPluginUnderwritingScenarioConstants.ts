@@ -1,7 +1,5 @@
 import {
   BatchOperatorUnderwritingSteps,
-  Constants as HarnessConstants,
-  EthereumSyndicationTool,
   outputKey
 } from "@wireio/cluster-tool"
 
@@ -17,20 +15,28 @@ export namespace SyndicationPluginUnderwritingScenarioConstants {
     "pluginUnderwritingEthereum",
     { amount: 2_000_000_000n, feeBps: 0 }
   )
-  /** Independent prefunded Ethereum wallet, outside this flow's operator slots and the panic wallet. */
-  export const EthereumHdIndex = 48
+  /**
+   * Durable handle of the independent Ethereum syndicator's persisted wallet — a random
+   * per-cluster wallet, distinct from every operator and bootstrap actor.
+   */
+  export const EthereumWalletName = "plugin-underwriting-ethereum-user"
   /** WIRE destination owned by the independent Ethereum syndicator. */
   export const EthereumUser = "synd.ethuser"
-  /** Convert depot shadow precision to the native liqETH precision. */
+  /** The syndicated amount in native liqETH precision (`BatchOperatorUnderwritingSteps.ethereumNativeAmount`). */
   export const EthereumNativeAmount =
-    EthereumPlan.amount *
-    10n **
-      BigInt(
-        EthereumSyndicationTool.LiqEthTokenPrecision -
-          HarnessConstants.DepotPrecisionCap
-      )
-  /** Acquire extra liqETH so a share price above one cannot leave the syndicating wallet short. */
-  export const EthereumDepositAmount = EthereumNativeAmount * 2n
+    BatchOperatorUnderwritingSteps.ethereumNativeAmount(EthereumPlan.amount)
+  /** The ETH deposited for liqETH: extra headroom so a share price above one cannot leave the wallet short. */
+  export const EthereumDepositAmount =
+    BatchOperatorUnderwritingSteps.ethereumDepositWei(EthereumPlan.amount)
+  /** One ether of gas headroom for the deposit, the approval and the syndication. */
+  export const EthereumGasHeadroomWei =
+    BatchOperatorUnderwritingSteps.EthereumGasHeadroomWei
+  /**
+   * The syndicator wallet's funded balance (one `anvil_setBalance`): the whole deposit plus
+   * its gas headroom. Below the deposit, the deposit Step is the first failure.
+   */
+  export const EthereumWalletBalanceWei =
+    BatchOperatorUnderwritingSteps.ethereumWalletBalanceWei(EthereumPlan.amount)
   /** Exact liquid shadow balances at the start of the Ethereum lifecycle. */
   export interface EthereumBalances {
     readonly holder: bigint

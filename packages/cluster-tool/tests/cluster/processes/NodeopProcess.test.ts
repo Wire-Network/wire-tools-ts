@@ -6,6 +6,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -358,12 +359,15 @@ describe("NodeopProcess", () => {
           ssm: {
             awsRegions: ["us-east-1"],
             awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-          }
+          },
+          kms: null,
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
         },
         awsClusterNodeConfig: {
           account: AWSAccountName.dev,
           regions: ["us-east-1"],
-          ssm: null
+          ssm: null,
+          kms: null
         }
       })
     }
@@ -418,6 +422,52 @@ describe("NodeopProcess", () => {
           SSMPlugin
         ])
       ).toEqual([])
+    })
+
+    describe("the KMS scheme (an ethereum key custodied by AWS KMS)", () => {
+      const KMSPlugin =
+        NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.KMS]
+      /** The regional spec the harness renders for a KMS-custodied EM key. */
+      const KMSSpec =
+        "eth-batchopa,ethereum,ethereum,0xabc,KMS:us-east-1:alias/wire/dev/batchop-a/EM"
+
+      it("maps a KMS:<region>:<alias> spec to the kms plugin", () => {
+        expect(KMSPlugin).toBe("sysio::signature_provider_kms_plugin")
+        expect(
+          NodeopProcess.requiredSignatureProviderPlugins([
+            NodeopProcess.SignatureProviderFlag,
+            KMSSpec
+          ])
+        ).toEqual([KMSPlugin])
+      })
+
+      it("requires BOTH plugins for an SSM cluster whose EM key is in KMS, in scan order, deduped", () => {
+        const mixed = [
+          NodeopProcess.SignatureProviderFlag,
+          "a,wire,wire,P1,SSM:/wire/dev/batchop.a/K1",
+          NodeopProcess.SignatureProviderFlag,
+          KMSSpec,
+          NodeopProcess.SignatureProviderFlag,
+          "sol-batchopa,solana,solana,P3,SSM:/wire/dev/batchop.a/ED",
+          NodeopProcess.SignatureProviderFlag,
+          KMSSpec
+        ]
+        expect(NodeopProcess.requiredSignatureProviderPlugins(mixed)).toEqual([
+          SSMPlugin,
+          KMSPlugin
+        ])
+      })
+
+      it("skips the kms plugin when a --plugin flag already enables it", () => {
+        expect(
+          NodeopProcess.requiredSignatureProviderPlugins([
+            NodeopProcess.PluginFlag,
+            KMSPlugin,
+            NodeopProcess.SignatureProviderFlag,
+            KMSSpec
+          ])
+        ).toEqual([])
+      })
     })
 
     it("an SSM cluster's producing node enables the ssm plugin (the 3110006 fix)", async () => {
@@ -516,7 +566,12 @@ describe("NodeopProcess", () => {
         clusterPath: dir,
         dataPath: Path.join(dir, "data"),
         executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
-        signatureProvider: { type: SignatureProviderType.KIOD, ssm: null }
+        signatureProvider: {
+          type: SignatureProviderType.KIOD,
+          ssm: null,
+          kms: null,
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+        }
       })
       const nodeop = await NodeopProcess.create(manager, {
         node: biosNode(kiodCluster),

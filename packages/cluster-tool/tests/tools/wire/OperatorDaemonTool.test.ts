@@ -17,6 +17,7 @@ import {
   AWSAccountName,
   EthereumReadBlockTag,
   NodeopReadMode,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig
 } from "@wireio/cluster-tool-shared"
@@ -44,15 +45,9 @@ import {
   fixtureExternalOutposts
 } from "../../config/resolveEnvironmentFixture.js"
 
-/** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic =
-  "test test test test test test test test test test test junk"
-
+/** A fully-keyed operator with REAL, RANDOM EM + ED keys — nothing derives from a mnemonic. */
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
-  const wallet = ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-      "m/44'/60'/0'/0/1"
-    ),
+  const wallet = ethers.Wallet.createRandom(),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
@@ -479,12 +474,15 @@ describe("OperatorDaemonTool", () => {
               ssm: {
                 awsRegions: ["us-east-1"],
                 awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-              }
+              },
+              kms: null,
+              batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
             },
             awsClusterNodeConfig: {
               account: AWSAccountName.dev,
               regions: ["us-east-1"],
-              ssm: null
+              ssm: null,
+              kms: null
             }
           })
         ),

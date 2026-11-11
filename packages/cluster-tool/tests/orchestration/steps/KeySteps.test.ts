@@ -1,12 +1,14 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { OperatorType } from "@wireio/opp-typescript-models"
 import { ethers } from "ethers"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import {
   AWSAccountName,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
+  type AWSKMSSignatureProviderOptions,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
@@ -17,21 +19,19 @@ import {
   NodeConfig,
   NodeRole
 } from "@wireio/cluster-tool/config"
-import {
-  EthereumMnemonicKey,
-  EthereumOutpostBootstrapper,
-  Steps
-} from "@wireio/cluster-tool/orchestration"
-import { Report } from "@wireio/cluster-tool/report"
+import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
+import { Steps } from "@wireio/cluster-tool/orchestration"
+import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import type { WireFinalizerKeyPair } from "@wireio/cluster-tool/types/KeyPair"
+import { ethereumPublicKeyFromWallet } from "@wireio/cluster-tool/utils"
 import {
   fixtureConfig,
   fixtureProducerTopology,
-  fixtureProducerTopologyOverrides,
-  PersistedFixture
+  fixtureProducerTopologyOverrides
 } from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
 /** The `SSMClient` constructor config — region-less means the ambient region. */
 interface MockSSMClientConfig {
@@ -55,6 +55,126 @@ jest.mock("@aws-sdk/client-ssm", () => ({
     .fn()
     .mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
 }))
+
+/** The `KMSClient` constructor config — a KMS client is always regional. */
+interface MockKMSClientConfig {
+  region?: string
+}
+
+const mockKmsSend = jest.fn()
+jest.mock("@aws-sdk/client-kms", () => ({
+  KMSClient: jest
+    .fn()
+    .mockImplementation(({ region }: MockKMSClientConfig = {}) => ({
+      send: (command: unknown) => mockKmsSend(command, region ?? "")
+    })),
+  GetPublicKeyCommand: jest
+    .fn()
+    .mockImplementation((input: unknown) => ({ kind: "GetPublicKey", input })),
+  CreateKeyCommand: jest
+    .fn()
+    .mockImplementation((input: unknown) => ({ kind: "CreateKey", input })),
+  CreateAliasCommand: jest
+    .fn()
+    .mockImplementation((input: unknown) => ({ kind: "CreateAlias", input }))
+}))
+
+/** A captured KMS tag. */
+interface MockKmsTag {
+  TagKey: string
+  TagValue: string
+}
+
+/** The captured `GetPublicKey` / `CreateKey` / `CreateAlias` input. */
+interface MockKmsCommandInput {
+  KeyId?: string
+  KeySpec?: string
+  KeyUsage?: string
+  Description?: string
+  Tags?: MockKmsTag[]
+  AliasName?: string
+  TargetKeyId?: string
+}
+
+/** The shape the mocked `@aws-sdk/client-kms` command constructors produce. */
+interface MockKmsCommand {
+  kind: string
+  input: MockKmsCommandInput
+}
+
+/** One key the in-memory KMS holds: its ARN and the wallet whose point it reports. */
+interface MockKmsKey {
+  arn: string
+  wallet: ethers.HDNodeWallet
+}
+
+/** Every KMS command of `kind` that was sent, in order, with its input. */
+function kmsCommandInputs(kind: string): MockKmsCommandInput[] {
+  return mockKmsSend.mock.calls
+    .map(([command]: [MockKmsCommand]) => command)
+    .filter(command => command.kind === kind)
+    .map(command => command.input)
+}
+
+/** KMS's not-found rejection — the ONLY failure the adopt probe treats as absence. */
+function kmsNotFound(keyId: string): Error {
+  return Object.assign(new Error(`Alias ${keyId} is not found.`), {
+    name: "NotFoundException"
+  })
+}
+
+/** The DER `SubjectPublicKeyInfo` prefix of a secp256k1 public key. */
+const Secp256k1SpkiPrefix = "3056301006072a8648ce3d020106052b8104000a034200"
+
+/** The DER SPKI KMS returns for `wallet`'s key. */
+function kmsSpki(wallet: ethers.HDNodeWallet): Uint8Array {
+  return ethers.getBytes(
+    `0x${Secp256k1SpkiPrefix}${wallet.signingKey.publicKey.slice(2)}`
+  )
+}
+
+/**
+ * A REAL in-memory KMS behind the mocked `send`, keyed by alias: `GetPublicKey`
+ * answers for a bound alias and reports not-found otherwise; `CreateKey` mints a
+ * key, `CreateAlias` binds it — so adopt → create → read-back behaves like AWS.
+ * ONE region is enough: a KMS key is regional and the cluster names exactly one.
+ */
+const kmsStore = new Map<string, MockKmsKey>()
+let kmsPendingKey: MockKmsKey = null
+
+/** Bind a key for `wallet` under `aliasName` — the adopt-existing case. */
+function seedKmsKey(aliasName: string, wallet = ethers.Wallet.createRandom()): MockKmsKey {
+  const key = {
+    arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
+    wallet
+  }
+  kmsStore.set(aliasName, key)
+  return key
+}
+
+function installKMSStoreMock(): void {
+  mockKmsSend.mockImplementation(async (command: MockKmsCommand, region: string) => {
+    if (command.kind === "GetPublicKey") {
+      const key = kmsStore.get(command.input.KeyId)
+      if (key == null) throw kmsNotFound(command.input.KeyId)
+      return {
+        KeyId: key.arn,
+        PublicKey: kmsSpki(key.wallet),
+        KeySpec: KMSClientProvider.SigningKeySpec,
+        KeyUsage: KMSClientProvider.SigningKeyUsage
+      }
+    }
+    if (command.kind === "CreateKey") {
+      kmsPendingKey = {
+        arn: `arn:aws:kms:${region}:123456789012:key/${kmsStore.size + 1}`,
+        wallet: ethers.Wallet.createRandom()
+      }
+      return { KeyMetadata: { Arn: kmsPendingKey.arn } }
+    }
+    kmsStore.set(command.input.AliasName, kmsPendingKey)
+    return {}
+  })
+}
 
 /** A captured SSM tag. */
 interface MockTag {
@@ -142,11 +262,7 @@ function installSSMStoreMock(): void {
   })
 }
 
-/** `clio` output the fake binary prints for a K1 generation. */
-const K1_OUTPUT =
-  "Private key: PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i\n" +
-  "Public key: PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
-/** `sys-util` output the fake binary prints for a BLS generation. */
+/** `sys-util` output the fake binary prints for a BLS generation — the one backend that still shells out. */
 const BLS_OUTPUT =
   `Private key: ${Constants.DEV_BLS_PRIVATE_KEY}\n` +
   `Public key: ${Constants.DEV_BLS_PUBLIC_KEY}\n` +
@@ -158,8 +274,7 @@ describe("Steps.keys", () => {
   beforeAll(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "key-steps-"))
     Fs.mkdirSync(Path.join(dir, "bin"), { recursive: true })
-    fakeBinary(Path.join(dir, "clio"), K1_OUTPUT)
-    fakeBinary(Path.join(dir, "bin", "sys-util"), BLS_OUTPUT)
+    fakeBinary(Path.join(dir, KeyGenerator.SysUtilSubpath), BLS_OUTPUT)
   })
 
   afterAll(() => {
@@ -169,6 +284,9 @@ describe("Steps.keys", () => {
   beforeEach(() => {
     mockSend.mockReset()
     ssmStore.clear()
+    mockKmsSend.mockReset()
+    kmsStore.clear()
+    kmsPendingKey = null
   })
 
   /** An executable shell script that prints `stdout` regardless of its args. */
@@ -178,24 +296,14 @@ describe("Steps.keys", () => {
     return file
   }
 
-  /** Executables + buildPath pointed at this suite's fake clio / sys-util. */
+  /** A buildPath pointed at this suite's fake sys-util — K1 / ED / EM need no binary at all. */
   function fakeExecutables(): Partial<ClusterConfig> {
-    return {
-      buildPath: dir,
-      executables: {
-        ...PersistedFixture.executables,
-        clio: Path.join(dir, "clio")
-      }
-    }
+    return { buildPath: dir }
   }
 
-  /** The generation context over the fake binaries + the anvil mnemonic. */
+  /** The generation context over the fake sys-util. */
   function keyContext(): KeyGenerator.Context {
-    return KeyGenerator.context(
-      Path.join(dir, "clio"),
-      dir,
-      EthereumOutpostBootstrapper.AnvilMnemonic
-    )
+    return KeyGenerator.context(dir)
   }
 
   it.each(["planGenerateNodeKeys", "planCreateWallet"] as const)(
@@ -222,12 +330,15 @@ describe("Steps.keys", () => {
         ssm: {
           awsRegions: SSMRegions,
           awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-        }
+        },
+        kms: null,
+        batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
       },
       awsClusterNodeConfig: {
         account: AWSAccountName.test,
         regions: SSMRegions,
-        ssm: null
+        ssm: null,
+        kms: null
       }
     }
   }
@@ -362,7 +473,9 @@ describe("Steps.keys", () => {
               ssm: {
                 awsRegions: SSMRegions,
                 awsSecretIdPattern: "/wire/{cluster}/{keyType}"
-              }
+              },
+              kms: null,
+              batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
             }
           })
         )
@@ -508,7 +621,9 @@ describe("Steps.keys", () => {
               awsSecretIdPattern:
                 "/wire/{cluster}/{account}/{keyType}/{version}",
               version: "v4"
-            }
+            },
+            kms: null,
+            batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
           }
         })
       )
@@ -689,10 +804,6 @@ describe("Steps.keys", () => {
       )
       expect(adopted.privateKey).toBe(existing.toString())
       expect(adopted.publicKey).toBe(existing.toPublic().toString())
-      // The fake clio would have produced a DIFFERENT key — adoption must win.
-      expect(adopted.privateKey).not.toContain(
-        "2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
-      )
       // Probed only; nothing was written.
       expect(commandInputs("PutParameter")).toEqual([])
     })
@@ -705,8 +816,13 @@ describe("Steps.keys", () => {
         "batchop.a",
         keyContext()
       )
-      expect(created.privateKey).toBe(
-        "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
+      // A RANDOM key — never the dev key — whose public half is its own derivation.
+      expect(created.privateKey).toMatch(/^PVT_K1_/)
+      expect(created.privateKey).not.toBe(
+        PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toString()
+      )
+      expect(PrivateKey.from(created.privateKey).toPublic().toString()).toBe(
+        created.publicKey
       )
       // Every region was probed before falling back to generation.
       expect(commandInputs("GetParameter").map(input => input.Name)).toEqual(
@@ -764,53 +880,488 @@ describe("Steps.keys", () => {
     })
   })
 
-  describe("ethereumMnemonic (D14 — never the published anvil phrase under SSM)", () => {
-    it("falls back to the anvil mnemonic under KEY / KIOD so flows stay byte-identical", () => {
-      expect(Steps.keys.ethereumMnemonic(fixtureContext())).toBe(
-        EthereumOutpostBootstrapper.AnvilMnemonic
+  describe("KMS custody of the EM key (an SSM cluster with kms settings)", () => {
+    /** The ONE region the KMS keys live in — one of the replication regions. */
+    const KmsRegion = "us-east-1"
+    /** The alias the KMS pattern renders for the first batch operator (`batchop.a` → `batchop-a`). */
+    const BatchOperatorAlias = "alias/wire/test/batchop-a/EM"
+
+    /** Per-test shape of the kms settings + the batch-operator key policy. */
+    interface KmsConfigOptions {
+      kms?: Partial<AWSKMSSignatureProviderOptions>
+      policy?: SignatureProviderKeyPolicy
+    }
+
+    /** The SSM fixture plus kms settings (and, when given, an explicit key policy). */
+    function ssmKmsConfig(
+      overrides: Partial<ClusterConfig> = {},
+      { kms = {}, policy = SignatureProviderKeyPolicy.adoptOrCreate }: KmsConfigOptions = {}
+    ): ClusterConfig {
+      const base = ssmOverrides()
+      return fixtureConfig({
+        ...base,
+        signatureProvider: {
+          ...base.signatureProvider,
+          kms: {
+            awsKeyAliasPattern: "alias/wire/{cluster}/{account}/{keyType}",
+            awsRegion: KmsRegion,
+            ...kms
+          },
+          batchOperatorKeyPolicy: policy
+        },
+        ...overrides
+      })
+    }
+
+    /** Adopt-or-create `keyType` for `account` under `config`, inside a recorder scope. */
+    async function adoptOrCreate<T extends KeyType>(
+      config: ClusterConfig,
+      keyType: T,
+      account: string,
+      recorder = new StepExtraRecorder(),
+      purpose?: string
+    ) {
+      return StepExtraRecorder.runWith(recorder, () =>
+        Steps.keys.adoptOrCreateSignatureProviderKey(
+          config,
+          keyType,
+          account,
+          keyContext(),
+          purpose == null ? {} : { purpose }
+        )
       )
+    }
+
+    it("custodySource renders the KMS source for the EM key — the one region + the alias, dots mapped to dashes", () => {
+      expect(
+        ClusterConfigProvider.custodySource(
+          ssmKmsConfig(),
+          "batchop.a",
+          KeyType.EM
+        )
+      ).toEqual({
+        type: SignatureProviderType.KMS,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: BatchOperatorAlias
+      })
     })
 
-    it("reads the cluster-scoped phrase once a run has generated one", () => {
-      const ctx = fixtureContext(),
-        phrase = ethers.Mnemonic.fromEntropy(ethers.randomBytes(32)).phrase
-      ctx.outputs.set(EthereumMnemonicKey, phrase)
-      expect(Steps.keys.ethereumMnemonic(ctx)).toBe(phrase)
+    it("ADOPTS the KMS key behind the rendered alias — a material-less pair carrying the key reference, with a note", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      const { wallet, arn } = seedKmsKey(BatchOperatorAlias),
+        recorder = new StepExtraRecorder(),
+        adopted = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables()),
+          KeyType.EM,
+          "batchop.a",
+          recorder
+        )
+      expect(adopted).toEqual({
+        type: KeyType.EM,
+        publicKey: ethereumPublicKeyFromWallet(wallet).toString(),
+        address: wallet.address,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: BatchOperatorAlias
+      })
+      expect(adopted).not.toHaveProperty("privateKey")
+      // Probed only — no key minted, no alias bound, and SSM never consulted for the EM curve.
+      expect(kmsCommandInputs("GetPublicKey")).toEqual([{ KeyId: BatchOperatorAlias }])
+      expect(kmsCommandInputs("CreateKey")).toEqual([])
+      expect(mockSend).not.toHaveBeenCalled()
+      expect(recorder.calls).toEqual([
+        {
+          client: "harness",
+          kind: "note",
+          text: "adopted batchop.a's existing EM key from KMS",
+          account: "batchop.a",
+          keyType: "EM",
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: BatchOperatorAlias,
+          keyArn: arn
+        }
+      ])
+    })
+
+    it("CREATES the key INSIDE KMS when nothing is behind the alias (adoptOrCreate) — tagged with the platform version, recorded as an aws-kms keygen", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      const recorder = new StepExtraRecorder(),
+        purpose = "batch operator batchop.a — ethereum outpost key (EM)",
+        created = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables(), { kms: { version: "v4" } }),
+          KeyType.EM,
+          "batchop.a",
+          recorder,
+          purpose
+        ),
+        key = kmsStore.get(BatchOperatorAlias)
+      expect(key).toBeDefined()
+      // Probe (not found) → CreateKey → CreateAlias(ARN) → read back through the alias.
+      expect(kmsCommandInputs("GetPublicKey")).toEqual([
+        { KeyId: BatchOperatorAlias },
+        { KeyId: BatchOperatorAlias }
+      ])
+      expect(kmsCommandInputs("CreateKey")).toEqual([
+        {
+          KeySpec: KMSClientProvider.SigningKeySpec,
+          KeyUsage: KMSClientProvider.SigningKeyUsage,
+          Description: purpose,
+          Tags: [{ TagKey: Steps.keys.PlatformVersionTagKey, TagValue: "v4" }]
+        }
+      ])
+      expect(kmsCommandInputs("CreateAlias")).toEqual([
+        { AliasName: BatchOperatorAlias, TargetKeyId: key.arn }
+      ])
+      expect(created).toEqual({
+        type: KeyType.EM,
+        publicKey: ethereumPublicKeyFromWallet(key.wallet).toString(),
+        address: key.wallet.address,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: BatchOperatorAlias
+      })
+      expect(created).not.toHaveProperty("privateKey")
+      // The keygen is recorded like a local one — public half, purpose, mechanism; no material (KMS has none to give).
+      expect(recorder.calls).toEqual([
+        {
+          client: "aws-kms",
+          kind: "keygen",
+          keyType: "EM",
+          purpose,
+          keyArn: key.arn,
+          ...created
+        }
+      ])
+      // Nothing was put to SSM for a KMS-custodied curve.
+      expect(commandInputs("PutParameter")).toEqual([])
+    })
+
+    it("omits Tags entirely when the kms settings declare no version, and describes the key by account + curve without a purpose", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      await adoptOrCreate(ssmKmsConfig(fakeExecutables()), KeyType.EM, "batchop.b")
+      const [createKey] = kmsCommandInputs("CreateKey")
+      expect(createKey).not.toHaveProperty("Tags")
+      expect(createKey.Description).toBe("batchop.b EM signing key")
+    })
+
+    it("keeps every other curve in SSM — the K1 of the same operator adopts from / generates into Parameter Store", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      const existing = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY)
+      publishEverywhere("/wire/test/batchop.a/K1", existing.toNativeString())
+      const adopted = await adoptOrCreate(
+        ssmKmsConfig(fakeExecutables()),
+        KeyType.K1,
+        "batchop.a"
+      )
+      expect(adopted.privateKey).toBe(existing.toString())
+      expect(mockKmsSend).not.toHaveBeenCalled()
+    })
+
+    describe("the batchOperatorKeyPolicy gate on the CREATE arm", () => {
+      it("adoptOnly: a bootstrap batch operator's MISSING key FAILS naming the custody id and the pre-create command — KMS and SSM alike, nothing minted", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const config = ssmKmsConfig(fakeExecutables(), {
+          policy: SignatureProviderKeyPolicy.adoptOnly
+        })
+        await expect(adoptOrCreate(config, KeyType.EM, "batchop.a")).rejects.toThrow(
+          /batchOperatorKeyPolicy is adoptOnly and no existing EM key was found for batch operator batchop\.a at us-east-1:alias\/wire\/test\/batchop-a\/EM — pre-create its keys \(wire-cluster-tool create-batch-operator-keys\) before bootstrapping/
+        )
+        await expect(adoptOrCreate(config, KeyType.K1, "batchop.b")).rejects.toThrow(
+          /no existing K1 key was found for batch operator batchop\.b at \/wire\/test\/batchop\.b\/K1/
+        )
+        expect(kmsCommandInputs("CreateKey")).toEqual([])
+        expect(commandInputs("PutParameter")).toEqual([])
+      })
+
+      it("adoptOnly: an EXISTING batch-operator key is adopted exactly as under adoptOrCreate", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const { wallet } = seedKmsKey(BatchOperatorAlias),
+          k1 = PrivateKey.generate(KeyType.K1)
+        publishEverywhere("/wire/test/batchop.a/K1", k1.toNativeString())
+        const config = ssmKmsConfig(fakeExecutables(), {
+          policy: SignatureProviderKeyPolicy.adoptOnly
+        })
+        expect((await adoptOrCreate(config, KeyType.EM, "batchop.a")).address).toBe(
+          wallet.address
+        )
+        expect((await adoptOrCreate(config, KeyType.K1, "batchop.a")).privateKey).toBe(
+          k1.toString()
+        )
+      })
+
+      it("adoptOnly: every OTHER identity still creates — a producer node, the genesis identity, a flow operator", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const config = ssmKmsConfig(fakeExecutables(), {
+          policy: SignatureProviderKeyPolicy.adoptOnly
+        })
+        expect((await adoptOrCreate(config, KeyType.K1, "node_00")).privateKey).toMatch(
+          /^PVT_K1_/
+        )
+        expect(
+          (await adoptOrCreate(config, KeyType.K1, NodeConfig.BiosName)).privateKey
+        ).toMatch(/^PVT_K1_/)
+        const flowOperator = await adoptOrCreate(config, KeyType.EM, "depositoraaa")
+        expect(flowOperator.awsKmsKeyId).toBe("alias/wire/test/depositoraaa/EM")
+        expect(kmsStore.has("alias/wire/test/depositoraaa/EM")).toBe(true)
+      })
+
+      it("adoptOnly on a KEY cluster: a batch operator's key cannot be minted here (the held identity is the adoption path) — the message names no custody id", async () => {
+        installSSMStoreMock()
+        await expect(
+          adoptOrCreate(
+            fixtureConfig({
+              ...fakeExecutables(),
+              signatureProvider: {
+                type: SignatureProviderType.KEY,
+                ssm: null,
+                kms: null,
+                batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+              }
+            }),
+            KeyType.K1,
+            "batchop.a"
+          )
+        ).rejects.toThrow(
+          /no existing K1 key was found for batch operator batchop\.a — pre-create its keys/
+        )
+        expect(mockSend).not.toHaveBeenCalled()
+      })
+    })
+
+    describe("publishSignatureProviderKey (the extracted per-region probe-then-put primitive)", () => {
+      const k1 = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY),
+        publication: Steps.keys.SignatureProviderKeyPublication = {
+          publishPhase: Steps.keys.SignatureKeyPublishPhase.afterOperators,
+          label: "batchop.a",
+          publicationLabel: "batchop.a",
+          keyType: KeyType.K1,
+          awsRegions: SSMRegions,
+          secretId: "/wire/test/batchop.a/K1",
+          version: "v4"
+        }
+
+      it("puts the key's NATIVE string to EVERY region, Overwrite false, tagged with the version", async () => {
+        installSSMStoreMock()
+        await Steps.keys.publishSignatureProviderKey(publication, k1.toString())
+        const puts = commandInputs("PutParameter")
+        expect(puts).toHaveLength(SSMRegions.length)
+        puts.forEach(put =>
+          expect(put).toEqual({
+            Name: publication.secretId,
+            Value: k1.toNativeString(),
+            Type: "SecureString",
+            Overwrite: false,
+            Tags: [{ Key: Steps.keys.PlatformVersionTagKey, Value: "v4" }]
+          })
+        )
+        expect(mockSend.mock.calls.map(([, region]) => region)).toEqual(
+          SSMRegions.flatMap(region => [region, region])
+        )
+      })
+
+      it("RETAINS a region that already holds THIS key and still writes the region that is behind", async () => {
+        installSSMStoreMock()
+        regionStore(SSMRegions[0]).set(publication.secretId, k1.toNativeString())
+        await Steps.keys.publishSignatureProviderKey(publication, k1.toString())
+        expect(commandInputs("PutParameter")).toHaveLength(1)
+        expect(regionStore(SSMRegions[1]).get(publication.secretId)).toBe(
+          k1.toNativeString()
+        )
+      })
+
+      it("REFUSES a region holding a DIFFERENT key — the stale parameter is never overwritten", async () => {
+        installSSMStoreMock()
+        regionStore(SSMRegions[0]).set(
+          publication.secretId,
+          PrivateKey.generate(KeyType.K1).toNativeString()
+        )
+        await expect(
+          Steps.keys.publishSignatureProviderKey(publication, k1.toString())
+        ).rejects.toThrow(
+          /\/wire\/test\/batchop\.a\/K1 in us-east-1 already holds a DIFFERENT K1 key than the one materialized for batchop\.a — rotate or delete the stale parameter/
+        )
+        expect(commandInputs("PutParameter")).toEqual([])
+      })
+
+      it("REFUSES a region holding a value that is not a key of that curve at all", async () => {
+        installSSMStoreMock()
+        regionStore(SSMRegions[0]).set(publication.secretId, "not-a-key")
+        await expect(
+          Steps.keys.publishSignatureProviderKey(publication, k1.toString())
+        ).rejects.toThrow(/holds a value that is not a K1 private key/)
+      })
+
+      it("omits Tags when the publication carries no version", async () => {
+        installSSMStoreMock()
+        await Steps.keys.publishSignatureProviderKey(
+          { ...publication, version: undefined },
+          k1.toString()
+        )
+        commandInputs("PutParameter").forEach(put =>
+          expect(put).not.toHaveProperty("Tags")
+        )
+      })
+    })
+
+    describe("the publication walkers EXCLUDE a KMS-custodied curve (no parameter to put)", () => {
+      it("operatorKeyPublications drops the EM row under kms and keeps it without", () => {
+        expect(
+          Steps.keys
+            .operatorKeyPublications(ssmKmsConfig(), "batchop.a", OperatorType.BATCH)
+            .map(publication => [KeyType[publication.keyType], publication.secretId])
+        ).toEqual([
+          ["K1", "/wire/test/batchop.a/K1"],
+          ["ED", "/wire/test/batchop.a/ED"]
+        ])
+        expect(
+          Steps.keys
+            .operatorKeyPublications(ssmConfig(), "batchop.a", OperatorType.BATCH)
+            .map(publication => publication.keyType)
+        ).toEqual([KeyType.K1, KeyType.EM, KeyType.ED])
+      })
+
+      it("signatureProviderKeyPublications drops every EM row and nothing else", () => {
+        const withKms = Steps.keys.signatureProviderKeyPublications(ssmKmsConfig()),
+          without = Steps.keys.signatureProviderKeyPublications(ssmConfig())
+        expect(withKms.some(publication => publication.keyType === KeyType.EM)).toBe(
+          false
+        )
+        expect(without.some(publication => publication.keyType === KeyType.EM)).toBe(
+          true
+        )
+        // One EM row per batch operator is the whole difference.
+        expect(withKms).toEqual(
+          without.filter(publication => publication.keyType !== KeyType.EM)
+        )
+        expect(without.length - withKms.length).toBe(ssmConfig().batchOperatorCount)
+      })
+
+      it("signatureProviderSecretId is absent for the KMS-custodied curve and still renders the SSM ones", () => {
+        const config = ssmKmsConfig()
+        expect(Steps.keys.signatureProviderSecretId(config, "batchop.a", KeyType.EM)).toBeNull()
+        expect(Steps.keys.signatureProviderSecretId(config, "batchop.a", KeyType.K1)).toBe(
+          "/wire/test/batchop.a/K1"
+        )
+        expect(Steps.keys.signatureProviderSecretId(config, "batchop.a", KeyType.ED)).toBe(
+          "/wire/test/batchop.a/ED"
+        )
+      })
+    })
+
+    describe("custodyReference (the public, material-free pointer a listing reports)", () => {
+      it("renders SSM:<secretId> and KMS:<region>:<alias>", () => {
+        expect(
+          Steps.keys.custodyReference({
+            type: SignatureProviderType.SSM,
+            awsSecretId: "/wire/test/batchop.a/K1"
+          })
+        ).toBe("SSM:/wire/test/batchop.a/K1")
+        expect(
+          Steps.keys.custodyReference({
+            type: SignatureProviderType.KMS,
+            awsKmsRegion: KmsRegion,
+            awsKmsKeyId: BatchOperatorAlias
+          })
+        ).toBe(`KMS:${KmsRegion}:${BatchOperatorAlias}`)
+      })
+
+      it("agrees with the ONE renderer for every curve of an SSM + kms cluster", () => {
+        const config = ssmKmsConfig(),
+          reference = (keyType: KeyType) =>
+            Steps.keys.custodyReference(
+              ClusterConfigProvider.custodySource(config, "batchop.a", keyType)
+            )
+        expect(reference(KeyType.EM)).toBe(`KMS:${KmsRegion}:${BatchOperatorAlias}`)
+        expect(reference(KeyType.K1)).toBe("SSM:/wire/test/batchop.a/K1")
+        expect(reference(KeyType.ED)).toBe("SSM:/wire/test/batchop.a/ED")
+      })
+    })
+
+    describe("identityPrivateKey (what a publish puts, per curve)", () => {
+      const operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
+
+      it("selects the wire / ethereum / solana secret by curve", () => {
+        expect(Steps.keys.identityPrivateKey(operator, KeyType.K1, operator.label)).toBe(
+          operator.wire.privateKey
+        )
+        expect(Steps.keys.identityPrivateKey(operator, KeyType.EM, operator.label)).toBe(
+          operator.ethereum.privateKey
+        )
+        expect(Steps.keys.identityPrivateKey(operator, KeyType.ED, operator.label)).toBe(
+          operator.solana.privateKey
+        )
+      })
+
+      it("selects a producer's finalizer secret, and names the missing curve otherwise", () => {
+        const producer = {
+          ...fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
+          wireFinalizer: {
+            type: KeyType.BLS as const,
+            publicKey: Constants.DEV_BLS_PUBLIC_KEY,
+            privateKey: Constants.DEV_BLS_PRIVATE_KEY,
+            proofOfPossession: Constants.DEV_BLS_PROOF_OF_POSSESSION
+          }
+        }
+        expect(Steps.keys.identityPrivateKey(producer, KeyType.BLS, "flowprod")).toBe(
+          Constants.DEV_BLS_PRIVATE_KEY
+        )
+        expect(() =>
+          Steps.keys.identityPrivateKey(operator, KeyType.BLS, operator.label)
+        ).toThrow(/batchopaaaa has no wireFinalizer key/)
+        expect(() =>
+          Steps.keys.identityPrivateKey(
+            { ...operator, ethereum: undefined },
+            KeyType.EM,
+            operator.label
+          )
+        ).toThrow(/batchopaaaa has no ethereum key/)
+      })
+
+      it("refuses a curve no identity carries", () => {
+        expect(() =>
+          Steps.keys.identityPrivateKey(operator, KeyType.R1, operator.label)
+        ).toThrow(/batchopaaaa has no R1 key/)
+      })
     })
   })
 
   describe("runGenerateNodeKeys", () => {
-    it("under KEY: generates node keys and leaves the anvil mnemonic in place", async () => {
+    it("under KEY: generates one RANDOM K1 + BLS set per producer node — nothing is derived from a mnemonic", async () => {
       const ctx = fixtureContext(fakeExecutables())
       await Steps.keys.runGenerateNodeKeys(
         ctx,
         null,
         new AbortController().signal
       )
-      expect(ctx.outputs.get(EthereumMnemonicKey)).toBeNull()
-      expect(Steps.keys.ethereumMnemonic(ctx)).toBe(
-        EthereumOutpostBootstrapper.AnvilMnemonic
+      const { wire, wireFinalizer } = ctx.keyStore.node(0).keys
+      expect(wire.privateKey).toMatch(/^PVT_K1_/)
+      expect(wire.privateKey).not.toBe(Constants.DEV_K1_PRIVATE_KEY)
+      expect(PrivateKey.from(wire.privateKey).toPublic().toString()).toBe(
+        wire.publicKey
       )
-      expect(ctx.keyStore.node(0).keys.wire.privateKey).toMatch(/^PVT_K1_/)
-      expect(ctx.keyStore.node(0).keys.wireFinalizer.proofOfPossession).toBe(
+      expect(wireFinalizer.proofOfPossession).toBe(
         Constants.DEV_BLS_PROOF_OF_POSSESSION
       )
     })
 
-    it("under SSM: mints a cluster-scoped mnemonic into ctx.outputs (never the config)", async () => {
-      installSSMStoreMock()
-      const ctx = fixtureContext(ssmConfig(fakeExecutables()))
+    it("mints a DIFFERENT random K1 for every producer node", async () => {
+      const ctx = fixtureContext({
+        ...fixtureProducerTopologyOverrides(2, 2),
+        ...fakeExecutables()
+      })
       await Steps.keys.runGenerateNodeKeys(
         ctx,
         null,
         new AbortController().signal
       )
-      const phrase = ctx.outputs.get(EthereumMnemonicKey)
-      expect(phrase).not.toBe(EthereumOutpostBootstrapper.AnvilMnemonic)
-      // 32 bytes of entropy → the 24-word BIP-39 form, and a REAL phrase.
-      expect(phrase.split(" ")).toHaveLength(24)
-      expect(ethers.Mnemonic.fromPhrase(phrase).phrase).toBe(phrase)
-      expect(JSON.stringify(ctx.config)).not.toContain(phrase)
+      expect(ctx.keyStore.node(0).keys.wire.privateKey).not.toBe(
+        ctx.keyStore.node(1).keys.wire.privateKey
+      )
     })
 
     it("under SSM: ADOPTS a producer node's already-published keys", async () => {
@@ -1269,11 +1820,9 @@ describe("Steps.keys", () => {
       expect(probed.some(name => name.includes(producer))).toBe(false)
     })
 
-    /** A context whose batch operator also holds outpost keys (EM off the anvil mnemonic, ED generated). */
+    /** A context whose batch operator also holds outpost keys (EM + ED, both random). */
     async function outpostKeyContext() {
-      const ethereum = await KeyGenerator.create(KeyType.EM, keyContext(), {
-          ethereumHdIndex: 7
-        }),
+      const ethereum = await KeyGenerator.create(KeyType.EM, keyContext()),
         solana = await KeyGenerator.create(KeyType.ED, keyContext()),
         ctx = fixtureContext()
       ctx.keyStore.setOperator({
@@ -1414,26 +1963,16 @@ describe("Steps.keys", () => {
   })
 
   describe("keyGeneratorContext", () => {
-    it("pairs the cluster's clio + its build's sys-util with the run's mnemonic — the anvil one by default", () => {
+    it("names the build's sys-util and NOTHING else — no clio, no mnemonic, the same on every cluster", () => {
       const ctx = fixtureContext(),
         context = Steps.keys.keyGeneratorContext(ctx)
-      expect(context.clio).toBe(ctx.config.executables.clio)
-      expect(context.sysUtil).toBe(
-        Path.join(ctx.config.buildPath, KeyGenerator.SysUtilSubpath)
-      )
-      expect(context.ethereumMnemonic.phrase).toBe(
-        EthereumOutpostBootstrapper.AnvilMnemonic
-      )
-    })
-
-    it("derives EM keys from the CLUSTER-SCOPED mnemonic once an SSM run has minted one", () => {
-      const ctx = fixtureContext(),
-        phrase = ethers.Mnemonic.fromEntropy(
-          ethers.randomBytes(Steps.keys.EthereumMnemonicEntropyBytes)
-        ).phrase
-      ctx.outputs.set(EthereumMnemonicKey, phrase)
-      expect(Steps.keys.keyGeneratorContext(ctx).ethereumMnemonic.phrase).toBe(
-        phrase
+      expect(context).toEqual({
+        sysUtil: Path.join(ctx.config.buildPath, KeyGenerator.SysUtilSubpath)
+      })
+      expect(Object.keys(context)).toEqual(["sysUtil"])
+      // An SSM cluster's context is identical: nothing cluster-scoped rides it.
+      expect(Steps.keys.keyGeneratorContext(fixtureContext(ssmConfig()))).toEqual(
+        context
       )
     })
   })

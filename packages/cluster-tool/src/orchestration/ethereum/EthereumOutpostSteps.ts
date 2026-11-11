@@ -1,10 +1,8 @@
 import Assert from "node:assert"
-import Path from "node:path"
 import { range } from "lodash"
-import { KeyType } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { Constants } from "../../Constants.js"
-import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { EthereumWallet } from "../../clients/ethereum/EthereumWallet.js"
 import { BatchOperatorSchedule } from "../../config/BatchOperatorSchedule.js"
 import { Report } from "../../report/Report.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
@@ -16,7 +14,6 @@ import {
 } from "../ClusterBuildStep.js"
 import type { OperatorAccount } from "../outputs/OperatorAccount.js"
 import { EpochContractSteps } from "../steps/contracts/sysio/EpochContractSteps.js"
-import { KeySteps } from "../steps/KeySteps.js"
 import {
   EthereumOutpostBootstrapper,
   type EthereumOutpostBootstrapperOptions,
@@ -28,9 +25,6 @@ import type { StepInput } from "../StepRunner.js"
 
 /** Steps that deploy + seed the Ethereum (anvil) outpost. */
 export namespace EthereumOutpostSteps {
-  /** Subpath (under the cluster data dir) for the annotated accounts file. */
-  const AnvilDataSubpath = "anvil"
-
   /** Already-booked local fixture shadow, seeded before subsequent custody funding. */
   export interface DeployInput extends StepInput {
     /** Discriminator for the deployment step's reported input. */
@@ -40,20 +34,17 @@ export namespace EthereumOutpostSteps {
   }
 
   /**
-   * Derive the PROVISIONAL batch-operator roster the outpost is constructed with
+   * The PROVISIONAL batch-operator roster the outpost is constructed with
    * (WNE-41: `OPPInbound.initialize` refuses to seat an empty one) — the ETH
    * addresses of every bootstrapped batch operator, grouped in the depot's
    * SHAPE. The depot's real membership is installed later by
    * {@link planOppBootstrap} (`seed-ethereum-roster`), once
    * `sysio.epoch::schbatchgps` has produced it.
    *
-   * The addresses are DERIVED rather than read off provisioned operators
-   * because the outpost deploys in **Cluster Prerequisites**, while the batch
-   * operators are provisioned later in **Cluster Post Contract Deployment**.
-   * The (mnemonic, HD index) pair is fully determined by then, and both sides
-   * read it from the SAME two authorities — {@link KeySteps.ethereumMnemonic}
-   * and {@link Constants.batchOperatorEthereumHdIndex} — so the provisional
-   * roster names exactly the keys the daemons later sign `epochIn` with.
+   * The addresses are READ off `ctx.keyStore`: the bootstrap materializes every
+   * batch operator's identity in Cluster Prerequisites (`OperatorKeys`), ahead
+   * of this deploy, precisely so the roster names the random keys the daemons
+   * later sign `epochIn` with. Nothing derives an address ahead of its key.
    *
    * Group `k` serves epoch `1 + k` and its length is that epoch's consensus
    * threshold (WNE-27), so the grouping is sized by the depot's own
@@ -64,39 +55,26 @@ export namespace EthereumOutpostSteps {
    *
    * @param ctx - The build context.
    * @returns The provisional roster for `OPPInbound.initialize`.
+   * @throws If a batch operator has not been materialized or has no Ethereum key.
    */
-  export async function resolveInitialRoster<C extends ClusterBuildContext>(
+  export function resolveInitialRoster<C extends ClusterBuildContext>(
     ctx: C
-  ): Promise<EthereumOutpostInitialRoster> {
+  ): EthereumOutpostInitialRoster {
     const { config } = ctx,
       { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
         BatchOperatorSchedule.resolve(config),
-      keyContext = KeyGenerator.context(
-        config.executables.clio,
-        config.buildPath,
-        KeySteps.ethereumMnemonic(ctx)
-      ),
-      // Walk the BATCH-OPERATOR LABEL list — an array already narrowed to
-      // `batchop.` entries — and take that filtered array's iterator index.
-      // The provisioning side (`ClusterBuildDefaults`) assigns each operator's
-      // HD index the same way, so the roster authorizes exactly the addresses
-      // the daemons later sign `epochIn` with. Indexing a bare
-      // `range(batchOperatorCount)` would agree only by coincidence of
-      // ordering; neither the position nor the sort order of an operator in a
-      // persisted `cluster-keys.json` is guaranteed, so the ordinal is only
-      // meaningful once the list has been filtered by label prefix.
-      batchOperatorLabels = Constants.batchOperatorLabels(
-        config.batchOperatorCount
-      ),
-      addresses = await mapSeries(
-        batchOperatorLabels,
-        async (label, index) =>
-          (
-            await KeyGenerator.create(KeyType.EM, keyContext, {
-              ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
-              purpose: `ethereum-outpost initial batch-operator roster (${label})`
-            })
-          ).address
+      // Walk the BATCH-OPERATOR LABEL list in index order: neither the
+      // position nor the sort order of an operator in the key store is a
+      // contract, the label sequence is.
+      addresses = Constants.batchOperatorLabels(config.batchOperatorCount).map(
+        label => {
+          const operator = ctx.keyStore.assertOperator(label)
+          Assert.ok(
+            operator.ethereum,
+            `resolveInitialRoster: batch operator ${label} has no Ethereum key`
+          )
+          return operator.ethereum.address
+        }
       )
     return {
       groups: partitionLikeDepot(
@@ -160,11 +138,11 @@ export namespace EthereumOutpostSteps {
 
   /**
    * Deploy the Ethereum outpost against the already-running run anvil
-   * (`Steps.processes.anvil.start` must precede this in the phase): deploy the
-   * `wire-ethereum` contracts and write the annotated
-   * accounts file (later phases re-read `accounts.json` / `outpost-addrs.json`
-   * from disk). Paths and the anvil port come from `ctx.config`; the planned
-   * mock shadow obligation is supplied before the one-shot pool initialization.
+   * (`Steps.processes.anvil.start`, the deployer and panic wallet steps must
+   * precede this in the phase): deploy the `wire-ethereum` contracts as the
+   * deployer (later phases re-read `outpost-addrs.json` from disk). Paths and
+   * the anvil port come from `ctx.config`; the planned mock shadow obligation
+   * is supplied before the one-shot pool initialization.
    */
   export function planDeploy<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -189,22 +167,30 @@ export namespace EthereumOutpostSteps {
    * The bootstrapper options every Ethereum-outpost runner constructs from the
    * context — paths, the run anvil's endpoint (same derivation as
    * `AnvilProcess.rpcUrl`: the anvil was bound to this exact port by
-   * `Steps.processes.anvil.start`, so they cannot diverge), and the roster the
-   * call installs.
+   * `Steps.processes.anvil.start`, so they cannot diverge), the persisted
+   * deployer and panic wallets, and the roster the call installs.
    */
   function bootstrapperOptions<C extends ClusterBuildContext>(
     ctx: C,
     initialRoster: EthereumOutpostInitialRoster
   ): EthereumOutpostBootstrapperOptions {
+    const { dataPath } = ctx.config
     return {
       ethereumPath: ctx.config.ethereumPath,
-      anvilDataPath: Path.join(ctx.config.dataPath, AnvilDataSubpath),
       rpcUrl: toURL(
         ctx.config.bind.anvil.port,
         toDialAddress(ctx.config.bind.anvil.address)
       ),
       deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(
         ctx.config
+      ),
+      deployer: EthereumWallet.loadKeyPair(
+        dataPath,
+        EthereumWallet.DeployerWalletName
+      ),
+      panicAccount: EthereumWallet.loadKeyPair(
+        dataPath,
+        EthereumWallet.PanicWalletName
       ),
       initialRoster
     }
@@ -217,12 +203,8 @@ export namespace EthereumOutpostSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    EthereumOutpostBootstrapper.assertOperatorsClearOfPanicAccount(
-      ctx.config.batchOperatorCount,
-      ctx.config.underwriterCount
-    )
     await new EthereumOutpostBootstrapper({
-      ...bootstrapperOptions(ctx, await resolveInitialRoster(ctx)),
+      ...bootstrapperOptions(ctx, resolveInitialRoster(ctx)),
       mockSyndicatedPrincipal: input.mockSyndicatedPrincipal
     }).bootstrap()
   }
@@ -335,9 +317,9 @@ export namespace EthereumOutpostSteps {
    * bootstrapper's deploy config named: the per-transfer maximum and the yield
    * deadband ({@link EthereumOutpostBootstrapper.MaxSyndicationPerTransferWei},
    * {@link EthereumOutpostBootstrapper.YieldDeadbandDepotUnits}), the liq
-   * token `LIQETH` at 18 decimals, and the panic account
-   * ({@link EthereumOutpostBootstrapper.PanicAccountIndex}) able to call
-   * `pause` and `unpause` on it.
+   * token `LIQETH` at 18 decimals, and the panic account (the persisted
+   * {@link EthereumWallet.PanicWalletName} wallet) able to call `pause` and
+   * `unpause` on it.
    *
    * @param ctx - The build context.
    * @throws On the first value that differs.
@@ -362,8 +344,9 @@ export namespace EthereumOutpostSteps {
       expected,
       "EthereumOutpostSteps: SyndicationPool's configuration is not what the deploy config named"
     )
-    const panic = EthereumOutpostBootstrapper.anvilWallet(
-        EthereumOutpostBootstrapper.PanicAccountIndex
+    const panic = EthereumWallet.loadKeyPair(
+        ctx.config.dataPath,
+        EthereumWallet.PanicWalletName
       ).address,
       { pause, unpause } = EthereumSyndicationTool.PoolFunction
     await mapSeries([pause, unpause], async functionName =>

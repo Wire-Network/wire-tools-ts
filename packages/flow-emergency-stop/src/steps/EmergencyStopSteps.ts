@@ -7,10 +7,10 @@ import { promisify, stripVTControlCharacters } from "node:util"
 import { BN } from "@coral-xyz/anchor"
 import { ComputeBudgetProgram } from "@solana/web3.js"
 import { ChainKind } from "@wireio/opp-typescript-models"
-import { PrivateKey, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
 import { match } from "ts-pattern"
-import { isError, Wallet } from "ethers"
+import { isError } from "ethers"
 import {
   AuthExLinkTool,
   ClusterBuildStep,
@@ -20,6 +20,7 @@ import {
   Steps,
   SyndicationScenario,
   WireClient,
+  ethereumSigner,
   getLogger,
   clearNonceCache,
   matchesProtoEnum,
@@ -180,15 +181,13 @@ export namespace EmergencyStopSteps {
           )
         )
         .with(Action.replaySolana, () => replaySolana(ctx))
-        .with(Action.linkEthereum, () => {
-          const privateKey = PrivateKey.from(
-            Steps.registry.readMockSyndicationBonder(ctx).ethereum.privateKey
-          )
+        .with(Action.linkEthereum, async () => {
+          const bonder = Steps.registry.readMockSyndicationBonder(ctx)
           return AuthExLinkTool.createLink(ctx.wire, {
             chainKind: ChainKind.EVM,
             account: SyndicationScenario.Bonder,
-            privateKey,
-            ethereumWallet: new Wallet(privateKey.toNativeString())
+            publicKey: bonder.ethereum.publicKey,
+            signer: await ethereumSigner(bonder.ethereum)
           })
         })
         .with(Action.payEthereum, () =>
@@ -196,7 +195,7 @@ export namespace EmergencyStopSteps {
             ctx,
             {
               kind: "EthereumSyndicationTool.PayPendingDesyndicationInput",
-              ethereumHdIndex: Constants.EthereumDonor,
+              walletName: Constants.EthereumDonorWalletName,
               requestId: ctx.outputs.assert(Constants.EthereumRequest)
             },
             signal
@@ -264,7 +263,7 @@ export namespace EmergencyStopSteps {
             ctx,
             {
               kind: "EthereumSyndicationTool.DepositLiqEthInput",
-              ethereumHdIndex: Constants.EthereumDonor,
+              walletName: Constants.EthereumDonorWalletName,
               amountWei:
                 (Constants.Amount +
                   fixture.recredit *
@@ -279,7 +278,7 @@ export namespace EmergencyStopSteps {
             ctx,
             {
               kind: "EthereumSyndicationTool.DonateToPoolInput",
-              ethereumHdIndex: Constants.EthereumDonor,
+              walletName: Constants.EthereumDonorWalletName,
               amount:
                 ctx.outputs.assert(Constants.EthereumRecredit) *
                 Constants.EthereumScale

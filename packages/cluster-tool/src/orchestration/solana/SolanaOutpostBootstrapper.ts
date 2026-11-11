@@ -573,8 +573,8 @@ export namespace SolanaOutpostBootstrapper {
   /** Bancor connector weight (basis points) for the bootstrap-seeded reserves. */
   export const BootstrapConnectorWeightBps = 5000
 
-  /** Native SOL token codename. */
-  export const SolTokenCodename = "SOL"
+  /** Native SOL token codename — the ONE declaration, `Constants.SOL_TOKEN_CODENAME`. */
+  export const SolTokenCodename = Constants.SOL_TOKEN_CODENAME
   /** Native SOL chain decimals (lamports) — bound via `set_token_precision`. */
   export const SolTokenDecimals = 9
   /** LIQSOL token codename registered against the deployed liqSOL mint. */

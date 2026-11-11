@@ -17,12 +17,17 @@
  * - {@link EthereumSyndicationTool.planPayPendingDesyndication} — the
  *   permissionless crank that pays a `DESYNDICATE_LIQ` the pool stored.
  *
- * A holder is an anvil HD account, named by its index (the harness's end-user
- * convention — `SwapUserIdentities`, the flow constants). ABIs come from the
- * run's `<ethereumPath>/artifacts/contracts/…` and addresses from this
- * cluster's deploy-artifact files, both resolved inside the runners; each
- * runner encodes its ONE call through the request builders below, which are
- * pure and therefore what the unit tests check.
+ * A holder is a persisted per-cluster wallet, named by its durable handle
+ * (`EthereumWallet`; created and funded through `EthereumFundingTool`). ABIs
+ * come from the run's `<ethereumPath>/artifacts/contracts/…` and addresses
+ * from this cluster's deploy-artifact files, both resolved inside the runners;
+ * each runner encodes its ONE call through the request builders below, which
+ * are pure and therefore what the unit tests check.
+ *
+ * Every loader and read is addressed by an {@link EthereumOutpostSource}: a
+ * Step runner's `ctx` (its provider, `ethereumPath` and deploy records, each
+ * resolved at the point of use) or an {@link EthereumOutpostTarget} composed
+ * without a cluster (`fund-batch-operators`, over an `ExternalOutpostConfig`).
  */
 
 import Assert from "node:assert"
@@ -32,6 +37,7 @@ import Path from "node:path"
 import { ethers } from "ethers"
 import { SlugName } from "@wireio/sdk-core"
 
+import { EthereumWallet } from "../../clients/ethereum/EthereumWallet.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -45,6 +51,11 @@ import {
   loadOutpostContract,
   resolveLatestNonce
 } from "../../utils/ethereumUtils.js"
+import { EthereumFundingTool } from "./EthereumFundingTool.js"
+import {
+  EthereumOutpostTarget,
+  type EthereumOutpostSource
+} from "./EthereumOutpostTarget.js"
 
 export namespace EthereumSyndicationTool {
   /** `outpost-addrs.json` key + artifact basename of the syndication pool. */
@@ -263,23 +274,96 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The deployed `SyndicationPool`, from this cluster's `outpost-addrs.json`
-   * and the run's hardhat artifact.
+   * The `wire-ethereum` artifact tree a source addresses — the target's own,
+   * or the context's configured `ethereumPath`.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
+   * @returns The repo root.
+   */
+  function ethereumPathOf<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
+  ): string {
+    return EthereumOutpostTarget.is(source)
+      ? source.ethereumPath
+      : source.config.ethereumPath
+  }
+
+  /**
+   * The outpost address book a source addresses — the target's own, or this
+   * cluster's `outpost-addrs.json` read at the point of use (a context's
+   * records are files the deploy wrote; nothing reads them before a runner
+   * needs them).
+   *
+   * @param source - The build context, or a target.
+   * @returns The contract-name → address map.
+   */
+  function outpostAddressesOf<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
+  ): Record<string, string> {
+    return EthereumOutpostTarget.is(source)
+      ? source.outpostAddresses
+      : readDeployAddresses(
+          source,
+          EthereumOutpostBootstrapper.OutpostAddressesFile
+        )
+  }
+
+  /**
+   * The liqEth address book a source addresses — the target's own (asserted
+   * present: an outpost without liqETH has no deposit manager or token to
+   * load), or this cluster's `liqeth-addrs.json` read at the point of use.
+   *
+   * @param source - The build context, or a target.
+   * @returns The contract-name → address map.
+   * @throws If a target carries no liqEth addresses.
+   */
+  function liqEthAddressesOf<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
+  ): Record<string, string> {
+    if (!EthereumOutpostTarget.is(source)) {
+      return readDeployAddresses(
+        source,
+        EthereumOutpostBootstrapper.LiqEthAddressesFile
+      )
+    }
+    Assert.ok(
+      source.liqEthAddresses != null,
+      "EthereumSyndicationTool: the outpost target carries no liqEthAddresses — the outpost has no liqETH deploy to load"
+    )
+    return source.liqEthAddresses
+  }
+
+  /**
+   * The provider a source reads through — the target's own, or the context's
+   * recording provider (resolved at the point of use: a context's client is
+   * lazy, and throws for an external-outpost cluster).
+   *
+   * @param source - The build context, or a target.
+   * @returns The provider.
+   */
+  function providerOf<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
+  ): ethers.Provider {
+    return EthereumOutpostTarget.is(source)
+      ? source.provider
+      : source.ethereum.provider
+  }
+
+  /**
+   * The deployed `SyndicationPool`, from the source's outpost address book and
+   * the hardhat artifact.
+   *
+   * @param source - The build context, or a target.
    * @param runner - The signer (writes) or provider (reads) to bind.
    * @returns The pool contract.
    */
   export function loadSyndicationPool<C extends ClusterBuildContext>(
-    ctx: C,
+    source: EthereumOutpostSource<C>,
     runner: ethers.ContractRunner
   ): SyndicationPoolView & ethers.BaseContract {
     return loadOutpostContract<SyndicationPoolView>(
-      ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.OutpostAddressesFile
-      ),
+      ethereumPathOf(source),
+      outpostAddressesOf(source),
       SyndicationPoolContractName,
       [...SyndicationPoolArtifactSubpath],
       runner
@@ -287,20 +371,20 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The deployed `DepositManager`, from this cluster's `liqeth-addrs.json` and
-   * the run's hardhat artifact.
+   * The deployed `DepositManager`, from the source's liqEth address book and
+   * the hardhat artifact.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param runner - The signer to bind.
    * @returns The deposit-manager contract.
    */
   export function loadDepositManager<C extends ClusterBuildContext>(
-    ctx: C,
+    source: EthereumOutpostSource<C>,
     runner: ethers.ContractRunner
   ): ethers.BaseContract {
     return loadOutpostContract<object>(
-      ctx.config.ethereumPath,
-      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
+      ethereumPathOf(source),
+      liqEthAddressesOf(source),
       DepositManagerContractName,
       [...DepositManagerArtifactSubpath],
       runner
@@ -308,20 +392,20 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The deployed liqETH token, from this cluster's `liqeth-addrs.json` and the
-   * run's hardhat artifact.
+   * The deployed liqETH token, from the source's liqEth address book and the
+   * hardhat artifact.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param runner - The signer (writes) or provider (reads) to bind.
    * @returns The token contract.
    */
   export function loadLiqEthToken<C extends ClusterBuildContext>(
-    ctx: C,
+    source: EthereumOutpostSource<C>,
     runner: ethers.ContractRunner
   ): LiqEthTokenView & ethers.BaseContract {
     return loadOutpostContract<LiqEthTokenView>(
-      ctx.config.ethereumPath,
-      readDeployAddresses(ctx, EthereumOutpostBootstrapper.LiqEthAddressesFile),
+      ethereumPathOf(source),
+      liqEthAddressesOf(source),
       LiqEthTokenContractName,
       [...LiqEthTokenArtifactSubpath],
       runner,
@@ -330,57 +414,23 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The deployed outpost access manager, from this cluster's
-   * `outpost-addrs.json` and the run's hardhat artifact.
+   * The deployed outpost access manager, from the source's outpost address
+   * book and the hardhat artifact.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param runner - The provider to bind.
    * @returns The access-manager contract.
    */
   export function loadOutpostManagerAuthority<C extends ClusterBuildContext>(
-    ctx: C,
+    source: EthereumOutpostSource<C>,
     runner: ethers.ContractRunner
   ): AccessManagerView & ethers.BaseContract {
     return loadOutpostContract<AccessManagerView>(
-      ctx.config.ethereumPath,
-      readDeployAddresses(
-        ctx,
-        EthereumOutpostBootstrapper.OutpostAddressesFile
-      ),
+      ethereumPathOf(source),
+      outpostAddressesOf(source),
       OutpostManagerAuthorityContractName,
       [...OutpostManagerAuthorityArtifactSubpath],
       runner
-    )
-  }
-
-  /**
-   * The anvil HD wallet at `ethereumHdIndex`, connected to the run's provider.
-   *
-   * @param ctx - The build context (supplies the provider).
-   * @param ethereumHdIndex - The HD account index.
-   * @returns The connected wallet.
-   */
-  export function hdWallet<C extends ClusterBuildContext>(
-    ctx: C,
-    ethereumHdIndex: number
-  ): ethers.HDNodeWallet {
-    return EthereumOutpostBootstrapper.anvilWallet(ethereumHdIndex).connect(
-      ctx.ethereum.provider
-    )
-  }
-
-  /**
-   * The 33-byte compressed secp256k1 public key of the anvil HD account at
-   * `ethereumHdIndex`, as `0x` hex — the `compressedPubkey` `syndicate` needs,
-   * which must derive to the sender. A pure value helper.
-   *
-   * @param ethereumHdIndex - The HD account index.
-   * @returns The compressed key.
-   */
-  export function compressedPubkey(ethereumHdIndex: number): string {
-    return ethers.SigningKey.computePublicKey(
-      EthereumOutpostBootstrapper.anvilWallet(ethereumHdIndex).publicKey,
-      true
     )
   }
 
@@ -545,40 +595,64 @@ export namespace EthereumSyndicationTool {
    * @param ctx - The build context.
    * @returns Depot units (9 decimals).
    */
-  export async function readPoolBalanceDepot<C extends ClusterBuildContext>(
+  export function readPoolBalanceDepot(
+    target: EthereumOutpostTarget
+  ): Promise<bigint>
+  export function readPoolBalanceDepot<C extends ClusterBuildContext>(
     ctx: C
+  ): Promise<bigint>
+  export async function readPoolBalanceDepot<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
   ): Promise<bigint> {
-    return loadSyndicationPool(ctx, ctx.ethereum.provider).poolBalanceDepot()
+    return loadSyndicationPool(source, providerOf(source)).poolBalanceDepot()
   }
 
   /**
    * Read the pool's governed, inclusive custody-gap allowance without changing it.
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @returns The deployed allowance in basis points.
    */
-  export async function readCustodyShortfallBps<C extends ClusterBuildContext>(
+  export function readCustodyShortfallBps(
+    target: EthereumOutpostTarget
+  ): Promise<bigint>
+  export function readCustodyShortfallBps<C extends ClusterBuildContext>(
     ctx: C
+  ): Promise<bigint>
+  export async function readCustodyShortfallBps<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
   ): Promise<bigint> {
-    return loadSyndicationPool(ctx, ctx.ethereum.provider).custodyShortfallBps()
+    return loadSyndicationPool(source, providerOf(source)).custodyShortfallBps()
   }
 
   /**
    * Read the successful transaction's custody-check event for one request.
    * Missing evidence returns undefined for polling; duplicate evidence is refused.
    * A refused check must still fully fund the payout, isolating the ratio guard.
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param requestId - The depot request id.
    * @param depotAmount - The exact net redemption, in depot units.
    * @param tolerated - Select the tolerated event rather than the refusal event.
    * @returns Actual projected custody, post-burn outstanding and allowance, or undefined.
    */
-  export async function readCustodyCheck<C extends ClusterBuildContext>(
+  export function readCustodyCheck(
+    target: EthereumOutpostTarget,
+    requestId: bigint,
+    depotAmount: bigint,
+    tolerated: boolean
+  ): Promise<CustodyCheck>
+  export function readCustodyCheck<C extends ClusterBuildContext>(
     ctx: C,
     requestId: bigint,
     depotAmount: bigint,
     tolerated: boolean
+  ): Promise<CustodyCheck>
+  export async function readCustodyCheck<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    requestId: bigint,
+    depotAmount: bigint,
+    tolerated: boolean
   ): Promise<CustodyCheck> {
-    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+    const pool = loadSyndicationPool(source, providerOf(source)),
       eventName = tolerated
         ? PoolEvent.CustodyShortfallTolerated
         : PoolEvent.CustodyShortfall,
@@ -630,17 +704,25 @@ export namespace EthereumSyndicationTool {
    * The release the pool stored under `requestId`, or `undefined` when none is
    * stored (never deferred, or already paid — paying deletes it). A READ.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param requestId - The depot request id.
    * @returns The stored release, or `undefined`.
    */
-  export async function readPendingDesyndication<C extends ClusterBuildContext>(
+  export function readPendingDesyndication(
+    target: EthereumOutpostTarget,
+    requestId: bigint
+  ): Promise<PendingDesyndication>
+  export function readPendingDesyndication<C extends ClusterBuildContext>(
     ctx: C,
+    requestId: bigint
+  ): Promise<PendingDesyndication>
+  export async function readPendingDesyndication<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
     requestId: bigint
   ): Promise<PendingDesyndication> {
     const [recipient, depotAmount, reason] = await loadSyndicationPool(
-      ctx,
-      ctx.ethereum.provider
+      source,
+      providerOf(source)
     ).pendingDesyndications(requestId)
     // `depotAmount != 0` is the contract's own "a record is stored" marker.
     if (depotAmount === 0n) return undefined
@@ -651,29 +733,45 @@ export namespace EthereumSyndicationTool {
    * Whether the pool is paused (the emergency stop, or its own custody
    * shortfall pause). A READ.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @returns The pause flag.
    */
-  export async function readPaused<C extends ClusterBuildContext>(
+  export function readPaused(
+    target: EthereumOutpostTarget
+  ): Promise<boolean>
+  export function readPaused<C extends ClusterBuildContext>(
     ctx: C
+  ): Promise<boolean>
+  export async function readPaused<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
   ): Promise<boolean> {
-    return loadSyndicationPool(ctx, ctx.ethereum.provider).paused()
+    return loadSyndicationPool(source, providerOf(source)).paused()
   }
 
   /**
    * `account`'s liqETH balance, in wei. A READ.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param account - The address to read.
    * @param blockTag - The block to read at; the latest when omitted.
    * @returns The balance.
    */
-  export async function readLiqEthBalance<C extends ClusterBuildContext>(
+  export function readLiqEthBalance(
+    target: EthereumOutpostTarget,
+    account: string,
+    blockTag?: ethers.BlockTag
+  ): Promise<bigint>
+  export function readLiqEthBalance<C extends ClusterBuildContext>(
     ctx: C,
     account: string,
     blockTag?: ethers.BlockTag
+  ): Promise<bigint>
+  export async function readLiqEthBalance<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    account: string,
+    blockTag?: ethers.BlockTag
   ): Promise<bigint> {
-    return loadLiqEthToken(ctx, ctx.ethereum.provider).balanceOf(account, {
+    return loadLiqEthToken(source, providerOf(source)).balanceOf(account, {
       blockTag
     })
   }
@@ -681,15 +779,23 @@ export namespace EthereumSyndicationTool {
   /**
    * liqETH's share rate at `blockTag`. A READ.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param blockTag - The block to read at.
    * @returns The index and its unit.
    */
-  export async function readLiqEthRate<C extends ClusterBuildContext>(
+  export function readLiqEthRate(
+    target: EthereumOutpostTarget,
+    blockTag: ethers.BlockTag
+  ): Promise<LiqEthRate>
+  export function readLiqEthRate<C extends ClusterBuildContext>(
     ctx: C,
     blockTag: ethers.BlockTag
+  ): Promise<LiqEthRate>
+  export async function readLiqEthRate<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    blockTag: ethers.BlockTag
   ): Promise<LiqEthRate> {
-    const token = loadLiqEthToken(ctx, ctx.ethereum.provider)
+    const token = loadLiqEthToken(source, providerOf(source))
     return {
       index: await token.index({ blockTag }),
       unit: await token.unit({ blockTag })
@@ -700,16 +806,24 @@ export namespace EthereumSyndicationTool {
    * The ONE `Desyndicated` event for `requestId`, backed by exactly one matching
    * liqETH transfer in its successful receipt. A READ, independent of block position.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param requestId - The depot request id.
    * @returns The payment and its block position.
    * @throws If the payment or its matching token transfer is missing or duplicated.
    */
-  export async function readDesyndicationPayment<C extends ClusterBuildContext>(
+  export function readDesyndicationPayment(
+    target: EthereumOutpostTarget,
+    requestId: bigint
+  ): Promise<DesyndicationPayment>
+  export function readDesyndicationPayment<C extends ClusterBuildContext>(
     ctx: C,
     requestId: bigint
+  ): Promise<DesyndicationPayment>
+  export async function readDesyndicationPayment<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    requestId: bigint
   ): Promise<DesyndicationPayment> {
-    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
+    const pool = loadSyndicationPool(source, providerOf(source)),
       events = await pool.queryFilter(
         pool.getEvent(PoolEvent.Desyndicated),
         EventScanFromBlock
@@ -730,7 +844,7 @@ export namespace EthereumSyndicationTool {
         `${requestId}, found ${payments.length}`
     )
     const [payment] = payments
-    await assertDesyndicationTransfer(ctx, pool, payment)
+    await assertDesyndicationTransfer(source, pool, payment)
     return {
       recipient: payment.args.recipient,
       nativeAmount: BigInt(payment.args.nativeAmount),
@@ -743,7 +857,7 @@ export namespace EthereumSyndicationTool {
 
   /** Verify the pool's payment against the actual token transfer in its receipt. */
   async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
-    ctx: C,
+    source: EthereumOutpostSource<C>,
     pool: ReturnType<typeof loadSyndicationPool>,
     payment: ethers.EventLog
   ): Promise<void> {
@@ -753,7 +867,7 @@ export namespace EthereumSyndicationTool {
       `EthereumSyndicationTool: payment ${payment.transactionHash} has no successful receipt`
     )
     Assert.strictEqual(receipt.blockHash, payment.blockHash)
-    const token = loadLiqEthToken(ctx, ctx.ethereum.provider),
+    const token = loadLiqEthToken(source, providerOf(source)),
       tokenAddress = ethers.getAddress(await token.getAddress()),
       poolAddress = ethers.getAddress(await pool.getAddress()),
       transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
@@ -823,10 +937,16 @@ export namespace EthereumSyndicationTool {
    * @param ctx - The build context.
    * @returns The four configured values.
    */
-  export async function readPoolConfiguration<C extends ClusterBuildContext>(
+  export function readPoolConfiguration(
+    target: EthereumOutpostTarget
+  ): Promise<PoolConfiguration>
+  export function readPoolConfiguration<C extends ClusterBuildContext>(
     ctx: C
+  ): Promise<PoolConfiguration>
+  export async function readPoolConfiguration<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
   ): Promise<PoolConfiguration> {
-    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider)
+    const pool = loadSyndicationPool(source, providerOf(source))
     return {
       maxSyndicationPerTransfer: await pool.maxSyndicationPerTransfer(),
       yieldDeadband: await pool.yieldDeadband(),
@@ -841,18 +961,28 @@ export namespace EthereumSyndicationTool {
    * configuration check asks it for the panic account and `pause` /
    * `unpause`.
    *
-   * @param ctx - The build context.
+   * @param source - The build context, or a target.
    * @param account - The caller to ask about.
    * @param functionName - The pool function.
    * @returns Whether the call is immediately permitted.
    */
-  export async function readCanCallPool<C extends ClusterBuildContext>(
+  export function readCanCallPool(
+    target: EthereumOutpostTarget,
+    account: string,
+    functionName: PoolFunction
+  ): Promise<boolean>
+  export function readCanCallPool<C extends ClusterBuildContext>(
     ctx: C,
     account: string,
     functionName: PoolFunction
+  ): Promise<boolean>
+  export async function readCanCallPool<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    account: string,
+    functionName: PoolFunction
   ): Promise<boolean> {
-    const pool = loadSyndicationPool(ctx, ctx.ethereum.provider),
-      manager = loadOutpostManagerAuthority(ctx, ctx.ethereum.provider),
+    const pool = loadSyndicationPool(source, providerOf(source)),
+      manager = loadOutpostManagerAuthority(source, providerOf(source)),
       authority = await pool.authority()
     // The pool must answer to THIS manager, or its answer is about another pool.
     Assert.ok(
@@ -884,8 +1014,8 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planDepositLiqEth} — one `deposit` write. */
   export interface DepositLiqEthInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.DepositLiqEthInput"
-    /** Anvil HD index of the depositing holder. */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the depositing holder's persisted wallet. */
+    readonly walletName: string
     /** Wei deposited (`msg.value`). */
     readonly amountWei: bigint
   }
@@ -898,7 +1028,7 @@ export namespace EthereumSyndicationTool {
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning.
-   * @param ethereumHdIndex - Anvil HD index of the holder.
+   * @param walletName - Durable handle of the holder's persisted wallet.
    * @param amountWei - Wei to deposit.
    * @returns The definition step.
    */
@@ -909,7 +1039,7 @@ export namespace EthereumSyndicationTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
+    walletName: string,
     amountWei: bigint
   ): ClusterBuildStep<C, DepositLiqEthInput> {
     return ClusterBuildStep.create<C, DepositLiqEthInput>(
@@ -919,7 +1049,7 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.DepositLiqEthInput",
-        ethereumHdIndex,
+        walletName,
         amountWei
       },
       runDepositLiqEth
@@ -937,7 +1067,7 @@ export namespace EthereumSyndicationTool {
       input.amountWei > 0n,
       "EthereumSyndicationTool.planDepositLiqEth: amountWei must be positive"
     )
-    const holder = hdWallet(ctx, input.ethereumHdIndex)
+    const holder = EthereumFundingTool.signer(ctx, input.walletName)
     await send(
       holder,
       depositLiqEthRequest(loadDepositManager(ctx, holder), input.amountWei),
@@ -951,10 +1081,16 @@ export namespace EthereumSyndicationTool {
   }
 
   /** Read the principal already reconciled against depot shadow, in depot units. */
-  export async function readSyndicatedPrincipal<C extends ClusterBuildContext>(
+  export function readSyndicatedPrincipal(
+    target: EthereumOutpostTarget
+  ): Promise<bigint>
+  export function readSyndicatedPrincipal<C extends ClusterBuildContext>(
     ctx: C
+  ): Promise<bigint>
+  export async function readSyndicatedPrincipal<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>
   ): Promise<bigint> {
-    return loadSyndicationPool(ctx, ctx.ethereum.provider).syndicatedPrincipal()
+    return loadSyndicationPool(source, providerOf(source)).syndicatedPrincipal()
   }
 
   // ── Step: liqETH allowance for the pool (`approve`) ──────────────────────
@@ -962,8 +1098,8 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planApproveLiqEth} — one `approve` write. */
   export interface ApproveLiqEthInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.ApproveLiqEthInput"
-    /** Anvil HD index of the approving holder. */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the approving holder's persisted wallet. */
+    readonly walletName: string
     /** The allowance granted to the pool, in wei. */
     readonly amount: bigint
   }
@@ -976,7 +1112,7 @@ export namespace EthereumSyndicationTool {
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning.
-   * @param ethereumHdIndex - Anvil HD index of the holder.
+   * @param walletName - Durable handle of the holder's persisted wallet.
    * @param amount - The allowance, in wei.
    * @returns The definition step.
    */
@@ -987,7 +1123,7 @@ export namespace EthereumSyndicationTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
+    walletName: string,
     amount: bigint
   ): ClusterBuildStep<C, ApproveLiqEthInput> {
     return ClusterBuildStep.create<C, ApproveLiqEthInput>(
@@ -997,7 +1133,7 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.ApproveLiqEthInput",
-        ethereumHdIndex,
+        walletName,
         amount
       },
       runApproveLiqEth
@@ -1011,7 +1147,7 @@ export namespace EthereumSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const holder = hdWallet(ctx, input.ethereumHdIndex),
+    const holder = EthereumFundingTool.signer(ctx, input.walletName),
       pool = loadSyndicationPool(ctx, holder)
     await send(
       holder,
@@ -1029,12 +1165,16 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planSyndicate} — one `syndicate` write. */
   export interface SyndicateInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.SyndicateInput"
-    /** Anvil HD index of the syndicating holder (the sender). */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the syndicating holder's persisted wallet (the sender). */
+    readonly walletName: string
     /** Wei to syndicate. */
     readonly amount: bigint
-    /** The 33-byte compressed key the depot parks the syndication against, `0x` hex. */
-    readonly compressedPubkey: string
+    /**
+     * The 33-byte compressed key the depot parks the syndication against, `0x`
+     * hex — the holder's own when absent, carried as given when a flow
+     * presents another.
+     */
+    readonly compressedPubkey?: string
   }
 
   /**
@@ -1042,15 +1182,17 @@ export namespace EthereumSyndicationTool {
    * takes the liqETH (it needs the allowance of {@link planApproveLiqEth}) and
    * queues `SYNDICATE_LIQ`; it refuses an amount above its per-transfer
    * maximum, a key that does not derive to the sender, and any call while
-   * paused. The key is carried as given, so a flow can present a wrong one.
+   * paused. Without `compressedPubkey` the holder's own key is sent
+   * (`EthereumFundingTool.compressedPubkey`); a flow presenting a wrong one
+   * passes it explicitly.
    *
    * @param actor - The narrative subject (the holder).
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning.
-   * @param ethereumHdIndex - Anvil HD index of the holder.
+   * @param walletName - Durable handle of the holder's persisted wallet.
    * @param amount - Wei to syndicate.
-   * @param compressedPubkey - The compressed key (see {@link compressedPubkey}).
+   * @param compressedPubkey - A compressed key to present instead of the holder's own.
    * @returns The definition step.
    */
   export function planSyndicate<
@@ -1060,9 +1202,9 @@ export namespace EthereumSyndicationTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
+    walletName: string,
     amount: bigint,
-    compressedPubkey: string
+    compressedPubkey?: string
   ): ClusterBuildStep<C, SyndicateInput> {
     return ClusterBuildStep.create<C, SyndicateInput>(
       actor,
@@ -1071,9 +1213,9 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.SyndicateInput",
-        ethereumHdIndex,
+        walletName,
         amount,
-        compressedPubkey
+        ...(compressedPubkey != null ? { compressedPubkey } : {})
       },
       runSyndicate
     )
@@ -1090,13 +1232,19 @@ export namespace EthereumSyndicationTool {
       input.amount > 0n,
       "EthereumSyndicationTool.planSyndicate: amount must be positive"
     )
-    const holder = hdWallet(ctx, input.ethereumHdIndex)
+    const holder = EthereumFundingTool.signer(ctx, input.walletName),
+      {
+        compressedPubkey = EthereumFundingTool.compressedPubkey(
+          ctx,
+          input.walletName
+        )
+      } = input
     await send(
       holder,
       syndicateRequest(
         loadSyndicationPool(ctx, holder),
         input.amount,
-        input.compressedPubkey
+        compressedPubkey
       ),
       "EthereumSyndicationTool.planSyndicate"
     )
@@ -1107,8 +1255,8 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planDonateToPool} — one liqETH transfer into the pool. */
   export interface DonateToPoolInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.DonateToPoolInput"
-    /** Anvil HD index of the donor. */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the donor's persisted wallet. */
+    readonly walletName: string
     /** Wei to transfer. */
     readonly amount: bigint
   }
@@ -1122,7 +1270,7 @@ export namespace EthereumSyndicationTool {
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning.
-   * @param ethereumHdIndex - Anvil HD index of the donor.
+   * @param walletName - Durable handle of the donor's persisted wallet.
    * @param amount - Wei to transfer.
    * @returns The definition step.
    */
@@ -1133,7 +1281,7 @@ export namespace EthereumSyndicationTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
+    walletName: string,
     amount: bigint
   ): ClusterBuildStep<C, DonateToPoolInput> {
     return ClusterBuildStep.create<C, DonateToPoolInput>(
@@ -1143,7 +1291,7 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.DonateToPoolInput",
-        ethereumHdIndex,
+        walletName,
         amount
       },
       runDonateToPool
@@ -1161,7 +1309,7 @@ export namespace EthereumSyndicationTool {
       input.amount > 0n,
       "EthereumSyndicationTool.planDonateToPool: amount must be positive"
     )
-    const donor = hdWallet(ctx, input.ethereumHdIndex),
+    const donor = EthereumFundingTool.signer(ctx, input.walletName),
       pool = loadSyndicationPool(ctx, donor)
     await send(
       donor,
@@ -1179,16 +1327,16 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planSetPaused} — one panic-signed `pause` / `unpause` write. */
   export interface SetPausedInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.SetPausedInput"
-    /** Anvil HD index of the signer — the panic account the deploy config named. */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the signer's wallet — the panic account the deploy config named. */
+    readonly walletName: string
     /** `true` sends `pause()`, `false` sends `unpause()`. */
     readonly paused: boolean
   }
 
   /**
    * A single `SyndicationPool.pause()` or `unpause()`, signed by the panic
-   * account ({@link EthereumOutpostBootstrapper.PanicAccountIndex}, carried on
-   * the input so the Report names the signer). While paused, `syndicate` and
+   * account (the persisted {@link EthereumWallet.PanicWalletName} wallet,
+   * carried on the input so the Report names the signer). While paused, `syndicate` and
    * `realizeYield` revert with `EnforcedPause` and every inbound
    * `DESYNDICATE_LIQ` is stored rather than paid; `unpause` lifts the
    * emergency stop and the pool's own custody-shortfall pause alike.
@@ -1216,7 +1364,7 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.SetPausedInput",
-        ethereumHdIndex: EthereumOutpostBootstrapper.PanicAccountIndex,
+        walletName: EthereumWallet.PanicWalletName,
         paused
       },
       runSetPaused
@@ -1230,7 +1378,7 @@ export namespace EthereumSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const panic = hdWallet(ctx, input.ethereumHdIndex)
+    const panic = EthereumFundingTool.signer(ctx, input.walletName)
     await send(
       panic,
       setPausedRequest(loadSyndicationPool(ctx, panic), input.paused),
@@ -1243,8 +1391,8 @@ export namespace EthereumSyndicationTool {
   /** Input for {@link planPayPendingDesyndication} — one permissionless crank write. */
   export interface PayPendingDesyndicationInput extends StepInput {
     readonly kind: "EthereumSyndicationTool.PayPendingDesyndicationInput"
-    /** Anvil HD index of the caller (any account may crank). */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the caller's persisted wallet (any account may crank). */
+    readonly walletName: string
     /** The depot request id the release was stored under. */
     readonly requestId: bigint
   }
@@ -1258,7 +1406,7 @@ export namespace EthereumSyndicationTool {
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning.
-   * @param ethereumHdIndex - Anvil HD index of the caller.
+   * @param walletName - Durable handle of the caller's persisted wallet.
    * @param requestId - The stored release's depot request id.
    * @returns The definition step.
    */
@@ -1269,7 +1417,7 @@ export namespace EthereumSyndicationTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    ethereumHdIndex: number,
+    walletName: string,
     requestId: bigint
   ): ClusterBuildStep<C, PayPendingDesyndicationInput> {
     return ClusterBuildStep.create<C, PayPendingDesyndicationInput>(
@@ -1279,7 +1427,7 @@ export namespace EthereumSyndicationTool {
       options,
       {
         kind: "EthereumSyndicationTool.PayPendingDesyndicationInput",
-        ethereumHdIndex,
+        walletName,
         requestId
       },
       runPayPendingDesyndication
@@ -1295,7 +1443,7 @@ export namespace EthereumSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const caller = hdWallet(ctx, input.ethereumHdIndex)
+    const caller = EthereumFundingTool.signer(ctx, input.walletName)
     await send(
       caller,
       payPendingDesyndicationRequest(

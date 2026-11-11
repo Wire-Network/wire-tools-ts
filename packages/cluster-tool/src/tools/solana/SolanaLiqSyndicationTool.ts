@@ -26,16 +26,25 @@
  * runners; every seed is a named constant in {@link SolanaLiqSyndicationTool.PdaSeed},
  * cross-checked against `wire-solana/programs/liqsol-core` (and `liqsol-token` /
  * `transfer-hook` for the mint + hook seeds).
+ *
+ * Every read, PDA derivation and transaction build is addressed by a
+ * {@link SolanaOutpostSource}: a Step runner's `ctx` (from which
+ * {@link SolanaOutpostTarget.fromContext} derives the connection, the IDL root
+ * and the deployed program id) or a {@link SolanaOutpostTarget} composed
+ * without a cluster (`fund-batch-operators`, over an `ExternalOutpostConfig`).
+ * The Step runners keep their `ctx` contract and derive the target inside.
  */
 
 import Assert from "node:assert"
 
 import { Either, asOption } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
+import { match } from "ts-pattern"
 import {
   type AccountMeta,
   type Commitment,
   ComputeBudgetProgram,
+  type Connection,
   Keypair,
   MessageAccountKeys,
   PublicKey,
@@ -68,6 +77,10 @@ import { LiqsolPdaSeed, pendingPayoutAddress } from "./LiqsolPdaSeed.js"
 import { getLogger } from "../../logging/Logger.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
+import {
+  SolanaOutpostTarget,
+  type SolanaOutpostSource
+} from "./SolanaOutpostTarget.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -116,11 +129,13 @@ export namespace SolanaLiqSyndicationTool {
 
   // ── value helpers (PDA derivation / program loading — run INSIDE runners) ──
 
-  /** The liqsol PDAs that do not depend on a user, resolved from `ctx.config.solanaPath`. */
+  /** The liqsol PDAs that do not depend on a user, resolved from the wire-solana tree + the deployed program id. */
   export interface BasePdas {
     globalState: PublicKey
     globalConfig: PublicKey
     poolAuthority: PublicKey
+    /** The pretoken purchase-history ring (`+ pool_authority`) — PreLaunch `synd`'s yield source. */
+    pretokenPurchaseHistory: PublicKey
     distributionState: PublicKey
     bucketAuthority: PublicKey
     liqsolMint: PublicKey
@@ -155,13 +170,21 @@ export namespace SolanaLiqSyndicationTool {
    * Derive every user-independent liqsol PDA. A pure value helper (no chain
    * call), so it is called freely inside step runners.
    *
-   * @param solanaPath - The `wire-solana` repo root (supplies the program ids).
+   * @param solanaPath - The `wire-solana` repo root (supplies the liqsol-token
+   *   + transfer-hook program ids, and `liqsol_core`'s unless overridden).
+   * @param liqsolCoreProgram - The DEPLOYED `liqsol_core` program id — a
+   *   {@link SolanaOutpostTarget}'s; defaults to the committed keypair's.
    * @returns The derived addresses.
    */
-  export function deriveBasePdas(solanaPath: string): BasePdas {
+  export function deriveBasePdas(
+    solanaPath: string,
+    liqsolCoreProgram: PublicKey = SolanaOutpostProgramTool.assertProgramId(
+      solanaPath,
+      SolanaOutpostProgramTool.AnchorProgram.liqsolCore
+    )
+  ): BasePdas {
     const { AnchorProgram, assertProgramId, derivePda } =
         SolanaOutpostProgramTool,
-      liqsolCoreProgram = assertProgramId(solanaPath, AnchorProgram.liqsolCore),
       liqsolTokenProgram = assertProgramId(
         solanaPath,
         AnchorProgram.liqsolToken
@@ -194,6 +217,10 @@ export namespace SolanaLiqSyndicationTool {
       globalState: core(PdaSeed.GlobalState),
       globalConfig: core(SolanaOutpostBootstrapper.PdaSeed.GlobalConfig),
       poolAuthority,
+      pretokenPurchaseHistory: core(
+        PdaSeed.PretokenPurchaseHistory,
+        poolAuthority.toBuffer()
+      ),
       distributionState: core(PdaSeed.DistributionState),
       bucketAuthority,
       liqsolMint,
@@ -235,13 +262,16 @@ export namespace SolanaLiqSyndicationTool {
    *
    * @param solanaPath - The `wire-solana` repo root.
    * @param user - The user's Solana wallet pubkey.
+   * @param liqsolCoreProgram - The DEPLOYED `liqsol_core` program id; defaults
+   *   to the committed keypair's (see {@link deriveBasePdas}).
    * @returns The derived addresses.
    */
   export function deriveUserPdas(
     solanaPath: string,
-    user: PublicKey
+    user: PublicKey,
+    liqsolCoreProgram?: PublicKey
   ): UserPdas {
-    const base = deriveBasePdas(solanaPath),
+    const base = deriveBasePdas(solanaPath, liqsolCoreProgram),
       userAta = getAssociatedTokenAddressSync(
         base.liqsolMint,
         user,
@@ -374,17 +404,15 @@ export namespace SolanaLiqSyndicationTool {
    * hand-rolled snake-to-camel pass, so it cannot disagree with the coder the
    * runners actually call.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @throws If any map names an account the IDL does not, or misses one.
    */
   export function assertAccountMapsMatchIdl<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): void {
-    const { instructions } = SolanaOutpostProgramTool.loadReadOnlyProgram(
-      ctx.solana.connection,
-      ctx.config.solanaPath
-    ).idl
-    instructionAccountMaps(ctx.config.solanaPath).forEach(
+    const target = SolanaOutpostTarget.resolve(source),
+      { instructions } = loadReadOnlyLiqsolProgram(target).idl
+    instructionAccountMaps(target.solanaPath).forEach(
       ({ instruction, accounts }) => {
         const declared = instructions.find(({ name }) => name === instruction)
         Assert.ok(
@@ -409,21 +437,60 @@ export namespace SolanaLiqSyndicationTool {
 
   /**
    * Build the `liqsol_core` Anchor program bound to `keypair` as its provider
-   * wallet — the ONE program construction for this tool.
+   * wallet — the ONE program construction for this tool, at the target's
+   * DEPLOYED program id.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath` + program id).
    * @param keypair - The signer the provider's wallet wraps.
    * @returns The Anchor program.
    */
   export function loadLiqsolProgram<C extends ClusterBuildContext>(
-    ctx: C,
+    source: SolanaOutpostSource<C>,
     keypair: Keypair
   ): anchor.Program<anchor.Idl> {
+    const target = SolanaOutpostTarget.resolve(source)
     return SolanaOutpostProgramTool.loadProgram(
-      ctx.solana.connection,
+      target.connection,
       keypair,
-      ctx.config.solanaPath
+      target.solanaPath,
+      target.programId
     )
+  }
+
+  /**
+   * The `liqsol_core` program bound to a connection-only provider — what a
+   * READ decodes through (`SolanaOutpostProgramTool.loadReadOnlyProgram`), at
+   * the target's DEPLOYED program id.
+   *
+   * @param target - The target (RPC connection + `solanaPath` + program id).
+   * @returns The Anchor program, with no wallet.
+   */
+  function loadReadOnlyLiqsolProgram(
+    target: SolanaOutpostTarget
+  ): anchor.Program<anchor.Idl> {
+    return SolanaOutpostProgramTool.loadReadOnlyProgram(
+      target.connection,
+      target.solanaPath,
+      SolanaOutpostProgramTool.ProgramName,
+      target.programId
+    )
+  }
+
+  /**
+   * The connection a source addresses — a context's recording connection or
+   * the target's own — for the paths that need ONLY the connection (the
+   * epoch-rewards sysvar read, a submission), which a context stub without a
+   * config can legitimately serve.
+   *
+   * @param source - The build context, or a target.
+   * @returns The connection.
+   */
+  function connectionOf<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>
+  ): Connection {
+    return SolanaOutpostTarget.is(source)
+      ? source.connection
+      : source.solana.connection
   }
 
   /**
@@ -460,6 +527,7 @@ export namespace SolanaLiqSyndicationTool {
     liqSequence: anchor.BN
     wireState: AnchorEnumVariant
     frozen: boolean
+    paused: boolean
   }
 
   /**
@@ -472,14 +540,14 @@ export namespace SolanaLiqSyndicationTool {
    * authority for this account's layout, so nothing here re-declares it beyond
    * the three fields consumed.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The decoded liq-yield accounting.
    * @throws If `GlobalState` has not been initialized (`anchor run init-wire-config`).
    */
   export async function readLiqYieldState<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<LiqYieldState> {
-    const state = await readGlobalState(ctx)
+    const state = await readGlobalState(source)
     return {
       yieldAccumulatedLiqsol: BigInt(state.yieldAccumulatedLiqsol.toString()),
       liqYieldReported: BigInt(state.liqYieldReported.toString()),
@@ -501,12 +569,31 @@ export namespace SolanaLiqSyndicationTool {
     ctx: C,
     userName: string
   ): Promise<bigint> {
-    const user = SolanaFundingTool.loadKeypair(ctx.config.dataPath, userName),
-      { userAta } = deriveUserPdas(ctx.config.solanaPath, user.publicKey)
+    const user = SolanaFundingTool.loadKeypair(ctx.config.dataPath, userName)
+    return readLiqsolBalanceOf(ctx, user.publicKey)
+  }
+
+  /**
+   * The liqSOL balance of the wallet `owner` — the Token-2022 amount on the ATA
+   * the liqsol mint derives for it; `0n` before the ATA exists. The pubkey
+   * primitive {@link readLiqsolBalance} reads a persisted keypair's handle
+   * through, and what a cluster-less caller with a live keypair reads directly.
+   * A READ.
+   *
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
+   * @param owner - The wallet whose liqSOL ATA is read.
+   * @returns The ATA's raw liqSOL amount (9-decimal base units).
+   */
+  export async function readLiqsolBalanceOf<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>,
+    owner: PublicKey
+  ): Promise<bigint> {
+    const target = SolanaOutpostTarget.resolve(source),
+      { userAta } = deriveUserPdas(target.solanaPath, owner, target.programId)
     try {
       return (
         await getAccount(
-          ctx.solana.connection,
+          target.connection,
           userAta,
           undefined,
           TOKEN_2022_PROGRAM_ID
@@ -515,7 +602,7 @@ export namespace SolanaLiqSyndicationTool {
     } catch (error) {
       // A missing ATA is the expected never-held case — breadcrumb, not a failure.
       log.debug(
-        `readLiqsolBalance(${userName} → ${userAta.toBase58()}): ${error instanceof Error ? error.message : String(error)}`
+        `readLiqsolBalanceOf(${owner.toBase58()} → ${userAta.toBase58()}): ${error instanceof Error ? error.message : String(error)}`
       )
       return 0n
     }
@@ -527,15 +614,15 @@ export namespace SolanaLiqSyndicationTool {
    * A READ — callers use it to assert the pre-state of a transition rather than
    * discovering it from an on-chain revert.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The current launch state.
    * @throws If `GlobalState` is absent, or carries a variant this enum does not
    *   name (a program/enum drift worth failing loudly on).
    */
   export async function readWireState<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<WireState> {
-    const { wireState } = await readGlobalState(ctx),
+    const { wireState } = await readGlobalState(source),
       // Anchor decodes a unit-variant enum as a single-key object whose key is
       // the camelCased variant — the same spelling `wireStateVariant` encodes.
       [variant] = Object.keys(wireState ?? {})
@@ -552,16 +639,17 @@ export namespace SolanaLiqSyndicationTool {
    * coder, reached via {@link SolanaOutpostProgramTool.loadReadOnlyProgram} —
    * a READ needs the IDL's layouts and nothing else: no wallet, no keypair.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The decoded account.
    * @throws If `GlobalState` has not been initialized (`anchor run init-wire-config`).
    */
   async function readGlobalState<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<GlobalStateAccount> {
-    return readSingleton<C, GlobalStateAccount>(
-      ctx,
-      deriveBasePdas(ctx.config.solanaPath).globalState,
+    const target = SolanaOutpostTarget.resolve(source)
+    return readSingleton<GlobalStateAccount>(
+      target,
+      deriveBasePdas(target.solanaPath, target.programId).globalState,
       GlobalStateAccountName
     )
   }
@@ -569,27 +657,27 @@ export namespace SolanaLiqSyndicationTool {
   /**
    * Decode one liqsol singleton through the program's OWN Anchor coder.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param target - The target (RPC connection + `solanaPath` + program id).
    * @param address - The singleton's PDA.
    * @param accountName - The account's camelCased coder name.
    * @returns The decoded account.
    * @throws If the account does not exist (the liqsol surface was never initialized).
    */
-  async function readSingleton<C extends ClusterBuildContext, T>(
-    ctx: C,
+  async function readSingleton<T>(
+    target: SolanaOutpostTarget,
     address: PublicKey,
     accountName: string
   ): Promise<T> {
-    const account = await ctx.solana.connection.getAccountInfo(address)
+    const account = await target.connection.getAccountInfo(address)
     Assert.ok(
       account != null,
       `SolanaLiqSyndicationTool: ${accountName} ${address.toBase58()} does not exist — ` +
         "the liqsol surface was never initialized"
     )
-    return SolanaOutpostProgramTool.loadReadOnlyProgram(
-      ctx.solana.connection,
-      ctx.config.solanaPath
-    ).coder.accounts.decode<T>(accountName, account.data)
+    return loadReadOnlyLiqsolProgram(target).coder.accounts.decode<T>(
+      accountName,
+      account.data
+    )
   }
 
   /**
@@ -597,13 +685,28 @@ export namespace SolanaLiqSyndicationTool {
    * While it is set `synd` refuses with `OutpostFrozen` and every inbound
    * `DESYNDICATE_LIQ` is stored as a `PendingPayout` rather than paid.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The flag.
    */
   export async function readGlobalStateFrozen<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<boolean> {
-    return (await readGlobalState(ctx)).frozen
+    return (await readGlobalState(source)).frozen
+  }
+
+  /**
+   * Whether the liqsol surface is paused (`GlobalState.paused`) — the admin
+   * stop every user instruction (`synd`, `sol_to_liqsol`) refuses under with
+   * `SystemPaused`. A READ, so a caller refuses up front rather than reading
+   * the revert back out of a failed submission.
+   *
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
+   * @returns The flag.
+   */
+  export async function readGlobalStatePaused<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>
+  ): Promise<boolean> {
+    return (await readGlobalState(source)).paused
   }
 
   /** Name of the `GlobalConfig` account as the camelCased Anchor coder keys it. */
@@ -630,21 +733,20 @@ export namespace SolanaLiqSyndicationTool {
    * Read the liqsol `GlobalConfig`'s admin, panic account and per-transfer
    * syndication maximum. A READ.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The decoded fields.
    * @throws If `global_config` has not been initialized (`anchor run init-global-config`).
    */
   export async function readGlobalConfig<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<GlobalConfigState> {
-    const { admin, panic, maxSyndicationPerTransfer } = await readSingleton<
-      C,
-      GlobalConfigAccount
-    >(
-      ctx,
-      deriveBasePdas(ctx.config.solanaPath).globalConfig,
-      GlobalConfigAccountName
-    )
+    const target = SolanaOutpostTarget.resolve(source),
+      { admin, panic, maxSyndicationPerTransfer } =
+        await readSingleton<GlobalConfigAccount>(
+          target,
+          deriveBasePdas(target.solanaPath, target.programId).globalConfig,
+          GlobalConfigAccountName
+        )
     return {
       admin,
       panic,
@@ -657,16 +759,17 @@ export namespace SolanaLiqSyndicationTool {
    * base units. A READ: the solvency check compares exactly this against the
    * depot's outstanding shadow.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The pool ATA's raw liqSOL amount.
    */
   export async function readPoolBalance<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<bigint> {
-    const { liqsolPoolAta } = deriveBasePdas(ctx.config.solanaPath)
+    const target = SolanaOutpostTarget.resolve(source),
+      { liqsolPoolAta } = deriveBasePdas(target.solanaPath, target.programId)
     return (
       await getAccount(
-        ctx.solana.connection,
+        target.connection,
         liqsolPoolAta,
         undefined,
         TOKEN_2022_PROGRAM_ID
@@ -734,26 +837,24 @@ export namespace SolanaLiqSyndicationTool {
    * later transaction that moved the pool balance. A READ over confirmed
    * transaction history.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @param sequence - The syndication's sequence, as `syndicate_liq` logs it.
    * @returns The syndication's custody change and every later change.
    * @throws When a signature's transaction is unavailable, or no recent pool
    *   transaction queued that sequence.
    */
   export async function readSyndicationCustody<C extends ClusterBuildContext>(
-    ctx: C,
+    source: SolanaOutpostSource<C>,
     sequence: bigint
   ): Promise<SyndicationCustody> {
-    const pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = SolanaOutpostProgramTool.loadReadOnlyProgram(
-        ctx.solana.connection,
-        ctx.config.solanaPath
-      ),
+    const target = SolanaOutpostTarget.resolve(source),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadReadOnlyLiqsolProgram(target),
       yieldInstructionData = program.coder.instruction.encode(
         ReportLiqYieldMethodName, {}
       )
     const signatures = (
-      await ctx.solana.connection.getSignaturesForAddress(
+      await target.connection.getSignaturesForAddress(
         pdas.liqsolPoolAta,
         { limit: PoolSignatureScanLimit },
         SolanaClient.ConfirmationStatus.confirmed
@@ -762,7 +863,7 @@ export namespace SolanaLiqSyndicationTool {
       .filter(info => info.err == null)
       .reverse()
     const changes = await mapSeries(signatures, async info => {
-      const response = await ctx.solana.connection.getTransaction(info.signature, {
+      const response = await target.connection.getTransaction(info.signature, {
         commitment: SolanaClient.ConfirmationStatus.confirmed,
         maxSupportedTransactionVersion: 0
       })
@@ -926,15 +1027,14 @@ export namespace SolanaLiqSyndicationTool {
    * Every stored `DESYNDICATE_LIQ` on the outpost. A READ
    * (`getProgramAccounts` filtered by the `PendingPayout` discriminator).
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @returns The records, in the RPC's order.
    */
   export async function readPendingPayouts<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<PendingPayoutRecord[]> {
-    const accounts = await SolanaOutpostProgramTool.loadReadOnlyProgram(
-      ctx.solana.connection,
-      ctx.config.solanaPath
+    const accounts = await loadReadOnlyLiqsolProgram(
+      SolanaOutpostTarget.resolve(source)
     ).account[PendingPayoutAccountName].all()
     return accounts.map(({ publicKey, account }) =>
       toPendingPayoutRecord(publicKey, account as PendingPayoutAccount)
@@ -945,24 +1045,25 @@ export namespace SolanaLiqSyndicationTool {
    * The stored `DESYNDICATE_LIQ` of `requestId`, or `undefined` when none is
    * stored (never deferred, or already paid — paying closes the account). A READ.
    *
-   * @param ctx - The build context (RPC connection + `solanaPath`).
+   * @param source - The build context, or a target (RPC connection + `solanaPath`).
    * @param requestId - The depot's request id.
    * @returns The record, or `undefined`.
    */
   export async function readPendingPayout<C extends ClusterBuildContext>(
-    ctx: C,
+    source: SolanaOutpostSource<C>,
     requestId: bigint
   ): Promise<PendingPayoutRecord> {
-    const { liqsolCoreProgram } = deriveBasePdas(ctx.config.solanaPath),
+    const target = SolanaOutpostTarget.resolve(source),
+      { liqsolCoreProgram } = deriveBasePdas(
+        target.solanaPath,
+        target.programId
+      ),
       address = pendingPayoutAddress(liqsolCoreProgram, requestId),
-      account = await ctx.solana.connection.getAccountInfo(address)
+      account = await target.connection.getAccountInfo(address)
     if (account == null) return undefined
     return toPendingPayoutRecord(
       address,
-      SolanaOutpostProgramTool.loadReadOnlyProgram(
-        ctx.solana.connection,
-        ctx.config.solanaPath
-      ).coder.accounts.decode<PendingPayoutAccount>(
+      loadReadOnlyLiqsolProgram(target).coder.accounts.decode<PendingPayoutAccount>(
         PendingPayoutAccountName,
         account.data
       )
@@ -971,25 +1072,28 @@ export namespace SolanaLiqSyndicationTool {
 
   /**
    * Submit a built transaction signed by `signer`, then poll-confirm it — the
-   * ONE submission path for this tool's runners.
+   * ONE submission path for this tool's runners, and for a cluster-less
+   * caller that builds through {@link depositForLiqsolTransaction} /
+   * {@link syndTransaction}.
    *
-   * @param ctx - The build context (supplies the recording connection).
+   * @param source - The build context (its recording connection), or a target.
    * @param transaction - The built, unsigned transaction.
    * @param signer - The keypair that signs and pays.
    * @param label - Confirmation label surfaced on timeout.
+   * @returns The confirmed transaction's signature.
    */
-  async function submit<C extends ClusterBuildContext>(
-    ctx: C,
+  export async function submit<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>,
     transaction: anchor.web3.Transaction,
     signer: Keypair,
     label: string
-  ): Promise<void> {
-    const signature = await ctx.solana.connection.sendTransaction(
-      transaction,
-      [signer],
-      { skipPreflight: false }
-    )
-    await confirmSignature(ctx.solana.connection, signature, label)
+  ): Promise<string> {
+    const connection = connectionOf(source),
+      signature = await connection.sendTransaction(transaction, [signer], {
+        skipPreflight: false
+      })
+    await confirmSignature(connection, signature, label)
+    return signature
   }
 
 
@@ -1072,20 +1176,85 @@ export namespace SolanaLiqSyndicationTool {
   }
 
   /**
-   * `synd`'s 23 accounts, in its PostLaunch form: the outbound buffer + config
-   * are REQUIRED and both `Option` accounts (`outpost_account`,
-   * `pretoken_purchase_history`) are `None`.
+   * The four `synd` accounts whose presence depends on the outpost's launch
+   * state — the two the PostLaunch attestation targets, and the two the
+   * PreLaunch per-user position lives in. Each is `null` (Anchor's `None`) in
+   * the state that does not read it.
+   */
+  interface SyndLaunchAccounts {
+    outboundMessageBuffer: PublicKey
+    config: PublicKey
+    outpostAccount: PublicKey
+    pretokenPurchaseHistory: PublicKey
+  }
+
+  /**
+   * The launch-dependent `synd` accounts of `wireState`
+   * (`syndicate_liqsol.rs`): PostLaunch REQUIRES the outbound buffer + config
+   * (the `SyndicateLIQ` attestation targets them) and passes both per-user
+   * `Option` accounts as `None`; PreLaunch is the mirror image — the user's
+   * `outpost_account` (created on first use) and the pretoken purchase history
+   * (the local yield source) are required, and nothing is queued. Every other
+   * state refuses `synd` on chain (Launching is the frozen snapshot window,
+   * Refund has nothing to syndicate), so no form exists for them.
    *
    * @param pdas - The syndicating user's derived liqsol addresses.
+   * @param wireState - The outpost's launch state.
+   * @returns The four accounts.
+   * @throws For a launch state in which `synd` is refused.
+   */
+  function syndLaunchAccounts(
+    pdas: UserPdas,
+    wireState: WireState
+  ): SyndLaunchAccounts {
+    return match(wireState)
+      .with(
+        WireState.postLaunch,
+        (): SyndLaunchAccounts => ({
+          outboundMessageBuffer: pdas.outboundMessageBuffer,
+          config: pdas.outpostConfig,
+          outpostAccount: null,
+          pretokenPurchaseHistory: null
+        })
+      )
+      .with(
+        WireState.preLaunch,
+        (): SyndLaunchAccounts => ({
+          outboundMessageBuffer: null,
+          config: null,
+          outpostAccount: pdas.outpostAccount,
+          pretokenPurchaseHistory: pdas.pretokenPurchaseHistory
+        })
+      )
+      .otherwise(() => {
+        throw new Error(
+          `SolanaLiqSyndicationTool.syndAccounts: liqsol_core refuses synd in ${wireState} — only ${WireState.preLaunch} and ${WireState.postLaunch} have an account form`
+        )
+      })
+  }
+
+  /**
+   * `synd`'s 23 accounts, in the form of `wireState` — PostLaunch by default:
+   * the outbound buffer + config are REQUIRED and both `Option` accounts
+   * (`outpost_account`, `pretoken_purchase_history`) are `None`; PreLaunch
+   * flips the four ({@link syndLaunchAccounts}). The key SET is identical in
+   * both forms, which is what the IDL check compares.
+   *
+   * @param pdas - The syndicating user's derived liqsol addresses.
+   * @param wireState - The outpost's launch state (PostLaunch when omitted).
    * @returns The account map.
    */
-  export function syndAccounts(pdas: UserPdas): InstructionAccounts {
+  export function syndAccounts(
+    pdas: UserPdas,
+    wireState: WireState = WireState.postLaunch
+  ): InstructionAccounts {
+    const launch = syndLaunchAccounts(pdas, wireState)
     return {
       // PostLaunch REQUIRES the outbound buffer + config (the attestation
       // targets them) and takes `outpost_account` as None — the mirror image
       // of the pre-launch branch.
-      outboundMessageBuffer: pdas.outboundMessageBuffer,
-      config: pdas.outpostConfig,
+      outboundMessageBuffer: launch.outboundMessageBuffer,
+      config: launch.config,
       user: pdas.user,
       // `synd` reads the per-transfer maximum off `global_config`
       // (`StakeLiqsolContext.global_config`).
@@ -1104,7 +1273,7 @@ export namespace SolanaLiqSyndicationTool {
       liqsolCoreProgram: pdas.liqsolCoreProgram,
       transferHookProgram: pdas.transferHookProgram,
       liqsolPoolAta: pdas.liqsolPoolAta,
-      outpostAccount: null,
+      outpostAccount: launch.outpostAccount,
       tokenProgram: TOKEN_2022_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -1113,7 +1282,7 @@ export namespace SolanaLiqSyndicationTool {
       // `close_pretoken_singletons` may have closed the latter — passing a
       // closed account as Some(...) fails Anchor's deserialization before
       // the handler runs, which reads as a program bug.
-      pretokenPurchaseHistory: null
+      pretokenPurchaseHistory: launch.pretokenPurchaseHistory
     }
   }
 
@@ -1491,13 +1660,13 @@ export namespace SolanaLiqSyndicationTool {
    * i.e. whether every stake instruction is currently refused. A READ — it runs
    * freely inside a runner.
    *
-   * @param ctx - The build context (supplies the RPC connection).
+   * @param source - The build context, or a target (supplies the RPC connection).
    * @returns Whether {@link EpochRewardsSysvar}'s `active` flag is set.
    */
   export async function isEpochRewardsActive<C extends ClusterBuildContext>(
-    ctx: C
+    source: SolanaOutpostSource<C>
   ): Promise<boolean> {
-    const account = await ctx.solana.connection.getAccountInfo(
+    const account = await connectionOf(source).getAccountInfo(
       EpochRewardsSysvar
     )
     // A runtime that predates partitioned rewards omits the sysvar entirely;
@@ -1511,18 +1680,18 @@ export namespace SolanaLiqSyndicationTool {
    * Block until the runtime is not distributing epoch rewards — the
    * precondition every stake-touching `liqsol_core` instruction is gated on.
    *
-   * @param ctx - The build context (supplies the RPC connection).
+   * @param source - The build context, or a target (supplies the RPC connection).
    * @param label - What the caller is about to submit, for the timeout message.
    * @throws If rewards are still being distributed after
    *   {@link EpochRewardsIdleBudgetMs}.
    */
   export async function waitForEpochRewardsIdle<C extends ClusterBuildContext>(
-    ctx: C,
+    source: SolanaOutpostSource<C>,
     label: string
   ): Promise<void> {
     await pollUntil(
       `epoch rewards distribution to finish before ${label}`,
-      async () => !(await isEpochRewardsActive(ctx)),
+      async () => !(await isEpochRewardsActive(source)),
       EpochRewardsIdleBudgetMs,
       EpochRewardsPollIntervalMs
     )
@@ -1562,13 +1731,17 @@ export namespace SolanaLiqSyndicationTool {
    *
    * Takes `send` as a parameter so the retry is exercised without a validator.
    *
-   * @param ctx - The build context (the wait reads the sysvar through it).
+   * @param source - The build context, or a target (the wait reads the sysvar through it).
    * @param label - What is being submitted, for the log and the wait's timeout.
    * @param send - Builds and submits the transaction; called at most twice.
    */
   export async function submitWithEpochRewardsRetry<
     C extends ClusterBuildContext
-  >(ctx: C, label: string, send: () => Promise<void>): Promise<void> {
+  >(
+    source: SolanaOutpostSource<C>,
+    label: string,
+    send: () => Promise<void>
+  ): Promise<void> {
     const outcome = await send().then(
       () => Either.right<Error, null>(null),
       (error: Error) => Either.left<Error, null>(error)
@@ -1581,7 +1754,7 @@ export namespace SolanaLiqSyndicationTool {
           `${label}: the epoch-rewards window opened between the poll and the ` +
             "landing — waiting it out and re-sending once"
         )
-        await waitForEpochRewardsIdle(ctx, label)
+        await waitForEpochRewardsIdle(source, label)
         await send()
       }
     })
@@ -1606,24 +1779,54 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.userName
       ),
-      pdas = deriveUserPdas(ctx.config.solanaPath, user.publicKey),
-      program = loadLiqsolProgram(ctx, user),
-      seed = input.ephemeralStakeSeed,
+      target = SolanaOutpostTarget.fromContext(ctx),
+      transaction = await depositForLiqsolTransaction(
+        target,
+        user,
+        input.lamports,
+        input.ephemeralStakeSeed
+      )
+    await submit(target, transaction, user, label)
+  }
+
+  /**
+   * Build ONE `sol_to_liqsol` transaction for `user` — the deposit of
+   * `lamports` against the per-deposit ephemeral stake account
+   * `createWithSeed(user, "ephemeral_<seed>", StakeProgram)`, under the
+   * compute ceiling the stake + mint + hook CPIs need. The ONE build the Step
+   * runner and a cluster-less caller share; submitting it is {@link submit}.
+   *
+   * @param source - The build context, or a target.
+   * @param user - The depositing keypair (signs + pays).
+   * @param lamports - Lamports to deposit.
+   * @param ephemeralStakeSeed - The `u32` seed of the ephemeral stake account.
+   * @returns The built, unsigned transaction.
+   */
+  export async function depositForLiqsolTransaction<
+    C extends ClusterBuildContext
+  >(
+    source: SolanaOutpostSource<C>,
+    user: Keypair,
+    lamports: bigint,
+    ephemeralStakeSeed: number
+  ): Promise<anchor.web3.Transaction> {
+    const target = SolanaOutpostTarget.resolve(source),
+      pdas = deriveUserPdas(target.solanaPath, user.publicKey, target.programId),
+      program = loadLiqsolProgram(target, user),
       ephemeralStake = await PublicKey.createWithSeed(
         user.publicKey,
-        `${EphemeralStakeSeedPrefix}${seed}`,
+        `${EphemeralStakeSeedPrefix}${ephemeralStakeSeed}`,
         StakeProgram.programId
-      ),
-      transaction = await program.methods
-        .solToLiqsol(new anchor.BN(input.lamports.toString()), seed)
-        .accountsStrict(depositForLiqsolAccounts(pdas, ephemeralStake))
-        .preInstructions([
-          ComputeBudgetProgram.setComputeUnitLimit({
-            units: DepositComputeUnitLimit
-          })
-        ])
-        .transaction()
-    await submit(ctx, transaction, user, label)
+      )
+    return program.methods
+      .solToLiqsol(new anchor.BN(lamports.toString()), ephemeralStakeSeed)
+      .accountsStrict(depositForLiqsolAccounts(pdas, ephemeralStake))
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({
+          units: DepositComputeUnitLimit
+        })
+      ])
+      .transaction()
   }
 
   // ── Step: launch-state flip (`liqsol_core::set_wire_state`) ──────────────
@@ -1691,14 +1894,15 @@ export namespace SolanaLiqSyndicationTool {
         `${WireStateTransitions[current].join(", ") || "nothing — it is terminal"})`
     )
     const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, admin),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, admin),
       transaction = await program.methods
         .setWireState(wireStateVariant(input.wireState))
         .accountsStrict(setWireStateAccounts(pdas, admin.publicKey))
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       admin,
       `SolanaLiqSyndicationTool.planSetWireState ${input.wireState}`
@@ -1758,8 +1962,9 @@ export namespace SolanaLiqSyndicationTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, admin),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, admin),
       transaction = await program.methods
         .setTokenAddress(
           new anchor.BN(input.tokenCode.toString()),
@@ -1768,7 +1973,7 @@ export namespace SolanaLiqSyndicationTool {
         .accountsStrict(setLiqTokenAddressAccounts(pdas, admin.publicKey))
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       admin,
       `SolanaLiqSyndicationTool.planSetLiqTokenAddress ${input.tokenCode}`
@@ -1833,23 +2038,48 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.userName
       ),
-      pdas = deriveUserPdas(ctx.config.solanaPath, user.publicKey),
-      program = loadLiqsolProgram(ctx, user),
-      transaction = await program.methods
-        .synd(new anchor.BN(input.amount.toString()))
-        .accountsStrict(syndAccounts(pdas))
-        .preInstructions([
-          ComputeBudgetProgram.setComputeUnitLimit({
-            units: SyndicationComputeUnitLimit
-          })
-        ])
-        .transaction()
+      target = SolanaOutpostTarget.fromContext(ctx),
+      transaction = await syndTransaction(target, user, input.amount)
     await submit(
-      ctx,
+      target,
       transaction,
       user,
       `SolanaLiqSyndicationTool.planSynd ${input.userName}`
     )
+  }
+
+  /**
+   * Build ONE `synd` transaction for `user` — `amount` liqSOL into the
+   * outpost-owned pool, in the account form of `wireState`
+   * ({@link syndAccounts}), under the Token-2022 + transfer-hook compute
+   * ceiling. The ONE build the Step runner (PostLaunch) and a cluster-less
+   * caller (whichever launch state the outpost is in) share; submitting it is
+   * {@link submit}.
+   *
+   * @param source - The build context, or a target.
+   * @param user - The syndicating keypair (signs + pays).
+   * @param amount - liqSOL base units to syndicate.
+   * @param wireState - The outpost's launch state, selecting the account form.
+   * @returns The built, unsigned transaction.
+   */
+  export async function syndTransaction<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>,
+    user: Keypair,
+    amount: bigint,
+    wireState: WireState = WireState.postLaunch
+  ): Promise<anchor.web3.Transaction> {
+    const target = SolanaOutpostTarget.resolve(source),
+      pdas = deriveUserPdas(target.solanaPath, user.publicKey, target.programId),
+      program = loadLiqsolProgram(target, user)
+    return program.methods
+      .synd(new anchor.BN(amount.toString()))
+      .accountsStrict(syndAccounts(pdas, wireState))
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({
+          units: SyndicationComputeUnitLimit
+        })
+      ])
+      .transaction()
   }
 
   // ── Step: donate pool yield (`liqsol_core::inject_bonus_synd_yield`) ─────
@@ -1925,8 +2155,9 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.donorName
       ),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, donor),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, donor),
       transaction = await program.methods
         .injectBonusSyndYield(new anchor.BN(input.lamports.toString()))
         .accountsStrict(injectBonusSyndYieldAccounts(pdas, donor.publicKey))
@@ -1937,7 +2168,7 @@ export namespace SolanaLiqSyndicationTool {
         ])
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       donor,
       `SolanaLiqSyndicationTool.planInjectBonusSyndYield ${input.donorName}`
@@ -1997,8 +2228,9 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.crankerName
       ),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, cranker),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, cranker),
       transaction = await program.methods
         .reportLiqYield()
         .accountsStrict(reportLiqYieldAccounts(pdas, cranker.publicKey))
@@ -2009,7 +2241,7 @@ export namespace SolanaLiqSyndicationTool {
         ])
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       cranker,
       `SolanaLiqSyndicationTool.planReportLiqYield ${input.crankerName}`
@@ -2069,8 +2301,9 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.panicKeypairName
       ),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, admin),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, admin),
       transaction = await program.methods
         .setPanic()
         .accountsStrict(
@@ -2078,7 +2311,7 @@ export namespace SolanaLiqSyndicationTool {
         )
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       admin,
       `SolanaLiqSyndicationTool.planSetPanic ${input.panicKeypairName}`
@@ -2143,14 +2376,15 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.signerName
       ),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      program = loadLiqsolProgram(ctx, signer),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      program = loadLiqsolProgram(target, signer),
       transaction = await program.methods
         .setFrozen(input.frozen)
         .accountsStrict(setFrozenAccounts(pdas, signer.publicKey))
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       signer,
       `SolanaLiqSyndicationTool.planSetFrozen ${input.signerName} ${input.frozen}`
@@ -2230,9 +2464,10 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.callerName
       ),
-      pdas = deriveBasePdas(ctx.config.solanaPath),
-      holder = deriveUserPdas(ctx.config.solanaPath, record.user),
-      program = loadLiqsolProgram(ctx, caller),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveBasePdas(target.solanaPath, target.programId),
+      holder = deriveUserPdas(target.solanaPath, record.user, target.programId),
+      program = loadLiqsolProgram(target, caller),
       transaction = await program.methods
         .payPendingDesyndication(new anchor.BN(input.requestId.toString()))
         .accountsStrict(
@@ -2254,7 +2489,7 @@ export namespace SolanaLiqSyndicationTool {
         ])
         .transaction()
     await submit(
-      ctx,
+      target,
       transaction,
       caller,
       `SolanaLiqSyndicationTool.planPayPendingDesyndication ${input.requestId}`
@@ -2329,9 +2564,10 @@ export namespace SolanaLiqSyndicationTool {
         ctx.config.dataPath,
         input.donorName
       ),
-      pdas = deriveUserPdas(ctx.config.solanaPath, donor.publicKey),
+      target = SolanaOutpostTarget.fromContext(ctx),
+      pdas = deriveUserPdas(target.solanaPath, donor.publicKey, target.programId),
       transfer = await createTransferCheckedWithTransferHookInstruction(
-        ctx.solana.connection,
+        target.connection,
         pdas.userAta,
         pdas.liqsolMint,
         pdas.liqsolPoolAta,
@@ -2343,7 +2579,7 @@ export namespace SolanaLiqSyndicationTool {
         TOKEN_2022_PROGRAM_ID
       )
     await submit(
-      ctx,
+      target,
       new anchor.web3.Transaction().add(transfer),
       donor,
       `SolanaLiqSyndicationTool.planDonateToPool ${input.donorName}`

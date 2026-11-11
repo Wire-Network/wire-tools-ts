@@ -91,8 +91,8 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | `DEV_K1_PRIVATE_KEY` | Matching private key; imported into the `default` kiod wallet. | `DEV_K1.privateKey` (WIF spelling) |
 | `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer). | `DEV_BLS.publicKey` (`PUB_BLS_*` spelling) |
 | `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `DEV_BLS.proofOfPossession` (`SIG_BLS_*` spelling) |
-| Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (`clio create key --k1`, `sys-util bls create key`) |
-| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, anvil-mnemonic HD-derived), and a SOL key (ED25519). The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) |
+| Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (random K1 via sdk-core, `sys-util bls create key`) |
+| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, a random secp256k1 key — or, on an SSM cluster with `kms` settings, a key created inside AWS KMS that never leaves it), and a SOL key (ED25519). Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
 | `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
 
 ¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the genesis block-signing key and the standalone key on `sysio`'s own `active` — nothing else. Producer accounts are keyed by their **hosting node's generated K1**, operators (`batchop.*`) by their **own per-operator generated K1**, and the `sysio.*` system accounts (and `dev.owner1`) by `sysio@active` — production substitutes real keys / msig throughout.
@@ -546,15 +546,16 @@ capital requirements, deployed-node recovery, and verification.
     runtime-generated identity: a unique WIRE K1 (the account key, imported into the kiod wallet so
     `<account>@active` can sign), an ETH key (EM), and a SOL key (ED25519).
     - SOL-side (not a depot action): each batch operator's ED keypair is airdropped **100 SOL** — its daemon
-      pays the fees on every per-epoch `epoch_in` delivery. Anvil prefunds the operators' ETH HD accounts
-      under `KEY`; under `SSM` (generated mnemonic) each is funded 10 ETH.
+      pays the fees on every per-epoch `epoch_in` delivery. ETH-side: every operator's random EM address
+      starts at zero on the run anvil and is funded through `anvil_setBalance`
+      (`WireOperatorProvisioningTool.planEthereumFunding`, one Step per operator) under every provider.
 39. **Operator chain links** — `sysio.authex::createlink({chain_kind, account:<operator>, sig, pub_key,
     nonce})` — `[<operator>@active]` — per operator, one EVM link + one SVM link (signed by the operator's own
     active authority over a nonce'd message; **not** `recordlink`):
-    - EVM (`chain_kind = CHAIN_KIND_EVM`, 2): `pub_key` = `PUB_EM_*` derived from the anvil mnemonic
-      `"test test test test test test test test test test test junk"` at HD path `m/44'/60'/0'/0/<index>`,
-      `index` = 1-based operator ordinal (batch ops 1–3). **(cluster; production: the operator's
-      real ETH key.)**
+    - EVM (`chain_kind = CHAIN_KIND_EVM`, 2): `pub_key` = the operator's `PUB_EM_*` — its random EM key
+      (or its KMS-custodied key, whose link signature is produced by a remote `KMS::Sign` through
+      `keyPairUtils.ethereumSigner`). The link is what sweeps a pre-funded operator's parked launch
+      import credit into its own `sysio.liq` balance.
     - SVM (`chain_kind = CHAIN_KIND_SVM`, 3): `pub_key` = the operator's generated ED25519 key (the same key
       its daemon's `--signature-provider` signs Solana txs with).
 40. `sysio.opreg::regoperator({account:<operator>, type, is_bootstrapped})` — `[sysio.opreg@active]`:

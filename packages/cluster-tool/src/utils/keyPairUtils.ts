@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { match } from "ts-pattern"
@@ -11,6 +12,7 @@ import {
   type PublicKeyType
 } from "@wireio/sdk-core"
 import { WireKey, WireKeyType } from "@wireio/opp-typescript-models"
+import { KMSClientProvider } from "../config/KMSClientProvider.js"
 import type {
   EthereumKeyPair,
   KeyPair,
@@ -23,8 +25,9 @@ import type {
  * objects — BOTH directions. The typed pairs are the stored, JSON-round-trippable
  * form (in `ClusterKeyStore` / operator outputs); these helpers (a) reconstruct the
  * ephemeral ethers/web3 signing objects from a stored pair, and (b) build a stored
- * pair from a live ethers wallet. This is DERIVATION only — key GENERATION is the
- * separate concern owned by `KeyGenerator` (see `one-generic-facade-per-concept`).
+ * pair from a live ethers wallet or a KMS public key. This is DERIVATION only —
+ * key GENERATION is the separate concern owned by `KeyGenerator` (see
+ * `one-generic-facade-per-concept`).
  */
 
 // ── WIRE-canonical / chain-native private-key string → sdk-core PrivateKey ──
@@ -129,35 +132,80 @@ export function keyPairFromPrivate<T extends KeyType>(
 
 // ── stored EthereumKeyPair → live objects ───────────────────────────────────
 
-/** The raw 0x-hex secp256k1 private key underlying an EM key pair. */
-function ethereumPrivateKeyHex(ethereum: EthereumKeyPair): string {
-  return ethers.hexlify(PrivateKey.from(ethereum.privateKey).data.array)
+/** Whether an EM pair's secret lives in AWS KMS (the pair carries a key ref, never material). */
+export function isKmsCustodied(ethereum: EthereumKeyPair): boolean {
+  return ethereum.awsKmsKeyId != null
 }
 
 /**
- * An ethers signer reconstructed from an EM key pair — connected to `provider`
- * when one is given; without one it can only sign offline (messages, typed
- * data), never send.
+ * Assert an EM pair carries its key MATERIAL — the precondition of every
+ * derivation that needs the secret itself (a hardhat deployer key, a local
+ * wallet). A KMS-custodied pair never does: its secret never leaves KMS, so a
+ * consumer that needs raw material is simply incompatible with that custody.
  */
-export function ethereumSigner(
+function assertEthereumKeyMaterial(ethereum: EthereumKeyPair): string {
+  Assert.ok(
+    ethereum.privateKey != null,
+    `keyPairUtils: the EM key ${ethereum.address} carries no key material (${
+      isKmsCustodied(ethereum)
+        ? `it is custodied by AWS KMS ${ethereum.awsKmsKeyId}`
+        : `it is referenced by ${ethereum.awsSecretId ?? "nothing"}`
+    }) — sign through ethereumSigner instead`
+  )
+  return ethereum.privateKey
+}
+
+/**
+ * The raw 0x-hex secp256k1 private key underlying an EM key pair — for the
+ * consumers that genuinely need the material itself (the outpost deployer key
+ * hardhat reads, a local wallet). Throws for a KMS-custodied pair.
+ *
+ * @param ethereum - The EM pair.
+ * @returns The `0x`-prefixed 32-byte hex secret.
+ */
+export function ethereumPrivateKeyHex(ethereum: EthereumKeyPair): string {
+  return ethers.hexlify(
+    PrivateKey.from(assertEthereumKeyMaterial(ethereum)).data.array
+  )
+}
+
+/**
+ * The ONE signer facade over an EM pair's custody forms: local material → an
+ * `ethers.Wallet`; AWS KMS → an ethers signer whose every signature is a remote
+ * `KMS::Sign` (`KMSClientProvider.createSigner`). Connected to `provider` when
+ * one is given; without one it can only sign offline (messages, typed data),
+ * never send. Async because the KMS arm loads its SDK lazily.
+ *
+ * @param ethereum - The EM pair.
+ * @param provider - The provider to connect to.
+ * @returns The signer.
+ */
+export async function ethereumSigner(
   ethereum: EthereumKeyPair,
   provider?: ethers.Provider
-): ethers.Wallet {
-  return new ethers.Wallet(ethereumPrivateKeyHex(ethereum), provider)
+): Promise<ethers.Signer> {
+  return isKmsCustodied(ethereum)
+    ? KMSClientProvider.createSigner(
+        ethereum.awsKmsRegion,
+        ethereum.awsKmsKeyId,
+        provider
+      )
+    : new ethers.Wallet(ethereumPrivateKeyHex(ethereum), provider)
 }
 
 /**
  * The 33-byte compressed secp256k1 public key (the depot `opAddress`) from an EM
- * key pair — derived from the private key so it agrees with the signer.
+ * key pair — read off the STORED public key, so it renders for every custody
+ * form (a KMS pair has no material to derive from). The two derivations agree
+ * by construction: the stored `publicKey` IS the key's compressed point.
  */
 export function ethereumCompressedPubkey(ethereum: EthereumKeyPair): Uint8Array {
-  const signingKey = new ethers.SigningKey(ethereumPrivateKeyHex(ethereum))
-  return ethers.getBytes(ethers.SigningKey.computePublicKey(signingKey.publicKey, true))
+  return PublicKey.from(ethereum.publicKey).data.array
 }
 
-/** The sdk-core EM PrivateKey from an EM key pair (native `0x…` via `toNativeString`). */
+/** The sdk-core EM PrivateKey from an EM key pair (native `0x…` via `toNativeString`). Throws for a KMS-custodied pair. */
 export function ethereumSdkPrivateKey(ethereum: EthereumKeyPair): PrivateKey {
-  return PrivateKey.from(ethereum.privateKey)
+  return PrivateKey.from(assertEthereumKeyMaterial(ethereum))
 }
 
 /**
@@ -215,6 +263,33 @@ export function ethereumKeyPairFromWallet(wallet: ethers.BaseWallet): EthereumKe
   }
 }
 
+// ── KMS public key → typed EM pair (the KMS-custody form) ───────────────────
+
+/**
+ * A stored {@link EthereumKeyPair} for a key AWS KMS custodies: its public
+ * identity (`PUB_EM_…` + the `0x` address, both derived from the compressed
+ * point KMS reports) plus the key reference — and NO `privateKey`, because the
+ * secret never leaves KMS.
+ *
+ * @param compressed - The 33-byte compressed secp256k1 point (`KMSClientProvider.PublicKey`).
+ * @param awsKmsRegion - The ONE region the key lives in.
+ * @param awsKmsKeyId - The `KeyId` the key is addressed by (its alias name).
+ * @returns The KMS-custodied pair.
+ */
+export function ethereumKeyPairFromKmsPublicKey(
+  compressed: Uint8Array,
+  awsKmsRegion: string,
+  awsKmsKeyId: string
+): EthereumKeyPair {
+  return {
+    type: KeyType.EM,
+    publicKey: PublicKey.from({ type: "EM", compressed }).toString(),
+    address: ethers.computeAddress(ethers.hexlify(compressed)),
+    awsKmsRegion,
+    awsKmsKeyId
+  }
+}
+
 // ── stored SolanaKeyPair → live objects ─────────────────────────────────────
 
 /** The sdk-core ED PrivateKey from an ED key pair (e.g. for authex-link signing). */
@@ -225,6 +300,23 @@ export function solanaSdkPrivateKey(solana: SolanaKeyPair): PrivateKey {
 /** A web3.js Keypair reconstructed from an ED key pair. */
 export function solanaKeypair(solana: SolanaKeyPair): Keypair {
   return Keypair.fromSecretKey(solanaSdkPrivateKey(solana).data.array)
+}
+
+// ── live web3.js Keypair → typed ED pair (the inverse of solanaKeypair) ────
+
+/**
+ * A stored {@link SolanaKeyPair} from a live web3.js keypair — the ED
+ * counterpart of {@link ethereumKeyPairFromWallet}, and the exact inverse of
+ * {@link solanaKeypair}: a keypair persisted by handle
+ * (`SolanaFundingTool.createKeypair`) becomes the typed pair an
+ * `OperatorAccount.solana` carries, with the public half derived from the
+ * secret.
+ *
+ * @param keypair - The live keypair (its 64-byte secret holds the seed + the point).
+ * @returns The stored pair (`PUB_ED_…` / `PVT_ED_…`).
+ */
+export function solanaKeyPairFromKeypair(keypair: Keypair): SolanaKeyPair {
+  return keyPairFromPrivate(KeyType.ED, Base58.encode(keypair.secretKey))
 }
 
 // ── Wire public key → OPP proto WireKey ─────────────────────────────────────

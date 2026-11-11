@@ -9,6 +9,7 @@ import {
   environmentPathDefaults,
   hasCommandLineFlag,
   mergeAWSClusterNodeConfig,
+  mergeSignatureProviderKMS,
   mergeSignatureProviderSSM,
   toClusterBuildOptions,
   toClusterBuildOptionsFile
@@ -59,13 +60,17 @@ export function createCreateCommand(commandLine: string[] = []) {
         fileOptions,
         explicitClusterPath
       )
-      // Node config FIRST: `mergeSignatureProviderSSM` reads its `ssm` as the
-      // lowest-precedence SSM source.
+      // Node config FIRST: the SSM / KMS merges read its `ssm` / `kms` as
+      // their lowest-precedence source.
       const report = await ClusterManager.create(
-        mergeSignatureProviderSSM(
-          mergeAWSClusterNodeConfig(
-            toClusterBuildOptions(args, fileOptions ?? {}),
-            args
+        mergeSignatureProviderKMS(
+          mergeSignatureProviderSSM(
+            mergeAWSClusterNodeConfig(
+              toClusterBuildOptions(args, fileOptions ?? {}),
+              args
+            ),
+            args,
+            fileOptions
           ),
           args,
           fileOptions

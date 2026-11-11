@@ -4,9 +4,12 @@ import { Base58, KeyType, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
-import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
+import { EthereumFundingTool } from "../../tools/ethereum/EthereumFundingTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
-import { privateKeyFromNativeString } from "../../utils/keyPairUtils.js"
+import {
+  ethereumPublicKeyFromWallet,
+  privateKeyFromNativeString
+} from "../../utils/keyPairUtils.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -94,7 +97,8 @@ export namespace SyndicationUserSteps {
   export interface LinkEthereumKeyInput extends StepInput {
     readonly kind: "SyndicationUserSteps.LinkEthereumKeyInput"
     readonly account: string
-    readonly ethereumHdIndex: number
+    /** Durable handle of the user's persisted Ethereum wallet. */
+    readonly walletName: string
   }
 
   /**
@@ -104,7 +108,7 @@ export namespace SyndicationUserSteps {
    * @param description - Step description.
    * @param options - Step execution options.
    * @param account - WIRE destination account.
-   * @param ethereumHdIndex - The prefunded local wallet's index.
+   * @param walletName - Durable handle of the user's persisted Ethereum wallet.
    * @returns One createlink Step.
    */
   export function planLinkEthereumKey<
@@ -115,7 +119,7 @@ export namespace SyndicationUserSteps {
     description: string,
     options: ClusterBuildStepOptions,
     account: string,
-    ethereumHdIndex: number
+    walletName: string
   ): ClusterBuildStep<C, LinkEthereumKeyInput> {
     return ClusterBuildStep.create<C, LinkEthereumKeyInput>(
       actor,
@@ -125,7 +129,7 @@ export namespace SyndicationUserSteps {
       {
         kind: "SyndicationUserSteps.LinkEthereumKeyInput",
         account,
-        ethereumHdIndex
+        walletName
       },
       runLinkEthereumKey
     )
@@ -138,18 +142,12 @@ export namespace SyndicationUserSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumWallet = EthereumSyndicationTool.hdWallet(
-      ctx,
-      input.ethereumHdIndex
-    )
+    const wallet = EthereumFundingTool.signer(ctx, input.walletName)
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.EVM,
       account: input.account,
-      ethereumWallet,
-      privateKey: privateKeyFromNativeString(
-        KeyType.EM,
-        ethereumWallet.privateKey
-      )
+      publicKey: ethereumPublicKeyFromWallet(wallet).toString(),
+      signer: wallet
     })
   }
 

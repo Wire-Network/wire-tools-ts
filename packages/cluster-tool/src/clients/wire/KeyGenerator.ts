@@ -38,72 +38,71 @@ function parseField(stdout: string, pattern: RegExp, label: string): string {
 /**
  * The single, generic key-generation facade for every curve the harness uses.
  * `create<T>(type, context, options)` dispatches by {@link KeyType} to the
- * heterogeneous backends — K1 via `clio`, BLS via `sys-util`, ED via sdk-core, EM
- * via an anvil HD wallet — and returns the precisely-typed {@link KeyPair}<T>.
+ * heterogeneous backends — K1 and ED via sdk-core, EM via ethers, BLS via
+ * `sys-util` — and returns the precisely-typed {@link KeyPair}<T>.
+ *
+ * Every pair is freshly RANDOM. Nothing here derives from a mnemonic, a seed or
+ * an index: a key the harness mints is reproducible from nothing but its own
+ * stored secret, on a local flow cluster exactly as on a real deployment.
+ *
  * There is NO per-curve PUBLIC entry point; callers name a type, the facade owns
- * the "how" (see `one-generic-facade-per-concept`). Folds the former
- * `WireKeyGenerator` (+ `cluster/keyGen.ts`); K1/BLS shell to `clio` / `sys-util`
- * and parse the WIF console output, preserving parity with the Python launcher.
+ * the "how" (see `one-generic-facade-per-concept`). BLS is the one backend that
+ * still shells out: `sys-util` produces the finalizer key's proof of possession
+ * alongside the pair.
  */
 export namespace KeyGenerator {
   /** Timeout for a single key-generation subprocess (ms). */
   export const CommandTimeoutMs = 10_000
   /** Subpath (under the build dir) of the `sys-util` binary (BLS generation). */
   export const SysUtilSubpath = "bin/sys-util"
-  /** BIP-44 Ethereum HD derivation path prefix (append the account index). */
-  export const EthereumDerivationPath = "m/44'/60'/0'/0/"
 
-  /** `clio` argv generating a K1 pair (shared by the backend + the extra record). */
-  export const K1CreateCommand = ["create", "key", "--k1", "--to-console"] as const
   /** `sys-util` argv generating a BLS pair (shared by the backend + the extra record). */
   export const BLSCreateCommand = ["bls", "create", "key", "--to-console"] as const
 
-  /** Regex captures for the `clio` / `sys-util` key-generation console output. */
+  /** Regex captures for the `sys-util` key-generation console output. */
   export namespace Pattern {
-    export const K1Private = /Private key:\s+(PVT_K1_\S+)/
-    export const K1Public = /Public key:\s+(PUB_K1_\S+)/
     export const BLSPrivate = /Private key:\s+(PVT_BLS_\S+)/
     export const BLSPublic = /Public key:\s+(PUB_BLS_\S+)/
     export const BLSProofOfPossession = /Proof of Possession:\s+(SIG_BLS_\S+)/
   }
 
-  /** External tooling + material the per-curve backends need. */
+  /**
+   * External tooling the per-curve backends need. Every member is the tooling
+   * that EXISTS where the context was built; a backend asserts the member it
+   * needs (a cluster-less key command has no build and generates no BLS key).
+   */
   export interface Context {
-    /** `clio` binary — K1 (secp256k1) generation. */
-    readonly clio: string
-    /** `sys-util` binary — BLS finalizer generation. */
-    readonly sysUtil: string
-    /** Anvil HD mnemonic — EM (secp256k1) deterministic derivation. */
-    readonly ethereumMnemonic: ethers.Mnemonic
+    /** `sys-util` binary — BLS finalizer generation. Absent without a wire-sysio build. */
+    readonly sysUtil?: string
   }
 
-  /** Per-call options. Only EM consults {@link CreateOptions.ethereumHdIndex}. */
+  /** Per-call options. */
   export interface CreateOptions {
-    /** HD account index for EM derivation (deterministic anvil account). */
-    readonly ethereumHdIndex?: number
     /** What the generated pair is FOR — lands in the step's `extra` record. */
     readonly purpose?: string
   }
 
   /**
-   * Build a {@link Context} from a resolved cluster config's `clio` binary, build
-   * path, and the anvil mnemonic phrase.
+   * Build a {@link Context} from a resolved cluster config's build path, or a
+   * tooling-less one when there is no build (K1 / ED / EM generation needs
+   * none).
    *
-   * @param clio - The `clio` binary path.
-   * @param buildPath - The wire-sysio build dir (holds `bin/sys-util`).
-   * @param ethereumMnemonicPhrase - The anvil HD mnemonic phrase.
+   * @param buildPath - The wire-sysio build dir (holds `bin/sys-util`), when there is one.
    * @returns A ready {@link Context}.
    */
-  export function context(
-    clio: string,
-    buildPath: string,
-    ethereumMnemonicPhrase: string
-  ): Context {
-    return {
-      clio,
-      sysUtil: Path.join(buildPath, SysUtilSubpath),
-      ethereumMnemonic: ethers.Mnemonic.fromPhrase(ethereumMnemonicPhrase)
-    }
+  export function context(buildPath?: string): Context {
+    return buildPath == null
+      ? {}
+      : { sysUtil: Path.join(buildPath, SysUtilSubpath) }
+  }
+
+  /** The `sys-util` binary of a context, asserting the context carries one. */
+  function assertSysUtil(context: Context): string {
+    Assert.ok(
+      context.sysUtil != null,
+      "KeyGenerator: BLS generation requires the sys-util binary — build the context from a wire-sysio build path"
+    )
+    return context.sysUtil
   }
 
   /**
@@ -111,8 +110,8 @@ export namespace KeyGenerator {
    * `type` to the matching backend and returns the precisely-typed pair.
    *
    * @param type - The curve to generate (`K1` / `BLS` / `ED` / `EM`).
-   * @param context - Binaries + mnemonic the backends require.
-   * @param options - Per-curve extras (EM's HD index).
+   * @param context - The tooling the backends require.
+   * @param options - Per-call extras (the purpose).
    * @returns The generated `KeyPair<T>`.
    */
   export async function create<T extends KeyType>(
@@ -122,7 +121,7 @@ export namespace KeyGenerator {
   ): Promise<KeyPair<T>> {
     // The ONE cast, at the dispatch point — TS cannot correlate the runtime
     // `match` arm inside `createByType` with the generic `T`.
-    const keyPair = (await createByType(type, context, options)) as KeyPair<T>
+    const keyPair = (await createByType(type, context)) as KeyPair<T>
     recordKeygen(type, context, options, keyPair)
     return keyPair
   }
@@ -130,7 +129,7 @@ export namespace KeyGenerator {
   /**
    * Land the generated key's IDENTITY in the running step's `extra`: the public
    * half, what it is for, and HOW it was generated — the exact command line for
-   * the `clio` / `sys-util` backends, the library + derivation otherwise.
+   * the `sys-util` backend, the library otherwise.
    *
    * The PRIVATE half is deliberately absent. The Report renderers serialize
    * `extra` verbatim into `<cluster>/reports/cluster-build.{csv,md,html}`, and
@@ -150,22 +149,12 @@ export namespace KeyGenerator {
     keyPair: KeyPair
   ): void {
     const mechanism = match<KeyType, StepExtraRecorder.ClientCall>(type)
-      .with(KeyType.K1, () => ({
-        client: "clio",
-        kind: "keygen",
-        command: [context.clio, ...K1CreateCommand]
-      }))
       .with(KeyType.BLS, () => ({
         client: "sys-util",
         kind: "keygen",
-        command: [context.sysUtil, ...BLSCreateCommand]
+        command: [assertSysUtil(context), ...BLSCreateCommand]
       }))
-      .with(KeyType.ED, () => ({ client: "sdk-core", kind: "keygen" }))
-      .with(KeyType.EM, () => ({
-        client: "ethers",
-        kind: "keygen",
-        derivation: `${EthereumDerivationPath}${options.ethereumHdIndex}`
-      }))
+      .with(KeyType.EM, () => ({ client: "ethers", kind: "keygen" }))
       .otherwise(() => ({ client: "sdk-core", kind: "keygen" }))
     // Drop the secret, keep everything else — the same projection
     // `ClusterState.keyCustodyFor` uses, so every NON-secret per-curve member
@@ -185,18 +174,12 @@ export namespace KeyGenerator {
    * `T`, which control-flow would otherwise keep binding into the pattern). The one
    * `KeyPair<T>` cast lives at the {@link create} boundary above.
    */
-  async function createByType(
-    type: KeyType,
-    context: Context,
-    options: CreateOptions
-  ): Promise<KeyPair> {
+  async function createByType(type: KeyType, context: Context): Promise<KeyPair> {
     return match(type)
-      .with(KeyType.K1, () => createK1(context.clio))
-      .with(KeyType.BLS, () => createBLS(context.sysUtil))
+      .with(KeyType.K1, async () => createK1())
+      .with(KeyType.BLS, () => createBLS(assertSysUtil(context)))
       .with(KeyType.ED, async () => createED())
-      .with(KeyType.EM, async () =>
-        createEM(context.ethereumMnemonic, options.ethereumHdIndex)
-      )
+      .with(KeyType.EM, async () => createEM())
       .otherwise(() => {
         throw new Error(`KeyGenerator: unsupported key type ${KeyType[type] ?? type}`)
       })
@@ -204,15 +187,13 @@ export namespace KeyGenerator {
 
   // ── private per-curve backends ────────────────────────────────────────────
 
-  /** K1 (secp256k1) via `clio create key --k1 --to-console`. */
-  async function createK1(clioBinary: string): Promise<WireKeyPair> {
-    const { stdout } = await execFileAsync(clioBinary, [...K1CreateCommand], {
-      timeout: CommandTimeoutMs
-    })
+  /** K1 (secp256k1) via sdk-core — the prefixed `PVT_K1_` / `PUB_K1_` spellings, no external process. */
+  function createK1(): WireKeyPair {
+    const k1Private = PrivateKey.generate(KeyType.K1)
     return {
       type: KeyType.K1,
-      privateKey: parseField(stdout, Pattern.K1Private, "K1 private key"),
-      publicKey: parseField(stdout, Pattern.K1Public, "K1 public key")
+      publicKey: k1Private.toPublic().toString(),
+      privateKey: k1Private.toString()
     }
   }
 
@@ -243,25 +224,18 @@ export namespace KeyGenerator {
     }
   }
 
-  /** EM (secp256k1) via the anvil HD wallet at `ethereumHdIndex` (deterministic). */
-  function createEM(mnemonic: ethers.Mnemonic, ethereumHdIndex?: number): EthereumKeyPair {
-    Assert.ok(
-      ethereumHdIndex != null,
-      "KeyGenerator.create(EM): options.ethereumHdIndex is required"
-    )
-    const wallet = ethers.HDNodeWallet.fromMnemonic(
-      mnemonic,
-      `${EthereumDerivationPath}${ethereumHdIndex}`
-    )
-    return ethereumKeyPairFromWallet(wallet)
+  /** EM (secp256k1) via a random ethers wallet — no mnemonic, no index. */
+  function createEM(): EthereumKeyPair {
+    return ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
   }
 
   // ── signature-provider SOURCE (the spec's final segment) ──────────────────
 
   /**
    * Where a rendered `--signature-provider` spec sources its private key: `KEY`
-   * (inline private key), `SSM` (a rendered secret id — REGION-LESS), or `KIOD`
-   * (a kiod wallet URL). Rendered as the spec's final segment by
+   * (inline private key), `SSM` (a rendered secret id — REGION-LESS), `KIOD`
+   * (a kiod wallet URL), or `KMS` (a regional key reference — the key never
+   * leaves AWS KMS). Rendered as the spec's final segment by
    * {@link toProviderSegment}.
    */
   export interface SignatureProviderSource {
@@ -271,6 +245,10 @@ export namespace KeyGenerator {
     awsSecretId?: string
     /** kiod wallet URL (KIOD only). */
     kiodUrl?: string
+    /** The ONE region the KMS key lives in (KMS only). */
+    awsKmsRegion?: string
+    /** The KMS `KeyId` — the rendered alias name (KMS only). */
+    awsKmsKeyId?: string
   }
 
   /** The default source — an inline `KEY:` spec (byte-identical to the historical output). */
@@ -314,8 +292,9 @@ export namespace KeyGenerator {
 
   /**
    * Render the final `<provider>:<…>` segment of a signature-provider spec:
-   * `KEY:<privateKey>` (inline — the default), `SSM:<secretId>`, or
-   * `KIOD:<url>`. The C++ `signature_provider_manager_plugin` parses every form.
+   * `KEY:<privateKey>` (inline — the default), `SSM:<secretId>`, `KIOD:<url>`,
+   * or `KMS:<region>:<keyId>`. The C++ `signature_provider_manager_plugin`
+   * (+ `signature_provider_kms_plugin`) parses every form.
    *
    * The SSM form is REGION-LESS — ONE colon. `ssm_signature_provider.cpp`'s
    * `parse_ssm_spec` accepts an ARN, an explicit `<region>:<parameter-name>`, or
@@ -324,11 +303,16 @@ export namespace KeyGenerator {
    * region; drop the leading ':'"). There is no primary region to name, so the
    * region-less form is the one this harness renders.
    *
-   * `keyMaterial` is a THUNK, and only the `KEY` arm calls it: under SSM custody
-   * a pair rehydrated by `ClusterState.loadKeys` carries `awsSecretId` and NO
-   * `privateKey`, and the EM / ED key-material derivations throw on an absent
-   * secret. Evaluating it eagerly would crash `wire-cluster-tool run` on an SSM
-   * cluster while building a spec that never needed the key in the first place.
+   * The KMS form names its region — a KMS key is REGIONAL, and
+   * `parse_kms_spec`'s shorthand `<region>:<key-id-or-alias>` resolves the
+   * alias in the daemon's own AWS account.
+   *
+   * `keyMaterial` is a THUNK, and only the `KEY` arm calls it: under SSM / KMS
+   * custody a pair rehydrated by `ClusterState.loadKeys` carries a reference
+   * and NO `privateKey`, and the EM / ED key-material derivations throw on an
+   * absent secret. Evaluating it eagerly would crash `wire-cluster-tool run` on
+   * such a cluster while building a spec that never needed the key in the
+   * first place.
    */
   function toProviderSegment(
     source: SignatureProviderSource,
@@ -349,6 +333,13 @@ export namespace KeyGenerator {
           "KeyGenerator.toProviderSegment: a KIOD source requires kiodUrl"
         )
         return `KIOD:${source.kiodUrl}`
+      })
+      .with(SignatureProviderType.KMS, () => {
+        Assert.ok(
+          source.awsKmsRegion != null && source.awsKmsKeyId != null,
+          "KeyGenerator.toProviderSegment: a KMS source requires awsKmsRegion + awsKmsKeyId"
+        )
+        return `KMS:${source.awsKmsRegion}:${source.awsKmsKeyId}`
       })
       .exhaustive()
   }

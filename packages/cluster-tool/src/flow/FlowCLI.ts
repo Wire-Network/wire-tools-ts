@@ -1,6 +1,7 @@
 import Yargs, { type Argv } from "yargs"
 import {
   applyClusterBuildOptionsArgs,
+  mergeSignatureProviderKMS,
   mergeSignatureProviderSSM,
   toClusterBuildOptions
 } from "../cli/ClusterBuildOptionsArgs.js"
@@ -62,9 +63,10 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
   }
 
   /**
-   * Parse argv → options, compose the default bootstrap + the scenario's phases,
-   * lay down the cluster + run it, and return the {@link Report}. The entrypoint
-   * sets the process exit code from `report.succeeded`.
+   * Parse argv → options, run the scenario's pre-bootstrap stage when it has
+   * one, compose the default bootstrap + the scenario's phases, lay down the
+   * cluster + run it, and return the {@link Report}. The entrypoint sets the
+   * process exit code from `report.succeeded`.
    *
    * @returns The run's report.
    */
@@ -72,10 +74,17 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
     // Scenario defaults supply the non-flag leaves (collateral object-arrays)
     // that can't ride the argv surface.
     const argv = await this.yargs.parseAsync(),
-      options = mergeSignatureProviderSSM(
-        toClusterBuildOptions(argv, this.scenario.defaults),
+      resolved = mergeSignatureProviderKMS(
+        mergeSignatureProviderSSM(
+          toClusterBuildOptions(argv, this.scenario.defaults),
+          argv
+        ),
         argv
-      )
+      ),
+      options =
+        this.scenario.prepare != null
+          ? await this.scenario.prepare(resolved)
+          : resolved
     const cluster = await ClusterBuildDefaults.create<C>(options, {
       createContext: this.scenario.createContext?.bind(this.scenario)
     })

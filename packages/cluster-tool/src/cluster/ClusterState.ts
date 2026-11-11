@@ -15,6 +15,7 @@ import {
   type ClusterState as ClusterStateSnapshot,
   type ClusterStateNode
 } from "@wireio/cluster-tool-shared"
+import type { KeyGenerator } from "../clients/wire/KeyGenerator.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
 import { isNotEmpty } from "../utils/predicateUtils.js"
@@ -102,7 +103,7 @@ export interface ClusterKeys {
 
 /**
  * The custody members every persisted key record carries. They are mutually
- * exclusive alternatives, not two optional extras — see
+ * exclusive alternatives, not optional extras — see
  * {@link hasSingleCustodyForm}.
  */
 const keyCustodyShape = {
@@ -112,26 +113,50 @@ const keyCustodyShape = {
   awsSecretId: z.string().optional()
 }
 
+/**
+ * The THIRD custody form, EM only: the AWS KMS key the secret lives in and
+ * never leaves (an SSM cluster with `kms` settings). Both members ride
+ * together — see {@link hasSingleCustodyForm}.
+ */
+const ethereumKmsCustodyShape = {
+  /** The KMS `KeyId` (an alias name for harness-rendered keys). */
+  awsKmsKeyId: z.string().optional(),
+  /** The ONE region the KMS key lives in. */
+  awsKmsRegion: z.string().optional()
+}
+
 /** The custody members a persisted key record is validated on. */
 interface PersistedKeyCustody {
   /** The Wire-canonical key material, when the record carries it. */
   privateKey?: string
   /** The SSM parameter id, when the record references it instead. */
   awsSecretId?: string
+  /** The KMS key reference, when the record references that instead (EM only). */
+  awsKmsKeyId?: string
+  /** The KMS key's region — present exactly when `awsKmsKeyId` is. */
+  awsKmsRegion?: string
 }
 
 /**
- * EXACTLY ONE custody form per record — key material XOR an SSM reference.
- * BOTH means an SSM cluster leaked plaintext into `cluster-keys.json` (§5.6);
- * NEITHER means a record nothing can sign with.
+ * EXACTLY ONE custody form per record — key material, an SSM reference, or a
+ * KMS reference (whose region rides with it). TWO means an SSM cluster leaked
+ * plaintext into `cluster-keys.json` (§5.6); NONE means a record nothing can
+ * sign with.
  */
 function hasSingleCustodyForm(record: PersistedKeyCustody): boolean {
-  return (record.privateKey != null) !== (record.awsSecretId != null)
+  const forms = [
+    record.privateKey,
+    record.awsSecretId,
+    record.awsKmsKeyId
+  ].filter(form => form != null).length
+  return (
+    forms === 1 && (record.awsKmsKeyId != null) === (record.awsKmsRegion != null)
+  )
 }
 
 /** Why {@link hasSingleCustodyForm} rejected a record. */
 const SingleCustodyFormMessage =
-  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD) or awsSecretId (SSM), never both and never neither"
+  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD), awsSecretId (SSM) or awsKmsKeyId + awsKmsRegion (KMS, EM only), never two and never none"
 
 /** Schema validating a WIRE (K1) key pair record against the grandfathered `WireKeyPair`. */
 const WireKeyPairSchema: z.ZodType<WireKeyPair> = z
@@ -156,14 +181,16 @@ const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
 /** Schema validating an Ethereum (EM) key pair record. `address` is NON-SECRET
- *  and rides BOTH custody variants — every ETH funding / collateral read uses
- *  it, and `ExternalClusterConfigSteps` emits from the same record. */
+ *  and rides EVERY custody variant — every ETH funding / collateral read uses
+ *  it, and `ExternalClusterConfigSteps` emits from the same record. EM is the
+ *  one curve with the KMS custody form. */
 const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z
   .object({
     type: z.literal(KeyType.EM),
     publicKey: z.string(),
     address: z.string(),
-    ...keyCustodyShape
+    ...keyCustodyShape,
+    ...ethereumKmsCustodyShape
   })
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
@@ -340,9 +367,26 @@ export namespace ClusterState {
       // to the generic `KeyPair<T>` its conditional extension is keyed on.
       return {
         ...custodyFree,
-        awsSecretId: sourceFor(account, keyPair.type).awsSecretId
+        ...custodyReference(sourceFor(account, keyPair.type))
       } as KeyPair<T>
     }
+  }
+
+  /**
+   * The custody members a provider source persists IN PLACE of the secret: the
+   * SSM parameter id, or — for a KMS-custodied EM key — the KMS key reference
+   * (which the in-memory pair already carries; the rendered source is spread
+   * so the persisted ref and the daemon's spec can never disagree).
+   */
+  function custodyReference(
+    source: KeyGenerator.SignatureProviderSource
+  ): PersistedKeyCustody {
+    return match(source.type)
+      .with(SignatureProviderType.KMS, () => ({
+        awsKmsKeyId: source.awsKmsKeyId,
+        awsKmsRegion: source.awsKmsRegion
+      }))
+      .otherwise(() => ({ awsSecretId: source.awsSecretId }))
   }
 
   /**

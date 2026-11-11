@@ -29,7 +29,9 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 | `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
-| `create-api-node` | Render a STANDALONE (non-cluster) WIRE API node's `config.ini` + `start.sh` into `--output-path`. The one command with no cluster behind it: no `ClusterConfig`, no process, no chain, no Report. |
+| `create-api-node` | Render a STANDALONE (non-cluster) WIRE API node's `config.ini` + `start.sh` into `--output-path`. A command with no cluster behind it: no `ClusterConfig`, no process, no chain, no Report. |
+| `create-batch-operator-keys` | Pre-create the batch operators' signing keys in a cluster's AWS custody store (K1/ED in SSM, EM in SSM or KMS) from the SAME two documents `create` reads, and print their PUBLIC listing — the addresses a launch pre-funds before the cluster exists. Cluster-less like `create-api-node`. |
+| `fund-batch-operators` | Fund the pre-created batch operators on BOTH deployed outposts: adopt their keys (adopt-only — a missing key fails), check each native balance covers `stake + reserve`, and stake the configured amount (`batchOperatorUnderwriting.stake`) so the launch snapshot carries their positions; print the transaction receipts. Cluster-less like `create-batch-operator-keys`. |
 
 The cluster directory is the **single source of truth**: executable paths,
 ports, key material, node layout, deployed contract addresses. `run` never
@@ -93,7 +95,7 @@ the path flags.
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](../../docs/syndication-underwriting-operations.md). |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps — and, for a pre-funded launch, the flag-less `stake` / `reserve` lists (`TokenAmount[]`, one per outpost native token `ETH` / `SOL`, in depot units at 9 decimals) that `fund-batch-operators` stakes and requires each operator to keep; both default (1 ETH + 10 SOL staked; 0.05 ETH + 0.1 SOL kept) and a set list must name each native token exactly once. See [underwriting operations](../../docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -107,9 +109,11 @@ the path flags.
 | `--ethereum-bootstrap-json-file <file>` | | — | the frozen Ethereum outpost's pre-launch export (opp-snapshot `EthereumGenesisSnapshot`): import its staked liqETH, WIRE claims and LIQETH yield pool during epoch zero. See "Launch-data import" below |
 | `--solana-bootstrap-json-file <file>` | | — | the Solana outpost's genesis export (`SolanaGenesisSnapshot`): import its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero |
 | `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` or `ethereumRead.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
-| `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
-| `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
+| `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm` and optional `kms` settings) |
+| `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` — the cluster-wide custody of every generated key. `KMS` is never a cluster type: it custodies ONLY an SSM cluster's Ethereum (EM) keys, through `--signature-provider-kms` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
+| `--signature-provider-kms '<json>'\|<file>` | | — | AWS KMS custody of the EM keys (`{"awsKeyAliasPattern":"alias/wire/{cluster}/{account}/{keyType}","awsRegion":"us-east-1"}`, SSM clusters only): each operator's secp256k1 key is created inside KMS under the rendered alias (a handle's dots become dashes: `alias/wire/dev/batchop-a/EM`) and never leaves it — the daemon spec renders `KMS:<region>:<alias>` (nodeop loads `signature_provider_kms_plugin`) and the harness signs its authex link through KMS. Same precedence as the SSM flag; `awsRegion` must be one of the node config's `regions` |
+| `--signature-provider-batch-operator-key-policy` | | `adoptOrCreate` | how the bootstrap obtains the batch operators' keys: `adoptOrCreate` adopts the custody store's key (SSM parameter / KMS alias / an identity the context already holds) else generates one; `adoptOnly` FAILS the bootstrap when a batch operator's key is not pre-created — the policy of a pre-funded launch (`create-batch-operator-keys` first, fund the listed addresses, export the outposts, then `create`). Every other identity always adopts-or-creates |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
 
@@ -311,6 +315,97 @@ Notes specific to this command:
   non-zero through yargs.
 
 Full walkthrough: [`docs/create-api-node-guide.md`](../../docs/create-api-node-guide.md).
+
+### `create-batch-operator-keys`
+
+```bash
+wire-cluster-tool create-batch-operator-keys \
+  --cluster-build-options-file cluster-build-options.json \   # batchOperatorCount + signatureProvider
+  --aws-cluster-node-config    aws-cluster-node-config.json \  # account, regions, ssm, optional kms
+  [--signature-provider-ssm '<json>'|<file>] [--signature-provider-kms '<json>'|<file>] \
+  [--batch-operator-count <n>] [--signature-provider-type SSM] > batch-operator-keys.json
+```
+
+Pre-creates the bootstrap batch operators' signing keys (`batchop.a` … per
+`batchOperatorCount`) in the cluster's AWS custody store BEFORE the cluster
+exists, so a launch can pre-fund them on the outposts: each operator's wire K1
+and solana ED keys are adopted from (or created and published to) the SSM
+parameters the same patterns render for `create`, and its ethereum EM key is
+adopted from (or created under) the KMS alias when the node config carries a
+`kms` block — otherwise it is an SSM parameter too. An existing key is adopted,
+never replaced, so re-running is safe and the cluster's `batchOperatorKeyPolicy`
+is not consulted (this command IS the pre-creation `adoptOnly` relies on). A
+`KEY` / `KIOD` provider is refused: there is no custody store to create into.
+
+stdout carries ONLY the public listing, one row per operator per curve —
+`{ label, keyType, publicKey, address? (EM), custody }` where `custody` is
+`SSM:<secretId>` or `KMS:<region>:<alias>` — never key material; diagnostics go
+to stderr. Whoever pre-funds the outposts uses the EM `address` and the ED
+`publicKey`. Cluster-less like `create-api-node`: no `ClusterBuildContext`, no
+Step, no Report; the custody writes go through the same primitives the
+bootstrap's key Steps use (`KeySteps.adoptOrCreateSignatureProviderKey` /
+`publishSignatureProviderKey`).
+
+The pre-funded launch sequence: `create-batch-operator-keys` → send each listed
+address its gas reserve + stake on each outpost → `fund-batch-operators` (below)
+→ freeze the outposts' launch-data exports →
+`create … --signature-provider-batch-operator-key-policy adoptOnly` with the
+exports, whose bootstrap adopts exactly these keys, imports the positions and
+verifies each operator holds its credit (`LcoImportOperatorCredit`).
+
+### `fund-batch-operators`
+
+```bash
+wire-cluster-tool fund-batch-operators \
+  --cluster-build-options-file cluster-build-options.json \   # batchOperatorCount, enableBatchOperatorUnderwriting, batchOperatorUnderwriting.{fundedOperatorCount,stake,reserve}, signatureProvider
+  --aws-cluster-node-config    aws-cluster-node-config.json \  # account, regions, ssm, optional kms
+  --external-outpost-config    external-outpost-config.json \  # the deployed outposts: rpcUrls, addresses, program id, mints
+  --ethereum-path <wire-ethereum> --solana-path <wire-solana> \ # the ABI / IDL artifacts (or WIRE_ETH_PATH / WIRE_SOLANA_PATH)
+  [--signature-provider-ssm '<json>'|<file>] [--signature-provider-kms '<json>'|<file>] > funding-receipts.json
+```
+
+Funds the first `batchOperatorUnderwriting.fundedOperatorCount` bootstrap batch
+operators (every operator by default — the underwriting operators, whose
+pre-funded stake IS their underwriting inventory, so the document must enable
+`enableBatchOperatorUnderwriting`) on BOTH deployed outposts. For each operator
+it ADOPTS the keys `create-batch-operator-keys` pre-created (adopt-ONLY: a
+missing key fails naming its id and is never created), reads its native balance
+on each outpost and refuses one below `stake + reserve`, then stakes `stake`:
+
+- **Ethereum, pre-launch** — one `Depositor.depositAndStake{value: stake}`
+  signed by the operator's EM key (a KMS-custodied key signs remotely). The
+  outpost is pre-launch while the address book records the `Depositor` and its
+  `dDay()` is false; `dDay()` true, or no `Depositor` recorded, is
+  **post-launch** — `DepositManager.deposit{value}` → liqETH
+  `approve(SyndicationPool)` → `SyndicationPool.syndicate(liqETH,
+  compressedPubkey)` (the pool must be recorded and unpaused, with
+  `liqEthAddresses` present). An open refund window or a paused contract
+  refuses.
+- **Solana** — `sol_to_liqsol(stake)` then `synd(all minted liqSOL)` signed by
+  the operator's ED keypair, in the account form of the outpost's launch state
+  (`PreLaunch`: the per-user `outpost_account` + pretoken history;
+  `PostLaunch`: the outbound buffer + config). `Launching` (the frozen snapshot
+  window) and `Refund` are refused, as are a frozen or paused surface.
+
+Every precondition of every operator — the chain id behind the Ethereum
+endpoint, the LIQSOL mint, both launch states, both per-transfer syndication
+maxima, every balance — is checked BEFORE the first transaction, so a refusal
+writes nothing. The writes then run operator by operator, Ethereum then Solana,
+one transaction per write, each awaited for its receipt; the first write
+failure stops the run. Nothing is idempotent: a re-run stakes again.
+
+stdout carries ONLY the receipt listing, one row per landed transaction —
+`{ label, chain, action, transaction, amount }` (`action` one of
+`depositAndStake | deposit | approve | syndicate | solToLiqsol | synd`;
+`transaction` the hash / signature; `amount` in chain-native base units as a
+decimal string); diagnostics go to stderr. Exit `0` iff every operator was
+funded on every outpost; a write failure still prints what landed, then exits
+`1`. Cluster-less like `create-batch-operator-keys`: no `ClusterBuildContext`,
+no Step, no Report; the reads and builds go through the same tool primitives
+the flow Steps use (`EthereumSyndicationTool`, `EthereumPreLaunchStakingTool`,
+`SolanaLiqSyndicationTool`), addressed by the outpost targets the external
+config composes. The external config MUST carry both `rpcUrl`s: a command with
+no cluster has no bind config to fall back to.
 
 ---
 

@@ -1113,15 +1113,24 @@ export namespace KeyGenerator {
     type: T, context: Context, options: CreateOptions = {}
   ): Promise<KeyPair<T>> {
     const keyPair = await match(type as KeyType)
-      .with(KeyType.K1, () => createK1(context.clio))
-      .with(KeyType.BLS, () => createBLS(context.sysUtil))
-      .with(KeyType.ED, async () => createED())
-      .with(KeyType.EM, async () => createEM(context.ethereumMnemonic, options.ethereumHdIndex))
+      .with(KeyType.K1, async () => createK1())            // secp256k1 via sdk-core
+      .with(KeyType.BLS, () => createBLS(context.sysUtil))  // BLS + proof of possession via sys-util
+      .with(KeyType.ED, async () => createED())            // ed25519 via sdk-core
+      .with(KeyType.EM, async () => createEM())            // a random ethers wallet
       .otherwise(() => { throw new Error(`KeyGenerator: unsupported key type ${KeyType[type] ?? type}`) })
     return keyPair as KeyPair<T>   // the ONE cast, at the dispatch point
   }
 }
 ```
+
+Every backend mints a RANDOM key. No mnemonic, seed or index enters the facade:
+a key the harness generates is reproducible from nothing but its own stored
+secret — on a flow cluster exactly as on a real deployment. Local-chain actors
+(the outpost deployer, the panic account, a flow's holder) are random wallets
+persisted by durable handle (`EthereumWallet.saveWallet` / `loadKeyPair`) and
+funded through the local faucet (`EthereumFundingTool.planSetBalance` →
+`anvil_setBalance`; `SolanaFundingTool.planKeypairAirdrop`), never drawn from an
+anvil genesis account.
 
 Never scattered per-variant public functions for one concept — and never merge
 DIFFERENT concepts into one facade (generation ≠ derivation: `KeyGenerator`

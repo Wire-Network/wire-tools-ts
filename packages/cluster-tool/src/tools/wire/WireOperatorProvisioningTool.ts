@@ -34,17 +34,12 @@
 
 import Assert from "node:assert"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { KeyType, Name, PrivateKey, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
 import { SignatureProviderType } from "@wireio/cluster-tool-shared"
-import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
-import {
-  clearNonceCache,
-  resolveLatestNonce
-} from "../../utils/ethereumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -56,6 +51,7 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
+import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -70,13 +66,8 @@ import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
 const log = getLogger(__filename)
 
 export namespace WireOperatorProvisioningTool {
-  /** Default wei seeded into a flow operator's ETH wallet (covers a deposit + gas). */
+  /** Default wei a flow operator's ETH wallet is funded to (covers a deposit + gas). */
   export const DefaultEthereumFundWei = 10n ** 18n // 1 ETH
-  /**
-   * Serialization key for ETH funding sends — they all share ONE anvil signer,
-   * so they share one nonce sequence. See {@link runEthereumFunding}.
-   */
-  const EthereumFundingQueueKey = "WireOperatorProvisioningTool.ethereumFunding"
   /** Default lamports airdropped to a flow operator's SOL keypair. */
   export const DefaultSolanaAirdropLamports = 5n * BigInt(LAMPORTS_PER_SOL)
   /** Creator account for provisioned operator accounts. */
@@ -101,8 +92,13 @@ export namespace WireOperatorProvisioningTool {
      * collateral-backed producers publish under their own label and carry none.
      */
     readonly publicationLabel?: string
-    /** Batch / underwriter: anvil-mnemonic HD index for the operator's ETH wallet. */
-    readonly ethereumHdIndex?: number
+    /**
+     * Batch / underwriter: the identity already sits in `ctx.keyStore`, materialized by an
+     * earlier phase (the bootstrap's `OperatorKeys`, via {@link planOperatorIdentityPhase}),
+     * so the provisioning Phase runs no materialization step of its own. Default `false`: a
+     * flow-provisioned operator materializes inside its own Phase.
+     */
+    readonly identityMaterialized?: boolean
     /** Batch / underwriter: `regoperator` bootstrapped flag (default `true`). */
     readonly isBootstrapped?: boolean
     /** Batch / underwriter: wei to seed the ETH wallet (omit to skip funding). */
@@ -153,13 +149,7 @@ export namespace WireOperatorProvisioningTool {
         // A GENESIS producer names its hosting node and shares that node's block-signing K1; a
         // COLLATERAL-BACKED one does not, and takes the same route every other bonded operator
         // does — unique keys, an account of its own, authex links on both chains, and
-        // `opreg::regoperator`. The two shapes are mutually exclusive: a spec carrying both a
-        // node index and an ETH wallet index would take the genesis route and silently drop the
-        // outpost identity, the links and the registration.
-        Assert.ok(
-          !(spec.producerNodeIndex != null && spec.ethereumHdIndex != null),
-          `provision producer ${spec.label}: producerNodeIndex (genesis) and ethereumHdIndex (collateral-backed) are mutually exclusive`
-        )
+        // `opreg::regoperator`. The node index is what tells the two apart.
         return spec.producerNodeIndex != null
           ? planProvisionProducerPhase<C>(group, spec, options)
           : planProvisionOppOperatorPhase<C>(group, spec, options)
@@ -229,6 +219,58 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /**
+   * Materialize every bootstrapped OPP operator's identity, ONE step each, as a Phase the
+   * caller registers early in the bootstrap — the batch-operator counterpart of
+   * {@link planProducerIdentityPhase}.
+   *
+   * Split from the provisioning Phase for the same reason: materialization is pure key work
+   * (generate or adopt the unique K1 + EM + ED, import the K1 into kiod, accumulate the
+   * {@link OperatorAccount}) and must happen BEFORE the Ethereum outpost deploys, because
+   * `OPPInbound.initialize` seats a provisional roster of the operators' ETH addresses and
+   * no address exists ahead of its random key. The account, the links and the registration
+   * are chain WRITES that wait for the system contracts, much later. Each spec's
+   * provisioning Phase is then planned with `identityMaterialized: true`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - The phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides applied to every step.
+   * @param specs - The operators to materialize (label + type).
+   * @returns The self-registered phase.
+   */
+  export function planOperatorIdentityPhase<C extends ClusterBuildContext = ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    specs: readonly OperatorProvisioningSpec[]
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(
+      parent,
+      name,
+      description,
+      specs.map(spec =>
+        planIdentityMaterialization<C>(
+          operatorActor(spec.type),
+          `${spec.label}-identity`,
+          `generate ${spec.label} WIRE + ETH + SOL identity`,
+          options,
+          spec.label,
+          spec.type
+        )
+      )
+    )
+  }
+
+  /** The Report actor narrating an operator of `type`. */
+  function operatorActor(type: OperatorType): Report.Actor {
+    return match(type)
+      .with(OperatorType.UNDERWRITER, () => Report.Actor.Underwriter)
+      .with(OperatorType.PRODUCER, () => Report.Actor.Producer)
+      .otherwise(() => Report.Actor.BatchOperator)
+  }
+
+  /**
    * A genesis producer's Phase: create its account.
    *
    * Its identity is materialized earlier, by {@link planProducerIdentityPhase} — see there for
@@ -271,33 +313,29 @@ export namespace WireOperatorProvisioningTool {
     const {
         label,
         type,
-        ethereumHdIndex,
+        identityMaterialized = false,
         isBootstrapped,
         fundEthereumWei,
         airdropSolanaLamports
       } = spec,
-      actor = match(type)
-        .with(OperatorType.UNDERWRITER, () => Report.Actor.Underwriter)
-        .with(OperatorType.PRODUCER, () => Report.Actor.Producer)
-        .otherwise(() => Report.Actor.BatchOperator),
+      actor = operatorActor(type),
       // External-outpost mode: operators are pre-funded out-of-band on the REAL
-      // chains — there is no anvil prefund / SOL faucet — so the outpost-chain
+      // chains — there is no anvil faucet / SOL faucet — so the outpost-chain
       // funding steps are gated out; every depot-side step still runs.
       isExternalOutpost = group.context.config?.externalOutposts != null
-    Assert.ok(
-      ethereumHdIndex != null,
-      `provision operator ${label}: ethereumHdIndex is required`
-    )
     return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision operator ${label}`, [
-      planIdentityMaterialization<C>(
-        actor,
-        `${label}-identity`,
-        `generate ${label} WIRE + ETH + SOL identity`,
-        options,
-        label,
-        type,
-        ethereumHdIndex
-      ),
+      ...(identityMaterialized
+        ? []
+        : [
+            planIdentityMaterialization<C>(
+              actor,
+              `${label}-identity`,
+              `generate ${label} WIRE + ETH + SOL identity`,
+              options,
+              label,
+              type
+            )
+          ]),
       ...planOperatorKeyPublications<C>(group, actor, options, label, type),
       planAccountCreation<C>(
         actor,
@@ -402,7 +440,6 @@ export namespace WireOperatorProvisioningTool {
     readonly kind: "WireOperatorProvisioningTool.MaterializeIdentityInput"
     readonly label: string
     readonly type: OperatorType
-    readonly ethereumHdIndex: number
   }
 
   /**
@@ -417,8 +454,7 @@ export namespace WireOperatorProvisioningTool {
     description: string,
     options: ClusterBuildStepOptions,
     label: string,
-    type: OperatorType,
-    ethereumHdIndex: number
+    type: OperatorType
   ): ClusterBuildStep<C, MaterializeIdentityInput> {
     return ClusterBuildStep.create<C, MaterializeIdentityInput>(
       actor,
@@ -428,14 +464,23 @@ export namespace WireOperatorProvisioningTool {
       {
         kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
         label,
-        type,
-        ethereumHdIndex
+        type
       },
       runIdentityMaterialization
     )
   }
 
-  /** Named runner — generate K1/ED/EM, import the K1 into kiod, store the label. */
+  /**
+   * Named runner — adopt or generate K1/ED/EM, import the K1 into kiod, store
+   * the label.
+   *
+   * An identity the context ALREADY HOLDS (`ctx.keyStore.operator(label)`) is
+   * adopted whole: that is how a scenario pre-creates its operators' keys
+   * before the bootstrap composes — the KEY-custody twin of adopting an SSM
+   * parameter or a KMS alias (`KeySteps.adoptOrCreateSignatureProviderKey`),
+   * and what `batchOperatorKeyPolicy: adoptOnly` adopts from on a cluster with
+   * no AWS custody store.
+   */
   export async function runIdentityMaterialization<C extends ClusterBuildContext>(
     ctx: C,
     input: MaterializeIdentityInput,
@@ -449,9 +494,13 @@ export namespace WireOperatorProvisioningTool {
       Name.isValid(input.label),
       `materializeIdentity: operator handle "${input.label}" must be a valid WIRE name (it is the operator's account)`
     )
-    // EM keys derive from the run's mnemonic: the CLUSTER-SCOPED one an SSM
-    // cluster generated in `KeySteps.runGenerateNodeKeys`, else the published
-    // anvil mnemonic (KEY / KIOD — every flow keeps its byte-identical wallets).
+    const held = ctx.keyStore.operator(input.label)
+    if (held != null) {
+      await adoptHeldIdentity(ctx, held, input)
+      return
+    }
+    // Every curve is a fresh random key — nothing derives from a mnemonic or an
+    // index, on a flow cluster exactly as on a real deployment.
     const keyContext = KeySteps.keyGeneratorContext(ctx)
     // D21 — a key the AWS account already owns is ADOPTED, never regenerated,
     // and the read has to happen HERE: the very next steps set this account's
@@ -476,10 +525,7 @@ export namespace WireOperatorProvisioningTool {
         KeyType.EM,
         input.label,
         keyContext,
-        {
-          ethereumHdIndex: input.ethereumHdIndex,
-          purpose: `operator ${input.label} — ethereum outpost key (EM)`
-        }
+        { purpose: `operator ${input.label} — ethereum outpost key (EM)` }
       )
     ])
     // A collateral-backed PRODUCER reaches this path too, and it needs a finalizer key of its
@@ -496,13 +542,7 @@ export namespace WireOperatorProvisioningTool {
             { purpose: `producer ${input.label} — finalizer key (BLS)` }
           )
         : null
-    // Import the operator's unique wire key so kiod can sign `account@active`
-    // (authex links, registration, and any operator-signed flow actions), and its finalizer key
-    // so a KIOD-provider node can vote with it.
-    const wallet = await ctx.wire.wallet.getOrCreate()
-    await wallet.addPrivateKey(wire.privateKey)
-    if (wireFinalizer != null) await wallet.addPrivateKey(wireFinalizer.privateKey)
-    ctx.keyStore.setOperator({
+    const operator: OperatorAccount = {
       label: input.label,
       // An OPP operator owns its generated keys — published under its own handle.
       publicationLabel: input.label,
@@ -513,10 +553,63 @@ export namespace WireOperatorProvisioningTool {
       ethereum,
       solana,
       ...(wireFinalizer != null ? { wireFinalizer } : {})
+    }
+    await importSigningKeys(ctx, operator)
+    ctx.keyStore.setOperator(operator)
+    log.info(
+      `[provision] ${input.label} — WIRE ${wire.publicKey}, ETH ${ethereum.address}, SOL ${solana.publicKey}`
+    )
+  }
+
+  /**
+   * Adopt an identity the context already holds: its curves and type must
+   * match the step's, its wire key is imported into kiod exactly like a
+   * generated one, and the adoption lands in the step's `extra`.
+   */
+  async function adoptHeldIdentity<C extends ClusterBuildContext>(
+    ctx: C,
+    held: OperatorAccount,
+    input: MaterializeIdentityInput
+  ): Promise<void> {
+    Assert.strictEqual(
+      held.type,
+      input.type,
+      `materializeIdentity: ${input.label} is held as a ${OperatorType[held.type]}, not a ${OperatorType[input.type]}`
+    )
+    Assert.ok(
+      held.ethereum != null && held.solana != null,
+      `materializeIdentity: the held identity ${input.label} carries no outpost keys`
+    )
+    Assert.ok(
+      input.type !== OperatorType.PRODUCER || held.wireFinalizer != null,
+      `materializeIdentity: the held producer identity ${input.label} carries no finalizer key`
+    )
+    await importSigningKeys(ctx, held)
+    StepExtraRecorder.note(`adopted the identity ${input.label} the context already held`, {
+      label: input.label,
+      wire: held.wire.publicKey,
+      ethereum: held.ethereum.address,
+      solana: held.solana.publicKey
     })
     log.info(
-      `[provision] ${input.label} — WIRE ${wire.publicKey}, ETH ${ethereum.address} (hd=${input.ethereumHdIndex}), SOL ${solana.publicKey}`
+      `[provision] ${input.label} — adopted held identity: WIRE ${held.wire.publicKey}, ETH ${held.ethereum.address}, SOL ${held.solana.publicKey}`
     )
+  }
+
+  /**
+   * Import the operator's unique wire key so kiod can sign `account@active`
+   * (authex links, registration, and any operator-signed flow actions), and its
+   * finalizer key so a KIOD-provider node can vote with it.
+   */
+  async function importSigningKeys<C extends ClusterBuildContext>(
+    ctx: C,
+    operator: OperatorAccount
+  ): Promise<void> {
+    const wallet = await ctx.wire.wallet.getOrCreate()
+    await wallet.addPrivateKey(operator.wire.privateKey)
+    if (operator.wireFinalizer != null) {
+      await wallet.addPrivateKey(operator.wireFinalizer.privateKey)
+    }
   }
 
   // ── Step: materialize a producer's identity (from its node's shared keys) ──
@@ -779,7 +872,11 @@ export namespace WireOperatorProvisioningTool {
     readonly wei: bigint
   }
 
-  /** A single ETH transfer from anvil's deployer to the operator's wallet. */
+  /**
+   * A single `anvil_setBalance` on the operator's wallet — the local chain's
+   * faucet, the ETH counterpart of {@link planSolanaAirdrop}. A fresh random
+   * wallet starts at zero, so the balance set IS the funding.
+   */
   export function planEthereumFunding<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
@@ -798,7 +895,7 @@ export namespace WireOperatorProvisioningTool {
     )
   }
 
-  /** Named runner — ONE `sendTransaction` from anvil #0 to the operator wallet. */
+  /** Named runner — ONE `anvil_setBalance` on the operator wallet. */
   export async function runEthereumFunding<C extends ClusterBuildContext>(
     ctx: C,
     input: FundEthereumInput,
@@ -806,43 +903,11 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    const { signer } = ctx.ethereum.wallet
-    // Every operator funds from the SAME anvil signer while the operator phases
-    // run in PARALLEL, so this write needs two things, not one.
-    //
-    // The nonce is PINNED from the shared per-address counter — the same
-    // counter every other ETH write in the harness draws from. Letting ethers
-    // derive it instead means a `getTransactionCount(…, "pending")` round-trip,
-    // which lags un-mined submissions: measured 2026-08-10, nonce 157 was handed
-    // to FOUR concurrent sends and three were rejected `nonce has already been
-    // used`. The counter increments synchronously, so distinct callers cannot
-    // collide even if they overlap.
-    //
-    // The serialize() queue stays because the counter's contract requires it:
-    // a pinned nonce is only valid if every earlier submission actually landed,
-    // so the receipt wait belongs INSIDE the critical section.
-    await serialize(EthereumFundingQueueKey, async () => {
-      const nonce = await resolveLatestNonce(signer)
-      try {
-        const response = await signer.sendTransaction({
-          to: operator.ethereum.address,
-          value: input.wei,
-          nonce
-        })
-        await response.wait()
-      } catch (error) {
-        // The counter already advanced for a nonce that never landed. Re-seed
-        // from the chain, or every later send sits above the chain's nonce and
-        // waits in the mempool forever.
-        clearNonceCache(await signer.getAddress())
-        log.warn(
-          `fund ${input.label} ETH wallet failed at nonce ${nonce}; nonce cache cleared: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-        throw error
-      }
-    })
+    Assert.ok(
+      operator.ethereum,
+      `fund ${input.label} ETH wallet: the operator has no Ethereum key`
+    )
+    await ctx.ethereum.setBalance(operator.ethereum.address, input.wei)
   }
 
   // ── Step: airdrop SOL to the operator keypair (write) ────────────────────
@@ -930,19 +995,19 @@ export namespace WireOperatorProvisioningTool {
     // The link message + `account@active` auth carry the operator's on-chain `account`.
     const operator = ctx.keyStore.assertOperator(input.label)
     if (input.chainKind === ChainKind.EVM) {
-      // The link is signed offline: a provider-less wallet keeps this depot
+      // The link is signed offline: a provider-less signer keeps this depot
       // write from touching an outpost (none may be contacted when external).
-      const ethereumWallet = ethereumSigner(operator.ethereum)
+      // The custody facade signs through KMS when the EM key lives there.
       await AuthExLinkTool.createLink(ctx.wire, {
         chainKind: ChainKind.EVM,
         account: operator.account,
-        privateKey: PrivateKey.from(operator.ethereum.privateKey),
-        ethereumWallet
+        publicKey: operator.ethereum.publicKey,
+        signer: await ethereumSigner(operator.ethereum)
       })
       return
     }
     await AuthExLinkTool.createLink(ctx.wire, {
-      chainKind: input.chainKind,
+      chainKind: ChainKind.SVM,
       account: operator.account,
       privateKey: solanaSdkPrivateKey(operator.solana)
     })

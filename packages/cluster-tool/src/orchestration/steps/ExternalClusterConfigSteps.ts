@@ -18,6 +18,7 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   ExternalClusterConfigSchemaCodec,
+  isKMSCustodied,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -37,7 +38,11 @@ import { StartScriptSteps } from "./StartScriptSteps.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
-import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
+import type {
+  EthereumKeyPair,
+  KeyPair,
+  WireFinalizerKeyPair
+} from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../ClusterBuildPhaseGroup.js"
@@ -1044,7 +1049,10 @@ export namespace ExternalClusterConfigSteps {
    * - `SSM`  → the replication regions + `awsSecretId` taken VERBATIM from the
    *   publication row create wrote (NO private key), so the emitted ref is the
    *   published parameter by construction rather than by two render sites
-   *   agreeing.
+   *   agreeing — or, for a curve the SSM cluster custodies in KMS, the `KMS`
+   *   entry carrying the key reference persisted on the pair itself
+   *   (`awsKmsRegion` + `awsKmsKeyId`, rendered by the same ONE renderer that
+   *   adopted the key).
    * - `KIOD` → material-less (`publicKey` + BLS proof only); hydration is deferred.
    *
    * A BLS pair carries its `proofOfPossession` in every mode (required by the
@@ -1088,6 +1096,19 @@ export namespace ExternalClusterConfigSteps {
           provider.ssm != null,
           "create-external-config: SSM signature provider requires ssm settings"
         )
+        if (isKMSCustodied(provider, keyPair.type)) {
+          const { awsKmsRegion, awsKmsKeyId } = keyPair as EthereumKeyPair
+          Assert.ok(
+            awsKmsRegion != null && awsKmsKeyId != null,
+            `create-external-config: ${label} key ${KeyType[keyPair.type]} is KMS-custodied but its record carries no KMS reference`
+          )
+          return {
+            providerType: SignatureProviderType.KMS,
+            ...base,
+            awsKmsRegion,
+            awsKmsKeyId
+          }
+        }
         const published = lookup(label, keyPair.type)
         Assert.ok(
           published != null,

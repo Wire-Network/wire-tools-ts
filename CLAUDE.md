@@ -311,11 +311,27 @@ wire-cluster-tool create-api-node \                    # standalone (non-cluster
   --output-path <dir> --http-server-address <addr:port> \
   [--p2p-peer-address <addr:port>]... [--genesis-json <file>] \
   [--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...
+wire-cluster-tool create-batch-operator-keys \         # pre-create the batch operators' keys in SSM / KMS (cluster-less)
+  --cluster-build-options-file <options.json> --aws-cluster-node-config <node-config.json> \
+  [--signature-provider-kms '<json>'|<file>] > batch-operator-keys.json   # public listing on stdout
+wire-cluster-tool fund-batch-operators \               # stake the pre-created operators on both deployed outposts (cluster-less)
+  --cluster-build-options-file <options.json> --aws-cluster-node-config <node-config.json> \
+  --external-outpost-config <outposts.json> --ethereum-path <wire-ethereum> --solana-path <wire-solana> \
+  > funding-receipts.json                                # receipt listing on stdout; exit 0 iff every operator funded
 ```
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
-secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
+secret-id pattern), `--signature-provider-kms '<inline-json>'|<file>` (SSM
+clusters only: `{awsKeyAliasPattern, awsRegion}` — the Ethereum EM keys are
+created inside AWS KMS under the rendered alias and never leave it; the daemon
+spec renders `KMS:<region>:<alias>` and loads `signature_provider_kms_plugin`,
+the harness signs through `keyPairUtils.ethereumSigner`'s KMS arm, and
+`cluster-keys.json` persists the key reference `{awsKmsKeyId, awsKmsRegion}`
+in place of a secret), `--signature-provider-batch-operator-key-policy
+<adoptOrCreate|adoptOnly>` (default `adoptOrCreate`; `adoptOnly` fails the
+bootstrap when a batch operator's key was not pre-created — the policy of a
+pre-funded launch), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — see "`create` against external
 outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
@@ -453,7 +469,35 @@ verify and the custody backing run after operator provisioning rather than in th
 prerequisites group. The flag-less `batchOperatorUnderwriting` default tunes it:
 `fundedOperatorCount` (the first N operators get the credit; the rest run the role
 unfunded) and `maxExposure` (the caps, `TokenAmount[]`); both default to every operator
-funded, with caps of 10 LIQSOL and 10 LIQETH.
+funded, with caps of 10 LIQSOL and 10 LIQETH. Its `stake` / `reserve` members
+(`TokenAmount[]`, one per outpost native token `ETH` / `SOL`, depot units at 9 decimals;
+schema-defaulted to 1 ETH + 10 SOL staked and 0.05 ETH + 0.1 SOL kept) are what
+`fund-batch-operators` stakes for each funded operator on the deployed outposts
+(`Depositor.depositAndStake` pre-launch / the `SyndicationPool` path post-launch on
+Ethereum; `sol_to_liqsol` + `synd` on Solana, refusing `Launching`) and the gas / fee
+balance it requires each operator to keep beside the stake.
+
+**Flow authoring — pre-funded batch operators.** A flow that proves a PRE-FUNDED launch
+(`flow-batch-operator-prefunding`) does before the cluster what a real launch does before
+`create`: its `prepare` pre-creates the bootstrap batch operators' identities under KEY
+custody with `BatchOperatorKeyTool.createPersisted` (each curve persisted by the operator's
+label handle in the cluster data directory — `WireWallet.saveKey` for the K1,
+`EthereumFundingTool.createWallet` for the EM, `SolanaFundingTool.createKeypair` for the ED;
+a re-run reads them back), freezes both outposts' launch-data exports from committed
+TEMPLATES with each operator's positions keyed by those outpost keys
+(`WireLcoExportTool.writeExports` — the same template rewrite `flow-lco-import` uses for its
+holders), and returns the options with `ethereumBootstrapJsonFile` /
+`solanaBootstrapJsonFile` set and `signatureProvider.batchOperatorKeyPolicy: adoptOnly`.
+Its `createContext` seeds `BatchOperatorKeyTool.loadPersisted` into `ctx.keyStore`, which is
+what `WireOperatorProvisioningTool.runIdentityMaterialization` adopts whole in `OperatorKeys`
+(the KEY-custody twin of adopting an SSM parameter or a KMS alias); the bootstrap then parks
+each operator's positions under its keys, the operators' own authex links sweep them, and
+`LcoImportOperatorCredit` verifies the credit. The flow's own phases
+(`BatchOperatorPrefundingSteps`) verify per operator that the adopted keys are the persisted
+ones, that both links exist and that it holds LIQETH and LIQSOL, then drive a user's
+Ethereum syndication (`BatchOperatorUnderwritingSteps.planEthereumSyndication`) and wait for
+a pre-funded operator's bond, approval and claim. The mock syndication import stays OFF: the
+launch-data import is the operators' only credit, so the proof is the pre-funding's.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
@@ -476,8 +520,9 @@ bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicati
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
 `planDesyndicate`); `WireSyndicationTool` reads the depot's syndication state and
 bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). On the
-outposts, the Ethereum deploy config names the panic account
-(`EthereumOutpostBootstrapper.PanicAccountIndex`), `maxSyndicationPerTransfer` and
+outposts, the Ethereum deploy config names the panic account (the persisted
+random wallet `EthereumWallet.PanicWalletName`, created and funded by the
+`EthereumOutpost` phase's `EthereumFundingTool` steps), `maxSyndicationPerTransfer` and
 `yieldDeadband` (`verify-syndication-pool` reads them back), and the Solana surface
 runs `set-max-syndication --fresh` and `set_panic` to the harness panic keypair
 (`SolanaFundingTool.PanicKeypairName`). The outpost writes a flow drives —

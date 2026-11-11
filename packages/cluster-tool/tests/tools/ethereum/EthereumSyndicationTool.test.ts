@@ -2,13 +2,19 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
+import { EthereumWallet } from "@wireio/cluster-tool/clients/ethereum"
 import {
   EthereumOutpostBootstrapper,
   Steps
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
+import {
+  EthereumFundingTool,
+  EthereumSyndicationTool
+} from "@wireio/cluster-tool/tools/ethereum"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+import type { EthereumKeyPair } from "@wireio/cluster-tool/types"
+import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 
 /**
  * The `SyndicationPool` and `DepositManager` ABIs, TRIMMED from wire-ethereum's
@@ -32,8 +38,16 @@ const DepositManagerAddress = "0x00000000000000000000000000000000000000a3"
 const ManagerAddress = "0x00000000000000000000000000000000000000a5"
 const AccessManagerAddress = "0x00000000000000000000000000000000000000a4"
 
-/** An anvil HD index a flow-owned holder might use. */
-const HolderIndex = 48
+/** The durable handle a flow-owned holder's persisted wallet lives under. */
+const HolderWalletName = "holder"
+/** The holder's wallet — a RANDOM pair, persisted under {@link HolderWalletName} before the suite runs. */
+const HolderPair: EthereumKeyPair = ethereumKeyPairFromWallet(
+  ethers.Wallet.createRandom()
+)
+/** The emergency-stop panic account — a RANDOM pair, persisted under `EthereumWallet.PanicWalletName`. */
+const PanicPair: EthereumKeyPair = ethereumKeyPairFromWallet(
+  ethers.Wallet.createRandom()
+)
 
 /** Gross fixture return and its exact net under the bootstrap's Ethereum fee. */
 const GrossReturn = 500_000_000n,
@@ -134,6 +148,10 @@ describe("EthereumSyndicationTool", () => {
     root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "eth-syndication-"))
     ethereumPath = Path.join(root, "wire-ethereum")
     dataPath = Path.join(root, "data")
+    // The holder and the panic account are PERSISTED wallets under the cluster
+    // data dir — the runners load them by handle, never by index.
+    EthereumWallet.saveWallet(dataPath, HolderWalletName, HolderPair)
+    EthereumWallet.saveWallet(dataPath, EthereumWallet.PanicWalletName, PanicPair)
     stageArtifact(
       ethereumPath,
       EthereumSyndicationTool.SyndicationPoolArtifactSubpath,
@@ -189,6 +207,10 @@ describe("EthereumSyndicationTool", () => {
     Fs.rmSync(root, { recursive: true, force: true })
   })
 
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   describe("request builders", () => {
     const runner = () => answeringRunner({})
 
@@ -197,7 +219,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           runner()
         ),
-        key = EthereumSyndicationTool.compressedPubkey(HolderIndex),
+        key = EthereumFundingTool.compressedPubkey(context(), HolderWalletName),
         request = EthereumSyndicationTool.syndicateRequest(
           pool,
           5n * 10n ** 18n,
@@ -498,7 +520,7 @@ describe("EthereumSyndicationTool", () => {
 
     it("readPendingDesyndication decodes a stored release", async () => {
       const recipient =
-          EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address,
+          HolderPair.address,
         ctx = context(
           answeringRunner({
             [`${pool}:pendingDesyndications`]: [
@@ -530,7 +552,7 @@ describe("EthereumSyndicationTool", () => {
 
     it("readLiqEthBalance reads the token balance of an account", async () => {
       const holder =
-        EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
+        HolderPair.address
       await expect(
         EthereumSyndicationTool.readLiqEthBalance(
           context(answeringRunner({ [`${token}:balanceOf`]: [77n] })),
@@ -553,7 +575,7 @@ describe("EthereumSyndicationTool", () => {
             return base.call(transaction)
           }
         } as unknown as ethers.ContractRunner,
-        holder = EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
+        holder = HolderPair.address
       await expect(
         EthereumSyndicationTool.readLiqEthBalance(
           context(recording),
@@ -569,7 +591,7 @@ describe("EthereumSyndicationTool", () => {
 
     describe("readDesyndicationPayment", () => {
       const holder =
-        EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
+        HolderPair.address
 
       /** A `Desyndicated` log as the provider returns it, encoded by the pool ABI. */
       function desyndicatedLog(
@@ -785,9 +807,7 @@ describe("EthereumSyndicationTool", () => {
             return base.call(transaction)
           }
         } as unknown as ethers.ContractRunner,
-        panic = EthereumOutpostBootstrapper.anvilWallet(
-          EthereumOutpostBootstrapper.PanicAccountIndex
-        ).address
+        panic = PanicPair.address
       await expect(
         EthereumSyndicationTool.readCanCallPool(
           context(recording),
@@ -840,12 +860,10 @@ describe("EthereumSyndicationTool", () => {
   })
 
   describe("value helpers", () => {
-    it("derives a compressed key that recovers to the holder's address", () => {
-      const key = EthereumSyndicationTool.compressedPubkey(HolderIndex)
+    it("the holder key a syndicate request presents recovers to the PERSISTED holder's address", () => {
+      const key = EthereumFundingTool.compressedPubkey(context(), HolderWalletName)
       expect(ethers.getBytes(key)).toHaveLength(33)
-      expect(ethers.computeAddress(key)).toBe(
-        EthereumOutpostBootstrapper.anvilWallet(HolderIndex).address
-      )
+      expect(ethers.computeAddress(key)).toBe(HolderPair.address)
     })
 
     it("names LIQETH as the pool's token code, at 18 decimals", () => {
@@ -915,7 +933,7 @@ describe("EthereumSyndicationTool", () => {
   })
 
   describe("step factories", () => {
-    it("carries each holder write's HD index and amount, with its named runner", () => {
+    it("carries each holder write's wallet handle and amount, with its named runner", () => {
       const cases = [
         {
           step: EthereumSyndicationTool.planDepositLiqEth(
@@ -923,12 +941,12 @@ describe("EthereumSyndicationTool", () => {
             "deposit",
             "deposit ETH",
             {},
-            HolderIndex,
+            HolderWalletName,
             4n
           ),
           input: {
             kind: "EthereumSyndicationTool.DepositLiqEthInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amountWei: 4n
           },
           runner: EthereumSyndicationTool.runDepositLiqEth
@@ -939,12 +957,12 @@ describe("EthereumSyndicationTool", () => {
             "approve",
             "approve the pool",
             {},
-            HolderIndex,
+            HolderWalletName,
             4n
           ),
           input: {
             kind: "EthereumSyndicationTool.ApproveLiqEthInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amount: 4n
           },
           runner: EthereumSyndicationTool.runApproveLiqEth
@@ -955,12 +973,12 @@ describe("EthereumSyndicationTool", () => {
             "donate",
             "donate liqETH",
             {},
-            HolderIndex,
+            HolderWalletName,
             4n
           ),
           input: {
             kind: "EthereumSyndicationTool.DonateToPoolInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amount: 4n
           },
           runner: EthereumSyndicationTool.runDonateToPool
@@ -971,12 +989,12 @@ describe("EthereumSyndicationTool", () => {
             "pay",
             "pay the stored release",
             {},
-            HolderIndex,
+            HolderWalletName,
             9n
           ),
           input: {
             kind: "EthereumSyndicationTool.PayPendingDesyndicationInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             requestId: 9n
           },
           runner: EthereumSyndicationTool.runPayPendingDesyndication
@@ -989,23 +1007,40 @@ describe("EthereumSyndicationTool", () => {
     })
 
     it("planSyndicate carries the compressed key as given", () => {
-      const key = EthereumSyndicationTool.compressedPubkey(HolderIndex),
+      const key = EthereumFundingTool.compressedPubkey(context(), HolderWalletName),
         step = EthereumSyndicationTool.planSyndicate(
           Report.Actor.User,
           "syndicate",
           "syndicate liqETH",
           {},
-          HolderIndex,
+          HolderWalletName,
           5_000_000_000_000_000n,
           key
         )
       expect(step.input).toEqual({
         kind: "EthereumSyndicationTool.SyndicateInput",
-        ethereumHdIndex: HolderIndex,
+        walletName: HolderWalletName,
         amount: 5_000_000_000_000_000n,
         compressedPubkey: key
       })
       expect(step.runner).toBe(EthereumSyndicationTool.runSyndicate)
+    })
+
+    it("planSyndicate carries NO key when none is given — the runner derives the holder's own", () => {
+      const step = EthereumSyndicationTool.planSyndicate(
+        Report.Actor.User,
+        "syndicate",
+        "syndicate liqETH",
+        {},
+        HolderWalletName,
+        5_000_000_000_000_000n
+      )
+      expect(step.input).toEqual({
+        kind: "EthereumSyndicationTool.SyndicateInput",
+        walletName: HolderWalletName,
+        amount: 5_000_000_000_000_000n
+      })
+      expect(step.input).not.toHaveProperty("compressedPubkey")
     })
 
     it("planSetPaused names the panic account as its signer, both ways", () => {
@@ -1025,13 +1060,11 @@ describe("EthereumSyndicationTool", () => {
         )
       expect(pause.input).toEqual({
         kind: "EthereumSyndicationTool.SetPausedInput",
-        ethereumHdIndex: EthereumOutpostBootstrapper.PanicAccountIndex,
+        walletName: EthereumWallet.PanicWalletName,
         paused: true
       })
       expect(unpause.input.paused).toBe(false)
-      expect(unpause.input.ethereumHdIndex).toBe(
-        EthereumOutpostBootstrapper.PanicAccountIndex
-      )
+      expect(unpause.input.walletName).toBe(EthereumWallet.PanicWalletName)
       expect(pause.runner).toBe(EthereumSyndicationTool.runSetPaused)
     })
   })
@@ -1046,6 +1079,101 @@ describe("EthereumSyndicationTool", () => {
     ).resolves.toBe(principal)
   })
 
+  describe("runSyndicate — the holder's own key", () => {
+    const signal = new AbortController().signal,
+      /** A 33-byte compressed key a flow might present instead of the holder's. */
+      PresentedKey = `0x02${"ab".repeat(32)}`
+
+    /**
+     * A signer double satisfying the nonce helper — an address, a provider
+     * answering the count seed, and a submission that mines — so the runner's
+     * ONE `sendTransaction` can be inspected without a chain.
+     */
+    function fakeSigner() {
+      const address = ethers.Wallet.createRandom().address,
+        sendTransaction = jest.fn((_request: ethers.TransactionRequest) =>
+          Promise.resolve({ wait: () => Promise.resolve({ status: 1 }) })
+        ),
+        signer = {
+          provider: { getTransactionCount: () => Promise.resolve(0) },
+          getAddress: () => Promise.resolve(address),
+          sendTransaction
+        } as unknown as ethers.Wallet
+      jest.spyOn(EthereumFundingTool, "signer").mockReturnValue(signer)
+      return { sendTransaction }
+    }
+
+    it("derives the PERSISTED holder's compressed key when the input carries none", async () => {
+      const { sendTransaction } = fakeSigner(),
+        holderKey = EthereumFundingTool.compressedPubkey(
+          context(),
+          HolderWalletName
+        )
+      await EthereumSyndicationTool.runSyndicate(
+        context(),
+        {
+          kind: "EthereumSyndicationTool.SyndicateInput",
+          walletName: HolderWalletName,
+          amount: 5n
+        },
+        signal
+      )
+      expect(EthereumFundingTool.signer).toHaveBeenCalledWith(
+        expect.anything(),
+        HolderWalletName
+      )
+      expect(sendTransaction).toHaveBeenCalledTimes(1)
+      const [request] = sendTransaction.mock.calls[0],
+        [amount, pubkey] = poolInterface.decodeFunctionData(
+          "syndicate",
+          String(request.data)
+        )
+      expect(request.to).toBe(PoolAddress)
+      expect(request.nonce).toBe(0)
+      expect(amount).toBe(5n)
+      expect(pubkey).toBe(holderKey)
+      expect(ethers.computeAddress(pubkey)).toBe(HolderPair.address)
+    })
+
+    it("presents a key given on the input AS-IS — a flow proving the pool refuses a foreign key", async () => {
+      const { sendTransaction } = fakeSigner()
+      await EthereumSyndicationTool.runSyndicate(
+        context(),
+        {
+          kind: "EthereumSyndicationTool.SyndicateInput",
+          walletName: HolderWalletName,
+          amount: 5n,
+          compressedPubkey: PresentedKey
+        },
+        signal
+      )
+      const [request] = sendTransaction.mock.calls[0],
+        [, pubkey] = poolInterface.decodeFunctionData(
+          "syndicate",
+          String(request.data)
+        )
+      expect(pubkey).toBe(PresentedKey)
+    })
+
+    it("propagates a reverted syndicate", async () => {
+      const { sendTransaction } = fakeSigner()
+      sendTransaction.mockResolvedValue({
+        wait: () => Promise.resolve({ status: 0 })
+      })
+      await expect(
+        EthereumSyndicationTool.runSyndicate(
+          context(),
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount: 5n
+          },
+          signal
+        )
+      ).rejects.toThrow(/planSyndicate: reverted \(status=0\)/)
+    })
+  })
+
   describe("runner input guards", () => {
     const signal = new AbortController().signal
 
@@ -1055,7 +1183,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.DepositLiqEthInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amountWei: 0n
           },
           signal
@@ -1069,10 +1197,10 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.SyndicateInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amount: 0n,
             compressedPubkey:
-              EthereumSyndicationTool.compressedPubkey(HolderIndex)
+              EthereumFundingTool.compressedPubkey(context(), HolderWalletName)
           },
           signal
         )
@@ -1085,7 +1213,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.DonateToPoolInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amount: 0n
           },
           signal
@@ -1100,7 +1228,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.SetPausedInput",
-            ethereumHdIndex: EthereumOutpostBootstrapper.PanicAccountIndex,
+            walletName: EthereumWallet.PanicWalletName,
             paused: true
           },
           aborted
@@ -1111,7 +1239,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.ApproveLiqEthInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             amount: 1n
           },
           aborted
@@ -1122,7 +1250,7 @@ describe("EthereumSyndicationTool", () => {
           context(),
           {
             kind: "EthereumSyndicationTool.PayPendingDesyndicationInput",
-            ethereumHdIndex: HolderIndex,
+            walletName: HolderWalletName,
             requestId: 1n
           },
           aborted

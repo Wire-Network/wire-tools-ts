@@ -513,15 +513,18 @@ export namespace NodeopProcess {
   /**
    * Optional nodeop plugins by signature-provider SCHEME. `KEY` / `KIOD` are
    * built into `sysio::signature_provider_manager_plugin`; an `SSM:` spec
-   * resolves through `sysio::signature_provider_ssm_plugin`, which must be
-   * ENABLED via `--plugin` — otherwise provider creation aborts startup with
+   * resolves through `sysio::signature_provider_ssm_plugin` and a `KMS:` spec
+   * (an ethereum key custodied by AWS KMS) through
+   * `sysio::signature_provider_kms_plugin`, each of which must be ENABLED via
+   * `--plugin` — otherwise provider creation aborts startup with
    * `plugin_config_exception (3110006): Signature-provider scheme "SSM" is
    * provided by plugin "sysio::signature_provider_ssm_plugin"`.
    */
   export const SignatureProviderSchemePlugins: Partial<
     Record<SignatureProviderType, string>
   > = {
-    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin"
+    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin",
+    [SignatureProviderType.KMS]: "sysio::signature_provider_kms_plugin"
   }
 
   /**

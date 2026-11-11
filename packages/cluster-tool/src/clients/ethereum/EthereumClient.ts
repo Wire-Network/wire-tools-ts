@@ -4,18 +4,19 @@ import { RecordingJsonRpcProvider } from "./RecordingJsonRpcProvider.js"
 
 /**
  * Client for the Ethereum outpost on anvil/hardhat. Loads (and caches)
- * contracts and exposes the anvil control surface (`mine`, `advanceTime`) plus
- * OPP event queries. `getContract` is get-or-load, cached by `(name, address)`.
+ * contracts and exposes the anvil control surface (`mine`, `advanceTime`,
+ * `setBalance`) plus OPP event queries. `getContract` is get-or-load, cached by
+ * `(name, address)`.
  */
 export class EthereumClient {
   readonly provider: ethers.JsonRpcProvider
-  readonly wallet: EthereumWallet
+  private deployerWallet: EthereumWallet | null = null
   /** Keyed `${name}@${address}` so the same name at a new address re-binds. */
   private readonly contracts = new Map<string, ethers.Contract>()
 
   constructor(
     readonly rpcUrl: string,
-    privateKey: string | null = null
+    readonly dataPath: string
   ) {
     // Recording provider: every tx submission / anvil admin call made through
     // this client (or any signer/contract bound to it) lands in the running
@@ -25,10 +26,26 @@ export class EthereumClient {
     this.provider = new RecordingJsonRpcProvider(rpcUrl, undefined, {
       cacheTimeout: EthereumClient.ProviderCacheTimeoutMs
     })
-    this.wallet = new EthereumWallet(
+  }
+
+  /**
+   * The cluster's DEPLOYER wallet, connected to this provider — the outpost
+   * manager's admin, and the signer every contract bound through
+   * {@link getContract} sends with. It is the persisted
+   * `EthereumWallet.DeployerWalletName` wallet under the cluster data path,
+   * created by the Ethereum outpost phase before any write goes through this
+   * client, and loaded lazily on first use.
+   *
+   * @throws If the deployer wallet has not been created yet.
+   */
+  get wallet(): EthereumWallet {
+    return (this.deployerWallet ??= new EthereumWallet(
       this.provider,
-      privateKey ?? EthereumClient.DefaultPrivateKey
-    )
+      EthereumWallet.loadWallet(
+        this.dataPath,
+        EthereumWallet.DeployerWalletName
+      ).privateKey
+    ))
   }
 
   /**
@@ -60,6 +77,22 @@ export class EthereumClient {
   /** ETH (wei) balance of an address. */
   getBalance(address: string): Promise<bigint> {
     return this.provider.getBalance(address)
+  }
+
+  /**
+   * Set an address's ETH balance (anvil `anvil_setBalance`) — the local
+   * chain's faucet, the counterpart of the Solana validator's airdrop. The ONE
+   * way the harness funds an account on the run anvil: no genesis account is
+   * drawn from and no key derived to pay from.
+   *
+   * @param address - The account to fund.
+   * @param balanceWei - The balance to set, in wei.
+   */
+  async setBalance(address: string, balanceWei: bigint): Promise<void> {
+    await this.provider.send(EthereumClient.SetBalanceMethod, [
+      address,
+      ethers.toBeHex(balanceWei)
+    ])
   }
 
   /** Mine `blocks` blocks (anvil `evm_mine`). */
@@ -101,9 +134,8 @@ export class EthereumClient {
 export namespace EthereumClient {
   /** Disable ethers' request cache so local mined state is visible immediately. */
   export const ProviderCacheTimeoutMs = -1
-  /** anvil account #0 private key — deterministic; only used when none is supplied. */
-  export const DefaultPrivateKey =
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  /** The anvil RPC that sets an account's balance outright. */
+  export const SetBalanceMethod = "anvil_setBalance"
   /** OPP envelope event name on the outpost contract. */
   export const OppEnvelopeEvent = "OPPEnvelope"
 }
