@@ -21,7 +21,7 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * queues the full `NodeOwnerRegistration` NODE_OWNER_REG attestation, which
  * rides the next outbound OPP envelope to the depot, where
  * `sysio.msgch::dispatch_node_owner_reg` inline-sends the same
- * `newnameduser` + `nodeownreg` pair the scenario's direct-drive phases push
+ * `nodeownreg` action the scenario's direct-drive phases push
  * by hand. The committer is the run's default anvil wallet: it holds the
  * minted tier token, and its uncompressed secp256k1 key is the claim's
  * depositor key (recorded as the account's `sysio.authex` ETH link).
