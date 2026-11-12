@@ -365,10 +365,11 @@ export class WireClient {
    * `sysio@active`), waiting for finality. `setacctram` sets an absolute limit,
    * so the grant is the account's current limit plus `ramBytes`.
    *
-   * For a system contract account whose own native permissions and action
-   * links outgrow its code + abi allowance (`sysio.andon`). The `sysio.*`
-   * contracts bill their rows to `sysio`, and CPU and NET are billed to the
-   * contract an action runs on, so no other account needs a grant.
+   * Bootstrap uses this for `sysio.andon`, whose native permissions and action
+   * links outgrow its code + abi allowance. OPP bond rows use the privileged
+   * request issuer's system-pool payer, so batch operators need no separate
+   * bond-row grant. Other accounts' RAM needs depend on the rows they create
+   * and the payer selected for those rows.
    *
    * @param account - The account whose RAM limit is raised.
    * @param ramBytes - Bytes added to the account's current RAM limit.
