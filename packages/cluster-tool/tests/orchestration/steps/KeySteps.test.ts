@@ -6,6 +6,7 @@ import { Keypair } from "@solana/web3.js"
 import { KeySpec, KeyUsageType } from "@aws-sdk/client-kms"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey, PublicKey } from "@wireio/sdk-core"
+import { ConsoleAppender, Level, type LogRecord } from "@wireio/shared"
 import {
   AWSAccountName,
   SignatureProviderKeyPolicy,
@@ -96,6 +97,7 @@ interface MockKmsCommandInput {
   KeySpec?: string
   KeyUsage?: string
   Description?: string
+  MultiRegion?: boolean
   Tags?: MockKmsTag[]
   AliasName?: string
   TargetKeyId?: string
@@ -166,10 +168,26 @@ function kmsKeySpec(key: MockKmsKey): KeySpec {
 const kmsStore = new Map<string, MockKmsKey>()
 let kmsPendingKey: MockKmsKey = null
 
-/** Bind a secp256k1 key for `wallet` under `aliasName` — the adopt-existing case. */
-function seedKmsKey(aliasName: string, wallet = ethers.Wallet.createRandom()): MockKmsKey {
+/** The ONE region a seeded key lives in — the first replication region, which the KMS settings below name. */
+const KmsSeedRegion = "us-east-1"
+
+/**
+ * The ARN the in-memory KMS gives its next key in `region` — an `mrk-` key id
+ * for a multi-Region key, exactly as AWS marks one, a plain id otherwise.
+ */
+function kmsKeyArn(multiRegion: boolean, region = KmsSeedRegion): string {
+  const keyId = `${multiRegion ? KMSClientProvider.MultiRegionKeyIdPrefix : ""}${kmsStore.size + 1}`
+  return `arn:aws:kms:${region}:123456789012:key/${keyId}`
+}
+
+/** Bind a secp256k1 key for `wallet` under `aliasName` — the adopt-existing case; a single-Region key unless `multiRegion`. */
+function seedKmsKey(
+  aliasName: string,
+  wallet = ethers.Wallet.createRandom(),
+  multiRegion = false
+): MockKmsKey {
   const key: MockKmsKey = {
-    arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
+    arn: kmsKeyArn(multiRegion),
     keyType: KeyType.EM,
     wallet
   }
@@ -177,10 +195,14 @@ function seedKmsKey(aliasName: string, wallet = ethers.Wallet.createRandom()): M
   return key
 }
 
-/** Bind an Ed25519 key for `keypair` under `aliasName` — the adopt-existing case of an ED key. */
-function seedKmsSolanaKey(aliasName: string, keypair = Keypair.generate()): MockKmsKey {
+/** Bind an Ed25519 key for `keypair` under `aliasName` — the adopt-existing case of an ED key; a single-Region key unless `multiRegion`. */
+function seedKmsSolanaKey(
+  aliasName: string,
+  keypair = Keypair.generate(),
+  multiRegion = false
+): MockKmsKey {
   const key: MockKmsKey = {
-    arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
+    arn: kmsKeyArn(multiRegion),
     keyType: KeyType.ED,
     keypair
   }
@@ -188,10 +210,14 @@ function seedKmsSolanaKey(aliasName: string, keypair = Keypair.generate()): Mock
   return key
 }
 
-/** Bind a secp256k1 key for `wallet` under `aliasName` as a WIRE K1 key — the adopt-existing case of a batch operator's account key. */
-function seedKmsWireKey(aliasName: string, wallet = ethers.Wallet.createRandom()): MockKmsKey {
+/** Bind a secp256k1 key for `wallet` under `aliasName` as a WIRE K1 key — the adopt-existing case of a batch operator's account key; a single-Region key unless `multiRegion`. */
+function seedKmsWireKey(
+  aliasName: string,
+  wallet = ethers.Wallet.createRandom(),
+  multiRegion = false
+): MockKmsKey {
   const key: MockKmsKey = {
-    arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
+    arn: kmsKeyArn(multiRegion),
     keyType: KeyType.K1,
     wallet
   }
@@ -212,7 +238,8 @@ function installKMSStoreMock(): void {
       }
     }
     if (command.kind === "CreateKey") {
-      const arn = `arn:aws:kms:${region}:123456789012:key/${kmsStore.size + 1}`
+      // As AWS does: only a key asked for with `MultiRegion` gets the `mrk-` id.
+      const arn = kmsKeyArn(command.input.MultiRegion === true, region)
       kmsPendingKey =
         command.input.KeySpec === KeySpec.ECC_NIST_EDWARDS25519
           ? { arn, keyType: KeyType.ED, keypair: Keypair.generate() }
@@ -940,6 +967,27 @@ describe("Steps.keys", () => {
       keyTypes: [KeyType.EM]
     }
 
+    /** The console appender's `append`, spied so a warning the adopt path logs is observable (and never printed). */
+    let consoleAppend: jest.SpyInstance
+
+    beforeEach(() => {
+      consoleAppend = jest
+        .spyOn(ConsoleAppender.prototype, "append")
+        .mockImplementation(() => undefined)
+    })
+
+    afterEach(() => {
+      consoleAppend.mockRestore()
+    })
+
+    /** Every warning logged so far — the messages of the `warn` records the console appender received. */
+    function warnings(): string[] {
+      return consoleAppend.mock.calls
+        .map(([record]: [LogRecord]) => record)
+        .filter(record => record.level === Level.warn)
+        .map(record => record.message)
+    }
+
     /** Per-test shape of the kms settings + the batch-operator key policy. */
     interface KmsConfigOptions {
       kms?: Partial<AWSKMSSignatureProviderOptions>
@@ -1033,8 +1081,65 @@ describe("Steps.keys", () => {
           keyType: "EM",
           awsKmsRegion: KmsRegion,
           awsKmsKeyId: BatchOperatorAlias,
-          keyArn: arn
+          keyArn: arn,
+          multiRegion: false
         }
+      ])
+    })
+
+    it("WARNS when the adopted key is single-Region — it can never be replicated — and still adopts it (a warning, never a failure)", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      const { wallet, arn } = seedKmsKey(BatchOperatorAlias),
+        recorder = new StepExtraRecorder(),
+        adopted = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables()),
+          KeyType.EM,
+          "batchop.a",
+          recorder
+        )
+      expect(adopted.address).toBe(wallet.address)
+      expect(warnings()).toHaveLength(1)
+      const [warning] = warnings()
+      expect(warning).toContain(
+        `batchop.a's EM key ${arn} (KMS ${KmsRegion}:${BatchOperatorAlias}) is a single-Region key — it can never be replicated into another region`
+      )
+      expect(warning).toContain(
+        "a NEW key under a NEW alias, which the kms.version alias segment mints as a new generation"
+      )
+      expect(recorder.calls).toEqual([
+        expect.objectContaining({
+          kind: "note",
+          keyArn: arn,
+          multiRegion: false
+        })
+      ])
+    })
+
+    it("adopting a MULTI-Region key records the mark and logs no warning", async () => {
+      installSSMStoreMock()
+      installKMSStoreMock()
+      const { wallet, arn } = seedKmsKey(
+          BatchOperatorAlias,
+          ethers.Wallet.createRandom(),
+          true
+        ),
+        recorder = new StepExtraRecorder(),
+        adopted = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables()),
+          KeyType.EM,
+          "batchop.a",
+          recorder
+        )
+      expect(arn).toContain(`key/${KMSClientProvider.MultiRegionKeyIdPrefix}`)
+      expect(adopted.address).toBe(wallet.address)
+      expect(warnings()).toEqual([])
+      expect(recorder.calls).toEqual([
+        expect.objectContaining({
+          kind: "note",
+          keyArn: arn,
+          multiRegion: true
+        })
       ])
     })
 
@@ -1062,12 +1167,15 @@ describe("Steps.keys", () => {
           KeySpec: KeySpec.ECC_SECG_P256K1,
           KeyUsage: KeyUsageType.SIGN_VERIFY,
           Description: purpose,
+          MultiRegion: true,
           Tags: [{ TagKey: Steps.keys.PlatformVersionTagKey, TagValue: "v4" }]
         }
       ])
       expect(kmsCommandInputs("CreateAlias")).toEqual([
         { AliasName: BatchOperatorAlias, TargetKeyId: key.arn }
       ])
+      // A multi-Region PRIMARY — the `mrk-` key id KMS gives a key asked for that way.
+      expect(key.arn).toContain(`key/${KMSClientProvider.MultiRegionKeyIdPrefix}`)
       expect(created).toEqual({
         type: KeyType.EM,
         publicKey: ethereumPublicKeyFromWallet(key.wallet).toString(),
@@ -1076,7 +1184,7 @@ describe("Steps.keys", () => {
         awsKmsKeyId: BatchOperatorAlias
       })
       expect(created).not.toHaveProperty("privateKey")
-      // The keygen is recorded like a local one — public half, purpose, mechanism; no material (KMS has none to give).
+      // The keygen is recorded like a local one — public half, purpose, mechanism, the multi-Region mark; no material (KMS has none to give).
       expect(recorder.calls).toEqual([
         {
           client: "aws-kms",
@@ -1084,9 +1192,12 @@ describe("Steps.keys", () => {
           keyType: "EM",
           purpose,
           keyArn: key.arn,
+          multiRegion: true,
           ...created
         }
       ])
+      // A created key is never the single-Region case the adopt path warns about.
+      expect(warnings()).toEqual([])
       // Nothing was put to SSM for a KMS-custodied curve.
       expect(commandInputs("PutParameter")).toEqual([])
     })
@@ -1171,7 +1282,8 @@ describe("Steps.keys", () => {
             text: "adopted batchop.a's existing ED key from KMS",
             keyType: "ED",
             awsKmsKeyId: BatchOperatorSolanaAlias,
-            keyArn: arn
+            keyArn: arn,
+            multiRegion: false
           })
         ])
       })
@@ -1193,6 +1305,7 @@ describe("Steps.keys", () => {
             KeySpec: KeySpec.ECC_NIST_EDWARDS25519,
             KeyUsage: KeyUsageType.SIGN_VERIFY,
             Description: "batchop.a ED signing key",
+            MultiRegion: true,
             Tags: [{ TagKey: Steps.keys.PlatformVersionTagKey, TagValue: "v4" }]
           }
         ])
@@ -1215,6 +1328,7 @@ describe("Steps.keys", () => {
             keyType: "ED",
             purpose: null,
             keyArn: key.arn,
+            multiRegion: true,
             ...created
           }
         ])
@@ -1334,7 +1448,8 @@ describe("Steps.keys", () => {
             text: "adopted batchop.a's existing K1 key from KMS",
             keyType: "K1",
             awsKmsKeyId: BatchOperatorWireAlias,
-            keyArn: arn
+            keyArn: arn,
+            multiRegion: false
           })
         ])
       })
@@ -1358,6 +1473,7 @@ describe("Steps.keys", () => {
             KeySpec: KeySpec.ECC_SECG_P256K1,
             KeyUsage: KeyUsageType.SIGN_VERIFY,
             Description: purpose,
+            MultiRegion: true,
             Tags: [{ TagKey: Steps.keys.PlatformVersionTagKey, TagValue: "v4" }]
           }
         ])
@@ -1378,6 +1494,7 @@ describe("Steps.keys", () => {
             keyType: "K1",
             purpose,
             keyArn: key.arn,
+            multiRegion: true,
             ...created
           }
         ])

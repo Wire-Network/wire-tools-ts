@@ -35,7 +35,10 @@ const log = getLogger(__filename)
  * adopted, never replaced) and publishes every SSM-custodied curve
  * through the SAME publish primitive (`KeySteps.publishSignatureProviderKey`),
  * so a later `create` with `batchOperatorKeyPolicy: adoptOnly` finds exactly
- * these keys under exactly these ids. What it reports is PUBLIC only: the
+ * these keys under exactly these ids. A KMS key it creates is a multi-Region
+ * primary (`KMSClientProvider.createKey`), replicable later without changing
+ * its public key; a single-Region key it adopts never can be, which the adopt
+ * path warns about. What it reports is PUBLIC only: the
  * public keys, the EM addresses and the custody references the outposts are
  * funded against — never material (KMS has none to give; SSM's is never read
  * back).

@@ -253,6 +253,9 @@ const SolanaAliasName = "alias/wire/dev/batchop-a/ED"
 const WireAliasName = "alias/wire/dev/batchop-a/K1"
 const KeyArn =
   "arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+/** The ARN of a multi-Region key — AWS gives such a key an `mrk-` key id. */
+const MultiRegionKeyArn =
+  "arn:aws:kms:us-east-1:123456789012:key/mrk-0123456789abcdef0123456789abcdef"
 
 /** A legacy transaction whose fee payer + blockhash are set, as `submit` sets them. */
 function preparedTransaction(payer: PublicKey): Transaction {
@@ -318,6 +321,47 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       expect(() => KMSClientProvider.assertAliasName("alias/")).toThrow(
         /is not a KMS alias name/
       )
+    })
+  })
+
+  describe("isMultiRegionKeyArn", () => {
+    it("pins the mark AWS gives a multi-Region key id", () => {
+      expect(KMSClientProvider.MultiRegionKeyIdPrefix).toBe("mrk-")
+    })
+
+    it("reads the key id after key/ of a key ARN — true for an mrk- id, false for a plain one", () => {
+      expect(KMSClientProvider.isMultiRegionKeyArn(MultiRegionKeyArn)).toBe(
+        true
+      )
+      expect(KMSClientProvider.isMultiRegionKeyArn(KeyArn)).toBe(false)
+    })
+
+    it("reads a bare key id the same way", () => {
+      expect(
+        KMSClientProvider.isMultiRegionKeyArn(
+          "mrk-0123456789abcdef0123456789abcdef"
+        )
+      ).toBe(true)
+      expect(
+        KMSClientProvider.isMultiRegionKeyArn(
+          "11111111-2222-3333-4444-555555555555"
+        )
+      ).toBe(false)
+    })
+
+    it("an alias ARN or alias name names no key id and is never multi-Region — even one spelling key/mrk- inside the alias", () => {
+      expect(
+        KMSClientProvider.isMultiRegionKeyArn(
+          `arn:aws:kms:us-east-1:123456789012:${AliasName}`
+        )
+      ).toBe(false)
+      expect(
+        KMSClientProvider.isMultiRegionKeyArn(
+          "arn:aws:kms:us-east-1:123456789012:alias/wire/key/mrk-decoy"
+        )
+      ).toBe(false)
+      expect(KMSClientProvider.isMultiRegionKeyArn(AliasName)).toBe(false)
+      expect(KMSClientProvider.isMultiRegionKeyArn("")).toBe(false)
     })
   })
 
@@ -402,6 +446,7 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       expect(publicKey).toEqual({
         keyArn: KeyArn,
         keyType: KeyType.EM,
+        multiRegion: false,
         publicKey: compressedFor(wallet)
       })
       expect(sentCommands()).toEqual([
@@ -417,6 +462,7 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       ).resolves.toEqual({
         keyArn: KeyArn,
         keyType: KeyType.ED,
+        multiRegion: false,
         publicKey: keypair.publicKey.toBytes()
       })
     })
@@ -429,11 +475,25 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       ).resolves.toEqual({
         keyArn: KeyArn,
         keyType: KeyType.K1,
+        multiRegion: false,
         publicKey: privateKey.toPublic().data.array
       })
       expect(sentCommands()).toEqual([
         { kind: "GetPublicKey", input: { KeyId: WireAliasName } }
       ])
+    })
+
+    it("reads the multi-Region mark off the key ARN — true for an mrk- key id, false for a plain one (GetPublicKey reports no flag)", async () => {
+      const wallet = ethers.Wallet.createRandom()
+      mockSend
+        .mockResolvedValueOnce(publicKeyResponse(wallet, MultiRegionKeyArn))
+        .mockResolvedValueOnce(publicKeyResponse(wallet, KeyArn))
+      await expect(
+        KMSClientProvider.getPublicKey(Region, AliasName, KeyType.EM)
+      ).resolves.toMatchObject({ keyArn: MultiRegionKeyArn, multiRegion: true })
+      await expect(
+        KMSClientProvider.getPublicKey(Region, AliasName, KeyType.EM)
+      ).resolves.toMatchObject({ keyArn: KeyArn, multiRegion: false })
     })
 
     it("rejects an Ed25519 key for a K1 key — a WIRE account key is secp256k1", async () => {
@@ -505,6 +565,7 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       ).resolves.toEqual({
         keyArn: KeyArn,
         keyType: KeyType.EM,
+        multiRegion: false,
         publicKey: compressedFor(wallet)
       })
       await expect(
@@ -512,6 +573,7 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       ).resolves.toEqual({
         keyArn: KeyArn,
         keyType: KeyType.ED,
+        multiRegion: false,
         publicKey: keypair.publicKey.toBytes()
       })
     })
@@ -550,15 +612,15 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
   })
 
   describe("createKey", () => {
-    /** Answer CreateKey → CreateAlias → GetPublicKey for `wallet`'s key. */
+    /** Answer CreateKey → CreateAlias → GetPublicKey for `wallet`'s key — a multi-Region key, as KMS mints when asked. */
     function answerCreation(wallet: ethers.HDNodeWallet): void {
       mockSend
-        .mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+        .mockResolvedValueOnce({ KeyMetadata: { Arn: MultiRegionKeyArn } })
         .mockResolvedValueOnce({})
-        .mockResolvedValueOnce(publicKeyResponse(wallet, KeyArn))
+        .mockResolvedValueOnce(publicKeyResponse(wallet, MultiRegionKeyArn))
     }
 
-    it("creates a secp256k1 SIGN_VERIFY key for an EM key, binds the alias to its ARN, then reads the key back through the alias", async () => {
+    it("creates a secp256k1 SIGN_VERIFY multi-Region key for an EM key, binds the alias to its ARN, then reads the key back through the alias", async () => {
       const wallet = ethers.Wallet.createRandom()
       answerCreation(wallet)
       const created = await KMSClientProvider.createKey(
@@ -568,8 +630,9 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
         "batch operator batchop.a — ethereum outpost key (EM)"
       )
       expect(created).toEqual({
-        keyArn: KeyArn,
+        keyArn: MultiRegionKeyArn,
         keyType: KeyType.EM,
+        multiRegion: true,
         publicKey: compressedFor(wallet)
       })
       expect(sentCommands()).toEqual([
@@ -578,12 +641,13 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
           input: {
             KeySpec: KeySpec.ECC_SECG_P256K1,
             KeyUsage: KeyUsageType.SIGN_VERIFY,
-            Description: "batch operator batchop.a — ethereum outpost key (EM)"
+            Description: "batch operator batchop.a — ethereum outpost key (EM)",
+            MultiRegion: true
           }
         },
         {
           kind: "CreateAlias",
-          input: { AliasName, TargetKeyId: KeyArn }
+          input: { AliasName, TargetKeyId: MultiRegionKeyArn }
         },
         { kind: "GetPublicKey", input: { KeyId: AliasName } }
       ])
@@ -591,12 +655,14 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       expect(sentCommands()[0].input).not.toHaveProperty("Tags")
     })
 
-    it("creates an ECC_NIST_EDWARDS25519 SIGN_VERIFY key for an ED key and reads back its 32-byte point", async () => {
+    it("creates an ECC_NIST_EDWARDS25519 SIGN_VERIFY multi-Region key for an ED key and reads back its 32-byte point", async () => {
       const keypair = Keypair.generate()
       mockSend
-        .mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+        .mockResolvedValueOnce({ KeyMetadata: { Arn: MultiRegionKeyArn } })
         .mockResolvedValueOnce({})
-        .mockResolvedValueOnce(ed25519PublicKeyResponse(keypair, KeyArn))
+        .mockResolvedValueOnce(
+          ed25519PublicKeyResponse(keypair, MultiRegionKeyArn)
+        )
       await expect(
         KMSClientProvider.createKey(
           Region,
@@ -605,8 +671,9 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
           "batchop.a ED signing key"
         )
       ).resolves.toEqual({
-        keyArn: KeyArn,
+        keyArn: MultiRegionKeyArn,
         keyType: KeyType.ED,
+        multiRegion: true,
         publicKey: keypair.publicKey.toBytes()
       })
       expect(sentCommands()[0]).toEqual({
@@ -614,17 +681,20 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
         input: {
           KeySpec: KeySpec.ECC_NIST_EDWARDS25519,
           KeyUsage: KeyUsageType.SIGN_VERIFY,
-          Description: "batchop.a ED signing key"
+          Description: "batchop.a ED signing key",
+          MultiRegion: true
         }
       })
     })
 
-    it("creates a secp256k1 SIGN_VERIFY key for a K1 key — the same spec as EM — and reads back its compressed point as a K1 identity", async () => {
+    it("creates a secp256k1 SIGN_VERIFY multi-Region key for a K1 key — the same spec as EM — and reads back its compressed point as a K1 identity", async () => {
       const privateKey = randomWireKey()
       mockSend
-        .mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+        .mockResolvedValueOnce({ KeyMetadata: { Arn: MultiRegionKeyArn } })
         .mockResolvedValueOnce({})
-        .mockResolvedValueOnce(k1PublicKeyResponse(privateKey, KeyArn))
+        .mockResolvedValueOnce(
+          k1PublicKeyResponse(privateKey, MultiRegionKeyArn)
+        )
       await expect(
         KMSClientProvider.createKey(
           Region,
@@ -633,8 +703,9 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
           "batch operator batchop.a — WIRE account key (K1)"
         )
       ).resolves.toEqual({
-        keyArn: KeyArn,
+        keyArn: MultiRegionKeyArn,
         keyType: KeyType.K1,
+        multiRegion: true,
         publicKey: privateKey.toPublic().data.array
       })
       expect(sentCommands()).toEqual([
@@ -643,12 +714,26 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
           input: {
             KeySpec: KeySpec.ECC_SECG_P256K1,
             KeyUsage: KeyUsageType.SIGN_VERIFY,
-            Description: "batch operator batchop.a — WIRE account key (K1)"
+            Description: "batch operator batchop.a — WIRE account key (K1)",
+            MultiRegion: true
           }
         },
-        { kind: "CreateAlias", input: { AliasName: WireAliasName, TargetKeyId: KeyArn } },
+        {
+          kind: "CreateAlias",
+          input: { AliasName: WireAliasName, TargetKeyId: MultiRegionKeyArn }
+        },
         { kind: "GetPublicKey", input: { KeyId: WireAliasName } }
       ])
+    })
+
+    it("REFUSES a CreateKey response whose key is not multi-Region — KMS did not honour the flag — before any alias is bound", async () => {
+      mockSend.mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+      await expect(
+        KMSClientProvider.createKey(Region, AliasName, KeyType.EM, "p")
+      ).rejects.toThrow(
+        /returned arn:aws:kms:us-east-1:123456789012:key\/11111111-2222-3333-4444-555555555555, which is not a multi-Region key \(its key id must begin with mrk-\)/
+      )
+      expect(sentCommands().map(command => command.kind)).toEqual(["CreateKey"])
     })
 
     it("forwards the tags on the CreateKey itself", async () => {
@@ -683,7 +768,7 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
 
     it("propagates a CreateAlias refusal (an alias already bound is never re-pointed)", async () => {
       mockSend
-        .mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+        .mockResolvedValueOnce({ KeyMetadata: { Arn: MultiRegionKeyArn } })
         .mockRejectedValueOnce(
           kmsError("AlreadyExistsException", `${AliasName} already exists`)
         )

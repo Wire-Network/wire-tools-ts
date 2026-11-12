@@ -329,7 +329,11 @@ operators' WIRE account K1, Ethereum EM and Solana ED keys named by `keyTypes`
 without wire-sysio #768's K1 KMS signing, `["EM"]` keeps the ED keys there too
 for one without Ed25519 KMS signing, which also needs aws-sdk-cpp ≥ 1.11.686)
 are created inside AWS KMS under the rendered alias — `ECC_SECG_P256K1` for K1
-and EM, `ECC_NIST_EDWARDS25519` for ED — and never leave it; K1 custody is for
+and EM, `ECC_NIST_EDWARDS25519` for ED, every one a multi-Region PRIMARY
+(`MultiRegion: true`, `mrk-` key id), so a later `ReplicateKey` into another
+region — a separate step the harness never performs — keeps the public key and
+the identities keyed by it, while a single-Region key can never be converted
+and adopting one warns — and never leave it; K1 custody is for
 the batch operators' account keys only, producer and node K1 keys stay in SSM
 because `producer_plugin` needs its block-signing key locally; the pattern must
 carry `{account}` and `{keyType}`; the daemon spec renders

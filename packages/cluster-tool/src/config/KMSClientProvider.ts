@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import { asOption } from "@3fv/prelude-ts"
 import { ethers } from "ethers"
 import { identity } from "lodash"
 import {
@@ -89,7 +90,12 @@ function importKMSSignerModule(): Promise<KMSSignerModule> {
  * private key for every WIRE key on a node with producers configured —
  * wire-sysio #768). The private key is generated inside KMS and never leaves
  * it — there is no material to fetch, so unlike `SSMClientProvider` nothing
- * here ever returns a secret. There is deliberately NO delete
+ * here ever returns a secret. Every key {@link createKey} mints is a
+ * multi-Region PRIMARY (`MultiRegion: true`, key id `mrk-…`), so it can later
+ * be replicated into another region without changing its public key — a
+ * separate, deliberate step the harness never performs — and
+ * {@link PublicKey.multiRegion} reports whether an adopted key is one, read
+ * off its ARN ({@link isMultiRegionKeyArn}). There is deliberately NO delete
  * (`ScheduleKeyDeletion`): a key under an alias is the AWS ACCOUNT's durable
  * key identity, which the next `create` adopts — and the funding a pre-launch
  * deployment binds to it is unrecoverable once the key is gone.
@@ -134,6 +140,22 @@ export namespace KMSClientProvider {
 
   /** The dot a WIRE account handle separates its segments with. */
   const AccountSegmentSeparator = "."
+
+  /**
+   * The prefix AWS gives every multi-Region key's key id (`mrk-…`) — the ONE
+   * mark {@link isMultiRegionKeyArn} reads: `GetPublicKey` reports no
+   * multi-Region flag, and the harness role deliberately has no
+   * `kms:DescribeKey`.
+   */
+  export const MultiRegionKeyIdPrefix = "mrk-"
+  /** The scheme every AWS ARN starts with. */
+  const ArnPrefix = "arn:"
+  /** The field separator of an ARN (`arn:partition:service:region:account:resource`). */
+  const ArnFieldSeparator = ":"
+  /** The ARN field holding the resource — `key/<id>` for a key, `alias/<name>` for an alias. */
+  const ArnResourceFieldIndex = 5
+  /** The resource prefix of a KEY ARN (`…:key/<id>`); an alias ARN carries `alias/` there instead. */
+  const KeyArnResourcePrefix = "key/"
 
   /** Length of an uncompressed secp256k1 point (`04 || X || Y`). */
   export const UncompressedPointLength = 65
@@ -195,6 +217,13 @@ export namespace KMSClientProvider {
     readonly keyArn: string
     /** The curve the key signs for — the one its KMS key spec was verified against. */
     readonly keyType: KMSCustodiedKeyType
+    /**
+     * Whether the key is a multi-Region key — its key id begins with
+     * {@link MultiRegionKeyIdPrefix}, read off the ARN `GetPublicKey` reports.
+     * Every key {@link createKey} mints is one; an adopted key may predate that
+     * mark, and such a single-Region key can never be replicated.
+     */
+    readonly multiRegion: boolean
     /**
      * The curve-canonical public key bytes: the 33-byte compressed secp256k1
      * point of a K1 or EM key, the 32-byte Ed25519 point of an ED key.
@@ -262,6 +291,37 @@ export namespace KMSClientProvider {
       `KMSClientProvider: "${aliasName}" is not a KMS alias name — it must start with ${AliasPrefix} and contain only letters, digits, '/', '_' and '-'`
     )
     return aliasName
+  }
+
+  /**
+   * Whether `keyArn` names a multi-Region key: its key id — the segment after
+   * `key/` of a key ARN, or a bare key id as is — begins with
+   * {@link MultiRegionKeyIdPrefix}. An alias ARN or alias name names no key id
+   * and is never one. The property is fixed at creation — a single-Region key
+   * can never be converted or replicated — which is why the mark is worth
+   * reading off an adopted key.
+   *
+   * @param keyArn - A key ARN (`arn:aws:kms:…:key/<id>`) or a bare key id.
+   * @returns Whether the key is a multi-Region key.
+   */
+  export function isMultiRegionKeyArn(keyArn: string): boolean {
+    return keyIdOf(keyArn).startsWith(MultiRegionKeyIdPrefix)
+  }
+
+  /**
+   * The key id `keyArn` names: the segment after `key/` of a key ARN, a bare
+   * key id unchanged, nothing for any other ARN (an alias ARN carries `alias/`
+   * where a key ARN carries `key/`).
+   */
+  function keyIdOf(keyArn: string): string {
+    return match(keyArn)
+      .with(P.string.startsWith(ArnPrefix), arn =>
+        asOption(arn.split(ArnFieldSeparator)[ArnResourceFieldIndex])
+          .filter(resource => resource.startsWith(KeyArnResourcePrefix))
+          .map(resource => resource.slice(KeyArnResourcePrefix.length))
+          .getOrElse("")
+      )
+      .otherwise(identity)
   }
 
   /** Get-or-create the cached `KMSClient` for `region`. */
@@ -476,7 +536,7 @@ export namespace KMSClientProvider {
    * @param region - The region the key lives in.
    * @param keyId - Any `KeyId` KMS accepts (alias name, key id, key / alias ARN).
    * @param keyType - The curve the key must sign for.
-   * @returns The key's ARN, curve and curve-canonical public key bytes.
+   * @returns The key's ARN, curve, multi-Region mark and curve-canonical public key bytes.
    */
   export async function getPublicKey(
     region: string,
@@ -504,6 +564,8 @@ export namespace KMSClientProvider {
     return {
       keyArn: response.KeyId,
       keyType,
+      // `GetPublicKey` reports no multi-Region flag; the key id's prefix is the mark.
+      multiRegion: isMultiRegionKeyArn(response.KeyId),
       publicKey: publicKeyFromSpki(keyType, response.PublicKey)
     }
   }
@@ -542,12 +604,24 @@ export namespace KMSClientProvider {
   /**
    * Create a NEW signing key of the spec `keyType` needs (secp256k1 for K1 /
    * EM, Ed25519 for ED) and bind `aliasName` to it — the generation backend of
-   * a KMS-custodied key. The alias is the key's durable id: `CreateAlias` fails
-   * when the name is already bound, so reaching here for an existing alias
-   * means the adopt probe and this write disagreed, and the run fails loudly
-   * instead of re-pointing the alias.
+   * a KMS-custodied key.
    *
-   * @param region - The region the key lives in.
+   * Every key the harness creates is a multi-Region PRIMARY (`MultiRegion:
+   * true`; AWS gives it a `mrk-…` key id): AWS fixes the property at creation —
+   * a single-Region key can never be converted or replicated — while a primary
+   * can LATER be replicated into another region (`ReplicateKey`, plus an alias
+   * in that region) without changing its public key, hence without touching
+   * the on-chain identities keyed by it (the WIRE account key, the EM address,
+   * the ED key). That replication is a separate, deliberate step the harness
+   * never performs; the mark itself is unconditional — there is no knob — and
+   * a KMS that did not honour it fails here, before the alias is bound.
+   *
+   * The alias is the key's durable id: `CreateAlias` fails when the name is
+   * already bound, so reaching here for an existing alias means the adopt probe
+   * and this write disagreed, and the run fails loudly instead of re-pointing
+   * the alias.
+   *
+   * @param region - The region the key lives in — the primary's region.
    * @param aliasName - The alias to bind (`alias/…`).
    * @param keyType - The curve the key signs for.
    * @param description - The key's KMS description (what it is for).
@@ -569,6 +643,8 @@ export namespace KMSClientProvider {
           KeySpec: signingKeySpec(kms, keyType),
           KeyUsage: kms.KeyUsageType.SIGN_VERIFY,
           Description: description,
+          // A multi-Region PRIMARY, unconditionally — replicable later, never convertible.
+          MultiRegion: true,
           ...(tags.length > 0 ? { Tags: [...tags] } : {})
         })
       ),
@@ -577,11 +653,15 @@ export namespace KMSClientProvider {
       keyArn != null,
       `KMSClientProvider: CreateKey in ${region} returned no key ARN`
     )
+    Assert.ok(
+      isMultiRegionKeyArn(keyArn),
+      `KMSClientProvider: CreateKey in ${region} returned ${keyArn}, which is not a multi-Region key (its key id must begin with ${MultiRegionKeyIdPrefix}) — KMS did not honour MultiRegion, and a single-Region key can never be replicated`
+    )
     await client.send(
       new kms.CreateAliasCommand({ AliasName: aliasName, TargetKeyId: keyArn })
     )
     log.info(
-      `KMSClientProvider: created ${KeyType[keyType]} key ${keyArn} in ${region} as ${aliasName}`
+      `KMSClientProvider: created ${KeyType[keyType]} multi-Region key ${keyArn} in ${region} as ${aliasName}`
     )
     return getPublicKey(region, aliasName, keyType)
   }

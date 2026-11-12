@@ -333,7 +333,12 @@ export namespace KeySteps {
 
   /**
    * Adopt the KMS key behind the rendered alias, or nothing. The adopted pair
-   * carries the key's public identity and its reference — never material.
+   * carries the key's public identity and its reference — never material. The
+   * note records whether the key is multi-Region. A single-Region key is
+   * adopted all the same — it keeps working — but WARNED about: AWS fixes the
+   * property at creation, so it can never be replicated into another region,
+   * and a multi-Region key means a NEW key under a NEW alias, which the
+   * `kms.version` alias segment mints as a new generation.
    */
   async function adoptKMSKey(
     source: KeyGenerator.SignatureProviderSource,
@@ -350,6 +355,11 @@ export namespace KeySteps {
     log.info(
       `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from KMS ${awsKmsRegion}:${awsKmsKeyId} (${existing.keyArn}) — NOT regenerating`
     )
+    if (!existing.multiRegion) {
+      log.warn(
+        `[keys] ${account}'s ${KeyType[keyType]} key ${existing.keyArn} (KMS ${awsKmsRegion}:${awsKmsKeyId}) is a single-Region key — it can never be replicated into another region (AWS fixes the multi-Region property at creation); a multi-Region key needs a NEW key under a NEW alias, which the kms.version alias segment mints as a new generation`
+      )
+    }
     StepExtraRecorder.note(
       `adopted ${account}'s existing ${KeyType[keyType]} key from KMS`,
       {
@@ -357,7 +367,8 @@ export namespace KeySteps {
         keyType: KeyType[keyType],
         awsKmsRegion,
         awsKmsKeyId,
-        keyArn: existing.keyArn
+        keyArn: existing.keyArn,
+        multiRegion: existing.multiRegion
       }
     )
     return kmsKeyPair(existing, source)
@@ -386,10 +397,12 @@ export namespace KeySteps {
 
   /**
    * Generate a KMS-custodied key: a new key of the curve's spec inside KMS
-   * (secp256k1 for K1 / EM, Ed25519 for ED), bound to the rendered alias. The pair
-   * carries the key's public identity + reference, recorded in the step's
-   * `extra` the way `KeyGenerator.create` records a local generation (public
-   * half, purpose, mechanism — never material, of which KMS has none to give).
+   * (secp256k1 for K1 / EM, Ed25519 for ED), a multi-Region PRIMARY like every
+   * key the harness creates, bound to the rendered alias. The pair carries the
+   * key's public identity + reference, recorded in the step's `extra` the way
+   * `KeyGenerator.create` records a local generation (public half, purpose,
+   * mechanism, the multi-Region mark — never material, of which KMS has none
+   * to give).
    */
   async function createKMSKey(
     settings: KeyCustodySettings,
@@ -418,6 +431,7 @@ export namespace KeySteps {
       keyType: KeyType[keyType],
       purpose: options.purpose ?? null,
       keyArn: created.keyArn,
+      multiRegion: created.multiRegion,
       ...keyPair
     })
     return keyPair
