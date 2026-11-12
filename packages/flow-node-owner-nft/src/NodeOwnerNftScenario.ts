@@ -3,6 +3,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
   FlowScenario,
+  matchesProtoEnum,
   NodeOwnerRegStatus,
   NodeOwnerRejectReason,
   NodeOwnerTier,
@@ -21,7 +22,7 @@ import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwne
 import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./steps/NodeOwnerNftScenarioMintSteps.js"
 import { NodeOwnerNftScenarioRegistrationSteps as RegistrationSteps } from "./steps/NodeOwnerNftScenarioRegistrationSteps.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioAuthexChainkind, SysioContractName } = SysioContracts
 const { Actor } = Report
 
 /** The owner's `nodeownerreg` audit row must be REJECTED with `reason` (reads). */
@@ -54,6 +55,65 @@ async function assertRejectedWithoutRow(
     `nodeowners row must be absent for ${account}`
   )
   await assertRejectedAudit(ctx, account, reason)
+}
+
+/** Verify that the original Ethereum identity survived and the rejected key was not linked. */
+async function assertPreservedEthereumLink(
+  ctx: ClusterBuildContext,
+  account: string,
+  linkedHdIndex: number,
+  rejectedHdIndex: number
+): Promise<void> {
+  const linkedKey = await RegistrationSteps.newEthereumPublicKey(ctx, linkedHdIndex),
+    rejectedKey = await RegistrationSteps.newEthereumPublicKey(ctx, rejectedHdIndex),
+    links = await ctx.wire
+      .getSysioContract(SysioContractName.authex)
+      .tables.links.queryAll(),
+    accountLinks = links.filter(
+      row =>
+        row.username === account &&
+        matchesProtoEnum(
+          row.chain_kind,
+          SysioAuthexChainkind,
+          SysioAuthexChainkind.CHAIN_KIND_EVM
+        )
+    )
+  Assert.deepStrictEqual(
+    accountLinks.map(row => row.pub_key),
+    [linkedKey],
+    `original Ethereum link must be preserved for ${account}`
+  )
+  Assert.ok(
+    !links.some(row => row.pub_key === rejectedKey),
+    `rejected depositor key must remain unlinked for ${account}`
+  )
+}
+
+async function verifyExistingAccountRejected(
+  ctx: ClusterBuildContext,
+  account: string,
+  linkedHdIndex: number,
+  rejectedHdIndex: number
+): Promise<void> {
+  await assertRejectedWithoutRow(ctx, account, NodeOwnerRejectReason.AccountExists)
+  await assertPreservedEthereumLink(ctx, account, linkedHdIndex, rejectedHdIndex)
+}
+
+async function verifyDuplicateRejected(ctx: ClusterBuildContext): Promise<void> {
+  const account = Constants.DuplicateAccount,
+    registration = await readNodeOwner(ctx.wire, account)
+  await assertRejectedAudit(ctx, account, NodeOwnerRejectReason.Duplicate)
+  Assert.strictEqual(
+    Number(registration?.tier),
+    NodeOwnerTier.T1,
+    `original Tier-1 membership must be preserved for ${account}`
+  )
+  await assertPreservedEthereumLink(
+    ctx,
+    account,
+    Constants.DuplicateEthereumHdIndex,
+    Constants.DuplicateReplayEthereumHdIndex
+  )
 }
 
 /**
@@ -249,6 +309,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
+      RegistrationSteps.planAuthexLink(
+        Actor.Sysio,
+        "link-wrong-key-owner",
+        `record ${Constants.WrongKeyAccount}'s existing Ethereum link`,
+        stepOptions,
+        Constants.WrongKeyAccount,
+        Constants.WrongKeyLinkedEthereumHdIndex
+      ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-wrong-key-owner",
@@ -262,12 +330,13 @@ export class NodeOwnerNftScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "rejected-wrong-key-owner",
-        "no nodeowners row; audit REJECTED/ACCOUNT_EXISTS",
+        "no nodeowners row; audit REJECTED/ACCOUNT_EXISTS; original Ethereum link preserved",
         ctx =>
-          assertRejectedWithoutRow(
+          verifyExistingAccountRejected(
             ctx,
             Constants.WrongKeyAccount,
-            NodeOwnerRejectReason.AccountExists
+            Constants.WrongKeyLinkedEthereumHdIndex,
+            Constants.WrongKeyEthereumHdIndex
           ),
         stepOptions
       )
@@ -318,6 +387,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
+      RegistrationSteps.planAuthexLink(
+        Actor.Sysio,
+        "link-existing-owner",
+        `record ${Constants.ExistingAccount}'s existing Ethereum link`,
+        stepOptions,
+        Constants.ExistingAccount,
+        Constants.ExistingLinkedEthereumHdIndex
+      ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "reject-existing-owner",
@@ -331,8 +408,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "rejected-existing-owner",
-        "no nodeowners row; audit REJECTED/ACCOUNT_EXISTS",
-        ctx => assertRejectedWithoutRow(ctx, Constants.ExistingAccount, NodeOwnerRejectReason.AccountExists),
+        "no nodeowners row; audit REJECTED/ACCOUNT_EXISTS; original Ethereum link preserved",
+        ctx =>
+          verifyExistingAccountRejected(
+            ctx,
+            Constants.ExistingAccount,
+            Constants.ExistingLinkedEthereumHdIndex,
+            Constants.ExistingEthereumHdIndex
+          ),
         stepOptions
       )
     )
@@ -366,13 +449,8 @@ export class NodeOwnerNftScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "rejected-duplicate-owner",
-        "audit REJECTED/DUPLICATE after the replay",
-        ctx =>
-          assertRejectedAudit(
-            ctx,
-            Constants.DuplicateAccount,
-            NodeOwnerRejectReason.Duplicate
-          ),
+        "audit REJECTED/DUPLICATE; original Tier-1 membership and Ethereum link preserved",
+        verifyDuplicateRejected,
         stepOptions
       )
     )

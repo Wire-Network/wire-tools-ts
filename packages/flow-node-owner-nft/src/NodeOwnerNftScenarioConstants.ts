@@ -74,6 +74,10 @@ export namespace NodeOwnerNftScenarioConstants {
   export const TierBelowMinimumEthereumHdIndex = 46
   /** HD index for the tier-above-maximum hard-abort probe's EM key. */
   export const TierAboveMaximumEthereumHdIndex = 47
+  /** HD index for the existing link on the wrong-key fixture. */
+  export const WrongKeyLinkedEthereumHdIndex = 48
+  /** HD index for the existing link on the matching-key fixture. */
+  export const ExistingLinkedEthereumHdIndex = 49
 
   /** ERC-1155 units minted from MockWireNodes (the contract charges `1 ether` per unit). */
   export const MintAmount = 1

@@ -51,7 +51,9 @@ export enum NodeOwnerRegStatus {
 export enum NodeOwnerRejectReason {
   None = 0,
   NameInvalid = 1,
+  /** Historical audit value. Fresh claims create the account inside nodeownreg. */
   OwnerNotAccount = 2,
+  /** Historical audit value. Existing names reject regardless of the submitted key. */
   AccountKeyMismatch = 3,
   Duplicate = 4,
   LinkKeyMismatch = 5,

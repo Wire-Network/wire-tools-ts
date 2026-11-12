@@ -39,7 +39,7 @@ const UtcZuluSuffix = "Z"
 /**
  * Flow-local step factories + dispute-domain reads for the slashing scenario.
  * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
- * `sysio.opreg::processbatch`, and the roa node-owner registration pair have no
+ * `sysio.opreg::processbatch`, and `sysio.roa::nodeownreg` have no
  * shared `Steps.*` palette factories yet, so this namespace supplies them in the
  * same shape (`(actor, name, description, options, ...args) → ClusterBuildStep`,
  * ABI-exact action names, typed `StepInput`s, named runners). Cross-step values
@@ -407,7 +407,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
-   * @param account - The unused voter account name.
+   * @param account - Voter account to create; it must not exist yet.
    * @param tier - The node-owner tier.
    * @returns The definition step.
    */

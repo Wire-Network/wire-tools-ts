@@ -1,4 +1,4 @@
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildContext,
   ClusterBuildStep,
@@ -12,6 +12,8 @@ import {
   type EthereumIdentity,
   type StepInput
 } from "@wireio/cluster-tool"
+
+const { SysioAuthexChainkind, SysioContractName } = SysioContracts
 
 /**
  * Registration writes for fresh claims and pre-existing-account rejection fixtures.
@@ -113,6 +115,65 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       input.wirePublicKey,
       input.tier
     )
+  }
+
+  /** Input for the privileged pre-existing Ethereum link fixture. */
+  interface AuthexLinkInput extends StepInput {
+    readonly kind: "NodeOwnerNftScenarioRegistrationSteps.AuthexLinkInput"
+    readonly account: string
+    readonly ethereumHdIndex: number
+  }
+
+  /**
+   * Record a fixture account's Ethereum identity before testing a rejected claim.
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Per-step tuning.
+   * @param account - Existing fixture account.
+   * @param ethereumHdIndex - HD index for the fixture link, distinct from the claim's.
+   * @returns The link fixture step.
+   */
+  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    ethereumHdIndex: number
+  ): ClusterBuildStep<C, AuthexLinkInput> {
+    return ClusterBuildStep.create<C, AuthexLinkInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "NodeOwnerNftScenarioRegistrationSteps.AuthexLinkInput",
+        account,
+        ethereumHdIndex
+      },
+      runAuthexLink
+    )
+  }
+
+  async function runAuthexLink<C extends ClusterBuildContext>(
+    ctx: C,
+    input: AuthexLinkInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const { publicKey, nativeAddress } = await newEthereumIdentity(
+      ctx,
+      input.ethereumHdIndex
+    )
+    await ctx.wire
+      .getSysioContract(SysioContractName.authex)
+      .actions.recordlink.invoke({
+        account: input.account,
+        chain_kind: SysioAuthexChainkind.CHAIN_KIND_EVM,
+        pub_key: publicKey,
+        native_address: nativeAddress
+      })
   }
 
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
