@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
+import { asOption, Either } from "@3fv/prelude-ts"
 import { flatten, negate } from "lodash"
 import { match } from "ts-pattern"
 import {
@@ -13,6 +13,7 @@ import {
   NestedError
 } from "@wireio/shared"
 import {
+  type AbiProvider,
   Action,
   API,
   APIClient,
@@ -20,6 +21,7 @@ import {
   type Authority,
   Name,
   type PermissionLevelType,
+  Serializer,
   SysioContracts
 } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
@@ -1495,6 +1497,73 @@ export namespace WireClient {
     }
   }
 
+  /**
+   * A traced action's data as its generated type. The trace API decodes `data`
+   * into `params` with the ABI the contract held when the action ran, and omits
+   * `params` when it holds no such ABI or cannot decode with it; such an action's
+   * `data` is decoded here with the contract's ABI as `abis` reads it, the ABI the
+   * generated type describes.
+   *
+   * @param abis - Reads the contract's ABI, only for an action without `params`;
+   *   the caller picks the cache lifetime (an sdk-core `ABICache` per scan).
+   * @param contract - The contract the action belongs to.
+   * @param action - The action.
+   * @param trace - A traced `action` of `contract`.
+   * @returns The action's data.
+   * @throws When `trace` is another action; the ABI read's own error when it
+   *   fails; NestedError when `trace` carries no `params` and its `data` does
+   *   not decode as `action`.
+   */
+  export async function decodeTraceActionData<
+    Name extends SysioContractName,
+    Action extends ActionName<Name>
+  >(
+    abis: AbiProvider,
+    contract: Name,
+    action: Action,
+    trace: TraceAction
+  ): Promise<ActionData<Name, Action>> {
+    const { account } = SysioContractDefinitions[contract]
+    Assert.ok(
+      trace.account === account && trace.name === action,
+      `a trace of ${trace.account}::${trace.name} is not ${account}::${action}`
+    )
+    return asOption(trace.params).match({
+      // Untyped trace JSON, typed here once: the node decoded it as this action.
+      Some: async params => params as ActionData<Name, Action>,
+      None: () => decodeTraceData<ActionData<Name, Action>>(abis, account, trace)
+    })
+  }
+
+  /**
+   * `trace`'s encoded `data` decoded with `account`'s ABI, as the plain object
+   * its generated type describes.
+   */
+  async function decodeTraceData<Data>(
+    abis: AbiProvider,
+    account: string,
+    trace: TraceAction
+  ): Promise<Data> {
+    const abi = await abis.getAbi(Name.from(account))
+    return Either.try(() =>
+      Serializer.objectify(
+        Action.from({
+          account,
+          name: trace.name,
+          authorization: [],
+          data: trace.data
+        }).decodeData(abi)
+      )
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          `a trace of ${account}::${trace.name} carries no decoded params, and its data does not decode with the ${account} ABI`,
+          { cause: error, context: { data: trace.data } }
+        )
+      })
+      .getOrThrow()
+  }
+
   // ── Response shapes ──
   export interface GetInfoResponse {
     server_version: string
@@ -1550,10 +1619,19 @@ export namespace WireClient {
   }
   /** One executed action in a trace-API response, inline actions and notifications included. */
   export interface TraceAction {
+    /** The account whose code ran the action: `account` itself, or a notified one. */
     receiver: string
+    /** The contract the action belongs to. */
     account: string
+    /** The action. */
     name: string
-    /** The action data, decoded with the ABI in effect when it ran; each action has its own type. */
+    /** The encoded action data, as hex; the trace API always serves it. */
+    data: string
+    /**
+     * The action data, decoded with the ABI in effect when it ran; each action has
+     * its own type. Absent when the node holds no such ABI or cannot decode with it
+     * — read it through {@link decodeTraceActionData}.
+     */
     params?: unknown
   }
   /** One transaction in a traced block; failed transactions are never traced. */

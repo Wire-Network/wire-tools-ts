@@ -1,9 +1,12 @@
+import { identity } from "lodash"
 import { API, KeyType, PublicKey } from "@wireio/sdk-core"
+import { NestedError } from "@wireio/shared"
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { Constants, KeyGenerator } from "@wireio/cluster-tool"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireAuthorityAuditTool } from "@wireio/cluster-tool/tools/wire"
 import { AccountObjectFixture } from "../../fixtures/AccountObjectFixture.js"
+import { NewAccountTraceFixture } from "../../fixtures/NewAccountTraceFixture.js"
 
 const { Classification, AuditPhase } = WireAuthorityAuditTool
 const { account, permission, link } = AccountObjectFixture
@@ -722,37 +725,63 @@ describe("WireAuthorityAuditTool.normalizeKey", () => {
 })
 
 describe("WireAuthorityAuditTool.discoverSystemAccounts", () => {
-  /** A traced block creating `names` through `sysio::newaccount`. */
-  function block(number: number, names: string[]): WireClient.GetBlockTraceResponse {
+  /** How a node serves the `sysio::newaccount` actions it traced. */
+  type TracedCreation = typeof NewAccountTraceFixture.decoded
+
+  /** A traced block of `actions`. */
+  function tracedBlock(number: number, actions: WireClient.TraceAction[]): WireClient.GetBlockTraceResponse {
     return {
       number,
       status: WireClient.BlockTraceStatus.irreversible,
-      transactions: [
-        {
-          id: `trx${number}`,
-          block_num: number,
-          block_time: "2026-11-10T00:00:00.000",
-          actions: names.flatMap(name => [
-            { receiver: "sysio", account: "sysio", name: "newaccount", params: { creator: "sysio", name } },
-            // A notification to another receiver is not a second creation.
-            { receiver: "sysio.roa", account: "sysio", name: "newaccount", params: { creator: "sysio", name } }
-          ])
-        }
-      ]
+      transactions: [{ id: `trx${number}`, block_num: number, block_time: "2026-11-10T00:00:00.000", actions }]
     }
   }
 
-  it("audits genesis, every sysio.* account created, and the listed ones that exist", async () => {
-    const blocks = new Map([
-        [2, block(2, ["sysio.roa", "sysio.acct"])],
-        [3, block(3, ["defproducera", "sysio.extra", ...Constants.SYSTEM_ACCOUNTS.filter(name => name !== "sysio.cncl" && name !== "sysio.roa" && name !== "sysio.acct")])],
-        [4, block(4, [])]
-      ]),
-      getBlockTrace = jest.fn(async (number: number) => blocks.get(number)),
+  /** A traced block creating `names` through `sysio::newaccount`, each traced as `traced` shapes it. */
+  function block(
+    number: number,
+    names: string[],
+    traced: TracedCreation = NewAccountTraceFixture.decoded
+  ): WireClient.GetBlockTraceResponse {
+    return tracedBlock(
+      number,
+      names.flatMap(name => [
+        traced(name),
+        // A notification to another receiver is not a second creation.
+        traced(name, "sysio.roa")
+      ])
+    )
+  }
+
+  /**
+   * A WIRE client tracing `blocks` up to LIB `lib`, whose `get_raw_abi` answers
+   * with the `newaccount` ABI.
+   */
+  function scanned(blocks: Map<number, WireClient.GetBlockTraceResponse>, lib: number) {
+    const getBlockTrace = jest.fn(async (number: number) => blocks.get(number)),
+      getRawAbi = jest.fn().mockResolvedValue({ abi: NewAccountTraceFixture.Abi }),
       wire = {
-        getInfo: jest.fn().mockResolvedValue({ last_irreversible_block_num: 4 }),
+        api: { v1: { chain: { get_raw_abi: getRawAbi } } },
+        getInfo: jest.fn().mockResolvedValue({ last_irreversible_block_num: lib }),
         getBlockTrace
-      } as never,
+      } as never
+    return { wire, getBlockTrace, getRawAbi }
+  }
+
+  /** The system accounts block 3 creates in {@link scanned}'s history. */
+  const LaterSystemAccounts = Constants.SYSTEM_ACCOUNTS.filter(
+    name => name !== "sysio.cncl" && name !== "sysio.roa" && name !== "sysio.acct"
+  )
+
+  it("audits genesis, every sysio.* account created, and the listed ones that exist", async () => {
+    const { wire, getBlockTrace, getRawAbi } = scanned(
+        new Map([
+          [2, block(2, ["sysio.roa", "sysio.acct"])],
+          [3, block(3, ["defproducera", "sysio.extra", ...LaterSystemAccounts])],
+          [4, block(4, [])]
+        ]),
+        4
+      ),
       inventory = await WireAuthorityAuditTool.discoverSystemAccounts(
         wire,
         new AbortController().signal
@@ -764,10 +793,71 @@ describe("WireAuthorityAuditTool.discoverSystemAccounts", () => {
     expect(inventory.missing).toEqual(["sysio.cncl"])
     // The genesis block has no trace; the scan starts after it and reaches LIB.
     expect(getBlockTrace.mock.calls.map(([number]) => number)).toEqual([2, 3, 4])
+    // Every creation carried decoded params, so no ABI was read.
+    expect(getRawAbi).not.toHaveBeenCalled()
+  })
+
+  it("reads a creation the node did not decode from its encoded data, reading the sysio ABI once", async () => {
+    const { wire, getRawAbi } = scanned(
+        new Map([
+          [2, block(2, ["sysio.roa", "sysio.acct"])],
+          [3, block(3, ["defproducera", "sysio.extra", ...LaterSystemAccounts], NewAccountTraceFixture.raw)]
+        ]),
+        3
+      ),
+      inventory = await WireAuthorityAuditTool.discoverSystemAccounts(
+        wire,
+        new AbortController().signal
+      )
+    expect(inventory.accounts).toEqual(expect.arrayContaining(["sysio.roa", "sysio.acct", "sysio.extra", "dev.owner1", "sysio.nodes"]))
+    expect(inventory.accounts).not.toContain("defproducera")
+    expect(inventory.unlisted).toEqual(["sysio.extra"])
+    expect(inventory.missing).toEqual(["sysio.cncl"])
+    expect(getRawAbi).toHaveBeenCalledTimes(1)
+    expect(String(getRawAbi.mock.calls[0][0])).toBe("sysio")
+  })
+
+  it("fails, naming the block, on a creation with neither params nor decodable data", async () => {
+    const created = NewAccountTraceFixture.raw("sysio.extra"),
+      { wire } = scanned(
+        new Map([
+          [2, block(2, ["sysio.roa"])],
+          // The node did not decode it, and its data is one byte short.
+          [3, tracedBlock(3, [{ ...created, data: created.data.slice(0, -2) }])]
+        ]),
+        3
+      ),
+      failure = await WireAuthorityAuditTool.discoverSystemAccounts(
+        wire,
+        new AbortController().signal
+      ).then(() => null, identity<NestedError>)
+    expect(failure).toBeInstanceOf(NestedError)
+    expect(failure.message).toMatch(
+      /^authority audit: block 3 traces a sysio::newaccount whose new account cannot be read; read the traces from a node that decodes them, or pass the accounts to audit explicitly/
+    )
+    expect(failure.message).toContain("transaction=trx3")
+    expect(failure.causes).toHaveLength(1)
+    expect(failure.causes[0].message).toContain("carries no decoded params, and its data does not decode with the sysio ABI")
+  })
+
+  it("fails, naming the block, on a creation without params when the sysio ABI cannot be read", async () => {
+    const { wire, getRawAbi } = scanned(
+      new Map([[2, block(2, ["sysio.roa"], NewAccountTraceFixture.raw)]]),
+      2
+    )
+    getRawAbi.mockRejectedValue(new Error("get_raw_abi refused"))
+    const failure = await WireAuthorityAuditTool.discoverSystemAccounts(
+      wire,
+      new AbortController().signal
+    ).then(() => null, identity<NestedError>)
+    expect(failure).toBeInstanceOf(NestedError)
+    expect(failure.message).toMatch(/^authority audit: block 2 traces a sysio::newaccount whose new account cannot be read/)
+    expect(failure.causes[0].message).toBe("get_raw_abi refused")
   })
 
   it("refuses to enumerate from a node that holds no trace of a block", async () => {
     const wire = {
+      api: { v1: { chain: { get_raw_abi: jest.fn() } } },
       getInfo: jest.fn().mockResolvedValue({ last_irreversible_block_num: 3 }),
       getBlockTrace: jest.fn().mockResolvedValue(null)
     } as never

@@ -2,7 +2,9 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 
+import { identity } from "lodash"
 import { Action, Authority, Name, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
@@ -14,6 +16,7 @@ import { toURL } from "@wireio/cluster-tool/utils"
 import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 
 import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
+import { NewAccountTraceFixture } from "../../fixtures/NewAccountTraceFixture.js"
 
 describe("WireClient", () => {
   let config: WireClientConfig
@@ -705,6 +708,74 @@ describe("WireClient", () => {
       await expect(new WireClient(config).getBlockTrace(12)).rejects.toThrow(
         "get_block_trace(12) failed: HTTP 500"
       )
+    })
+  })
+
+  describe("decodeTraceActionData", () => {
+    const { Abi } = NewAccountTraceFixture
+
+    /** An ABI reader answering with the `newaccount` ABI. */
+    function abiReader() {
+      return { getAbi: jest.fn().mockResolvedValue(Abi) }
+    }
+
+    /** `trace` read as `sysio::newaccount` through `abis`. */
+    function decode(
+      abis: ReturnType<typeof abiReader>,
+      trace: WireClient.TraceAction
+    ): Promise<SysioContracts.SysioSystemNewaccountAction> {
+      return WireClient.decodeTraceActionData(
+        abis,
+        SysioContracts.SysioContractName.system,
+        NewAccountTraceFixture.Action,
+        trace
+      )
+    }
+
+    it("returns the node's decoded params without reading the ABI", async () => {
+      const abis = abiReader()
+      await expect(decode(abis, NewAccountTraceFixture.decoded("alice"))).resolves.toEqual(
+        NewAccountTraceFixture.data("alice")
+      )
+      expect(abis.getAbi).not.toHaveBeenCalled()
+    })
+
+    it("decodes the encoded data with the contract's ABI when the node did not decode it", async () => {
+      const abis = abiReader()
+      await expect(decode(abis, NewAccountTraceFixture.raw("alice"))).resolves.toEqual(
+        NewAccountTraceFixture.data("alice")
+      )
+      expect(abis.getAbi).toHaveBeenCalledTimes(1)
+      expect(String(abis.getAbi.mock.calls[0][0])).toBe("sysio")
+    })
+
+    it("fails, keeping the cause, when the data does not decode", async () => {
+      const trace = NewAccountTraceFixture.raw("alice"),
+        failure = await decode(abiReader(), { ...trace, data: trace.data.slice(0, -2) }).then(
+          () => null,
+          identity<NestedError>
+        )
+      expect(failure).toBeInstanceOf(NestedError)
+      expect(failure.message).toMatch(
+        /^a trace of sysio::newaccount carries no decoded params, and its data does not decode with the sysio ABI/
+      )
+      expect(failure.context).toEqual({ data: trace.data.slice(0, -2) })
+      expect(failure.causes).toHaveLength(1)
+    })
+
+    it("fails when the ABI does not declare the action", async () => {
+      const abis = { getAbi: jest.fn().mockResolvedValue({ ...Abi, actions: [] }) }
+      await expect(decode(abis, NewAccountTraceFixture.raw("alice"))).rejects.toThrow(
+        /does not decode with the sysio ABI/
+      )
+    })
+
+    it("refuses a trace of another action, reading no ABI", async () => {
+      const abis = abiReader()
+      await expect(
+        decode(abis, { ...NewAccountTraceFixture.raw("alice"), name: "updateauth" })
+      ).rejects.toThrow("a trace of sysio::updateauth is not sysio::newaccount")
+      expect(abis.getAbi).not.toHaveBeenCalled()
     })
   })
 

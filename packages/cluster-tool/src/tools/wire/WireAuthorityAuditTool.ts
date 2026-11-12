@@ -1,7 +1,8 @@
 import Assert from "node:assert"
 import { chunk, isEqual, range, sortBy, uniq } from "lodash"
 import { match, P } from "ts-pattern"
-import { API, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import { ABICache, type AbiProvider, API, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import { NestedError } from "@wireio/shared"
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { Constants } from "../../Constants.js"
@@ -52,9 +53,9 @@ export namespace WireAuthorityAuditTool {
    * trace. The genesis accounts it holds are {@link GenesisAccounts}.
    */
   export const FirstTracedBlockNum = 2
-  /** The action that creates an account. */
-  export const NewAccountAction: WireClient.ActionName<SysioContracts.SysioContractName.system> =
-    "newaccount"
+  /** The action that creates an account, typed as its literal, which selects its generated data type. */
+  export const NewAccountAction =
+    "newaccount" satisfies WireClient.ActionName<SysioContracts.SysioContractName.system>
   /** The permission a `linkauth` to "any permission" targets. */
   export const AnyPermission = "sysio.any"
   /** How a contract-wide link (no action named) is spelled. */
@@ -241,26 +242,31 @@ export namespace WireAuthorityAuditTool {
    * Enumerate the accounts to audit from the chain's history: every account a
    * `sysio::newaccount` created (inline creations included), read from the
    * trace API from block {@link FirstTracedBlockNum} through LIB, plus the genesis
-   * accounts. A node whose trace history does not reach back to genesis
-   * cannot enumerate; pass the accounts explicitly instead.
+   * accounts. A creation the node traced without decoded `params` is read from
+   * its encoded data with the `sysio` ABI, read once per scan. A node whose
+   * trace history does not reach back to genesis cannot enumerate; pass the
+   * accounts explicitly instead.
    *
    * @param wire - The WIRE client (its node must serve `/v1/trace_api`).
    * @param signal - The caller's cancellation.
    * @returns Every `sysio.*` account, the listed ones that exist, and the differences.
-   * @throws When the node holds no trace for a block in range.
+   * @throws When the node holds no trace for a block in range; NestedError,
+   *   naming the block, when a traced creation carries no `params` and its data
+   *   cannot be decoded.
    */
   export async function discoverSystemAccounts(
     wire: WireClient,
     signal: AbortSignal
   ): Promise<AccountInventory> {
     const lib = (await wire.getInfo()).last_irreversible_block_num,
+      abis = new ABICache(wire.api),
       batches = chunk(range(FirstTracedBlockNum, lib + 1), TraceScanConcurrency),
       created = uniq(
         (
           await mapSeries(batches, async blockNums => {
             signal.throwIfAborted()
             return (
-              await Promise.all(blockNums.map(blockNum => createdIn(wire, blockNum)))
+              await Promise.all(blockNums.map(blockNum => createdIn(wire, abis, blockNum)))
             ).flat()
           })
         ).flat()
@@ -289,24 +295,51 @@ export namespace WireAuthorityAuditTool {
   }
 
   /** The accounts `sysio::newaccount` created in one block. */
-  async function createdIn(wire: WireClient, blockNum: number): Promise<string[]> {
+  async function createdIn(
+    wire: WireClient,
+    abis: AbiProvider,
+    blockNum: number
+  ): Promise<string[]> {
     const block = await wire.getBlockTrace(blockNum)
     if (block == null)
       throw new Error(
         `authority audit: the node holds no trace of block ${blockNum}; pass the accounts to audit explicitly`
       )
-    return block.transactions
-      .flatMap(transaction => transaction.actions)
-      .filter(
-        action =>
-          action.account === Constants.SYSIO_ACCOUNT &&
-          action.receiver === Constants.SYSIO_ACCOUNT &&
-          action.name === NewAccountAction
+    return Promise.all(
+      block.transactions.flatMap(transaction =>
+        transaction.actions
+          .filter(
+            action =>
+              action.account === Constants.SYSIO_ACCOUNT &&
+              action.receiver === Constants.SYSIO_ACCOUNT &&
+              action.name === NewAccountAction
+          )
+          .map(action => createdAccount(abis, transaction, action))
       )
-      .map(
-        action =>
-          (action.params as SysioContracts.SysioSystemNewaccountAction).name
+    )
+  }
+
+  /**
+   * The account one traced `sysio::newaccount` created: from its decoded
+   * `params`, or from its encoded data when the node did not decode it.
+   */
+  async function createdAccount(
+    abis: AbiProvider,
+    transaction: WireClient.TraceTransaction,
+    action: WireClient.TraceAction
+  ): Promise<string> {
+    const { name } = await WireClient.decodeTraceActionData(
+      abis,
+      SysioContractName.system,
+      NewAccountAction,
+      action
+    ).catch((error: unknown) => {
+      throw new NestedError(
+        `authority audit: block ${transaction.block_num} traces a ${Constants.SYSIO_ACCOUNT}::${NewAccountAction} whose new account cannot be read; read the traces from a node that decodes them, or pass the accounts to audit explicitly`,
+        { cause: error, context: { transaction: transaction.id } }
       )
+    })
+    return name
   }
 
   /** Everything one audit pass reads once and classifies against. */
