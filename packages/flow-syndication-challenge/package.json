@@ -13,9 +13,9 @@
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.56",
-    "@wireio/sdk-core": "^1.0.110",
-    "@wireio/shared": "^1.0.109",
+    "@wireio/opp-typescript-models": "^1.0.58",
+    "@wireio/sdk-core": "^1.0.111",
+    "@wireio/shared": "^1.0.111",
     "source-map-support": "^0.5.21"
   },
   "devDependencies": {
