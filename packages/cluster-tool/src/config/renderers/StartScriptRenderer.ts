@@ -1,3 +1,5 @@
+import Path from "node:path"
+import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 import type { Renderer } from "../../utils/Renderer.js"
 import {
   matchesPrefix,
@@ -8,7 +10,7 @@ import {
   StartScriptVariable,
   type StartScriptRelocation
 } from "../../utils/startScriptUtils.js"
-import type { DaemonConfig } from "../DaemonConfig.js"
+import { DaemonConfig } from "../DaemonConfig.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 
 /**
@@ -57,8 +59,18 @@ export class StartScriptRenderer implements Renderer {
         "",
         ...StartScriptRenderer.environmentLines(daemon),
         ...StartScriptRenderer.conditionLines(daemon.conditions, relocations),
+        ...StartScriptRenderer.programVerificationLines(daemon),
         `exec ${StartScriptRenderer.execTarget(daemon, relocations)} \\`,
-        ...toRelocatableArgv(argv, relocations).map(word => `  ${word} \\`),
+        ...toRelocatableArgv(argv, relocations).map(
+          (word, index) =>
+            `  ${
+              daemon.solanaPrograms?.some(
+                program => program.soFile === argv[index]
+              )
+                ? `"$${StartScriptRenderer.ProgramSnapshotVariable}/${Path.basename(argv[index])}"`
+                : word
+            } \\`
+        ),
         `  ${StartScriptRenderer.ConditionalArrayExpansion}`,
         ""
       ]
@@ -71,6 +83,41 @@ export namespace StartScriptRenderer {
   export const StrictMode = "set -euo pipefail"
   /** Bash array collecting every condition's tokens, expanded into the `exec`. */
   export const ConditionalArrayName = "CONDITIONAL_ARGS"
+
+  /** Shell variable naming the unique runtime snapshot directory. */
+  export const ProgramSnapshotVariable = "WIRE_PROGRAM_SNAPSHOT"
+
+  /**
+   * Emit a self-contained, execution-time check using the SAME verifier as the
+   * harness. Only verified buffers are written to a fresh directory; validator
+   * argv then names those files. Rendering performs no artifact reads.
+   * @param daemon - Descriptor carrying the resolved Solana program list.
+   * @returns Shell lines before exec, empty for other daemons.
+   */
+  export function programVerificationLines(daemon: DaemonConfig): string[] {
+    if (!daemon.solanaPrograms?.length) return []
+    const files = daemon.solanaPrograms.map(program =>
+        Path.basename(program.soFile)
+      ),
+      verifier = SolanaOutpostProgramTool.verifyProgramBuild.toString()
+    return [
+      `${ProgramSnapshotVariable}="$("\${${DaemonConfig.NodeBinEnvironmentVariable}:-$(command -v ${DaemonConfig.NodeExecutable})}" - "$${StartScriptVariable.WIRE_SOLANA_PATH}" "$${StartScriptVariable.NODE_DIR}" <<'WIRE_SOLANA_BUILD_CHECK'`,
+      'const fs = require("node:fs"), path = require("node:path");',
+      `const verify = ${verifier};`,
+      "const [root, dataPath] = process.argv.slice(2);",
+      `const files = ${JSON.stringify(files)};`,
+      `const verified = verify(root, path.join(root, ${JSON.stringify(SolanaOutpostProgramTool.BuildManifestSubpath)}), files.map(file => path.join(root, ${JSON.stringify(SolanaOutpostProgramTool.DeploySubdirectory)}, file)), ${JSON.stringify(SolanaOutpostProgramTool.BuildRemediationHint)}, ${JSON.stringify(SolanaOutpostProgramTool.DirtyDescribeSuffix)});`,
+      `if (verified.sourceDescribe.endsWith(${JSON.stringify(SolanaOutpostProgramTool.DirtyDescribeSuffix)})) process.emitWarning("Programs were built from a DIRTY checkout — provenance cannot be verified beyond the commit");`,
+      `const snapshotPath = fs.mkdtempSync(path.join(dataPath, ${JSON.stringify(SolanaOutpostProgramTool.ProgramSnapshotPrefix)}));`,
+      "try {",
+      '  files.forEach((file, index) => fs.writeFileSync(path.join(snapshotPath, file), verified.binaries[index], {flag: "wx", mode: 0o444}));',
+      "  process.stdout.write(snapshotPath);",
+      "} catch (error) { fs.rmSync(snapshotPath, {recursive: true, force: true}); throw error; }",
+      "WIRE_SOLANA_BUILD_CHECK",
+      ')"',
+      ""
+    ]
+  }
 
   /**
    * Shell exports for the extra environment a live managed process merges over

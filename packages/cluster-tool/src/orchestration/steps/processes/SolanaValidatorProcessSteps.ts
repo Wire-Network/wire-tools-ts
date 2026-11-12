@@ -1,3 +1,4 @@
+import Fs from "node:fs"
 import Path from "node:path"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import {
@@ -20,13 +21,22 @@ export namespace SolanaValidatorProcessSteps {
    * with every wire-solana program loaded upgradeable, the per-cluster deployer
    * as their upgrade authority. Idempotent.
    */
-  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStart)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runStart
+    )
   }
 
   /** Named runner — get-or-create the {@link SolanaValidatorProcess} and start it. */
@@ -36,19 +46,53 @@ export namespace SolanaValidatorProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null) return
+    if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null)
+      return
 
-    const validator = await SolanaValidatorProcess.create(ctx.processManager, {
-      address: ctx.config.bind.solana.address,
-      rpcPort: ctx.config.bind.solana.ports.http,
-      faucetPort: ctx.config.bind.solana.ports.faucet,
-      gossipPort: ctx.config.bind.solana.ports.gossip,
-      dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
-      ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
-      slotsPerEpoch: ctx.config.solanaSlotsPerEpoch,
-      programs: resolvePrograms(ctx.config)
-    })
-    await validator.start()
+    const verified = SolanaOutpostProgramTool.readVerifiedPrograms(
+        ctx.config.solanaPath,
+        SolanaOutpostProgramTool.GenesisAnchorPrograms
+      ),
+      programs = resolvePrograms(ctx.config)
+    Fs.mkdirSync(ctx.config.dataPath, { recursive: true })
+    const snapshotPath = Fs.mkdtempSync(
+      Path.join(
+        ctx.config.dataPath,
+        SolanaOutpostProgramTool.ProgramSnapshotPrefix
+      )
+    )
+    try {
+      programs.forEach((program, index) => {
+        program.soFile = Path.join(snapshotPath, `${program.name}.so`)
+        Fs.writeFileSync(program.soFile, verified.binaries[index], {
+          flag: "wx",
+          mode: 0o444
+        })
+      })
+      const validator = await SolanaValidatorProcess.create(
+        ctx.processManager,
+        {
+          address: ctx.config.bind.solana.address,
+          rpcPort: ctx.config.bind.solana.ports.http,
+          faucetPort: ctx.config.bind.solana.ports.faucet,
+          gossipPort: ctx.config.bind.solana.ports.gossip,
+          dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
+          ledgerPath: Path.join(
+            ctx.config.dataPath,
+            SolanaValidatorProcess.LedgerSubpath
+          ),
+          slotsPerEpoch: ctx.config.solanaSlotsPerEpoch,
+          programs
+        }
+      )
+      await validator.start()
+    } catch (error) {
+      Fs.rmSync(snapshotPath, { recursive: true, force: true })
+      throw error
+    }
+    // Keep the immutable copies for the lifetime of this cluster. Its normal
+    // destroy removes dataPath; an asynchronous constructor cannot expose the
+    // shared build outputs again between verification and Agave's read.
   }
 
   /**
@@ -75,6 +119,15 @@ export namespace SolanaValidatorProcessSteps {
    * `liqsol_core`'s `ProgramData`). `createDeployerKeypair` is create-or-load,
    * so calling it from either path yields the identical identity.
    *
+   * `soFile` is the PATH ONLY — this resolves what the argv must say, never
+   * whether the binary on disk is the one the recorded build emitted. That
+   * check belongs to whoever actually loads it: {@link runStart} and the
+   * generated script at execution time. The renderer emits a script that runs
+   * LATER, and often on ANOTHER host — `create-external-config` clones a tree whose `wire-solana` was
+   * never built here, so verifying against THIS checkout would reject a
+   * perfectly good deployment payload while proving nothing about the host
+   * that will run it.
+   *
    * @param config - The resolved cluster config.
    * @returns The validator's program list.
    */
@@ -90,7 +143,10 @@ export namespace SolanaValidatorProcessSteps {
         config.solanaPath,
         program
       ).toBase58(),
-      soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath, program),
+      soFile: SolanaOutpostProgramTool.programSoFile(
+        config.solanaPath,
+        program
+      ),
       upgradeAuthority
     }))
   }

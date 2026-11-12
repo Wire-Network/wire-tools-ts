@@ -106,6 +106,8 @@ export interface DaemonConfig {
   readonly argv: readonly string[]
   /** Extra environment entries the live process merges over its inherited env. */
   readonly env?: Readonly<Record<string, string>>
+  /** Solana binaries to verify and snapshot on the host executing start.sh. */
+  readonly solanaPrograms?: Readonly<SolanaValidatorConfig["programs"]>
   /** Conditionals the script evaluates itself (see {@link DaemonArgvCondition}). */
   readonly conditions: readonly DaemonArgvCondition[]
   /**
@@ -335,6 +337,7 @@ export namespace DaemonConfig {
       // the operator cannot override. The renderer emits it as a defaulting
       // expansion, so the run-time environment still wins.
       env: SolanaValidatorProcess.DefaultEnv,
+      solanaPrograms: validator.programs,
       conditions: [],
       relocations: [
         { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
