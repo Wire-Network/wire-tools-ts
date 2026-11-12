@@ -2,8 +2,11 @@ const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const { KeyType } = require("@wireio/sdk-core")
 const {
+  ClusterBuild,
   Constants: HarnessConstants,
   KeyGenerator,
+  NodeOwnerTier,
+  OutputStore,
   Steps,
   supermajorityThreshold
 } = require("@wireio/cluster-tool")
@@ -76,6 +79,48 @@ test("every flow identity has its own seeded key, none of them the bootstrap key
     Scenario.flowPublicKey("gova"),
     KeyGenerator.createSeeded(KeyType.K1, Constants.keySeed("gova")).publicKey
   )
+})
+
+test("an initial owner is one nodeownreg claim under its own key, then a read-back", () => {
+  const steps = Scenario.planInitialOwner("gova", Constants.FirstDepositorEthereumHdIndex)
+  Assert.deepEqual(
+    steps.map(step => step.name),
+    ["register-gova", "registered-gova"]
+  )
+  Assert.deepEqual(steps[0].input, {
+    kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
+    ownerAccount: "gova",
+    tier: NodeOwnerTier.T1,
+    ethereumHdIndex: Constants.FirstDepositorEthereumHdIndex,
+    wirePublicKey: Scenario.flowPublicKey("gova")
+  })
+})
+
+test("the plan creates no owner account before its claim: only the stand-in council is created", () => {
+  const build = ClusterBuild.forContext({ outputs: new OutputStore() })
+  new Scenario.GovernanceHandoffScenario().plan(build)
+  const steps = build.children.flatMap(phase => phase.steps),
+    kinds = new Set(steps.map(step => step.input?.kind)),
+    claims = steps.filter(
+      step => step.input?.kind === "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
+    ),
+    created = steps.filter(step => step.input?.kind === "AccountSteps.CreateKeyedInput")
+  Assert.ok(!kinds.has("NodeOwnerRegistrationSteps.CreateNamedUserInput"))
+  Assert.deepEqual(
+    claims.map(step => step.input.ownerAccount),
+    [...Constants.InitialNodeOwners]
+  )
+  Assert.deepEqual(
+    claims.map(step => step.input.ethereumHdIndex),
+    Constants.InitialNodeOwners.map((_, index) => Constants.FirstDepositorEthereumHdIndex + index)
+  )
+  Assert.deepEqual(
+    created.map(step => step.input.account),
+    [...Constants.CouncilMembers]
+  )
+  const commit = steps.find(step => step.input?.kind === "NodeOwnerCommitSteps.CommitNodeInput")
+  Assert.equal(commit.input.wireAccountName, Constants.LateNodeOwner)
+  Assert.equal(commit.input.wirePublicKey, Scenario.flowPublicKey(Constants.LateNodeOwner))
 })
 
 test("a probe transfer is a typed sysio.token::transfer of one WIRE from sysio, declared by sysio@active", () => {

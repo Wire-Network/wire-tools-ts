@@ -1,4 +1,4 @@
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import { KeyGenerator } from "../../../clients/wire/KeyGenerator.js"
 import { Report } from "../../../report/Report.js"
 import {
@@ -15,16 +15,12 @@ import {
 import type { StepInput } from "../../StepRunner.js"
 import { KeySteps } from "../KeySteps.js"
 
+const { SysioAuthexChainkind, SysioContractName } = SysioContracts
+
 /**
- * Step factories for the `sysio.roa` create-in-flow registration WRITES — the
- * two actions the production depot (`sysio.msgch`) inline-sends when it decodes
- * an inbound OPP NodeOwnerRegistration: {@link planCreateNamedUser}
- * (`roa::newnameduser`, create the account from the claim's Wire key) and
- * {@link planRegisterNodeOwner} (`roa::nodeownreg`, register + inline-record the
- * depositor's ETH link in `sysio.authex`). Each write is its OWN
- * {@link ClusterBuildStep} so the `Report` records it — including the
- * intentionally-bad claims, whose transactions SUCCEED and soft-fail into a
- * `nodeownerreg` audit row that a scenario's verify steps assert.
+ * Registration writes for fresh claims and pre-existing-account rejection fixtures.
+ * Each write is its own Step; nodeownreg owns atomic creation, registration and linkage.
+ * Claim rejections commit an audit row and are checked by the following verify step.
  *
  * Before a governance handoff `sysio.roa@active` is the bootstrap `sysio` key,
  * so these writes stand in for the depot's dispatch; after one, an owner claims
@@ -75,9 +71,7 @@ export namespace NodeOwnerRegistrationSteps {
   }
 
   /**
-   * A single `sysio.roa::newnameduser` write — the create step the depot
-   * inline-sends first, making `wirePublicKey` the account's owner/active
-   * authority.
+   * A privileged pre-existing-account fixture, ineligible for node-owner claims.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -129,6 +123,65 @@ export namespace NodeOwnerRegistrationSteps {
     )
   }
 
+  /** Input for the privileged pre-existing Ethereum link fixture. */
+  interface AuthexLinkInput extends StepInput {
+    readonly kind: "NodeOwnerRegistrationSteps.AuthexLinkInput"
+    readonly account: string
+    readonly ethereumHdIndex: number
+  }
+
+  /**
+   * Record a fixture account's Ethereum identity before testing a rejected claim.
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Per-step tuning.
+   * @param account - Existing fixture account.
+   * @param ethereumHdIndex - HD index for the fixture link, distinct from the claim's.
+   * @returns The link fixture step.
+   */
+  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    ethereumHdIndex: number
+  ): ClusterBuildStep<C, AuthexLinkInput> {
+    return ClusterBuildStep.create<C, AuthexLinkInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "NodeOwnerRegistrationSteps.AuthexLinkInput",
+        account,
+        ethereumHdIndex
+      },
+      runAuthexLink
+    )
+  }
+
+  async function runAuthexLink<C extends ClusterBuildContext>(
+    ctx: C,
+    input: AuthexLinkInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const { publicKey, nativeAddress } = await newEthereumIdentity(
+      ctx,
+      input.ethereumHdIndex
+    )
+    await ctx.wire
+      .getSysioContract(SysioContractName.authex)
+      .actions.recordlink.invoke({
+        account: input.account,
+        chain_kind: SysioAuthexChainkind.CHAIN_KIND_EVM,
+        pub_key: publicKey,
+        native_address: nativeAddress
+      })
+  }
+
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
   export interface RegisterNodeOwnerInput extends StepInput {
     readonly kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
@@ -138,13 +191,13 @@ export namespace NodeOwnerRegistrationSteps {
     readonly tier: NodeOwnerTier
     /** HD index deriving the claim's new depositor EM key. */
     readonly ethereumHdIndex: number
-    /** The claimed owner/active Wire key (an existing account must be controlled by it). */
+    /** The owner/active Wire key for the new account. */
     readonly wirePublicKey: string
   }
 
   /**
    * A single `sysio.roa::nodeownreg` write, as the depot inline-sends it.
-   * Claim-payload problems (wrong key / invalid name / missing account /
+   * Claim-payload problems (existing account / invalid name /
    * replay) soft-fail into a `nodeownerreg` audit row — the transaction
    * SUCCEEDS — so intentionally-bad claims are normal write steps too, with a
    * following verify step asserting the audit outcome. The depot/system

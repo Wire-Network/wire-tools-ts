@@ -673,8 +673,9 @@ export function verifyProbePaid(recipient: string): ReturnType<typeof verifyStep
 }
 
 /**
- * The steps that register one initial tier-1 owner through the depot's
- * `sysio.roa` claim pair, then read the registration back.
+ * The steps that register one initial tier-1 owner through
+ * `sysio.roa::nodeownreg`, the claim the depot dispatches, which creates the
+ * owner's account under its own key; then read the registration back.
  *
  * @param owner - The owner.
  * @param ethereumHdIndex - The anvil HD index of the owner's depositor EM key.
@@ -684,30 +685,19 @@ export function planInitialOwner(
   owner: string,
   ethereumHdIndex: number
 ): Array<
-  | ReturnType<typeof RegistrationSteps.planCreateNamedUser>
   | ReturnType<typeof RegistrationSteps.planRegisterNodeOwner>
   | ReturnType<typeof verifyStep>
 > {
-  const publicKey = flowPublicKey(owner)
   return [
-    RegistrationSteps.planCreateNamedUser(
-      Actor.User,
-      `create-${owner}`,
-      `create ${owner} under its own key`,
-      StepOptions,
-      owner,
-      publicKey,
-      NodeOwnerTier.T1
-    ),
     RegistrationSteps.planRegisterNodeOwner(
       Actor.User,
       `register-${owner}`,
-      `register ${owner} at tier 1`,
+      `create and register ${owner} at tier 1 under its own key`,
       StepOptions,
       owner,
       NodeOwnerTier.T1,
       ethereumHdIndex,
-      publicKey
+      flowPublicKey(owner)
     ),
     verifyStep(
       Actor.Sysio,
@@ -826,7 +816,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "NodeOwners",
-      "Register the first tier-1 owners through the depot's sysio.roa claim pair"
+      "Register the first tier-1 owners through sysio.roa::nodeownreg, the claim the depot dispatches"
     ).push(
       ...Constants.PreSyncNodeOwners.flatMap((owner, index) =>
         planInitialOwner(owner, Constants.FirstDepositorEthereumHdIndex + index)

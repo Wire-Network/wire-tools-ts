@@ -207,22 +207,14 @@ export class SlashingScenario extends FlowScenario {
 
     // The dispute electorate: each owner is created with the shared dev K1 key
     // (so the flow can sign votes as any of them) and registered T1 via the same
-    // path the NFT claim uses (newnameduser creates the account, nodeownreg
-    // registers it + inline-bumps nodecount.t1_count — the N chkdispute reads).
+    // path the NFT claim uses (nodeownreg creates and registers the account,
+    // then inline-bumps nodecount.t1_count — the N chkdispute reads).
     ClusterBuildPhase.create(
       setup,
       "ProvisionVoters",
       "Create + register the 4 Tier-1 node owners of the dispute electorate (3 voters, 1 abstainer)"
     ).push(
-      ...Constants.Tier1ElectorateNames.flatMap(voter => [
-        DisputeSteps.planNewnameduser(
-          Actor.User,
-          `create-${voter}`,
-          `create Tier-1 node owner account ${voter}`,
-          {},
-          voter,
-          NodeOwnerTier.T1
-        ),
+      ...Constants.Tier1ElectorateNames.map(voter =>
         DisputeSteps.planNodeownreg(
           Actor.User,
           `register-${voter}`,
@@ -231,7 +223,7 @@ export class SlashingScenario extends FlowScenario {
           voter,
           NodeOwnerTier.T1
         )
-      ]),
+      ),
       verifyStep(
         Actor.Sysio,
         "electorate-registered",

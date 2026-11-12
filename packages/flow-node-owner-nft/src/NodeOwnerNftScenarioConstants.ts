@@ -35,8 +35,8 @@ export namespace NodeOwnerNftScenarioConstants {
   export const WrongKeyAccount = "nftb"
   /** 11-char name — valid charset, over the tier-1 2-6 char prefix budget. */
   export const NameInvalidAccount = "toolongname"
-  /** Valid-for-tier-1 name (5 chars) that is never created on chain. */
-  export const GhostAccount = "ghost"
+  /** Pre-existing account claimed using its matching public active key. */
+  export const ExistingAccount = "ghost"
   /** Replay owner — registered CONFIRMED, then re-registered → DUPLICATE. */
   export const DuplicateAccount = "nftd"
   /** Hard-abort owner for the tier-out-of-[1,3] invariant. */
@@ -64,8 +64,8 @@ export namespace NodeOwnerNftScenarioConstants {
   export const WrongKeyEthereumHdIndex = 41
   /** HD index for the name-invalid claim's depositor EM key. */
   export const NameInvalidEthereumHdIndex = 42
-  /** HD index for the ghost-owner claim's depositor EM key. */
-  export const GhostEthereumHdIndex = 43
+  /** HD index for the existing-account claim's depositor EM key. */
+  export const ExistingEthereumHdIndex = 43
   /** HD index for the duplicate owner's FIRST (confirmed) claim. */
   export const DuplicateEthereumHdIndex = 44
   /** HD index for the duplicate owner's REPLAY claim (a new key, like the original flow). */
@@ -74,6 +74,10 @@ export namespace NodeOwnerNftScenarioConstants {
   export const TierBelowMinimumEthereumHdIndex = 46
   /** HD index for the tier-above-maximum hard-abort probe's EM key. */
   export const TierAboveMaximumEthereumHdIndex = 47
+  /** HD index for the existing link on the wrong-key fixture. */
+  export const WrongKeyLinkedEthereumHdIndex = 48
+  /** HD index for the existing link on the matching-key fixture. */
+  export const ExistingLinkedEthereumHdIndex = 49
 
   /** ERC-1155 units minted from MockWireNodes (the contract charges `1 ether` per unit). */
   export const MintAmount = 1

@@ -1,4 +1,4 @@
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import { KeyGenerator, NodeOwnerTier } from "@wireio/cluster-tool"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
@@ -6,6 +6,7 @@ import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 
 const { commit: CommitSteps, mint: MintSteps, registration: RegistrationSteps } =
   Steps.nodeOwner
+const { SysioAuthexChainkind } = SysioContracts
 
 /** A K1 key the registration steps carry. */
 const OwnerKey = KeyGenerator.createSeeded(KeyType.K1, "node-owner-steps-test").publicKey
@@ -87,6 +88,63 @@ describe("Steps.nodeOwner.registration", () => {
     expect((await RegistrationSteps.newEthereumIdentity(ctx, 61)).publicKey).not.toBe(
       identity.publicKey
     )
+  })
+
+  it("authexLink carries the fixture account and the HD index of its existing link", () => {
+    const step = RegistrationSteps.planAuthexLink(
+      Report.Actor.Sysio,
+      "link-gova",
+      "link gova",
+      {},
+      "gova",
+      62
+    )
+    expect(step.input).toEqual({
+      kind: "NodeOwnerRegistrationSteps.AuthexLinkInput",
+      account: "gova",
+      ethereumHdIndex: 62
+    })
+  })
+
+  it("authexLink records ONE sysio.authex::recordlink of the HD-derived EVM identity", async () => {
+    const ctx = fixtureContext(),
+      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined),
+      identity = await RegistrationSteps.newEthereumIdentity(ctx, 62),
+      step = RegistrationSteps.planAuthexLink(
+        Report.Actor.Sysio,
+        "link-gova",
+        "link gova",
+        {},
+        "gova",
+        62
+      )
+    await step.runner(ctx, step.input, signal)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke.mock.calls[0].slice(0, 3)).toEqual([
+      "sysio.authex",
+      "recordlink",
+      {
+        account: "gova",
+        chain_kind: SysioAuthexChainkind.CHAIN_KIND_EVM,
+        pub_key: identity.publicKey,
+        native_address: identity.nativeAddress
+      }
+    ])
+  })
+
+  it("authexLink records nothing once the step is aborted", async () => {
+    const ctx = fixtureContext(),
+      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined),
+      step = RegistrationSteps.planAuthexLink(
+        Report.Actor.Sysio,
+        "link-gova",
+        "link gova",
+        {},
+        "gova",
+        62
+      )
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it("pushes nothing once the step is aborted", async () => {
