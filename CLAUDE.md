@@ -457,9 +457,14 @@ funded, with caps of 10 LIQSOL and 10 LIQETH.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
-unconditionally: `PanicAccount` + `EmergencyStop` (the panic account
+unconditionally: `DelegateNamePrefixes` (the bare names `andon` and `bond`, created
+with an `active` nothing satisfies so no node owner can register them),
+`PanicAccount` + `EmergencyStop` (the panic account
 `Constants.PANIC_ACCOUNT`, then native `pull`/`clear` permissions and action links
-on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers) and
+on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers), `JudgeAccount` +
+`BondRulings` (the judge account `Constants.JUDGE_ACCOUNT`, then native
+`rslvvalid`/`rslvinvalid` permissions and action links on `sysio.bond`; a ruling step
+declares its linked permission, which the judge or `sysio@active` satisfies) and
 `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
 `Steps.registry.SyndicationConfigRegistrations`: free syndication;

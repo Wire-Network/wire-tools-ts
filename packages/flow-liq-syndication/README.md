@@ -13,7 +13,7 @@ liqsol_core::report_liq_yield        (permissionless crank — non-admin signer)
   → LIQ_YIELD queued by the program
   → batch operator ferries both via an OPP envelope
   → sysio.msgch consumes the envelope and routes both to sysio.synd
-  → sysio rules each request VALID using sysio.bond::rslvvalid
+  → each request is ruled VALID using sysio.bond::rslvvalid, through its linked permission
   → sysio.synd releases principal; authenticated linking delivers it to the wallet
   → reported yield is released into the depot yield queue
   → sysio.epoch::advance keeps closing epochs

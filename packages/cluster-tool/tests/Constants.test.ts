@@ -160,6 +160,23 @@ describe("Constants", () => {
       expect(Constants.PANIC_ACCOUNT).toBe("andon.panic")
       expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.PANIC_ACCOUNT)
     })
+    it("names a judge account outside the sysio.* system namespace", () => {
+      expect(Constants.JUDGE_ACCOUNT).toBe("bond.judge")
+      expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.JUDGE_ACCOUNT)
+    })
+    it("derives one reserved name prefix per delegate account, none of them a sysio.* or system account", () => {
+      expect([...Constants.DELEGATE_ACCOUNTS]).toEqual(["andon.panic", "bond.judge"])
+      expect(Constants.DELEGATE_NAME_PREFIXES).toEqual(["andon", "bond"])
+      Constants.DELEGATE_NAME_PREFIXES.forEach(prefix => {
+        expect(prefix).not.toContain(Constants.ACCOUNT_NAME_SEPARATOR)
+        expect(Constants.SYSTEM_ACCOUNTS).not.toContain(prefix)
+      })
+    })
+    it("refuses a delegate account with no name prefix, whose reservation would take its own name", () => {
+      expect(Constants.delegateNamePrefix("bond.judge")).toBe("bond")
+      expect(() => Constants.delegateNamePrefix("judge")).toThrow(/must sit under a name prefix/)
+      expect(() => Constants.delegateNamePrefix(".judge")).toThrow(/must sit under a name prefix/)
+    })
     it("creates both governance authorities as system accounts", () => {
       expect([...Constants.GOVERNANCE_AUTHORITY_ACCOUNTS]).toEqual([
         "sysio.nodes",

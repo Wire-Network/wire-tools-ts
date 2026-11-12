@@ -67,6 +67,18 @@ function preHandoffChain(): Map<string, API.v1.AccountObject> {
         ])
       ])
     ],
+    [
+      "sysio.bond",
+      account("sysio.bond", [
+        ...governed("sysio.bond", true).permissions,
+        permission("rslvvalid", "active", 1, [], ["bond.judge@active", "sysio@active"], [
+          link("sysio.bond", "rslvvalid")
+        ]),
+        permission("rslvinvalid", "active", 1, [], ["bond.judge@active", "sysio@active"], [
+          link("sysio.bond", "rslvinvalid")
+        ])
+      ])
+    ],
     ["sysio.nodes", authority("sysio.nodes", 3, Roster.map(owner => `${owner}@active`))],
     ["sysio.cncl", authority("sysio.cncl", 1, ["sysio.null@active"])],
     [
@@ -82,6 +94,7 @@ function preHandoffChain(): Map<string, API.v1.AccountObject> {
       ])
     ],
     ["andon.panic", keyed("andon.panic", BootstrapKeyOnChain)],
+    ["bond.judge", keyed("bond.judge", BootstrapKeyOnChain)],
     ["defproducera", keyed("defproducera", ProducerKey)],
     ...Roster.map(
       (owner): [string, API.v1.AccountObject] => [
@@ -137,6 +150,7 @@ function wireFor(chain: Map<string, API.v1.AccountObject>, roster: string[] = Ro
 const Audited = [
   "sysio",
   "sysio.andon",
+  "sysio.bond",
   "sysio.cncl",
   "sysio.epoch",
   "sysio.msgch",
@@ -154,6 +168,7 @@ function optionsFor(
   return {
     accounts: Audited,
     panicAccount: Constants.PANIC_ACCOUNT,
+    judgeAccount: Constants.JUDGE_ACCOUNT,
     keys: [BootstrapKey],
     phase,
     ...(phase === AuditPhase.afterHandoff ? { handedTo: Constants.NODE_OWNERS_AUTHORITY } : {}),
@@ -201,12 +216,17 @@ describe("WireAuthorityAuditTool.audit", () => {
       [`sysio@active<-${BootstrapKeyOnChain}`, `sysio@owner<-${BootstrapKeyOnChain}`].sort()
     )
     expect(kinds(Classification.ownContractCode)).toEqual([
+      "sysio.bond@owner<-sysio.bond@sysio.code",
       "sysio.epoch@owner<-sysio.epoch@sysio.code",
       "sysio.msgch@owner<-sysio.msgch@sysio.code"
     ])
     expect(kinds(Classification.andonPanicDelegate)).toEqual([
       "sysio.andon@clear<-andon.panic@active",
       "sysio.andon@pull<-andon.panic@active"
+    ])
+    expect(kinds(Classification.bondJudgeDelegate)).toEqual([
+      "sysio.bond@rslvinvalid<-bond.judge@active",
+      "sysio.bond@rslvvalid<-bond.judge@active"
     ])
     expect(kinds(Classification.unsatisfiablePlaceholder)).toEqual([
       "sysio.cncl@active<-sysio.null@active"
@@ -218,11 +238,20 @@ describe("WireAuthorityAuditTool.audit", () => {
       "sysio.prods@active<-defproducera@active",
       "sysio.prods@prod.major<-defproducera@active"
     ])
-    // The panic exception names the key the panic account holds.
-    expect(
-      result.exceptions.find(entry => entry.classification === Classification.andonPanicDelegate)
-        .reason
-    ).toContain(BootstrapKeyOnChain)
+    // Each delegate exception names the delegate's role and the key the delegate holds.
+    const reasonOf = (classification: WireAuthorityAuditTool.Classification) =>
+      result.exceptions.find(entry => entry.classification === classification).reason
+    expect(reasonOf(Classification.andonPanicDelegate)).toContain(BootstrapKeyOnChain)
+    expect(reasonOf(Classification.andonPanicDelegate)).toContain("the panic account andon.panic@active")
+    expect(reasonOf(Classification.bondJudgeDelegate)).toContain(BootstrapKeyOnChain)
+    expect(reasonOf(Classification.bondJudgeDelegate)).toContain("the judge account bond.judge@active")
+  })
+
+  it("names the panic and the judge delegations as the delegate classifications", () => {
+    expect(WireAuthorityAuditTool.DelegateClassifications).toEqual([
+      Classification.andonPanicDelegate,
+      Classification.bondJudgeDelegate
+    ])
   })
 
   it("finds that the bootstrap key alone satisfies everything sysio governs before the handoff", async () => {
@@ -239,7 +268,7 @@ describe("WireAuthorityAuditTool.audit", () => {
     )
   })
 
-  it("after the handoff the key alone satisfies only the andon panic permissions", async () => {
+  it("after the handoff the key alone satisfies only the delegated panic and ruling permissions", async () => {
     const result = await auditAfter(postHandoffChain())
     expect(() => WireAuthorityAuditTool.assertClean(result)).not.toThrow()
     expect(() => WireAuthorityAuditTool.assertKeyRetired(result, BootstrapKey)).not.toThrow()
@@ -248,7 +277,12 @@ describe("WireAuthorityAuditTool.audit", () => {
         .filter(reach => reach.satisfies)
         .map(reach => `${reach.account}@${reach.permission}`)
         .sort()
-    ).toEqual(["sysio.andon@clear", "sysio.andon@pull"])
+    ).toEqual([
+      "sysio.andon@clear",
+      "sysio.andon@pull",
+      "sysio.bond@rslvinvalid",
+      "sysio.bond@rslvvalid"
+    ])
     // No tier-1 owner holds the key, so it carries no weight on sysio.nodes@active.
     expect(
       result.keyReach.find(reach => reach.account === "sysio.nodes" && reach.permission === "active")
@@ -281,7 +315,12 @@ describe("WireAuthorityAuditTool.audit", () => {
         .filter(reach => reach.satisfies)
         .map(reach => `${reach.account}@${reach.permission}`)
         .sort()
-    ).toEqual(["sysio.andon@clear", "sysio.andon@pull"])
+    ).toEqual([
+      "sysio.andon@clear",
+      "sysio.andon@pull",
+      "sysio.bond@rslvinvalid",
+      "sysio.bond@rslvvalid"
+    ])
   })
 
   it("refuses an after-handoff audit that names no authority", async () => {
@@ -451,6 +490,84 @@ describe("WireAuthorityAuditTool.audit", () => {
     ])("fails delegated from %s", async (_case, replacement, finding) => {
       const result = await auditBefore(withAccount(preHandoffChain(), replacement))
       expect(spelled(result.unclassified)).toEqual([finding])
+    })
+  })
+
+  describe("the judge account", () => {
+    it.each([
+      [
+        "a native permission of sysio.bond",
+        account("sysio.bond", [
+          governed("sysio.bond", true).permissions[0],
+          permission("active", "owner", 1, [], ["bond.judge@active", "sysio@active"])
+        ]),
+        "sysio.bond@active<-bond.judge@active"
+      ],
+      [
+        "a sysio.bond permission the bootstrap does not create",
+        account("sysio.bond", [
+          ...governed("sysio.bond", true).permissions,
+          permission("setconfig", "active", 1, [], ["bond.judge@active", "sysio@active"])
+        ]),
+        "sysio.bond@setconfig<-bond.judge@active"
+      ],
+      [
+        "a sysio.andon panic permission",
+        account("sysio.andon", [
+          ...governed("sysio.andon").permissions,
+          permission("pull", "active", 1, [], ["bond.judge@active", "sysio@active"])
+        ]),
+        "sysio.andon@pull<-bond.judge@active"
+      ]
+    ])("fails delegated from %s", async (_case, replacement, finding) => {
+      const result = await auditBefore(withAccount(preHandoffChain(), replacement))
+      expect(spelled(result.unclassified)).toEqual([finding])
+    })
+
+    it("still classifies a delegate that is also a tier-1 owner as a member of sysio.nodes", async () => {
+      // The judge sits on the roster: its entry on sysio.nodes@active is a governance member, not a
+      // misplaced delegate, and its ruling delegations stay the judge exception.
+      // Chain name order: bond.judge sorts before the gov* owners. Four members need three.
+      const roster = ["bond.judge", ...Roster],
+        result = await auditBefore(
+          withAccount(
+            preHandoffChain(),
+            authority("sysio.nodes", 3, roster.map(owner => `${owner}@active`))
+          ),
+          roster
+        )
+      expect(spelled(result.unclassified)).toEqual([])
+      expect(result.mismatches).toEqual([])
+      expect(
+        spelled(
+          result.exceptions.filter(
+            entry => entry.classification === Classification.governanceAuthorityMember
+          )
+        )
+      ).toContain("sysio.nodes@active<-bond.judge@active")
+      expect(
+        spelled(
+          result.exceptions.filter(
+            entry => entry.classification === Classification.bondJudgeDelegate
+          )
+        )
+      ).toEqual([
+        "sysio.bond@rslvinvalid<-bond.judge@active",
+        "sysio.bond@rslvvalid<-bond.judge@active"
+      ])
+    })
+
+    it("fails the panic account delegated from a sysio.bond ruling permission", async () => {
+      const result = await auditBefore(
+        withAccount(
+          preHandoffChain(),
+          account("sysio.bond", [
+            ...governed("sysio.bond", true).permissions,
+            permission("rslvvalid", "active", 1, [], ["andon.panic@active", "sysio@active"])
+          ])
+        )
+      )
+      expect(spelled(result.unclassified)).toEqual(["sysio.bond@rslvvalid<-andon.panic@active"])
     })
   })
 
@@ -643,6 +760,28 @@ describe("WireAuthorityAuditTool.audit", () => {
       ])
     })
 
+    it.each([
+      ["the other ruling", link("sysio.bond", "rslvinvalid"), "sysio.bond::rslvinvalid"],
+      ["every action of the contract", link("sysio.bond"), "sysio.bond::*"],
+      ["another contract's action", link("sysio.epoch", "rslvvalid"), "sysio.epoch::rslvvalid"]
+    ])("fails a bond ruling permission linked to %s", async (_case, wrong, spelling) => {
+      const result = await auditBefore(
+        withAccount(
+          preHandoffChain(),
+          account("sysio.bond", [
+            ...governed("sysio.bond", true).permissions,
+            permission("rslvvalid", "active", 1, [], ["bond.judge@active", "sysio@active"], [wrong]),
+            permission("rslvinvalid", "active", 1, [], ["bond.judge@active", "sysio@active"], [
+              link("sysio.bond", "rslvinvalid")
+            ])
+          ])
+        )
+      )
+      expect(result.unexpectedLinks).toEqual([
+        { account: "sysio.bond", permission: "rslvvalid", action: spelling }
+      ])
+    })
+
     it("fails a sysio.andon permission the bootstrap does not create, linked to its own action", async () => {
       const result = await auditBefore(
         withAccount(
@@ -684,10 +823,12 @@ describe("WireAuthorityAuditTool.audit", () => {
     })
     expect(lines).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^audited 9 accounts/),
+        expect.stringMatching(/^audited 10 accounts/),
         "unlisted system account sysio.extra (audited)",
         expect.stringMatching(/^exception andonPanicDelegate: sysio\.andon@pull <- andon\.panic@active/),
-        expect.stringMatching(/SATISFIES sysio\.andon@pull/)
+        expect.stringMatching(/SATISFIES sysio\.andon@pull/),
+        expect.stringMatching(/^exception bondJudgeDelegate: sysio\.bond@rslvvalid <- bond\.judge@active/),
+        expect.stringMatching(/SATISFIES sysio\.bond@rslvvalid/)
       ])
     )
   })

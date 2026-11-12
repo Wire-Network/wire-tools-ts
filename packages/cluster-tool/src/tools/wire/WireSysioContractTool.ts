@@ -54,12 +54,14 @@ export class WireSysioContractTool {
   }
 
   /**
-   * Create a `sysio.*` system account whose `owner` is `sysio@active`.
+   * Create a system account whose `owner` is `sysio@active`: a `sysio.*`
+   * account, or a reserved delegate name prefix.
    *
    * @param name - The account to create.
-   * @param active - Its `active` authority: `sysio@active` unless the account's
-   *   contract writes it later (a governance authority's
-   *   {@link WireSysioContractTool.sysioNullActiveAuthority} placeholder).
+   * @param active - Its `active` authority: `sysio@active` unless nothing may
+   *   act as the account yet or ever — a governance authority's
+   *   {@link WireSysioContractTool.sysioNullActiveAuthority} placeholder, which
+   *   its contract writes later, or a reserved name, which keeps it.
    */
   async createSysioAccount(
     name: string,
@@ -166,6 +168,27 @@ export namespace WireSysioContractTool {
    */
   export function sysioNullActiveAuthority(): SysioContracts.SysioSystemAuthorityType {
     return delegatedAuthority(Constants.NULL_ACCOUNT)
+  }
+
+  /**
+   * Authority satisfied by `delegate@active` or by `sysio@active`, each alone, in
+   * the chain's name order: a native permission handed to a named account that
+   * governance can still exercise and revoke.
+   *
+   * @param delegate - The account delegated to beside `sysio`.
+   * @returns The authority.
+   */
+  export function sysioActiveDelegateAuthority(
+    delegate: string
+  ): SysioContracts.SysioSystemAuthorityType {
+    return {
+      threshold: DelegationWeight,
+      keys: [],
+      accounts: [delegate, Constants.SYSIO_ACCOUNT].sort(compareNames).map(actor => ({
+        permission: { actor, permission: WireClient.ActivePermission },
+        weight: DelegationWeight
+      }))
+    }
   }
 
   /**

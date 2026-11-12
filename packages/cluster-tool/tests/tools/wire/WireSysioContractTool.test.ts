@@ -39,6 +39,25 @@ describe("WireSysioContractTool helpers", () => {
     )
   })
 
+  it("sysioActiveDelegateAuthority is the delegate or sysio, each alone, in chain name order", () => {
+    // andon.panic and bond.judge sort before sysio; a later name sorts after it.
+    expect(
+      WireSysioContractTool.sysioActiveDelegateAuthority(Constants.JUDGE_ACCOUNT)
+    ).toEqual({
+      threshold: 1,
+      keys: [],
+      accounts: [
+        { permission: { actor: "bond.judge", permission: "active" }, weight: 1 },
+        { permission: { actor: "sysio", permission: "active" }, weight: 1 }
+      ]
+    })
+    expect(
+      WireSysioContractTool.sysioActiveDelegateAuthority("zeta").accounts.map(
+        entry => entry.permission.actor
+      )
+    ).toEqual(["sysio", "zeta"])
+  })
+
   it("sysioActiveCodeAuthority puts sysio@active first, then code accounts sorted by name", () => {
     const authority = WireSysioContractTool.sysioActiveCodeAuthority([
       "sysio.opreg",

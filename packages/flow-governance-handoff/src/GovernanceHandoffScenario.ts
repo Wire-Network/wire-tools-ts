@@ -330,7 +330,8 @@ export async function assertLateOwnerKeepsThreshold(
  * Audit every permission of every system account; fail on anything the audit
  * cannot classify or any authority that differs from the one expected. After
  * a handoff, also fail when the bootstrap key alone still satisfies anything
- * but the `sysio.andon` panic permissions.
+ * but the delegated permissions: the `sysio.andon` panic permissions and the
+ * `sysio.bond` rulings.
  *
  * @param ctx - The build context.
  * @param signal - The step's cancellation.
@@ -350,6 +351,7 @@ export async function auditAuthorities(
     result = await WireAuthorityAuditTool.audit(ctx.wire, {
       accounts: inventory.accounts,
       panicAccount: HarnessConstants.PANIC_ACCOUNT,
+      judgeAccount: HarnessConstants.JUDGE_ACCOUNT,
       keys: [key],
       phase,
       handedTo,
@@ -739,8 +741,8 @@ export function planInitialOwner(
  *    `sysio.nodes@active`) signed by the bootstrap key leaves
  *    `sysio.nodes@active` the full roster, the third owner included (3 of 3).
  *    The audit re-runs, the bootstrap key alone now satisfies only the
- *    `sysio.andon` panic permissions, and a `sysio@active` action it signs is
- *    refused.
+ *    delegated `sysio.andon` panic and `sysio.bond` ruling permissions, and a
+ *    `sysio@active` action it signs is refused.
  * 5. **NodeOwnerMsig** — one approval short, a dry-run `exec` is refused; at
  *    the threshold it executes and pays its probe.
  * 6. **LateNodeOwner** / **PreviousRosterGoverns** / **NewRoster** — a fourth
@@ -922,7 +924,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "audit-after-handoff",
-        "the audit is clean and the bootstrap key alone satisfies only the sysio.andon panic permissions",
+        "the audit is clean and the bootstrap key alone satisfies only the delegated sysio.andon panic and sysio.bond ruling permissions",
         (ctx, signal) =>
           auditAuthorities(
             ctx,
@@ -1221,7 +1223,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "audit-after-council",
-        "the audit is clean, sysio.cncl@active is the stand-in council, and the bootstrap key still satisfies only the sysio.andon panic permissions",
+        "the audit is clean, sysio.cncl@active is the stand-in council, and the bootstrap key still satisfies only the delegated sysio.andon panic and sysio.bond ruling permissions",
         (ctx, signal) =>
           auditAuthorities(
             ctx,

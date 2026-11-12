@@ -8,6 +8,7 @@ import { WireClient } from "../../clients/wire/WireClient.js"
 import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { AndonContractSteps } from "../../orchestration/steps/contracts/sysio/AndonContractSteps.js"
+import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/BondContractSteps.js"
 import { GovernanceSteps } from "../../orchestration/steps/GovernanceSteps.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { WireNodeOwnerTool } from "./WireNodeOwnerTool.js"
@@ -19,6 +20,12 @@ const { SysioContractName, SysioContractAccount } = SysioContracts
 
 /** The emergency-stop contract, whose pull and clear permissions delegate to the panic account. */
 const AndonAccount = SysioContractAccount[SysioContractName.andon]
+/** The underwriting contract, whose ruling permissions delegate to the judge account. */
+const BondAccount = SysioContractAccount[SysioContractName.bond]
+/** What an exception's reason calls the account the Andon permissions delegate to. */
+const PanicRole = "panic"
+/** What an exception's reason calls the account the bond rulings delegate to. */
+const JudgeRole = "judge"
 
 /**
  * The authority audit to run before (and after) handing `sysio` to a
@@ -85,6 +92,8 @@ export namespace WireAuthorityAuditTool {
     crossContractCode = "crossContractCode",
     /** A `sysio.andon` panic permission delegating to the panic account. */
     andonPanicDelegate = "andonPanicDelegate",
+    /** A `sysio.bond` ruling permission delegating to the judge account. */
+    bondJudgeDelegate = "bondJudgeDelegate",
     /** `sysio`'s own key on `owner` / `active` BEFORE a handoff: the authority a handoff replaces. */
     rootKey = "rootKey",
     /** `sysio@owner` / `@active` delegating to the governance authority it was handed to. */
@@ -96,6 +105,16 @@ export namespace WireAuthorityAuditTool {
     /** A `sysio.prods` permission naming a scheduled producer; the chain keeps it equal to the schedule. */
     producerAuthority = "producerAuthority"
   }
+
+  /**
+   * The classifications of a permission delegated to a keyed account outside
+   * `sysio.*`. Whoever holds that account's key satisfies the permission, a
+   * handoff of `sysio` notwithstanding.
+   */
+  export const DelegateClassifications: ReadonlyArray<Classification> = [
+    Classification.andonPanicDelegate,
+    Classification.bondJudgeDelegate
+  ]
 
   /** One `<grantee>@sysio.code` delegation on `<account>@<permission>`. */
   export interface CodeGrant {
@@ -206,6 +225,8 @@ export namespace WireAuthorityAuditTool {
     readonly accounts: ReadonlyArray<string>
     /** The account `sysio.andon`'s panic permissions delegate to. */
     readonly panicAccount: string
+    /** The account `sysio.bond`'s ruling permissions delegate to. */
+    readonly judgeAccount: string
     /** The keys whose reach the audit computes — the bootstrap `sysio` key(s), in any spelling. */
     readonly keys: ReadonlyArray<string>
     /** Whether `sysio` has been handed to a governance authority yet. */
@@ -402,7 +423,15 @@ export namespace WireAuthorityAuditTool {
           })),
           ...response.permissions.flatMap(permission =>
             (permission.linked_actions ?? [])
-              .filter(link => !isAndonPanicLink(account, String(permission.perm_name), link))
+              .filter(
+                link =>
+                  !isDelegatedPermissionLink(
+                    options,
+                    account,
+                    String(permission.perm_name),
+                    link
+                  )
+              )
               .map(link => ({
                 account,
                 permission: String(permission.perm_name),
@@ -473,23 +502,66 @@ export namespace WireAuthorityAuditTool {
     return `${link.account}::${link.action == null ? ContractWideAction : String(link.action)}`
   }
 
-  /** Whether `permission` is one of the panic permissions the bootstrap creates on `sysio.andon`. */
-  function isAndonPanicPermission(account: string, permission: string): boolean {
-    return (
-      account === AndonAccount &&
-      Object.values<string>(AndonContractSteps.Permission).includes(permission)
+  /**
+   * The native child permissions the bootstrap delegates on one system
+   * contract: each is named after, and linked to, one of the contract's own
+   * actions, and is satisfied by the delegate or by `sysio@active`.
+   */
+  interface DelegatedPermissions {
+    /** The contract account holding the permissions. */
+    readonly account: string
+    /** The permissions, each named after the action it is linked to. */
+    readonly permissions: ReadonlyArray<string>
+    /** The account they delegate to beside `sysio@active`. */
+    readonly delegate: string
+    /** How a delegation to {@link delegate} is classified. */
+    readonly classification: Classification
+    /** What a reason calls the delegate. */
+    readonly role: string
+  }
+
+  /** Every set of permissions the bootstrap delegates: the Andon panic permissions and the bond rulings. */
+  function delegatedPermissions(options: AuditOptions): DelegatedPermissions[] {
+    return [
+      {
+        account: AndonAccount,
+        permissions: Object.values<string>(AndonContractSteps.Permission),
+        delegate: options.panicAccount,
+        classification: Classification.andonPanicDelegate,
+        role: PanicRole
+      },
+      {
+        account: BondAccount,
+        permissions: Object.values<string>(BondContractSteps.Permission),
+        delegate: options.judgeAccount,
+        classification: Classification.bondJudgeDelegate,
+        role: JudgeRole
+      }
+    ]
+  }
+
+  /** The delegated set `account@permission` belongs to, or absent when the bootstrap delegates no such permission. */
+  function findDelegatedPermissions(
+    options: AuditOptions,
+    account: string,
+    permission: string
+  ): DelegatedPermissions {
+    return delegatedPermissions(options).find(
+      delegated =>
+        delegated.account === account && delegated.permissions.includes(permission)
     )
   }
 
-  /** Whether `link` is the one documented link of a `sysio.andon` panic permission: its own action. */
-  function isAndonPanicLink(
+  /** Whether `link` is the one documented link of a delegated permission: its contract's own action of the same name. */
+  function isDelegatedPermissionLink(
+    options: AuditOptions,
     account: string,
     permission: string,
     link: API.v1.AccountLinkedAction
   ): boolean {
     return (
-      isAndonPanicPermission(account, permission) &&
-      String(link.account) === AndonAccount &&
+      findDelegatedPermissions(options, account, permission) != null &&
+      String(link.account) === account &&
       String(link.action) === permission
     )
   }
@@ -599,6 +671,7 @@ export namespace WireAuthorityAuditTool {
         unclassifiedReason(account, permission, subject)
       ],
       isGovernanceActive = isGovernanceAuthorityActive(account, permission),
+      delegation = findDelegatedPermissions(options, account, permission),
       [classification, reason] = await match({ actor, delegated })
         .with(
           {
@@ -630,18 +703,17 @@ export namespace WireAuthorityAuditTool {
                   ]
               : unclassified
         )
+        // Only the delegate of THIS permission: a delegate account named anywhere else falls
+        // through, so one that is also a governance member or a producer is still classified.
         .with(
           {
-            actor: options.panicAccount,
+            actor: P.when((candidate: string) => delegation?.delegate === candidate),
             delegated: WireClient.ActivePermission
           },
-          async (): Promise<[Classification, string]> =>
-            isAndonPanicPermission(account, permission)
-              ? [
-                  Classification.andonPanicDelegate,
-                  `${AndonAccount}@${permission} delegates to the panic account ${subject}, held by ${await describeKeys(context.accounts, actor, delegated)}`
-                ]
-              : unclassified
+          async (): Promise<[Classification, string]> => [
+            delegation.classification,
+            `${account}@${permission} delegates to the ${delegation.role} account ${subject}, held by ${await describeKeys(context.accounts, actor, delegated)}`
+          ]
         )
         .with(
           {
@@ -910,8 +982,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * Fail when `key` alone still satisfies any audited permission other than the
-   * `sysio.andon` panic permissions — the check after a handoff that the
-   * retired bootstrap key no longer reaches anything it should not.
+   * delegated ones (the `sysio.andon` panic permissions and the `sysio.bond`
+   * rulings) — the check after a handoff that the retired bootstrap key no
+   * longer reaches anything it should not.
    *
    * @param result - The audit's findings.
    * @param key - The retired key, in any spelling.
@@ -924,13 +997,13 @@ export namespace WireAuthorityAuditTool {
       throw new Error(
         `the key ${normalized} was not audited (audited: ${result.keys.join(", ") || "none"}); its reach is unknown`
       )
-    const panicPermissions = result.exceptions
-        .filter(entry => entry.classification === Classification.andonPanicDelegate)
+    const delegated = result.exceptions
+        .filter(entry => DelegateClassifications.includes(entry.classification))
         .map(entry => `${entry.account}@${entry.permission}`),
       offenders = result.keyReach
         .filter(reach => reach.key === normalized && reach.satisfies)
         .map(reach => `${reach.account}@${reach.permission}`)
-        .filter(permission => !panicPermissions.includes(permission))
+        .filter(permission => !delegated.includes(permission))
     if (offenders.length > 0)
       throw new Error(
         `the retired key ${normalized} still satisfies ${offenders.join(", ")} on its own`
