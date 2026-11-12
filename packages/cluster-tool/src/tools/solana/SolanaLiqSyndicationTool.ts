@@ -45,7 +45,6 @@ import {
   type Commitment,
   ComputeBudgetProgram,
   type Connection,
-  Keypair,
   MessageAccountKeys,
   PublicKey,
   StakeProgram,
@@ -82,6 +81,8 @@ import {
   type SolanaOutpostSource
 } from "./SolanaOutpostTarget.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import type { SolanaSigner } from "../../types/SolanaSigner.js"
+import { solanaSignerFromKeypair } from "../../utils/keyPairUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -441,17 +442,17 @@ export namespace SolanaLiqSyndicationTool {
    * DEPLOYED program id.
    *
    * @param source - The build context, or a target (RPC connection + `solanaPath` + program id).
-   * @param keypair - The signer the provider's wallet wraps.
+   * @param signer - The signer the provider's wallet IS — keypair-backed or KMS-backed alike.
    * @returns The Anchor program.
    */
   export function loadLiqsolProgram<C extends ClusterBuildContext>(
     source: SolanaOutpostSource<C>,
-    keypair: Keypair
+    signer: SolanaSigner
   ): anchor.Program<anchor.Idl> {
     const target = SolanaOutpostTarget.resolve(source)
     return SolanaOutpostProgramTool.loadProgram(
       target.connection,
-      keypair,
+      signer,
       target.solanaPath,
       target.programId
     )
@@ -1074,22 +1075,30 @@ export namespace SolanaLiqSyndicationTool {
    * Submit a built transaction signed by `signer`, then poll-confirm it — the
    * ONE submission path for this tool's runners, and for a cluster-less
    * caller that builds through {@link depositForLiqsolTransaction} /
-   * {@link syndTransaction}.
+   * {@link syndTransaction}. The signer pays: the fee payer and the recent
+   * blockhash are set here, the signer signs the serialized message (a
+   * keypair locally, a KMS key remotely), and the signed bytes are sent raw —
+   * so a KMS-custodied operator's stake lands through the same path as a
+   * flow user's keypair.
    *
    * @param source - The build context (its recording connection), or a target.
    * @param transaction - The built, unsigned transaction.
-   * @param signer - The keypair that signs and pays.
+   * @param signer - The signer that signs and pays.
    * @param label - Confirmation label surfaced on timeout.
    * @returns The confirmed transaction's signature.
    */
   export async function submit<C extends ClusterBuildContext>(
     source: SolanaOutpostSource<C>,
     transaction: anchor.web3.Transaction,
-    signer: Keypair,
+    signer: SolanaSigner,
     label: string
   ): Promise<string> {
     const connection = connectionOf(source),
-      signature = await connection.sendTransaction(transaction, [signer], {
+      { blockhash } = await connection.getLatestBlockhash()
+    transaction.feePayer = signer.publicKey
+    transaction.recentBlockhash = blockhash
+    const signed = await signer.signTransaction(transaction),
+      signature = await connection.sendRawTransaction(signed.serialize(), {
         skipPreflight: false
       })
     await confirmSignature(connection, signature, label)
@@ -1775,9 +1784,8 @@ export namespace SolanaLiqSyndicationTool {
     input: DepositForLiqsolInput,
     label: string
   ): Promise<void> {
-    const user = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.userName
+    const user = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.userName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       transaction = await depositForLiqsolTransaction(
@@ -1797,7 +1805,7 @@ export namespace SolanaLiqSyndicationTool {
    * runner and a cluster-less caller share; submitting it is {@link submit}.
    *
    * @param source - The build context, or a target.
-   * @param user - The depositing keypair (signs + pays).
+   * @param user - The depositing signer (signs + pays) — a keypair's or a KMS key's.
    * @param lamports - Lamports to deposit.
    * @param ephemeralStakeSeed - The `u32` seed of the ephemeral stake account.
    * @returns The built, unsigned transaction.
@@ -1806,7 +1814,7 @@ export namespace SolanaLiqSyndicationTool {
     C extends ClusterBuildContext
   >(
     source: SolanaOutpostSource<C>,
-    user: Keypair,
+    user: SolanaSigner,
     lamports: bigint,
     ephemeralStakeSeed: number
   ): Promise<anchor.web3.Transaction> {
@@ -1893,7 +1901,9 @@ export namespace SolanaLiqSyndicationTool {
         `${input.wireState} (permitted from ${current}: ` +
         `${WireStateTransitions[current].join(", ") || "nothing — it is terminal"})`
     )
-    const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
+    const admin = solanaSignerFromKeypair(
+        SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
+      ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
       program = loadLiqsolProgram(target, admin),
@@ -1961,7 +1971,9 @@ export namespace SolanaLiqSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
+    const admin = solanaSignerFromKeypair(
+        SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
+      ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
       program = loadLiqsolProgram(target, admin),
@@ -2034,9 +2046,8 @@ export namespace SolanaLiqSyndicationTool {
       input.amount > 0n,
       "SolanaLiqSyndicationTool.planSynd: amount must be positive"
     )
-    const user = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.userName
+    const user = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.userName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       transaction = await syndTransaction(target, user, input.amount)
@@ -2057,14 +2068,14 @@ export namespace SolanaLiqSyndicationTool {
    * {@link submit}.
    *
    * @param source - The build context, or a target.
-   * @param user - The syndicating keypair (signs + pays).
+   * @param user - The syndicating signer (signs + pays) — a keypair's or a KMS key's.
    * @param amount - liqSOL base units to syndicate.
    * @param wireState - The outpost's launch state, selecting the account form.
    * @returns The built, unsigned transaction.
    */
   export async function syndTransaction<C extends ClusterBuildContext>(
     source: SolanaOutpostSource<C>,
-    user: Keypair,
+    user: SolanaSigner,
     amount: bigint,
     wireState: WireState = WireState.postLaunch
   ): Promise<anchor.web3.Transaction> {
@@ -2151,9 +2162,8 @@ export namespace SolanaLiqSyndicationTool {
       "SolanaLiqSyndicationTool.planInjectBonusSyndYield: lamports must be a positive " +
         `multiple of ${BonusYieldLamportGranularity}`
     )
-    const donor = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.donorName
+    const donor = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.donorName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
@@ -2224,9 +2234,8 @@ export namespace SolanaLiqSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const cranker = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.crankerName
+    const cranker = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.crankerName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
@@ -2296,7 +2305,9 @@ export namespace SolanaLiqSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const admin = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath),
+    const admin = solanaSignerFromKeypair(
+        SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
+      ),
       panic = SolanaFundingTool.loadKeypair(
         ctx.config.dataPath,
         input.panicKeypairName
@@ -2372,9 +2383,8 @@ export namespace SolanaLiqSyndicationTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const signer = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.signerName
+    const signer = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.signerName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
@@ -2460,9 +2470,8 @@ export namespace SolanaLiqSyndicationTool {
       `SolanaLiqSyndicationTool.planPayPendingDesyndication: no PendingPayout is stored for ` +
         `request ${input.requestId} — it was never deferred, or it has already been paid`
     )
-    const caller = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.callerName
+    const caller = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.callerName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveBasePdas(target.solanaPath, target.programId),
@@ -2560,9 +2569,8 @@ export namespace SolanaLiqSyndicationTool {
       input.amount > 0n,
       "SolanaLiqSyndicationTool.planDonateToPool: amount must be positive"
     )
-    const donor = SolanaFundingTool.loadKeypair(
-        ctx.config.dataPath,
-        input.donorName
+    const donor = solanaSignerFromKeypair(
+        SolanaFundingTool.loadKeypair(ctx.config.dataPath, input.donorName)
       ),
       target = SolanaOutpostTarget.fromContext(ctx),
       pdas = deriveUserPdas(target.solanaPath, donor.publicKey, target.programId),

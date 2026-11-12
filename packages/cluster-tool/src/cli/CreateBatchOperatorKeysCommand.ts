@@ -79,7 +79,7 @@ function applyCreateBatchOperatorKeysArgs(
     .option(SignatureProviderKMSFlag, {
       type: "string",
       describe:
-        "KMS custody settings for the EM keys as inline JSON ({awsKeyAliasPattern, awsRegion, version?}) or a file path"
+        "KMS custody settings for the EM / ED keys as inline JSON ({awsKeyAliasPattern, awsRegion, keyTypes?, version?}; keyTypes default [\"EM\",\"ED\"]) or a file path"
     })
 }
 
@@ -113,7 +113,7 @@ export function createCreateBatchOperatorKeysCommand(
   return {
     command: ClusterCommand["create-batch-operator-keys"],
     describe:
-      "Pre-create the batch operators' signing keys in the cluster's AWS custody store (SSM, EM keys in KMS when configured) and print their public listing",
+      "Pre-create the batch operators' signing keys in the cluster's AWS custody store (SSM; the EM / ED keys in KMS when configured) and print their public listing",
     builder: (builder: Argv) =>
       applyCreateBatchOperatorKeysArgs(builder, fileOptions),
     handler: async (args: Record<string, unknown>) => {

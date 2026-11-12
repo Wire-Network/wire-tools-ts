@@ -30,7 +30,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
 | `create-api-node` | Render a STANDALONE (non-cluster) WIRE API node's `config.ini` + `start.sh` into `--output-path`. A command with no cluster behind it: no `ClusterConfig`, no process, no chain, no Report. |
-| `create-batch-operator-keys` | Pre-create the batch operators' signing keys in a cluster's AWS custody store (K1/ED in SSM, EM in SSM or KMS) from the SAME two documents `create` reads, and print their PUBLIC listing — the addresses a launch pre-funds before the cluster exists. Cluster-less like `create-api-node`. |
+| `create-batch-operator-keys` | Pre-create the batch operators' signing keys in a cluster's AWS custody store (K1 in SSM; EM and ED in KMS when the `kms` block names the curve, SSM otherwise) from the SAME two documents `create` reads, and print their PUBLIC listing — the addresses a launch pre-funds before the cluster exists. Cluster-less like `create-api-node`. |
 | `fund-batch-operators` | Fund the pre-created batch operators on BOTH deployed outposts: adopt their keys (adopt-only — a missing key fails), check each native balance covers `stake + reserve`, and stake the configured amount (`batchOperatorUnderwriting.stake`) so the launch snapshot carries their positions; print the transaction receipts. Cluster-less like `create-batch-operator-keys`. |
 
 The cluster directory is the **single source of truth**: executable paths,
@@ -110,9 +110,9 @@ the path flags.
 | `--solana-bootstrap-json-file <file>` | | — | the Solana outpost's genesis export (`SolanaGenesisSnapshot`): import its staked liqSOL, WIRE claims and LIQSOL yield pool during epoch zero |
 | `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig`. A `queryEngine.*` or `ethereumRead.*` member is left unset by OMITTING it from the document; the loader rejects `null` for any scalar leaf |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm` and optional `kms` settings) |
-| `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` — the cluster-wide custody of every generated key. `KMS` is never a cluster type: it custodies ONLY an SSM cluster's Ethereum (EM) keys, through `--signature-provider-kms` |
+| `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` — the cluster-wide custody of every generated key. `KMS` is never a cluster type: it custodies ONLY an SSM cluster's Ethereum (EM) and Solana (ED) keys, through `--signature-provider-kms` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
-| `--signature-provider-kms '<json>'\|<file>` | | — | AWS KMS custody of the EM keys (`{"awsKeyAliasPattern":"alias/wire/{cluster}/{account}/{keyType}","awsRegion":"us-east-1"}`, SSM clusters only): each operator's secp256k1 key is created inside KMS under the rendered alias (a handle's dots become dashes: `alias/wire/dev/batchop-a/EM`) and never leaves it — the daemon spec renders `KMS:<region>:<alias>` (nodeop loads `signature_provider_kms_plugin`) and the harness signs its authex link through KMS. Same precedence as the SSM flag; `awsRegion` must be one of the node config's `regions` |
+| `--signature-provider-kms '<json>'\|<file>` | | — | AWS KMS custody of the EM and ED keys (`{"awsKeyAliasPattern":"alias/wire/{cluster}/{account}/{keyType}","awsRegion":"us-east-1","keyTypes":["EM","ED"]}`, SSM clusters only): each operator's secp256k1 (`ECC_SECG_P256K1`) and Ed25519 (`ECC_NIST_EDWARDS25519`) key is created inside KMS under the rendered alias (a handle's dots become dashes: `alias/wire/dev/batchop-a/EM`, `…/ED`) and never leaves it — the daemon spec renders `KMS:<region>:<alias>` (nodeop loads `signature_provider_kms_plugin`) and the harness signs its authex links and its Solana staking through KMS. `keyTypes` names the custodied curves (default both); set `["EM"]` to keep the ED keys in SSM for a nodeop without wire-sysio's Ed25519 KMS signing (which also needs aws-sdk-cpp 1.11.686 or later). The pattern must carry `{account}` and `{keyType}`. Same precedence as the SSM flag; `awsRegion` must be one of the node config's `regions` |
 | `--signature-provider-batch-operator-key-policy` | | `adoptOrCreate` | how the bootstrap obtains the batch operators' keys: `adoptOrCreate` adopts the custody store's key (SSM parameter / KMS alias / an identity the context already holds) else generates one; `adoptOnly` FAILS the bootstrap when a batch operator's key is not pre-created — the policy of a pre-funded launch (`create-batch-operator-keys` first, fund the listed addresses, export the outposts, then `create`). Every other identity always adopts-or-creates |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
@@ -329,10 +329,11 @@ wire-cluster-tool create-batch-operator-keys \
 Pre-creates the bootstrap batch operators' signing keys (`batchop.a` … per
 `batchOperatorCount`) in the cluster's AWS custody store BEFORE the cluster
 exists, so a launch can pre-fund them on the outposts: each operator's wire K1
-and solana ED keys are adopted from (or created and published to) the SSM
-parameters the same patterns render for `create`, and its ethereum EM key is
-adopted from (or created under) the KMS alias when the node config carries a
-`kms` block — otherwise it is an SSM parameter too. An existing key is adopted,
+key is adopted from (or created and published to) the SSM parameter the same
+pattern renders for `create`, and its ethereum EM and solana ED keys are
+adopted from (or created under) the KMS aliases when the node config carries a
+`kms` block naming the curve (`keyTypes`, both by default) — otherwise they are
+SSM parameters too. An existing key is adopted,
 never replaced, so re-running is safe and the cluster's `batchOperatorKeyPolicy`
 is not consulted (this command IS the pre-creation `adoptOnly` relies on). A
 `KEY` / `KIOD` provider is refused: there is no custody store to create into.
@@ -382,7 +383,9 @@ on each outpost and refuses one below `stake + reserve`, then stakes `stake`:
   `liqEthAddresses` present). An open refund window or a paused contract
   refuses.
 - **Solana** — `sol_to_liqsol(stake)` then `synd(all minted liqSOL)` signed by
-  the operator's ED keypair, in the account form of the outpost's launch state
+  the operator's ED key (a KMS-custodied key signs the serialized transaction
+  message remotely through `keyPairUtils.solanaSigner`), in the account form
+  of the outpost's launch state
   (`PreLaunch`: the per-user `outpost_account` + pretoken history;
   `PostLaunch`: the outbound buffer + config). `Launching` (the frozen snapshot
   window) and `Refund` are refused, as are a frozen or paused surface.

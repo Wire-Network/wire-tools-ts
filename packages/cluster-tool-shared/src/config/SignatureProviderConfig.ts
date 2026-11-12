@@ -17,10 +17,12 @@ export enum SignatureProviderType {
 /**
  * The provider types a CLUSTER generates its own signing keys under — the
  * cluster-wide axis. `KMS` is deliberately absent: nodeop's
- * `signature_provider_kms_plugin` signs secp256k1 / ethereum keys only, so KMS
- * can never custody a cluster's K1 / BLS / ED keys. It complements an `SSM`
- * cluster instead ({@link AWSKMSSignatureProviderOptionsSchema}), moving ONLY
- * the curves in {@link KMSCustodiedKeyTypes} out of Parameter Store.
+ * `signature_provider_kms_plugin` signs the ethereum (secp256k1) and solana
+ * (Ed25519) keys and never a cluster's K1 / BLS keys, so KMS cannot be the
+ * cluster-wide custody. It complements an `SSM` cluster instead
+ * ({@link AWSKMSSignatureProviderOptionsSchema}), moving the curves its
+ * `keyTypes` member names — drawn from {@link KMSCustodiedKeyTypes} — out of
+ * Parameter Store.
  */
 export const ClusterSignatureProviderTypes = [
   SignatureProviderType.KEY,
@@ -32,12 +34,21 @@ export type ClusterSignatureProviderType =
   (typeof ClusterSignatureProviderTypes)[number]
 
 /**
- * The curves AWS KMS custodies when a cluster configures it: the ethereum EM
- * key ONLY. A constant, not a config member — nodeop's KMS provider is
- * ethereum-scoped by construction, so there is nothing an operator could
- * choose here.
+ * The curves AWS KMS CAN custody: the ethereum EM key (an `ECC_SECG_P256K1`
+ * KMS key) and the solana ED key (an `ECC_NIST_EDWARDS25519` KMS key) — the
+ * two nodeop's `signature_provider_kms_plugin` signs with. WHICH of them a
+ * deployment moves into KMS is its `kms.keyTypes` choice
+ * ({@link AWSKMSSignatureProviderOptionsSchema}); K1 always stays in SSM.
  */
-export const KMSCustodiedKeyTypes = [KeyType.EM] as const
+export const KMSCustodiedKeyTypes = [KeyType.EM, KeyType.ED] as const
+/** A curve KMS can custody — the enum-member subset {@link KMSCustodiedKeyTypes} spells. */
+export type KMSCustodiedKeyType = (typeof KMSCustodiedKeyTypes)[number]
+
+/**
+ * The curve of a KMS-custodied key — {@link KMSCustodiedKeyTypes} as a zod
+ * roster (members listed explicitly, as {@link KeyTypeSchema} does).
+ */
+const KMSCustodiedKeyTypeSchema = z.enum([KeyType.EM, KeyType.ED])
 
 /**
  * The curve of a signing key — reuses sdk-core's `KeyType` (referenced by
@@ -103,7 +114,7 @@ export const SignatureProviderKIODConfigSchema = z.object({
  * account. `awsKmsKeyId` is any `KeyId` KMS accepts: an alias name
  * (`alias/wire/dev/batchop-a/EM`, what the harness renders from its pattern),
  * a bare key id, or a key / alias ARN. Only the curves in
- * {@link KMSCustodiedKeyTypes} may ride this variant.
+ * {@link KMSCustodiedKeyTypes} may ride this variant — EM or ED.
  */
 export const SignatureProviderKMSConfigSchema = z.object({
   providerType: z.literal(SignatureProviderType.KMS),
@@ -135,7 +146,7 @@ export const SignatureProviderConfigSchema = z
     }
     if (
       config.providerType === SignatureProviderType.KMS &&
-      !isKMSCustodiedKeyType(config.type)
+      !isKMSCustodiableKeyType(config.type)
     ) {
       ctx.addIssue({
         code: "custom",
@@ -183,13 +194,31 @@ export type SignatureProviderConfigOf<T extends SignatureProviderType> = Extract
 >
 
 /**
- * Whether `keyType` is a curve AWS KMS custodies ({@link KMSCustodiedKeyTypes}).
+ * Whether `keyType` is a curve AWS KMS CAN custody ({@link KMSCustodiedKeyTypes}
+ * — EM or ED), whatever a deployment's `kms.keyTypes` chose.
  *
  * @param keyType - The curve.
- * @returns `true` for the KMS-custodied curves.
+ * @returns `true` for the custodiable curves.
  */
-export function isKMSCustodiedKeyType(keyType: KeyType): boolean {
+export function isKMSCustodiableKeyType(
+  keyType: KeyType
+): keyType is KMSCustodiedKeyType {
   return (KMSCustodiedKeyTypes as readonly KeyType[]).includes(keyType)
+}
+
+/**
+ * Whether `keyType` is a curve `kms` moves into AWS KMS — a member of the
+ * settings' `keyTypes` ({@link AWSKMSSignatureProviderOptionsSchema}).
+ *
+ * @param keyType - The curve.
+ * @param kms - The resolved KMS custody settings.
+ * @returns `true` for the curves the settings custody in KMS.
+ */
+export function isKMSCustodiedKeyType(
+  keyType: KeyType,
+  kms: AWSKMSSignatureProviderOptions
+): boolean {
+  return (kms.keyTypes as readonly KeyType[]).includes(keyType)
 }
 
 /**
@@ -226,10 +255,18 @@ export type AWSSSMSignatureProviderOptions = z.infer<
 >
 
 /**
- * AWS KMS custody settings for the {@link KMSCustodiedKeyTypes} curves of an
- * `SSM` cluster: the key ALIAS pattern every such key is adopted from (and,
- * under {@link SignatureProviderKeyPolicy.adoptOrCreate}, created under) and
- * the ONE region the keys live in.
+ * AWS KMS custody settings of an `SSM` cluster: WHICH of the
+ * {@link KMSCustodiedKeyTypes} curves live in KMS (`keyTypes`), the key ALIAS
+ * pattern every such key is adopted from (and, under
+ * {@link SignatureProviderKeyPolicy.adoptOrCreate}, created under) and the ONE
+ * region the keys live in.
+ *
+ * `keyTypes` defaults to every custodiable curve — EM and ED. A deployment
+ * whose nodeop cannot sign Solana transactions through KMS (it needs
+ * wire-sysio's Ed25519 KMS signing and aws-sdk-cpp 1.11.686 or later) sets
+ * `["EM"]`, keeping its ED keys in Parameter Store. The alias pattern MUST
+ * render differently per curve, so it carries `{keyType}` as well as
+ * `{account}` (checked at resolve time).
  *
  * The pattern takes the same placeholders as the SSM secret-id pattern —
  * `{cluster}` / `{account}` / `{keyType}` / `{version}` — and renders a KMS
@@ -245,11 +282,32 @@ export const AWSKMSSignatureProviderOptionsSchema = z.object({
   awsKeyAliasPattern: z.string().min(1),
   /** The ONE region the KMS keys live in — one of `AWSClusterNodeConfig.regions`. */
   awsRegion: z.string().min(1),
+  /**
+   * The curves custodied in KMS — a non-empty, duplicate-free subset of
+   * {@link KMSCustodiedKeyTypes}; defaults to all of them (EM + ED).
+   */
+  keyTypes: z
+    .array(KMSCustodiedKeyTypeSchema)
+    .nonempty()
+    .refine(
+      keyTypes => new Set(keyTypes).size === keyTypes.length,
+      "kms.keyTypes must not repeat a curve"
+    )
+    .default([...KMSCustodiedKeyTypes]),
   /** Value for the OPTIONAL `{version}` pattern token — omit when the pattern has none. */
   version: z.string().min(1).optional()
 })
-/** AWS KMS custody settings — the schema-inferred shape of {@link AWSKMSSignatureProviderOptionsSchema}. */
+/** AWS KMS custody settings — the schema-inferred (resolved) shape of {@link AWSKMSSignatureProviderOptionsSchema}. */
 export type AWSKMSSignatureProviderOptions = z.infer<
+  typeof AWSKMSSignatureProviderOptionsSchema
+>
+/**
+ * AWS KMS custody settings as a CALLER authors them — the schema's input
+ * shape, where `keyTypes` may be omitted for the default. Resolution
+ * (`ClusterConfigProvider.resolveSignatureProvider`) turns it into
+ * {@link AWSKMSSignatureProviderOptions}.
+ */
+export type AWSKMSSignatureProviderOptionsInput = z.input<
   typeof AWSKMSSignatureProviderOptionsSchema
 >
 
@@ -277,7 +335,7 @@ export enum SignatureProviderKeyPolicy {
  * TYPE the cluster generates its own signing keys under (default
  * {@link SignatureProviderType.KEY}), the SSM publish settings REQUIRED when
  * `type === SignatureProviderType.SSM`, the OPTIONAL KMS custody settings an
- * SSM cluster moves its {@link KMSCustodiedKeyTypes} keys into, and the
+ * SSM cluster moves its `kms.keyTypes` curves (EM / ED) into, and the
  * batch-operator key policy (default {@link SignatureProviderKeyPolicy.adoptOrCreate}).
  */
 export interface ClusterSignatureProviderOptions {
@@ -285,8 +343,8 @@ export interface ClusterSignatureProviderOptions {
   type?: ClusterSignatureProviderType
   /** AWS SSM publish settings — required when `type === SSM`. */
   ssm?: AWSSSMSignatureProviderOptions
-  /** AWS KMS custody settings for the EM keys — only valid when `type === SSM`. */
-  kms?: AWSKMSSignatureProviderOptions
+  /** AWS KMS custody settings for the EM / ED keys — only valid when `type === SSM`. */
+  kms?: AWSKMSSignatureProviderOptionsInput
   /** How the bootstrap obtains the batch operators' keys. Default: adoptOrCreate. */
   batchOperatorKeyPolicy?: SignatureProviderKeyPolicy
 }
@@ -302,7 +360,7 @@ export const ClusterSignatureProviderConfigSchema = z
     type: z.enum(ClusterSignatureProviderTypes),
     /** AWS SSM publish settings, or `null` under KEY/KIOD (round-trips through JSON). */
     ssm: AWSSSMSignatureProviderOptionsSchema.nullable(),
-    /** AWS KMS custody settings for the EM keys, or `null` (round-trips through JSON). */
+    /** AWS KMS custody settings for the EM / ED keys, or `null` (round-trips through JSON). */
     kms: AWSKMSSignatureProviderOptionsSchema.nullable().default(null),
     /** How the bootstrap obtains the batch operators' keys. */
     batchOperatorKeyPolicy: z
@@ -322,7 +380,7 @@ export type ClusterSignatureProviderConfig = z.infer<
 
 /**
  * Whether `keyType` lives in AWS KMS under `provider` — an `SSM` cluster with
- * KMS settings custodies its {@link KMSCustodiedKeyTypes} keys there; every
+ * KMS settings custodies the curves its `kms.keyTypes` names there; every
  * other combination keeps the curve in the cluster-wide provider.
  *
  * @param provider - The resolved cluster signature-provider config.
@@ -336,6 +394,6 @@ export function isKMSCustodied(
   return (
     provider.type === SignatureProviderType.SSM &&
     provider.kms != null &&
-    isKMSCustodiedKeyType(keyType)
+    isKMSCustodiedKeyType(keyType, provider.kms)
   )
 }

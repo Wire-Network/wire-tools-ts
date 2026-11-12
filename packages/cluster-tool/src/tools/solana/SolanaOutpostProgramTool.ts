@@ -22,6 +22,7 @@ import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
+import type { AnchorWallet } from "../../types/SolanaSigner.js"
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -240,29 +241,30 @@ export namespace SolanaOutpostProgramTool {
 
   /**
    * Build the OPP outpost Anchor `Program` (hosted in `liqsol_core`) bound to
-   * `keypair` as its provider wallet — THE one `Program` construction for this
-   * program. A pure value helper (IDL read + provider wiring, no chain call),
-   * so it is called freely inside step runners and bootstrapper methods.
+   * `wallet` as its provider wallet — THE one `Program` construction for this
+   * program. The wallet is Anchor's own contract, so a keypair-backed signer
+   * (`keyPairUtils.solanaSignerFromKeypair`) and a KMS-backed one
+   * (`keyPairUtils.solanaSigner`) bind alike. A pure value helper (IDL read +
+   * provider wiring, no chain call), so it is called freely inside step
+   * runners and bootstrapper methods.
    *
    * @param connection - The Solana RPC connection the provider transacts over.
-   * @param keypair - The signer the provider's wallet wraps.
+   * @param wallet - The provider wallet — the signer every write is paid and signed by.
    * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
    * @param programId - The DEPLOYED program id when it differs from the IDL's
    *   `address` (an external outpost); omit for a local build.
-   * @returns The Anchor program bound to `connection` + `keypair`.
+   * @returns The Anchor program bound to `connection` + `wallet`.
    * @throws If the generated IDL is missing (see {@link readIdl}).
    */
   export function loadProgram(
     connection: Connection,
-    keypair: Keypair,
+    wallet: AnchorWallet,
     solanaPath: string,
     programId?: PublicKey
   ): anchor.Program<anchor.Idl> {
-    const provider = new anchor.AnchorProvider(
-      connection,
-      new anchor.Wallet(keypair),
-      { commitment: SolanaClient.DefaultCommitment }
-    )
+    const provider = new anchor.AnchorProvider(connection, wallet, {
+      commitment: SolanaClient.DefaultCommitment
+    })
     return new anchor.Program(
       readIdlAt(solanaPath, ProgramName, programId),
       provider

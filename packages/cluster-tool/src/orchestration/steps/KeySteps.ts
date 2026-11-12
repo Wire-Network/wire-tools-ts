@@ -6,11 +6,14 @@ import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { NestedError } from "@wireio/shared"
 import {
+  isKMSCustodiableKeyType,
   isKMSCustodied,
+  KMSCustodiedKeyTypes,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterConfig,
-  type KeyCustodySettings
+  type KeyCustodySettings,
+  type KMSCustodiedKeyType
 } from "@wireio/cluster-tool-shared"
 import type { Tag } from "@aws-sdk/client-ssm"
 import type { Tag as KMSTag } from "@aws-sdk/client-kms"
@@ -18,7 +21,8 @@ import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
 import {
   ethereumKeyPairFromKmsPublicKey,
   keyPairFromPrivate,
-  privateKeyFromNativeString
+  privateKeyFromNativeString,
+  solanaKeyPairFromKmsPublicKey
 } from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
@@ -283,6 +287,43 @@ export namespace KeySteps {
   }
 
   /**
+   * The curve of a KMS source, narrowed to the ones KMS can custody — a source
+   * for any other curve is a renderer bug, not a configuration a key can be
+   * adopted or created for.
+   */
+  function assertKMSCustodiableKeyType(
+    keyType: KeyType,
+    account: string
+  ): KMSCustodiedKeyType {
+    if (isKMSCustodiableKeyType(keyType)) return keyType
+    throw new Error(
+      `KeySteps: ${account}'s ${KeyType[keyType]} key cannot live in KMS — KMS custodies ${KMSCustodiedKeyTypes.map(
+        curve => KeyType[curve]
+      ).join(", ")} keys only`
+    )
+  }
+
+  /**
+   * The stored pair of a KMS key's public identity: EM → the ethereum pair
+   * (`PUB_EM_…` + address), ED → the solana pair (`PUB_ED_…`); each carries the
+   * source's key reference and NO material.
+   */
+  function kmsKeyPair(
+    identity: KMSClientProvider.PublicKey,
+    source: KeyGenerator.SignatureProviderSource
+  ): KeyPair {
+    const { awsKmsRegion, awsKmsKeyId } = source
+    return match(identity.keyType)
+      .with(KeyType.EM, () =>
+        ethereumKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
+      .with(KeyType.ED, () =>
+        solanaKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
+      .exhaustive()
+  }
+
+  /**
    * Adopt the KMS key behind the rendered alias, or nothing. The adopted pair
    * carries the key's public identity and its reference — never material.
    */
@@ -294,7 +335,8 @@ export namespace KeySteps {
     const { awsKmsRegion, awsKmsKeyId } = source,
       existing = await KMSClientProvider.tryGetPublicKey(
         awsKmsRegion,
-        awsKmsKeyId
+        awsKmsKeyId,
+        assertKMSCustodiableKeyType(keyType, account)
       )
     if (existing == null) return null
     log.info(
@@ -310,11 +352,7 @@ export namespace KeySteps {
         keyArn: existing.keyArn
       }
     )
-    return ethereumKeyPairFromKmsPublicKey(
-      existing.compressed,
-      awsKmsRegion,
-      awsKmsKeyId
-    )
+    return kmsKeyPair(existing, source)
   }
 
   /**
@@ -339,11 +377,11 @@ export namespace KeySteps {
   }
 
   /**
-   * Generate a KMS-custodied key: a new secp256k1 key inside KMS, bound to the
-   * rendered alias. The pair carries the key's public identity + reference,
-   * recorded in the step's `extra` the way `KeyGenerator.create` records a local
-   * generation (public half, purpose, mechanism — never material, of which KMS
-   * has none to give).
+   * Generate a KMS-custodied key: a new key of the curve's spec inside KMS
+   * (secp256k1 for EM, Ed25519 for ED), bound to the rendered alias. The pair
+   * carries the key's public identity + reference, recorded in the step's
+   * `extra` the way `KeyGenerator.create` records a local generation (public
+   * half, purpose, mechanism — never material, of which KMS has none to give).
    */
   async function createKMSKey(
     settings: KeyCustodySettings,
@@ -361,14 +399,11 @@ export namespace KeySteps {
       created = await KMSClientProvider.createKey(
         awsKmsRegion,
         awsKmsKeyId,
+        assertKMSCustodiableKeyType(keyType, account),
         options.purpose ?? `${account} ${KeyType[keyType]} signing key`,
         tags
       ),
-      keyPair = ethereumKeyPairFromKmsPublicKey(
-        created.compressed,
-        awsKmsRegion,
-        awsKmsKeyId
-      )
+      keyPair = kmsKeyPair(created, source)
     StepExtraRecorder.record({
       client: KMSKeygenClient,
       kind: "keygen",

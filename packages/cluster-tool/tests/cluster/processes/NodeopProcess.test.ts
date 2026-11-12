@@ -441,6 +441,15 @@ describe("NodeopProcess", () => {
         ).toEqual([KMSPlugin])
       })
 
+      it("loads the kms plugin for a solana (ED) KMS: spec too — the scheme decides, never the curve", () => {
+        expect(
+          NodeopProcess.requiredSignatureProviderPlugins([
+            NodeopProcess.SignatureProviderFlag,
+            "sol-batchopa,solana,solana,7Zp4m9vGx1Z6bYbKx2uJ3gQfR9cT5nL8wM4aE2sD1hVq,KMS:us-east-1:alias/wire/dev/batchop-a/ED"
+          ])
+        ).toEqual([KMSPlugin])
+      })
+
       it("requires BOTH plugins for an SSM cluster whose EM key is in KMS, in scan order, deduped", () => {
         const mixed = [
           NodeopProcess.SignatureProviderFlag,

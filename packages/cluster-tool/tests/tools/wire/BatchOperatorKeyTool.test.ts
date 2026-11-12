@@ -1,4 +1,5 @@
 import { ethers } from "ethers"
+import { Keypair } from "@solana/web3.js"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
@@ -8,7 +9,8 @@ import {
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterSignatureProviderType,
-  type KeyCustodySettings
+  type KeyCustodySettings,
+  type KMSCustodiedKeyType
 } from "@wireio/cluster-tool-shared"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
@@ -18,7 +20,8 @@ import type { KeyPair } from "@wireio/cluster-tool/types"
 import {
   ethereumKeyPairFromKmsPublicKey,
   ethereumKeyPairFromWallet,
-  keyPairFromPrivate
+  keyPairFromPrivate,
+  solanaKeyPairFromKmsPublicKey
 } from "@wireio/cluster-tool/utils"
 
 /** Every region the SSM parameters replicate to; the KMS keys live in the first. */
@@ -32,14 +35,15 @@ const Labels = ["batchop.a", "batchop.b"]
 
 /** Per-fixture custody shape. */
 interface SettingsOptions {
-  kms?: boolean
+  /** The curves the kms block custodies; `null` (the default) for no kms block. */
+  kms?: KMSCustodiedKeyType[]
   policy?: SignatureProviderKeyPolicy
 }
 
 /** The resolved key-custody settings for `type`, optionally with kms and a policy. */
 function settings(
   type: ClusterSignatureProviderType = SignatureProviderType.SSM,
-  { kms = false, policy = SignatureProviderKeyPolicy.adoptOrCreate }: SettingsOptions = {}
+  { kms = null, policy = SignatureProviderKeyPolicy.adoptOrCreate }: SettingsOptions = {}
 ): KeyCustodySettings {
   return {
     signatureProvider: {
@@ -48,7 +52,10 @@ function settings(
         type === SignatureProviderType.SSM
           ? { awsRegions: Regions, awsSecretIdPattern: SecretIdPattern }
           : null,
-      kms: kms ? { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion } : null,
+      kms:
+        kms != null
+          ? { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion, keyTypes: kms }
+          : null,
       batchOperatorKeyPolicy: policy
     },
     awsClusterNodeConfig: {
@@ -63,7 +70,7 @@ function settings(
 /**
  * A REAL random pair of `keyType` for `account`, in the custody form the
  * bootstrap's seam would hand back under `custody`: material for every SSM
- * curve, a material-less KMS reference for a KMS-custodied EM.
+ * curve, a material-less KMS reference for a KMS-custodied EM / ED.
  */
 function fakePair(
   custody: KeyCustodySettings,
@@ -81,6 +88,13 @@ function fakePair(
           ClusterConfigProvider.custodySource(custody, account, KeyType.EM).awsKmsKeyId
         )
       : ethereumKeyPairFromWallet(wallet)
+  }
+  if (keyType === KeyType.ED && isKMSCustodied(custody.signatureProvider, KeyType.ED)) {
+    return solanaKeyPairFromKmsPublicKey(
+      Keypair.generate().publicKey.toBytes(),
+      KmsRegion,
+      ClusterConfigProvider.custodySource(custody, account, KeyType.ED).awsKmsKeyId
+    )
   }
   return keyPairFromPrivate(keyType, PrivateKey.generate(keyType).toNativeString())
 }
@@ -198,8 +212,8 @@ describe("BatchOperatorKeyTool", () => {
       })
     })
 
-    it("publishes ONLY the SSM-custodied curves under kms — the EM key has no parameter to put", async () => {
-      const custody = settings(SignatureProviderType.SSM, { kms: true }),
+    it("publishes ONLY the SSM-custodied curves under kms [EM] — the EM key has no parameter to put", async () => {
+      const custody = settings(SignatureProviderType.SSM, { kms: [KeyType.EM] }),
         operators = await BatchOperatorKeyTool.adoptOrCreate(
           custody,
           Labels,
@@ -219,7 +233,7 @@ describe("BatchOperatorKeyTool", () => {
 
     it("forces the policy to adoptOrCreate even when the settings say adoptOnly — this command IS the pre-creation", async () => {
       const custody = settings(SignatureProviderType.SSM, {
-        kms: true,
+        kms: [KeyType.EM],
         policy: SignatureProviderKeyPolicy.adoptOnly
       })
       await BatchOperatorKeyTool.adoptOrCreate(custody, Labels, KeyGenerator.context())
@@ -241,8 +255,46 @@ describe("BatchOperatorKeyTool", () => {
   })
 
   describe("toListing", () => {
-    it("lists 3 PUBLIC rows per operator (K1, EM, ED) — the EM row carrying its address — with SSM / KMS custody references", async () => {
-      const custody = settings(SignatureProviderType.SSM, { kms: true }),
+    it("lists 3 PUBLIC rows per operator (K1, EM, ED) under kms [EM, ED] — the EM row carrying its address — with the K1 in SSM and both outpost curves in KMS", async () => {
+      const custody = settings(SignatureProviderType.SSM, {
+          kms: [KeyType.EM, KeyType.ED]
+        }),
+        operators = await BatchOperatorKeyTool.adoptOrCreate(
+          custody,
+          Labels,
+          KeyGenerator.context()
+        ),
+        listing = BatchOperatorKeyTool.toListing(custody, operators)
+      expect(listing.map(row => [row.label, row.keyType, row.custody])).toEqual(
+        operators.flatMap(operator => [
+          [operator.label, KeyType.K1, `SSM:/wire/dev/${operator.label}/K1`],
+          [
+            operator.label,
+            KeyType.EM,
+            `KMS:${KmsRegion}:alias/wire/dev/${operator.label.replace(".", "-")}/EM`
+          ],
+          [
+            operator.label,
+            KeyType.ED,
+            `KMS:${KmsRegion}:alias/wire/dev/${operator.label.replace(".", "-")}/ED`
+          ]
+        ])
+      )
+      // Only the K1 has a parameter to publish; the ED pair carries its KMS reference, no material.
+      expect(publish).toHaveBeenCalledTimes(Labels.length)
+      expect(publish.mock.calls.map(([publication]) => publication.keyType)).toEqual(
+        Labels.map(() => KeyType.K1)
+      )
+      operators.forEach(operator => {
+        expect(operator.solana.awsKmsKeyId).toBe(
+          `alias/wire/dev/${operator.label.replace(".", "-")}/ED`
+        )
+        expect(operator.solana).not.toHaveProperty("privateKey")
+      })
+    })
+
+    it("lists 3 PUBLIC rows per operator (K1, EM, ED) under kms [EM] — the EM row carrying its address — with SSM / KMS custody references", async () => {
+      const custody = settings(SignatureProviderType.SSM, { kms: [KeyType.EM] }),
         operators = await BatchOperatorKeyTool.adoptOrCreate(
           custody,
           Labels,

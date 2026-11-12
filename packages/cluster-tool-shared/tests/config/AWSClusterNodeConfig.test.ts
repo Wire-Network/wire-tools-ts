@@ -1,3 +1,4 @@
+import { KeyType } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   AWSClusterNodeConfigSchema,
@@ -14,6 +15,8 @@ const KmsSettings = {
   awsKeyAliasPattern: "alias/wire/{cluster}/{account}/{keyType}",
   awsRegion: "us-east-1"
 }
+/** {@link KmsSettings} as the schema resolves it — `keyTypes` defaulted to both custodiable curves. */
+const ResolvedKmsSettings = { ...KmsSettings, keyTypes: [KeyType.EM, KeyType.ED] }
 
 describe("AWSAccountName", () => {
   it("is an identity-mapped string enum (value === key)", () => {
@@ -123,8 +126,8 @@ describe("AWSClusterNodeConfigSchemaCodec", () => {
   })
 })
 
-describe("AWSClusterNodeConfig.kms (the EM keys' KMS custody settings)", () => {
-  it("defaults to null — an SSM cluster without a kms block keeps its EM keys in Parameter Store", () => {
+describe("AWSClusterNodeConfig.kms (the EM / ED keys' KMS custody settings)", () => {
+  it("defaults to null — an SSM cluster without a kms block keeps its EM / ED keys in Parameter Store", () => {
     expect(
       AWSClusterNodeConfigSchema.parse({
         account: AWSAccountName.dev,
@@ -141,10 +144,31 @@ describe("AWSClusterNodeConfig.kms (the EM keys' KMS custody settings)", () => {
         kms: KmsSettings
       }),
       text = AWSClusterNodeConfigSchemaCodec.serialize(config)
-    expect(config.kms).toEqual(KmsSettings)
-    expect(JSON.parse(text).kms).toEqual(KmsSettings)
+    expect(config.kms).toEqual(ResolvedKmsSettings)
+    expect(JSON.parse(text).kms).toEqual(ResolvedKmsSettings)
     expect(JSON.parse(text).ssm).toBeNull()
     expect(AWSClusterNodeConfigSchemaCodec.deserialize(text)).toEqual(config)
+  })
+
+  it("carries an authored keyTypes — [\"EM\"] keeps the ED keys in Parameter Store", () => {
+    const config = AWSClusterNodeConfigSchema.parse({
+      account: AWSAccountName.prod,
+      regions: ["us-east-1"],
+      kms: { ...KmsSettings, keyTypes: [KeyType.EM] }
+    })
+    expect(config.kms.keyTypes).toEqual([KeyType.EM])
+    expect(
+      AWSClusterNodeConfigSchemaCodec.deserialize(
+        AWSClusterNodeConfigSchemaCodec.serialize(config)
+      ).kms.keyTypes
+    ).toEqual([KeyType.EM])
+    expect(
+      AWSClusterNodeConfigSchema.safeParse({
+        account: AWSAccountName.prod,
+        regions: ["us-east-1"],
+        kms: { ...KmsSettings, keyTypes: [KeyType.K1] }
+      }).success
+    ).toBe(false)
   })
 
   it("rejects a malformed kms block (missing awsRegion / missing pattern / empty region)", () => {
@@ -198,7 +222,7 @@ describe("KeyCustodySettings", () => {
         regions: ["us-east-1"]
       })
     }
-    expect(settings.signatureProvider.kms).toEqual(KmsSettings)
+    expect(settings.signatureProvider.kms).toEqual(ResolvedKmsSettings)
     expect(settings.awsClusterNodeConfig.account).toBe(AWSAccountName.dev)
     // No binaries, ports or cluster directory ride the settings.
     expect(Object.keys(settings).sort()).toEqual([

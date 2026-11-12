@@ -314,7 +314,11 @@ describe("runCreateBatchOperatorKeys", () => {
       listing = await runCreateBatchOperatorKeys(options)
     expect(resolveKeyCustody).toHaveBeenCalledWith(options)
     const settings: KeyCustodySettings = resolveKeyCustody.mock.results[0].value
-    expect(settings.signatureProvider.kms).toEqual(options.signatureProvider.kms)
+    // The authored kms block, with `keyTypes` resolved to its default (EM + ED).
+    expect(settings.signatureProvider.kms).toEqual({
+      ...options.signatureProvider.kms,
+      keyTypes: [KeyType.EM, KeyType.ED]
+    })
     // The default roster: 3 operators, in label order — K1 / ED / EM need no wire-sysio build.
     expect(adoptOrCreate).toHaveBeenCalledTimes(1)
     expect(adoptOrCreate).toHaveBeenCalledWith(

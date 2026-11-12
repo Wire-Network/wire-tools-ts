@@ -12,7 +12,9 @@ import {
   ethereumKeyPairFromKmsPublicKey,
   ethereumPrivateKeyHex,
   ethereumSdkPrivateKey,
-  ethereumUncompressedPublicKeyHex
+  ethereumUncompressedPublicKeyHex,
+  solanaKeyPairFromKmsPublicKey,
+  solanaSdkPrivateKey
 } from "@wireio/cluster-tool/utils"
 
 /** `sys-util` console output for a BLS generation — the one backend that still shells out. */
@@ -362,6 +364,26 @@ describe("KeyGenerator", () => {
       expect(() =>
         KeyGenerator.toSignatureProvider(pair, "eth-batchopaaaa", KmsSource)
       ).not.toThrow()
+    })
+
+    it("renders KMS:<region>:<alias> for an ED pair — <name>,solana,solana,<base58>,KMS:<region>:<alias>, the spec nodeop's Ed25519 KMS provider takes, with NO material read", () => {
+      const solanaAliasName = "alias/wire/test/batchop-a/ED",
+        edPrivate = PrivateKey.generate(KeyType.ED),
+        pair = solanaKeyPairFromKmsPublicKey(
+          edPrivate.toPublic().data.array,
+          KmsRegion,
+          solanaAliasName
+        ),
+        spec = KeyGenerator.toSignatureProvider(pair, "sol-batchopaaaa", {
+          type: SignatureProviderType.KMS,
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: solanaAliasName
+        })
+      expect(spec).toBe(
+        `sol-batchopaaaa,solana,solana,${edPrivate.toPublic().toNativeString()},KMS:${KmsRegion}:${solanaAliasName}`
+      )
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(() => solanaSdkPrivateKey(pair)).toThrow(/custodied by AWS KMS/)
     })
 
     it("asserts a KMS source carries BOTH its region and its key id", () => {

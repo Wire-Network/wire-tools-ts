@@ -19,6 +19,7 @@ import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
+import { solanaSignerFromKeypair } from "../../utils/keyPairUtils.js"
 
 import { LiqsolPdaSeed } from "../../tools/solana/LiqsolPdaSeed.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
@@ -463,7 +464,7 @@ export class SolanaOutpostBootstrapper {
   private loadProgram(deployer: Keypair): anchor.Program<anchor.Idl> {
     return SolanaOutpostProgramTool.loadProgram(
       this.connection,
-      deployer,
+      solanaSignerFromKeypair(deployer),
       this.config.solanaPath
     )
   }

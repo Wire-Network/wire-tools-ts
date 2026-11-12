@@ -15,6 +15,7 @@ import {
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import type { OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
+import type { SolanaSigner } from "@wireio/cluster-tool/types"
 import { KeySteps } from "@wireio/cluster-tool/orchestration/steps/KeySteps"
 import { BatchOperatorFundingTool } from "@wireio/cluster-tool/tools/all"
 import {
@@ -641,6 +642,55 @@ describe("BatchOperatorFundingTool", () => {
         WireState.preLaunch
       )
       expect(submit).toHaveBeenCalledTimes(2)
+      // The Solana signer is the operator's own ED key, derived through the facade.
+      submit.mock.calls.forEach(([, , signer]) =>
+        expect(signer.publicKey.toBase58()).toBe(
+          keyPairUtils.solanaPublicKey(account.solana).toBase58()
+        )
+      )
+    })
+
+    it("signs the Solana leg through the custody facade — a KMS-shaped signer is what the builders, the balance read and submit receive", async () => {
+      const account = await operator("batchop.a"),
+        provider = fakeProvider(
+          { [account.ethereum.address.toLowerCase()]: 2n * ethers.WeiPerEther },
+          stakingAnswers()
+        ),
+        kmsSigner = {
+          publicKey: keyPairUtils.solanaPublicKey(account.solana)
+        } as unknown as SolanaSigner,
+        solanaSigner = jest
+          .spyOn(keyPairUtils, "solanaSigner")
+          .mockResolvedValue(kmsSigner),
+        minted = 10_000_000_000n
+      fakeSigner(account, provider)
+      stubSolanaReads(WireState.preLaunch)
+      const submit = stubSolanaWrites(minted),
+        solana = solanaTarget(20_000_000_000n),
+        outcome = await BatchOperatorFundingTool.fund([account], DefaultAllocation, {
+          ethereum: preLaunchTarget(provider),
+          solana
+        })
+      expect(outcome.failure).toBeUndefined()
+      expect(solanaSigner).toHaveBeenCalledWith(account.solana)
+      expect(SolanaLiqSyndicationTool.depositForLiqsolTransaction).toHaveBeenCalledWith(
+        solana,
+        kmsSigner,
+        10_000_000_000n,
+        expect.any(Number)
+      )
+      expect(SolanaLiqSyndicationTool.readLiqsolBalanceOf).toHaveBeenCalledWith(
+        solana,
+        kmsSigner.publicKey
+      )
+      expect(SolanaLiqSyndicationTool.syndTransaction).toHaveBeenCalledWith(
+        solana,
+        kmsSigner,
+        minted,
+        WireState.preLaunch
+      )
+      expect(submit).toHaveBeenCalledTimes(2)
+      submit.mock.calls.forEach(([, , signer]) => expect(signer).toBe(kmsSigner))
     })
 
     it("post-launch: deposit, approve and syndicate the minted liqETH with the operator's compressed key", async () => {

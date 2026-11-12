@@ -28,7 +28,7 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { solanaKeypair } from "../../utils/keyPairUtils.js"
+import { solanaPublicKey } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
 
@@ -458,7 +458,8 @@ export namespace SolanaFundingTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
-    const pubkey = solanaKeypair(operator.solana).publicKey
+    // The STORED public key — it renders under every custody form (a KMS pair has no keypair to derive).
+    const pubkey = solanaPublicKey(operator.solana)
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
     const requestLamports =
@@ -545,7 +546,7 @@ export namespace SolanaFundingTool {
       ctx.solana.connection,
       deployer,
       new PublicKey(mint),
-      solanaKeypair(operator.solana).publicKey,
+      solanaPublicKey(operator.solana),
       input.amount
     )
   }

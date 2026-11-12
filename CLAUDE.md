@@ -323,10 +323,16 @@ wire-cluster-tool fund-batch-operators \               # stake the pre-created o
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
 secret-id pattern), `--signature-provider-kms '<inline-json>'|<file>` (SSM
-clusters only: `{awsKeyAliasPattern, awsRegion}` — the Ethereum EM keys are
-created inside AWS KMS under the rendered alias and never leave it; the daemon
-spec renders `KMS:<region>:<alias>` and loads `signature_provider_kms_plugin`,
-the harness signs through `keyPairUtils.ethereumSigner`'s KMS arm, and
+clusters only: `{awsKeyAliasPattern, awsRegion, keyTypes?}` — the Ethereum EM
+and Solana ED keys named by `keyTypes` (default `["EM","ED"]`; `["EM"]` keeps
+ED in SSM for a nodeop without wire-sysio's Ed25519 KMS signing, which also
+needs aws-sdk-cpp ≥ 1.11.686) are created inside AWS KMS under the rendered
+alias — `ECC_SECG_P256K1` / `ECC_NIST_EDWARDS25519` — and never leave it; the
+pattern must carry `{account}` and `{keyType}`; the daemon spec renders
+`KMS:<region>:<alias>` and loads `signature_provider_kms_plugin`, the harness
+signs through `keyPairUtils.ethereumSigner`'s / `keyPairUtils.solanaSigner`'s
+KMS arm (`SolanaSigner` is the one Solana signer shape — the authex link
+proof and `fund-batch-operators`' Solana staking go through it), and
 `cluster-keys.json` persists the key reference `{awsKmsKeyId, awsKmsRegion}`
 in place of a secret), `--signature-provider-batch-operator-key-policy
 <adoptOrCreate|adoptOnly>` (default `adoptOrCreate`; `adoptOnly` fails the

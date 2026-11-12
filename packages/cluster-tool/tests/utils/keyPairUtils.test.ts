@@ -1,4 +1,6 @@
 import { ethers } from "ethers"
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
+import nacl from "tweetnacl"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
@@ -14,15 +16,23 @@ import {
   isKmsCustodied,
   keyPairFromPrivate,
   privateKeyFromNativeString,
+  solanaKeyPairFromKmsPublicKey,
   solanaKeypair,
   solanaNativePublicKey,
+  solanaPublicKey,
   solanaSdkPrivateKey,
+  solanaSigner,
+  solanaSignerFromKeypair,
   wireKeyFromPublicKey
 } from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
-import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
+import type {
+  EthereumKeyPair,
+  SolanaKeyPair,
+  SolanaSigner
+} from "@wireio/cluster-tool/types"
 
 /** A fresh random ethers wallet — the only kind the harness ever holds. */
 function randomWallet(): ethers.HDNodeWallet {
@@ -32,6 +42,17 @@ function randomWallet(): ethers.HDNodeWallet {
 /** The ONE region a KMS key lives in, and the alias the harness renders for it. */
 const KmsRegion = "us-east-1"
 const KmsAliasName = "alias/wire/test/batchop-a/EM"
+/** The alias the harness renders for the same operator's ED key. */
+const SolanaKmsAliasName = "alias/wire/test/batchop-a/ED"
+
+/** A KMS-custodied ED pair whose public identity is `fixture`'s — no material. */
+function solanaKmsPairOf(fixture: SolanaKeyPair): SolanaKeyPair {
+  return solanaKeyPairFromKmsPublicKey(
+    solanaKeypair(fixture).publicKey.toBytes(),
+    KmsRegion,
+    SolanaKmsAliasName
+  )
+}
 
 /** The compressed secp256k1 point KMS reports for `wallet` (via `GetPublicKey`). */
 function compressedPointOf(wallet: ethers.HDNodeWallet): Uint8Array {
@@ -430,6 +451,142 @@ describe("keyPairUtils", () => {
         solanaKeypair(fixture).publicKey.toBase58()
       )
       expect(keypair.secretKey.length).toBe(64)
+    })
+
+    it("THROW naming the custody for a material-less pair — KMS, or an SSM ref", () => {
+      const fixture = solanaFixture(),
+        kmsPair = solanaKmsPairOf(fixture),
+        ssmRefsOnly: SolanaKeyPair = {
+          type: KeyType.ED,
+          publicKey: fixture.publicKey,
+          awsSecretId: "/wire/test/batchop.a/ED"
+        }
+      expect(() => solanaSdkPrivateKey(kmsPair)).toThrow(
+        new RegExp(
+          `the ED key ${fixture.publicKey} carries no key material \\(it is custodied by AWS KMS ${SolanaKmsAliasName}\\) — sign through solanaSigner instead`
+        )
+      )
+      expect(() => solanaKeypair(kmsPair)).toThrow(/custodied by AWS KMS/)
+      expect(() => solanaKeypair(ssmRefsOnly)).toThrow(
+        /it is referenced by \/wire\/test\/batchop\.a\/ED/
+      )
+    })
+  })
+
+  describe("solanaPublicKey", () => {
+    it("is the web3 PublicKey of the STORED key — equal to the keypair's, and rendering for a refs-only / KMS pair", () => {
+      const fixture = solanaFixture(),
+        expected = solanaKeypair(fixture).publicKey.toBase58()
+      expect(solanaPublicKey(fixture).toBase58()).toBe(expected)
+      expect(solanaPublicKey(solanaKmsPairOf(fixture)).toBase58()).toBe(expected)
+      expect(
+        solanaPublicKey({
+          type: KeyType.ED,
+          publicKey: fixture.publicKey,
+          awsSecretId: "/wire/test/batchop.a/ED"
+        }).toBase58()
+      ).toBe(expected)
+    })
+  })
+
+  // ── the KMS custody form of an ED pair ──
+  describe("solanaKeyPairFromKmsPublicKey / isKmsCustodied (ED)", () => {
+    it("builds the pair's PUBLIC identity from the 32-byte point — PUB_ED_, the key ref, and NO privateKey", () => {
+      const fixture = solanaFixture(),
+        pair = solanaKmsPairOf(fixture)
+      expect(pair.type).toBe(KeyType.ED)
+      // The same PUB_ED_ the local key derives — the point IS the identity.
+      expect(pair.publicKey).toBe(fixture.publicKey)
+      expect(pair.awsKmsRegion).toBe(KmsRegion)
+      expect(pair.awsKmsKeyId).toBe(SolanaKmsAliasName)
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(pair).not.toHaveProperty("awsSecretId")
+      expect(isKmsCustodied(pair)).toBe(true)
+      expect(isKmsCustodied(fixture)).toBe(false)
+    })
+
+    it("rejects a point that is not 32 bytes", () => {
+      expect(() =>
+        solanaKeyPairFromKmsPublicKey(new Uint8Array(33), KmsRegion, SolanaKmsAliasName)
+      ).toThrow()
+    })
+  })
+
+  describe("solanaSignerFromKeypair (the local-custody signer)", () => {
+    it("carries the keypair's public key and signs raw messages with pure Ed25519 — the keypair's own detached signature", async () => {
+      const keypair = Keypair.generate(),
+        signer = solanaSignerFromKeypair(keypair),
+        message = new TextEncoder().encode("createlink auth")
+      expect(signer.publicKey.toBase58()).toBe(keypair.publicKey.toBase58())
+      const signature = await signer.signMessage(message)
+      expect(signature).toHaveLength(nacl.sign.signatureLength)
+      expect(signature).toEqual(nacl.sign.detached(message, keypair.secretKey))
+      expect(
+        nacl.sign.detached.verify(message, signature, keypair.publicKey.toBytes())
+      ).toBe(true)
+    })
+
+    it("signs a prepared transaction as Anchor's wallet does (partialSign), and signAllTransactions each one", async () => {
+      const keypair = Keypair.generate(),
+        signer = solanaSignerFromKeypair(keypair),
+        prepared = () => {
+          const transaction = new Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: keypair.publicKey,
+              toPubkey: keypair.publicKey,
+              lamports: 1
+            })
+          )
+          transaction.feePayer = keypair.publicKey
+          transaction.recentBlockhash = Keypair.generate().publicKey.toBase58()
+          return transaction
+        },
+        one = await signer.signTransaction(prepared()),
+        many = await signer.signAllTransactions([prepared(), prepared()])
+      expect(one.verifySignatures()).toBe(true)
+      many.forEach(transaction => expect(transaction.verifySignatures()).toBe(true))
+      // An unprepared transaction cannot be signed — the caller sets payer + blockhash.
+      await expect(signer.signTransaction(new Transaction())).rejects.toThrow()
+    })
+  })
+
+  describe("solanaSigner (THE facade over both custody forms)", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    it("local material → a keypair-backed signer for the stored pair", async () => {
+      const fixture = solanaFixture(),
+        signer = await solanaSigner(fixture),
+        message = Uint8Array.of(1, 2, 3)
+      expect(signer.publicKey.toBase58()).toBe(solanaPublicKey(fixture).toBase58())
+      expect(await signer.signMessage(message)).toEqual(
+        nacl.sign.detached(message, solanaKeypair(fixture).secretKey)
+      )
+    })
+
+    it("KMS reference → KMSClientProvider.createSolanaSigner with the pair's region, key id and 32-byte point", async () => {
+      const fixture = solanaFixture(),
+        pair = solanaKmsPairOf(fixture),
+        kmsSigner = { publicKey: solanaPublicKey(fixture) } as unknown as SolanaSigner,
+        createSolanaSigner = jest
+          .spyOn(KMSClientProvider, "createSolanaSigner")
+          .mockResolvedValue(kmsSigner)
+      await expect(solanaSigner(pair)).resolves.toBe(kmsSigner)
+      expect(createSolanaSigner).toHaveBeenCalledTimes(1)
+      expect(createSolanaSigner).toHaveBeenCalledWith(
+        KmsRegion,
+        SolanaKmsAliasName,
+        solanaKeypair(fixture).publicKey.toBytes()
+      )
+    })
+
+    it("a refs-only SSM pair (no material, no KMS ref) fails naming the SSM reference", async () => {
+      await expect(
+        solanaSigner({
+          type: KeyType.ED,
+          publicKey: solanaFixture().publicKey,
+          awsSecretId: "/wire/test/batchop.a/ED"
+        })
+      ).rejects.toThrow(/it is referenced by \/wire\/test\/batchop\.a\/ED/)
     })
   })
 

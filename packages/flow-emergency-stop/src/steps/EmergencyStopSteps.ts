@@ -24,6 +24,7 @@ import {
   getLogger,
   clearNonceCache,
   matchesProtoEnum,
+  solanaSignerFromKeypair,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
   type StepInput,
@@ -340,7 +341,10 @@ export namespace EmergencyStopSteps {
         ctx.config.solanaPath,
         record.user
       ),
-      program = SolanaLiqSyndicationTool.loadLiqsolProgram(ctx, caller),
+      program = SolanaLiqSyndicationTool.loadLiqsolProgram(
+        ctx,
+        solanaSignerFromKeypair(caller)
+      ),
       transaction = await program.methods
         .payPendingDesyndication(new BN(record.requestId.toString()))
         .accountsStrict(

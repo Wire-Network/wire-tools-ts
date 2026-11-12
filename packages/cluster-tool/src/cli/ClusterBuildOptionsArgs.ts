@@ -21,6 +21,7 @@ import {
   SignatureProviderType,
   type AWSClusterNodeConfig,
   type AWSKMSSignatureProviderOptions,
+  type AWSKMSSignatureProviderOptionsInput,
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
@@ -644,7 +645,7 @@ export function buildOptionShape(
       type: choicesLeaf(
         ClusterSignatureProviderTypes,
         SignatureProviderType.KEY,
-        "signature provider type: KEY (inline), SSM, or KIOD (KMS custodies an SSM cluster's EM keys via --signature-provider-kms, never the cluster type)"
+        "signature provider type: KEY (inline), SSM, or KIOD (KMS custodies an SSM cluster's EM / ED keys via --signature-provider-kms, never the cluster type)"
       ),
       batchOperatorKeyPolicy: choicesLeaf(
         Object.values(SignatureProviderKeyPolicy),
@@ -825,7 +826,7 @@ export function applyCustodyDocumentArgs(yargs: Argv): Argv {
     .option(SignatureProviderKMSFlag, {
       type: "string",
       describe:
-        "KMS custody settings for the EM keys as inline JSON ({awsKeyAliasPattern, awsRegion, version?}) or a file path (SSM clusters only; the keys are adopted by alias and never leave KMS)"
+        "KMS custody settings for the EM / ED keys as inline JSON ({awsKeyAliasPattern, awsRegion, keyTypes?, version?}) or a file path (SSM clusters only; keyTypes names the custodied curves, default [\"EM\",\"ED\"] — [\"EM\"] keeps ED in SSM for a nodeop without Solana KMS signing; the keys are adopted by alias and never leave KMS)"
     })
     .option(ClusterBuildOptionsFileFlag, {
       type: "string",
@@ -1476,9 +1477,9 @@ export function toAWSKMSSignatureProviderOptions(
 
 /** Re-validate KMS options arriving from a source other than the flag, through the ONE codec. */
 function assertKMSOptions(
-  kms: AWSKMSSignatureProviderOptions,
+  kms: AWSKMSSignatureProviderOptionsInput,
   source: string
-): AWSKMSSignatureProviderOptions {
+): AWSKMSSignatureProviderOptionsInput {
   if (kms != null) {
     Assert.ok(
       kmsOptionsCodec.check(kms),

@@ -114,11 +114,12 @@ const keyCustodyShape = {
 }
 
 /**
- * The THIRD custody form, EM only: the AWS KMS key the secret lives in and
- * never leaves (an SSM cluster with `kms` settings). Both members ride
- * together — see {@link hasSingleCustodyForm}.
+ * The THIRD custody form, on the curves KMS can custody (EM, ED): the AWS KMS
+ * key the secret lives in and never leaves (an SSM cluster with `kms`
+ * settings naming the curve). Both members ride together — see
+ * {@link hasSingleCustodyForm}.
  */
-const ethereumKmsCustodyShape = {
+const kmsCustodyShape = {
   /** The KMS `KeyId` (an alias name for harness-rendered keys). */
   awsKmsKeyId: z.string().optional(),
   /** The ONE region the KMS key lives in. */
@@ -131,7 +132,7 @@ interface PersistedKeyCustody {
   privateKey?: string
   /** The SSM parameter id, when the record references it instead. */
   awsSecretId?: string
-  /** The KMS key reference, when the record references that instead (EM only). */
+  /** The KMS key reference, when the record references that instead (EM / ED). */
   awsKmsKeyId?: string
   /** The KMS key's region — present exactly when `awsKmsKeyId` is. */
   awsKmsRegion?: string
@@ -156,7 +157,7 @@ function hasSingleCustodyForm(record: PersistedKeyCustody): boolean {
 
 /** Why {@link hasSingleCustodyForm} rejected a record. */
 const SingleCustodyFormMessage =
-  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD), awsSecretId (SSM) or awsKmsKeyId + awsKmsRegion (KMS, EM only), never two and never none"
+  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD), awsSecretId (SSM) or awsKmsKeyId + awsKmsRegion (KMS — EM / ED), never two and never none"
 
 /** Schema validating a WIRE (K1) key pair record against the grandfathered `WireKeyPair`. */
 const WireKeyPairSchema: z.ZodType<WireKeyPair> = z
@@ -182,24 +183,25 @@ const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z
 
 /** Schema validating an Ethereum (EM) key pair record. `address` is NON-SECRET
  *  and rides EVERY custody variant — every ETH funding / collateral read uses
- *  it, and `ExternalClusterConfigSteps` emits from the same record. EM is the
- *  one curve with the KMS custody form. */
+ *  it, and `ExternalClusterConfigSteps` emits from the same record. EM and ED
+ *  are the curves with the KMS custody form. */
 const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z
   .object({
     type: z.literal(KeyType.EM),
     publicKey: z.string(),
     address: z.string(),
     ...keyCustodyShape,
-    ...ethereumKmsCustodyShape
+    ...kmsCustodyShape
   })
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
-/** Schema validating a Solana (ED) key pair record. */
+/** Schema validating a Solana (ED) key pair record — KMS-custodiable like EM. */
 const SolanaKeyPairSchema: z.ZodType<SolanaKeyPair> = z
   .object({
     type: z.literal(KeyType.ED),
     publicKey: z.string(),
-    ...keyCustodyShape
+    ...keyCustodyShape,
+    ...kmsCustodyShape
   })
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
@@ -374,7 +376,7 @@ export namespace ClusterState {
 
   /**
    * The custody members a provider source persists IN PLACE of the secret: the
-   * SSM parameter id, or — for a KMS-custodied EM key — the KMS key reference
+   * SSM parameter id, or — for a KMS-custodied EM / ED key — the KMS key reference
    * (which the in-memory pair already carries; the rendered source is spread
    * so the persisted ref and the daemon's spec can never disagree).
    */

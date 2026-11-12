@@ -11,10 +11,14 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
+  isKMSCustodiableKeyType,
   isKMSCustodied,
+  KMSCustodiedKeyTypes,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type AWSClusterNodeConfig,
+  type AWSKMSSignatureProviderOptions,
+  type AWSKMSSignatureProviderOptionsInput,
   type BatchOperatorUnderwritingConfig,
   type BindConfig,
   type BindOptions,
@@ -748,13 +752,57 @@ export namespace ClusterConfigProvider {
   }
 
   /**
+   * The placeholders a KMS alias pattern MUST render: one alias per identity
+   * per custodied curve, so a pattern without either would bind two keys to
+   * one alias.
+   */
+  export const KMSAliasRequiredPlaceholders = ["{account}", "{keyType}"] as const
+
+  /**
+   * Resolve the KMS custody settings a caller authored: `keyTypes` defaults to
+   * every curve KMS can custody ({@link KMSCustodiedKeyTypes} — EM + ED) and
+   * must otherwise be a non-empty, duplicate-free subset of them.
+   *
+   * @param kms - The authored settings.
+   * @returns The resolved settings.
+   */
+  function resolveKMSCustody(
+    kms: AWSKMSSignatureProviderOptionsInput
+  ): AWSKMSSignatureProviderOptions {
+    const { keyTypes = [...KMSCustodiedKeyTypes] } = kms
+    Assert.ok(
+      keyTypes.length > 0,
+      `signatureProvider.kms.keyTypes must name at least one curve (${KMSCustodiedKeyTypes.join(", ")})`
+    )
+    Assert.ok(
+      new Set(keyTypes).size === keyTypes.length,
+      `signatureProvider.kms.keyTypes must not repeat a curve (got ${keyTypes.join(", ")})`
+    )
+    keyTypes.forEach(keyType =>
+      Assert.ok(
+        isKMSCustodiableKeyType(keyType),
+        `signatureProvider.kms.keyTypes: KMS custodies ${KMSCustodiedKeyTypes.join(", ")} keys only (got ${keyType})`
+      )
+    )
+    Assert.ok(
+      KMSAliasRequiredPlaceholders.every(placeholder =>
+        kms.awsKeyAliasPattern.includes(placeholder)
+      ),
+      `signatureProvider.kms.awsKeyAliasPattern must carry ${KMSAliasRequiredPlaceholders.join(" and ")} — one alias per operator per custodied curve (got "${kms.awsKeyAliasPattern}")`
+    )
+    return { ...kms, keyTypes }
+  }
+
+  /**
    * Resolve the cluster signature-provider config: default {@link
    * SignatureProviderType.KEY}, validate that SSM settings are present iff the
    * type is `SSM`, DERIVE the SSM replication regions from
    * `awsClusterNodeConfig.regions` (its one author), validate the optional KMS
    * custody settings (SSM-only; the ONE key region must be a replication
-   * region; the alias pattern must render a KMS alias name), and default the
-   * batch-operator key policy to {@link SignatureProviderKeyPolicy.adoptOrCreate}.
+   * region; `keyTypes` resolved per {@link resolveKMSCustody}; the alias
+   * pattern must render a KMS alias name for every custodied curve), and
+   * default the batch-operator key policy to
+   * {@link SignatureProviderKeyPolicy.adoptOrCreate}.
    *
    * @param options - Caller signature-provider options (may be omitted).
    * @param awsClusterNodeConfig - The resolved AWS placement (required under SSM).
@@ -765,11 +813,12 @@ export namespace ClusterConfigProvider {
     awsClusterNodeConfig: AWSClusterNodeConfig
   ): ClusterSignatureProviderConfig {
     const {
-      type = SignatureProviderType.KEY,
-      ssm = null,
-      kms = null,
-      batchOperatorKeyPolicy = SignatureProviderKeyPolicy.adoptOrCreate
-    } = options ?? {}
+        type = SignatureProviderType.KEY,
+        ssm = null,
+        kms: authoredKms = null,
+        batchOperatorKeyPolicy = SignatureProviderKeyPolicy.adoptOrCreate
+      } = options ?? {},
+      kms = authoredKms == null ? null : resolveKMSCustody(authoredKms)
     Assert.ok(
       type !== SignatureProviderType.SSM || ssm != null,
       "signatureProvider.ssm (awsSecretIdPattern) is required when type is SSM"
@@ -790,26 +839,27 @@ export namespace ClusterConfigProvider {
     )
     Assert.ok(
       kms == null || type === SignatureProviderType.SSM,
-      "signatureProvider.kms is only valid when type is SSM (KMS custodies the EM keys of an SSM cluster)"
+      "signatureProvider.kms is only valid when type is SSM (KMS custodies the EM / ED keys of an SSM cluster)"
     )
     Assert.ok(
       kms == null || awsClusterNodeConfig.regions.includes(kms.awsRegion),
       `signatureProvider.kms.awsRegion must be one of awsClusterNodeConfig.regions (${awsClusterNodeConfig?.regions?.join(", ")})`
     )
-    if (kms != null) {
-      // Render the pattern once at resolve time so an alias the KMS grammar
-      // refuses fails here, not at the first key the bootstrap materializes.
+    // Render the pattern once per custodied curve at resolve time so an alias
+    // the KMS grammar refuses fails here, not at the first key the bootstrap
+    // materializes.
+    kms?.keyTypes.forEach(keyType =>
       KMSClientProvider.assertAliasName(
         toSecretId(kms.awsKeyAliasPattern, {
           cluster: awsClusterNodeConfig.account,
           account: KMSClientProvider.aliasAccountSegment(
             Constants.batchOperatorLabel(0)
           ),
-          keyType: KeyType[KeyType.EM],
+          keyType: KeyType[keyType],
           version: kms.version
         })
       )
-    }
+    )
     Assert.ok(
       batchOperatorKeyPolicy !== SignatureProviderKeyPolicy.adoptOnly ||
         type !== SignatureProviderType.KIOD,

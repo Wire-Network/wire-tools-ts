@@ -22,7 +22,7 @@ import {
   wireStateVariant,
   type SolanaOutpostTarget
 } from "@wireio/cluster-tool/tools/solana"
-import { toURL } from "@wireio/cluster-tool/utils"
+import { solanaSignerFromKeypair, toURL } from "@wireio/cluster-tool/utils"
 
 /** The trimmed `liqsol_core` IDL committed alongside the account-map cases. */
 const FixtureIdlFilename = "liqsolCoreInstructions.idl.json"
@@ -82,7 +82,7 @@ describe("SolanaLiqSyndicationTool — launch forms + outpost targets", () => {
   let deployedProgramId: PublicKey
   let program: anchor.Program<anchor.Idl>
   let connection: Connection
-  const user = Keypair.generate()
+  const user = solanaSignerFromKeypair(Keypair.generate())
 
   /**
    * The zero value the coder accepts for a field: a primitive, an array, or
@@ -185,7 +185,7 @@ describe("SolanaLiqSyndicationTool — launch forms + outpost targets", () => {
     )
     program = new anchor.Program(
       { ...FixtureIdl, address: deployedProgramId.toBase58() },
-      new anchor.AnchorProvider(connection, new anchor.Wallet(user), {})
+      new anchor.AnchorProvider(connection, user, {})
     )
   })
 
@@ -414,22 +414,37 @@ describe("SolanaLiqSyndicationTool — launch forms + outpost targets", () => {
       ).rejects.toThrow(/globalState .* does not exist/)
     })
 
-    it("submit sends through the target's connection and returns the confirmed signature", async () => {
-      const sendTransaction = jest.fn(async () => "signature-1"),
+    it("submit sets the signer as fee payer, signs over the latest blockhash, sends the raw bytes through the target's connection and returns the confirmed signature", async () => {
+      const blockhash = Keypair.generate().publicKey.toBase58(),
+        sendRawTransaction = jest.fn(async () => "signature-1"),
+        transaction = new anchor.web3.Transaction().add(
+          anchor.web3.SystemProgram.transfer({
+            fromPubkey: user.publicKey,
+            toPubkey: user.publicKey,
+            lamports: 1
+          })
+        ),
         signature = await SolanaLiqSyndicationTool.submit(
           target(new Map(), {
-            sendTransaction,
+            getLatestBlockhash: async () => ({ blockhash, lastValidBlockHeight: 1 }),
+            sendRawTransaction,
             getSignatureStatus: async () => ({
               context: { slot: 1 },
               value: { confirmationStatus: "confirmed", err: null }
             })
           } as unknown as Partial<Connection>),
-          new anchor.web3.Transaction(),
+          transaction,
           user,
           "launch-forms submit"
         )
       expect(signature).toBe("signature-1")
-      expect(sendTransaction).toHaveBeenCalledTimes(1)
+      expect(transaction.feePayer.equals(user.publicKey)).toBe(true)
+      expect(transaction.recentBlockhash).toBe(blockhash)
+      expect(transaction.verifySignatures()).toBe(true)
+      expect(sendRawTransaction).toHaveBeenCalledTimes(1)
+      expect(sendRawTransaction).toHaveBeenCalledWith(transaction.serialize(), {
+        skipPreflight: false
+      })
     })
   })
 })

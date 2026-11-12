@@ -562,7 +562,7 @@ describe("ClusterConfigProvider", () => {
       expect(result.kiodUrl).toMatch(/^http:\/\//)
     })
 
-    it("SSM + kms → the KMS source for the EM key (region + rendered alias), SSM for every other curve", () => {
+    it("SSM + kms → the KMS source for the EM and ED keys (region + rendered alias per curve), SSM for the K1", () => {
       const source = ClusterConfigProvider.signatureProviderSource(
         fixtureConfig(ssmKmsOverrides())
       )
@@ -571,19 +571,35 @@ describe("ClusterConfigProvider", () => {
         awsKmsRegion: KmsRegion,
         awsKmsKeyId: "alias/wire/test/batchop-a/EM"
       })
+      expect(source("batchop.a", KeyType.ED)).toEqual({
+        type: SignatureProviderType.KMS,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: "alias/wire/test/batchop-a/ED"
+      })
       expect(source("batchop.a", KeyType.K1)).toEqual({
         type: SignatureProviderType.SSM,
         awsSecretId: "/wire/test/batchop.a/K1"
+      })
+    })
+
+    it("SSM + kms keyTypes [EM] → the ED key keeps its SSM source", () => {
+      const source = ClusterConfigProvider.signatureProviderSource(
+        fixtureConfig(ssmKmsOverrides({ keyTypes: [KeyType.EM] }))
+      )
+      expect(source("batchop.a", KeyType.EM).type).toBe(SignatureProviderType.KMS)
+      expect(source("batchop.a", KeyType.ED)).toEqual({
+        type: SignatureProviderType.SSM,
+        awsSecretId: "/wire/test/batchop.a/ED"
       })
     })
   })
 
   /** The ONE region the KMS keys live in — one of the fixture's replication regions. */
   const KmsRegion = "us-east-1"
-  /** The alias pattern an SSM cluster adopts its EM keys from. */
+  /** The alias pattern an SSM cluster adopts its EM / ED keys from. */
   const KmsAliasPattern = "alias/wire/{cluster}/{account}/{keyType}"
 
-  /** An SSM cluster fixture WITH kms settings (the EM keys live in KMS). */
+  /** An SSM cluster fixture WITH kms settings (the EM and ED keys live in KMS unless `keyTypes` narrows it). */
   function ssmKmsOverrides(
     kms: Partial<ClusterSignatureProviderOptions["kms"]> = {}
   ): Partial<typeof PersistedFixture> {
@@ -594,7 +610,12 @@ describe("ClusterConfigProvider", () => {
           awsRegions: ["us-east-1", "eu-west-1"],
           awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
         },
-        kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion, ...kms },
+        kms: {
+          awsKeyAliasPattern: KmsAliasPattern,
+          awsRegion: KmsRegion,
+          keyTypes: [KeyType.EM, KeyType.ED],
+          ...kms
+        },
         batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
       },
       awsClusterNodeConfig: {
@@ -623,22 +644,31 @@ describe("ClusterConfigProvider", () => {
       })
     })
 
-    it("SSM + kms + EM → the KMS source: the ONE key region + the alias, `{account}` dots mapped to dashes", () => {
+    it("SSM + kms + EM / ED → the KMS source: the ONE key region + the per-curve alias, `{account}` dots mapped to dashes", () => {
+      const config = fixtureConfig(ssmKmsOverrides())
       expect(
-        ClusterConfigProvider.custodySource(
-          fixtureConfig(ssmKmsOverrides()),
-          "batchop.a",
-          KeyType.EM
-        )
+        ClusterConfigProvider.custodySource(config, "batchop.a", KeyType.EM)
       ).toEqual({
         type: SignatureProviderType.KMS,
         awsKmsRegion: KmsRegion,
         awsKmsKeyId: "alias/wire/test/batchop-a/EM"
       })
+      expect(
+        ClusterConfigProvider.custodySource(config, "batchop.a", KeyType.ED)
+      ).toEqual({
+        type: SignatureProviderType.KMS,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: "alias/wire/test/batchop-a/ED"
+      })
+      // The curves KMS cannot custody never render a KMS source.
+      expect(
+        ClusterConfigProvider.custodySource(config, "batchop.a", KeyType.K1).type
+      ).toBe(SignatureProviderType.SSM)
     })
 
-    it("SSM + kms, a non-EM curve → still an SSM source (KMS custodies EM only)", () => {
-      const config = fixtureConfig(ssmKmsOverrides())
+    it("SSM + kms, a curve the settings do not custody → still an SSM source (K1 always; ED under keyTypes [EM])", () => {
+      const config = fixtureConfig(ssmKmsOverrides()),
+        ethereumOnly = fixtureConfig(ssmKmsOverrides({ keyTypes: [KeyType.EM] }))
       expect(
         ClusterConfigProvider.custodySource(config, "batchop.a", KeyType.K1)
       ).toEqual({
@@ -646,8 +676,14 @@ describe("ClusterConfigProvider", () => {
         awsSecretId: "/wire/test/batchop.a/K1"
       })
       expect(
-        ClusterConfigProvider.custodySource(config, "batchop.a", KeyType.ED).type
-      ).toBe(SignatureProviderType.SSM)
+        ClusterConfigProvider.custodySource(ethereumOnly, "batchop.a", KeyType.ED)
+      ).toEqual({
+        type: SignatureProviderType.SSM,
+        awsSecretId: "/wire/test/batchop.a/ED"
+      })
+      expect(
+        ClusterConfigProvider.custodySource(ethereumOnly, "batchop.a", KeyType.EM).type
+      ).toBe(SignatureProviderType.KMS)
     })
 
     it("fills the OPTIONAL {version} token of the KMS alias pattern from the kms settings", () => {
@@ -727,7 +763,12 @@ describe("ClusterConfigProvider", () => {
             awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}",
             awsRegions: ["us-east-1", "eu-west-1"]
           },
-          kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion },
+          // `keyTypes` defaults to every curve KMS can custody.
+          kms: {
+            awsKeyAliasPattern: KmsAliasPattern,
+            awsRegion: KmsRegion,
+            keyTypes: [KeyType.EM, KeyType.ED]
+          },
           batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
         },
         awsClusterNodeConfig: { ...placement, ssm: null, kms: null }
@@ -737,6 +778,64 @@ describe("ClusterConfigProvider", () => {
         "awsClusterNodeConfig",
         "signatureProvider"
       ])
+    })
+
+    it("carries an authored kms.keyTypes — [\"EM\"] keeps the ED keys in SSM", () => {
+      expect(
+        ClusterConfigProvider.resolveKeyCustody({
+          signatureProvider: {
+            ...ssmOptions,
+            kms: {
+              awsKeyAliasPattern: KmsAliasPattern,
+              awsRegion: KmsRegion,
+              keyTypes: [KeyType.EM]
+            }
+          },
+          awsClusterNodeConfig: placement
+        }).signatureProvider.kms.keyTypes
+      ).toEqual([KeyType.EM])
+    })
+
+    it("refuses kms.keyTypes that is empty, repeats a curve or names one KMS cannot custody", () => {
+      const resolve = (keyTypes: unknown) =>
+        ClusterConfigProvider.resolveKeyCustody({
+          signatureProvider: {
+            ...ssmOptions,
+            kms: {
+              awsKeyAliasPattern: KmsAliasPattern,
+              awsRegion: KmsRegion,
+              keyTypes: keyTypes as ClusterSignatureProviderOptions["kms"]["keyTypes"]
+            }
+          },
+          awsClusterNodeConfig: placement
+        })
+      expect(() => resolve([])).toThrow(/kms\.keyTypes must name at least one curve/)
+      expect(() => resolve([KeyType.ED, KeyType.ED])).toThrow(
+        /kms\.keyTypes must not repeat a curve/
+      )
+      expect(() => resolve([KeyType.K1])).toThrow(
+        /KMS custodies EM, ED keys only \(got K1\)/
+      )
+    })
+
+    it("refuses a kms alias pattern without {account} or {keyType} — one alias per operator per custodied curve", () => {
+      const resolve = (awsKeyAliasPattern: string) =>
+        ClusterConfigProvider.resolveKeyCustody({
+          signatureProvider: {
+            ...ssmOptions,
+            kms: { awsKeyAliasPattern, awsRegion: KmsRegion }
+          },
+          awsClusterNodeConfig: placement
+        })
+      expect(() => resolve("alias/wire/{cluster}/{account}")).toThrow(
+        /awsKeyAliasPattern must carry \{account\} and \{keyType\}/
+      )
+      expect(() => resolve("alias/wire/{cluster}/{keyType}")).toThrow(
+        /awsKeyAliasPattern must carry \{account\} and \{keyType\}/
+      )
+      expect(resolve(KmsAliasPattern).signatureProvider.kms.awsKeyAliasPattern).toBe(
+        KmsAliasPattern
+      )
     })
 
     it("defaults to KEY with no AWS settings and the adopt-or-create policy from empty options", () => {
@@ -1052,7 +1151,11 @@ describe("ClusterConfigProvider", () => {
             kms: null
           }
         })
-      expect(config.signatureProvider.kms).toEqual(kms)
+      // `keyTypes` resolved to its default — every curve KMS can custody.
+      expect(config.signatureProvider.kms).toEqual({
+        ...kms,
+        keyTypes: [KeyType.EM, KeyType.ED]
+      })
       expect(config.signatureProvider.batchOperatorKeyPolicy).toBe(
         SignatureProviderKeyPolicy.adoptOnly
       )
@@ -1060,7 +1163,7 @@ describe("ClusterConfigProvider", () => {
       expect(
         ClusterConfigProvider.deserialize(ClusterConfigProvider.serialize(config))
           .signatureProvider.kms
-      ).toEqual(kms)
+      ).toEqual({ ...kms, keyTypes: [KeyType.EM, KeyType.ED] })
     })
   })
 

@@ -1,4 +1,5 @@
 import { ethers } from "ethers"
+import { Keypair } from "@solana/web3.js"
 import nacl from "tweetnacl"
 
 import { ChainKind } from "@wireio/opp-typescript-models"
@@ -10,7 +11,11 @@ import type * as Authex from "@wireio/sdk-core/contracts/sysio/authex/index" wit
 }
 
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
-import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
+import type { SolanaSigner } from "@wireio/cluster-tool/types"
+import {
+  ethereumKeyPairFromWallet,
+  solanaSignerFromKeypair
+} from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 // These CJS tests use the same SDK declaration branch as the built tool.
@@ -163,22 +168,39 @@ describe("AuthExLinkTool", () => {
       expect(invoke).not.toHaveBeenCalled()
     })
 
-    it("submits the SDK's composed Solana signature without prepending another public key", async () => {
-      const wire = fixtureContext().wire,
-        contract = wire.getSysioContract(
-          SysioContracts.SysioContractName.authex
-        ),
-        invoke = jest
-          .spyOn(contract.actions.createlink, "invoke")
-          .mockResolvedValue(null),
-        privateKey = PrivateKey.generate(KeyType.ED),
-        publicKey = privateKey.toPublic()
-      jest.spyOn(wire, "getSysioContract").mockReturnValue(contract)
+    /** An ED key in BOTH live forms: the sdk-core private key and the web3 keypair of the same 64-byte secret. */
+    function solanaIdentity() {
+      const privateKey = PrivateKey.generate(KeyType.ED),
+        keypair = Keypair.fromSecretKey(privateKey.data.array)
+      return { privateKey, keypair, publicKey: privateKey.toPublic() }
+    }
+
+    /**
+     * An ASYNC signer double of the KMS signer's shape — records every payload
+     * it is handed and returns `keypair`'s REAL detached signature of it (what
+     * a KMS `ED25519_SHA_512` / `RAW` Sign returns for the same key).
+     */
+    function recordingSolanaSigner(keypair: Keypair) {
+      const payloads: Uint8Array[] = [],
+        signer = {
+          publicKey: keypair.publicKey,
+          signMessage: async (message: Uint8Array): Promise<Uint8Array> => {
+            payloads.push(message)
+            return nacl.sign.detached(message, keypair.secretKey)
+          }
+        } as unknown as SolanaSigner
+      return { signer, payloads }
+    }
+
+    it("signs the SVM link with a keypair-backed signer — the SDK's composed 96-byte signature, byte-identical to the private key's own signMessage", async () => {
+      const { wire, invoke } = capturedAuthex(),
+        { privateKey, keypair, publicKey } = solanaIdentity()
 
       await AuthExLinkTool.createLink(wire, {
         chainKind: ChainKind.SVM,
         account: SolanaAccount,
-        privateKey
+        publicKey: publicKey.toString(),
+        signer: solanaSignerFromKeypair(keypair)
       })
 
       expect(invoke).toHaveBeenCalledTimes(1)
@@ -206,31 +228,76 @@ describe("AuthExLinkTool", () => {
       expect(
         signature.verifyMessage(Bytes.from(prepared.signingPayload), publicKey)
       ).toBe(true)
+      // The ONE payload, signed by the ONE algorithm: exactly the bytes
+      // `PrivateKey.signMessage` produces for the same key and message.
+      expect(data.sig).toBe(
+        privateKey.signMessage(Bytes.from(prepared.signingPayload)).toString()
+      )
       expect(options).toEqual({
         authorization: [{ actor: SolanaAccount, permission: "active" }]
       })
     })
 
-    it("propagates a Solana signer refusal before invoking the contract", async () => {
-      const wire = fixtureContext().wire,
-        contract = wire.getSysioContract(
-          SysioContracts.SysioContractName.authex
-        ),
-        invoke = jest
-          .spyOn(contract.actions.createlink, "invoke")
-          .mockResolvedValue(null),
-        privateKey = PrivateKey.generate(KeyType.ED),
-        failure = new Error("Solana signer refused")
-      jest.spyOn(wire, "getSysioContract").mockReturnValue(contract)
-      jest.spyOn(privateKey, "signMessage").mockImplementation(() => {
-        throw failure
+    it("signs the SVM link with an ASYNC KMS-shaped signer over the mapped-digest hex payload, yielding the same bytes as the local key", async () => {
+      const { wire, invoke } = capturedAuthex(),
+        { privateKey, keypair, publicKey } = solanaIdentity(),
+        { signer, payloads } = recordingSolanaSigner(keypair)
+
+      await AuthExLinkTool.createLink(wire, {
+        chainKind: ChainKind.SVM,
+        account: SolanaAccount,
+        publicKey: publicKey.toString(),
+        signer
       })
+
+      const [data] = invoke.mock.calls[0],
+        prepared = prepareCreateLink({
+          account: SolanaAccount,
+          publicKey,
+          chainKind: SysioContracts.SysioAuthexChainkind.CHAIN_KIND_SVM,
+          nonce: Number(data.nonce)
+        })
+      // The signer was AWAITED over exactly the SDK's signing payload (the
+      // lowercase hex of the mapped digest, as UTF-8)…
+      expect(payloads).toEqual([Bytes.from(prepared.signingPayload).array])
+      // …and its 64-byte signature rides the 96-byte Wire ED signature the
+      // local key would have produced.
+      expect(data.sig).toBe(
+        privateKey.signMessage(Bytes.from(prepared.signingPayload)).toString()
+      )
+    })
+
+    it("never derives the Solana public key from the signer — a material-less signer links the key the params name", async () => {
+      const { wire, invoke } = capturedAuthex(),
+        { publicKey } = solanaIdentity(),
+        // The signer is for a DIFFERENT key: the submitted pub_key still comes from the params.
+        { signer } = recordingSolanaSigner(Keypair.generate())
+      await AuthExLinkTool.createLink(wire, {
+        chainKind: ChainKind.SVM,
+        account: SolanaAccount,
+        publicKey: publicKey.toString(),
+        signer
+      })
+      expect(invoke.mock.calls[0][0].pub_key).toBe(publicKey.toString())
+    })
+
+    it("propagates a Solana signer refusal before invoking the contract", async () => {
+      const { wire, invoke } = capturedAuthex(),
+        { publicKey } = solanaIdentity(),
+        failure = new Error("Solana signer refused"),
+        signer = {
+          publicKey: Keypair.generate().publicKey,
+          signMessage: async () => {
+            throw failure
+          }
+        } as unknown as SolanaSigner
 
       await expect(
         AuthExLinkTool.createLink(wire, {
           chainKind: ChainKind.SVM,
           account: SolanaAccount,
-          privateKey
+          publicKey: publicKey.toString(),
+          signer
         })
       ).rejects.toBe(failure)
       expect(invoke).not.toHaveBeenCalled()

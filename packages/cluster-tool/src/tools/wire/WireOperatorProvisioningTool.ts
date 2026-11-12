@@ -58,8 +58,8 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import type { WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import {
   ethereumSigner,
-  solanaKeypair,
-  solanaSdkPrivateKey
+  solanaPublicKey,
+  solanaSigner
 } from "../../utils/keyPairUtils.js"
 import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
 
@@ -938,7 +938,7 @@ export namespace WireOperatorProvisioningTool {
     )
   }
 
-  /** Named runner — ONE `requestAirdrop` + confirm, to the derived SOL keypair. */
+  /** Named runner — ONE `requestAirdrop` + confirm, to the operator's STORED SOL public key (it renders under every custody form). */
   export async function runSolanaAirdrop<C extends ClusterBuildContext>(
     ctx: C,
     input: AirdropSolanaInput,
@@ -947,7 +947,7 @@ export namespace WireOperatorProvisioningTool {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
     const signature = await ctx.solana.connection.requestAirdrop(
-      solanaKeypair(operator.solana).publicKey,
+      solanaPublicKey(operator.solana),
       Number(input.lamports)
     )
     await confirmSignature(
@@ -1006,10 +1006,13 @@ export namespace WireOperatorProvisioningTool {
       })
       return
     }
+    // Same shape on Solana: the stored public key is linked, and the custody
+    // facade signs the proof through KMS when the ED key lives there.
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.SVM,
       account: operator.account,
-      privateKey: solanaSdkPrivateKey(operator.solana)
+      publicKey: operator.solana.publicKey,
+      signer: await solanaSigner(operator.solana)
     })
   }
 }

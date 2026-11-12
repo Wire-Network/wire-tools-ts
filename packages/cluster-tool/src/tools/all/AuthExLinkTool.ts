@@ -1,8 +1,9 @@
 import { ethers } from "ethers"
-import { Bytes, KeyType, PrivateKey, Signature, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, PublicKey, Signature, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import type { EthereumIdentity } from "../../types/KeyPair.js"
+import type { SolanaSigner } from "../../types/SolanaSigner.js"
 import {
   ethereumKeyPairFromWallet,
   ethereumPublicKeyFromWallet
@@ -31,11 +32,19 @@ export namespace AuthExLinkTool {
     signer: ethers.Signer
   }
 
-  /** Solana (ED) link parameters: the ed25519 private key signs the mapped digest. */
+  /**
+   * Solana (ED) link parameters — the mirror of {@link EthereumLinkParams}:
+   * the key's Wire-canonical public key (`PUB_ED_…`, read off the stored pair)
+   * and ANY {@link SolanaSigner} for it — a keypair-backed signer or the KMS
+   * signer `keyPairUtils.solanaSigner` builds, whose secret never leaves AWS.
+   * Nothing here derives the public key from the signer, so a material-less
+   * signer links exactly like a keypair.
+   */
   export interface SolanaLinkParams {
     chainKind: ChainKind.SVM
     account: string
-    privateKey: PrivateKey
+    publicKey: string
+    signer: SolanaSigner
   }
 
   /** Parameters for {@link createLink}, discriminated on `chainKind`. */
@@ -68,12 +77,17 @@ export namespace AuthExLinkTool {
   /**
    * Sign for Solana (ED) — the authex contract maps SHA256(message) into printable
    * ASCII [33..126]; the chain's ED25519 verification checks the signature over the
-   * LOWERCASE-HEX encoding of that mapped digest. Returns a 96-byte Wire ED signature
-   * (32-byte embedded pubkey + 64-byte signature) so `recover()` can extract the key.
+   * LOWERCASE-HEX encoding of that mapped digest. The signer produces the 64-byte
+   * detached Ed25519 signature of exactly that payload (pure Ed25519 — what a
+   * local key's `PrivateKey.signMessage` and a KMS `ED25519_SHA_512` / `RAW`
+   * Sign both compute); it is returned as the 96-byte Wire ED signature (the
+   * params' 32-byte pubkey + the 64-byte signature) so `recover()` can extract
+   * the key.
    */
   async function signSolanaMessage(
-    privateKey: PrivateKey,
-    message: string
+    message: string,
+    signer: SolanaSigner,
+    publicKey: string
   ): Promise<Signature> {
     const hashBytes = ethers.getBytes(ethers.sha256(ethers.toUtf8Bytes(message))),
       mapped = new Uint8Array(hashBytes.length)
@@ -81,26 +95,28 @@ export namespace AuthExLinkTool {
       mapped[index] = 33 + (byte % 94)
     })
     const hexPayload = ethers.toUtf8Bytes(ethers.hexlify(mapped).slice(2))
-    return privateKey.signMessage(Bytes.from(hexPayload))
+    return Signature.fromRaw(
+      await signer.signMessage(hexPayload),
+      KeyType.ED,
+      PublicKey.from(publicKey)
+    )
   }
 
   /**
    * Create an authex cross-chain link for a WIRE `account` (ETH `EVM` or SOL `SVM`).
-   * Invokes `sysio.authex::createlink`, authorized by `account@active`.
+   * Invokes `sysio.authex::createlink`, authorized by `account@active`. The
+   * linked key is the params' public key for BOTH chains; the signer only
+   * proves it.
    */
   export async function createLink(wire: WireClient, params: LinkParams): Promise<void> {
     // Native discriminated-union narrowing: ts-pattern cannot prove
     // exhaustiveness over the proto `ChainKind` enum's members.
-    const { chainKind, account } = params,
-      publicKeyString =
-        params.chainKind === ChainKind.EVM
-          ? params.publicKey
-          : params.privateKey.toPublic().toString(),
+    const { chainKind, account, publicKey: publicKeyString } = params,
       nonce = Date.now(),
       message = buildLinkMessage(publicKeyString, account, chainKind, nonce),
       signature = await (params.chainKind === ChainKind.EVM
         ? signEthereumMessage(message, params.signer)
-        : signSolanaMessage(params.privateKey, message))
+        : signSolanaMessage(message, params.signer, publicKeyString))
 
     await wire.getSysioContract(SysioContractName.authex).actions.createlink.invoke(
       {

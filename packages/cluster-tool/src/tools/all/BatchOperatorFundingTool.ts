@@ -67,8 +67,8 @@ import {
 import {
   ethereumCompressedPubkey,
   ethereumSigner,
-  solanaKeypair,
-  solanaNativePublicKey
+  solanaNativePublicKey,
+  solanaSigner
 } from "../../utils/keyPairUtils.js"
 import { EthereumOutpostTarget } from "../ethereum/EthereumOutpostTarget.js"
 import { EthereumPreLaunchStakingTool } from "../ethereum/EthereumPreLaunchStakingTool.js"
@@ -707,7 +707,9 @@ export namespace BatchOperatorFundingTool {
    * Fund one operator on Solana: `sol_to_liqsol(stake)` — standing off the
    * runtime's epoch-rewards window exactly as the deposit Step does — then
    * `synd` of EVERY liqSOL the operator then holds, in the launch state's
-   * account form.
+   * account form. Both are signed by the operator's ED key through the
+   * custody facade (`keyPairUtils.solanaSigner`), so a KMS-custodied key signs
+   * remotely.
    */
   async function fundSolana(
     operator: OperatorAccount,
@@ -716,7 +718,7 @@ export namespace BatchOperatorFundingTool {
   ): Promise<Receipt[]> {
     const { label } = operator,
       chain = Constants.SOLANA_CHAIN_CODENAME,
-      user = solanaKeypair(operator.solana),
+      user = await solanaSigner(operator.solana),
       { stakeLamports } = preflight.native,
       ephemeralStakeSeed = SolanaLiqSyndicationTool.nextEphemeralStakeSeed(label),
       depositLabel = `fund-batch-operators ${label} ${FundingAction.solToLiqsol}`

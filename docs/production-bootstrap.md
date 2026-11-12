@@ -92,7 +92,7 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer). | `DEV_BLS.publicKey` (`PUB_BLS_*` spelling) |
 | `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `DEV_BLS.proofOfPossession` (`SIG_BLS_*` spelling) |
 | Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (random K1 via sdk-core, `sys-util bls create key`) |
-| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, a random secp256k1 key — or, on an SSM cluster with `kms` settings, a key created inside AWS KMS that never leaves it), and a SOL key (ED25519). Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
+| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, a random secp256k1 key) and a SOL key (ED25519, a random key) — or, on an SSM cluster with `kms` settings, keys of the curves `kms.keyTypes` names (EM and ED by default) created inside AWS KMS (`ECC_SECG_P256K1` / `ECC_NIST_EDWARDS25519`) that never leave it; signing a Solana transaction through KMS on the daemon side requires wire-sysio's Ed25519 KMS support and aws-sdk-cpp 1.11.686 or later. Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
 | `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
 
 ¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the genesis block-signing key and the standalone key on `sysio`'s own `active` — nothing else. Producer accounts are keyed by their **hosting node's generated K1**, operators (`batchop.*`) by their **own per-operator generated K1**, and the `sysio.*` system accounts (and `dev.owner1`) by `sysio@active` — production substitutes real keys / msig throughout.
@@ -556,8 +556,10 @@ capital requirements, deployed-node recovery, and verification.
       (or its KMS-custodied key, whose link signature is produced by a remote `KMS::Sign` through
       `keyPairUtils.ethereumSigner`). The link is what sweeps a pre-funded operator's parked launch
       import credit into its own `sysio.liq` balance.
-    - SVM (`chain_kind = CHAIN_KIND_SVM`, 3): `pub_key` = the operator's generated ED25519 key (the same key
-      its daemon's `--signature-provider` signs Solana txs with).
+    - SVM (`chain_kind = CHAIN_KIND_SVM`, 3): `pub_key` = the operator's ED25519 key (the same key its
+      daemon's `--signature-provider` signs Solana txs with) — its random key, or its KMS-custodied key,
+      whose link proof is a remote `KMS::Sign` (`ED25519_SHA_512` over the raw payload) through
+      `keyPairUtils.solanaSigner`.
 40. `sysio.opreg::regoperator({account:<operator>, type, is_bootstrapped})` — `[sysio.opreg@active]`:
     - batch operators: `type:OPERATOR_TYPE_BATCH`, `is_bootstrapped:true` (skip collateral; immediately
       AVAILABLE).

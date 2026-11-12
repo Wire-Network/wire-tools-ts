@@ -4,6 +4,7 @@ import {
   AWSSSMSignatureProviderOptionsSchema,
   ClusterSignatureProviderConfigSchema,
   ClusterSignatureProviderTypes,
+  isKMSCustodiableKeyType,
   isKMSCustodied,
   isKMSCustodiedKeyType,
   KMSCustodiedKeyTypes,
@@ -11,6 +12,7 @@ import {
   SignatureProviderKeyPolicy,
   SignatureProviderKMSConfigSchema,
   SignatureProviderType,
+  type AWSKMSSignatureProviderOptions,
   type ClusterSignatureProviderConfig,
   type SignatureProviderConfigOf
 } from "@wireio/cluster-tool-shared"
@@ -114,7 +116,18 @@ describe("SignatureProviderKMSConfigSchema", () => {
     ).toBe(false)
   })
 
-  it("the union refine REJECTS a KMS entry whose curve is not EM, naming the custodied curves", () => {
+  it("accepts an ED (solana) KMS entry — the other curve KMS custodies", () => {
+    expect(
+      SignatureProviderConfigSchema.safeParse({
+        ...kmsEntry,
+        type: KeyType.ED,
+        publicKey: "PUB_ED_x",
+        awsKmsKeyId: "alias/wire/dev/batchop-a/ED"
+      }).success
+    ).toBe(true)
+  })
+
+  it("the union refine REJECTS a KMS entry whose curve is neither EM nor ED, naming the custodiable curves", () => {
     const result = SignatureProviderConfigSchema.safeParse({
       ...kmsEntry,
       type: KeyType.K1,
@@ -122,7 +135,7 @@ describe("SignatureProviderKMSConfigSchema", () => {
     })
     expect(result.success).toBe(false)
     expect(result.error?.issues?.[0]?.path).toEqual(["type"])
-    expect(result.error?.issues?.[0]?.message).toMatch(/EM keys only \(got K1\)/)
+    expect(result.error?.issues?.[0]?.message).toMatch(/EM, ED keys only \(got K1\)/)
   })
 
   it("SignatureProviderConfigOf<KMS> narrows to the KMS variant (region + key id, no privateKey)", () => {
@@ -140,7 +153,8 @@ describe("AWSKMSSignatureProviderOptionsSchema", () => {
     })
     expect(parsed).toEqual({
       awsKeyAliasPattern: KmsAliasPattern,
-      awsRegion: KmsRegion
+      awsRegion: KmsRegion,
+      keyTypes: [KeyType.EM, KeyType.ED]
     })
     expect(parsed.version).toBeUndefined()
     expect(
@@ -217,7 +231,12 @@ describe("SignatureProviderKeyPolicy", () => {
         batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
       })
     ).toMatchObject({
-      kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion },
+      // A persisted kms block without keyTypes loads custodying both curves.
+      kms: {
+        awsKeyAliasPattern: KmsAliasPattern,
+        awsRegion: KmsRegion,
+        keyTypes: [KeyType.EM, KeyType.ED]
+      },
       batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
     })
     expect(
@@ -230,38 +249,109 @@ describe("SignatureProviderKeyPolicy", () => {
   })
 })
 
-describe("isKMSCustodiedKeyType / isKMSCustodied", () => {
-  it("KMS custodies the EM curve ONLY", () => {
-    expect(KMSCustodiedKeyTypes).toEqual([KeyType.EM])
-    expect(isKMSCustodiedKeyType(KeyType.EM)).toBe(true)
-    ;[KeyType.K1, KeyType.ED, KeyType.BLS, KeyType.R1, KeyType.WA].forEach(
-      keyType => expect(isKMSCustodiedKeyType(keyType)).toBe(false)
+describe("AWSKMSSignatureProviderOptionsSchema.keyTypes (which custodiable curves live in KMS)", () => {
+  const base = { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion }
+
+  it("defaults to EVERY custodiable curve — EM and ED", () => {
+    expect(AWSKMSSignatureProviderOptionsSchema.parse(base).keyTypes).toEqual([
+      KeyType.EM,
+      KeyType.ED
+    ])
+    expect(AWSKMSSignatureProviderOptionsSchema.parse(base).keyTypes).toEqual([
+      ...KMSCustodiedKeyTypes
+    ])
+  })
+
+  it("accepts an authored subset — [\"EM\"] keeps the ED keys in Parameter Store", () => {
+    expect(
+      AWSKMSSignatureProviderOptionsSchema.parse({ ...base, keyTypes: [KeyType.EM] })
+        .keyTypes
+    ).toEqual([KeyType.EM])
+    expect(
+      AWSKMSSignatureProviderOptionsSchema.parse({ ...base, keyTypes: [KeyType.ED] })
+        .keyTypes
+    ).toEqual([KeyType.ED])
+  })
+
+  it("rejects an empty roster, a repeated curve and a curve KMS cannot custody", () => {
+    expect(
+      AWSKMSSignatureProviderOptionsSchema.safeParse({ ...base, keyTypes: [] }).success
+    ).toBe(false)
+    const repeated = AWSKMSSignatureProviderOptionsSchema.safeParse({
+      ...base,
+      keyTypes: [KeyType.EM, KeyType.EM]
+    })
+    expect(repeated.success).toBe(false)
+    expect(repeated.error?.issues?.[0]?.message).toMatch(/must not repeat a curve/)
+    ;[KeyType.K1, KeyType.BLS, "secp256k1"].forEach(keyType =>
+      expect(
+        AWSKMSSignatureProviderOptionsSchema.safeParse({ ...base, keyTypes: [keyType] })
+          .success
+      ).toBe(false)
+    )
+  })
+})
+
+describe("isKMSCustodiableKeyType / isKMSCustodiedKeyType / isKMSCustodied", () => {
+  /** Resolved kms settings custodying `keyTypes`. */
+  function kmsSettings(
+    keyTypes: AWSKMSSignatureProviderOptions["keyTypes"]
+  ): AWSKMSSignatureProviderOptions {
+    return { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion, keyTypes }
+  }
+
+  it("KMS CAN custody the EM and ED curves, and no other", () => {
+    expect(KMSCustodiedKeyTypes).toEqual([KeyType.EM, KeyType.ED])
+    expect(isKMSCustodiableKeyType(KeyType.EM)).toBe(true)
+    expect(isKMSCustodiableKeyType(KeyType.ED)).toBe(true)
+    ;[KeyType.K1, KeyType.BLS, KeyType.R1, KeyType.WA].forEach(keyType =>
+      expect(isKMSCustodiableKeyType(keyType)).toBe(false)
     )
   })
 
-  it("an SSM cluster WITH kms settings custodies its EM key in KMS", () => {
-    const kms = { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion }
-    expect(
-      isKMSCustodied(clusterProvider(SignatureProviderType.SSM, kms), KeyType.EM)
-    ).toBe(true)
+  it("isKMSCustodiedKeyType answers from the settings' keyTypes, never the roster", () => {
+    const both = kmsSettings([KeyType.EM, KeyType.ED]),
+      ethereumOnly = kmsSettings([KeyType.EM])
+    expect(isKMSCustodiedKeyType(KeyType.EM, both)).toBe(true)
+    expect(isKMSCustodiedKeyType(KeyType.ED, both)).toBe(true)
+    expect(isKMSCustodiedKeyType(KeyType.K1, both)).toBe(false)
+    expect(isKMSCustodiedKeyType(KeyType.EM, ethereumOnly)).toBe(true)
+    expect(isKMSCustodiedKeyType(KeyType.ED, ethereumOnly)).toBe(false)
+  })
+
+  it("an SSM cluster WITH kms settings custodies the curves they name in KMS", () => {
+    const provider = clusterProvider(
+      SignatureProviderType.SSM,
+      kmsSettings([KeyType.EM, KeyType.ED])
+    )
+    expect(isKMSCustodied(provider, KeyType.EM)).toBe(true)
+    expect(isKMSCustodied(provider, KeyType.ED)).toBe(true)
+    expect(isKMSCustodied(provider, KeyType.K1)).toBe(false)
+    // [EM] keeps ED in SSM.
+    const ethereumOnly = clusterProvider(
+      SignatureProviderType.SSM,
+      kmsSettings([KeyType.EM])
+    )
+    expect(isKMSCustodied(ethereumOnly, KeyType.EM)).toBe(true)
+    expect(isKMSCustodied(ethereumOnly, KeyType.ED)).toBe(false)
   })
 
   it("every other combination keeps the curve in the cluster-wide provider", () => {
-    const kms = { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion }
+    const kms = kmsSettings([KeyType.EM, KeyType.ED])
     // KEY + kms: KMS complements an SSM cluster only.
     expect(
       isKMSCustodied(clusterProvider(SignatureProviderType.KEY, kms), KeyType.EM)
     ).toBe(false)
-    // SSM without kms: the EM key is an SSM parameter like every other curve.
+    // SSM without kms: the EM / ED keys are SSM parameters like every other curve.
     expect(
       isKMSCustodied(clusterProvider(SignatureProviderType.SSM), KeyType.EM)
     ).toBe(false)
-    // SSM + kms, a non-EM curve: never KMS.
+    expect(
+      isKMSCustodied(clusterProvider(SignatureProviderType.SSM), KeyType.ED)
+    ).toBe(false)
+    // SSM + kms, a curve KMS cannot custody: never KMS.
     expect(
       isKMSCustodied(clusterProvider(SignatureProviderType.SSM, kms), KeyType.K1)
-    ).toBe(false)
-    expect(
-      isKMSCustodied(clusterProvider(SignatureProviderType.SSM, kms), KeyType.ED)
     ).toBe(false)
   })
 })

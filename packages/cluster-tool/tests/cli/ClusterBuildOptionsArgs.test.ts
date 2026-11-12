@@ -3,7 +3,7 @@ import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { SlugName } from "@wireio/sdk-core"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   ClusterSignatureProviderTypes,
@@ -885,17 +885,45 @@ const KmsAliasPattern = "alias/wire/{cluster}/{account}/{keyType}"
 const KmsRegion = "us-east-1"
 const KmsJson = `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}"}`
 const KmsFlag = "signature-provider-kms"
+/** The codec-resolved form of {@link KmsJson}: `keyTypes` defaulted to both custodiable curves. */
+const ResolvedKmsOptions = {
+  awsKeyAliasPattern: KmsAliasPattern,
+  awsRegion: KmsRegion,
+  keyTypes: [KeyType.EM, KeyType.ED]
+}
 
 describe("toAWSKMSSignatureProviderOptions", () => {
   it("is the --signature-provider-kms flag", () => {
     expect(SignatureProviderKMSFlag).toBe(KmsFlag)
   })
 
-  it("parses inline JSON — the alias pattern + the ONE key region", () => {
-    expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: KmsJson })).toEqual({
-      awsKeyAliasPattern: KmsAliasPattern,
-      awsRegion: KmsRegion
-    })
+  it("parses inline JSON — the alias pattern + the ONE key region, keyTypes defaulting to EM + ED", () => {
+    expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: KmsJson })).toEqual(
+      ResolvedKmsOptions
+    )
+  })
+
+  it("parses an authored keyTypes, and rejects a repeated or non-custodiable curve", () => {
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM"]}`
+      }).keyTypes
+    ).toEqual([KeyType.EM])
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["ED","ED"]}`
+      })
+    ).toThrow(/must not repeat a curve/)
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["K1"]}`
+      })
+    ).toThrow()
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":[]}`
+      })
+    ).toThrow()
   })
 
   it("parses the OPTIONAL version token value", () => {
@@ -911,10 +939,9 @@ describe("toAWSKMSSignatureProviderOptions", () => {
       file = Path.join(dir, "kms.json")
     Fs.writeFileSync(file, KmsJson)
     try {
-      expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: file })).toEqual({
-        awsKeyAliasPattern: KmsAliasPattern,
-        awsRegion: KmsRegion
-      })
+      expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: file })).toEqual(
+        ResolvedKmsOptions
+      )
     } finally {
       Fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -947,7 +974,11 @@ describe("mergeSignatureProviderKMS", () => {
         account: AWSAccountName.dev,
         regions: [KmsRegion],
         ssm: null,
-        kms: { awsKeyAliasPattern, awsRegion: KmsRegion }
+        kms: {
+          awsKeyAliasPattern,
+          awsRegion: KmsRegion,
+          keyTypes: [KeyType.EM, KeyType.ED]
+        }
       }
     }
   }
@@ -975,8 +1006,34 @@ describe("mergeSignatureProviderKMS", () => {
     expect(merged.signatureProvider).toEqual({
       type: SignatureProviderType.SSM,
       ssm: { awsSecretIdPattern: SecretIdPattern },
-      kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion }
+      kms: ResolvedKmsOptions
     })
+  })
+
+  it("carries an authored keyTypes from the flag and from the document alike", () => {
+    expect(
+      mergeSignatureProviderKMS(
+        {},
+        {
+          [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM"]}`
+        }
+      ).signatureProvider.kms.keyTypes
+    ).toEqual([KeyType.EM])
+    expect(
+      mergeSignatureProviderKMS(
+        {},
+        {},
+        {
+          signatureProvider: {
+            kms: {
+              awsKeyAliasPattern: KmsAliasPattern,
+              awsRegion: KmsRegion,
+              keyTypes: [KeyType.ED]
+            }
+          }
+        }
+      ).signatureProvider.kms.keyTypes
+    ).toEqual([KeyType.ED])
   })
 
   it("falls back to the options-file document's signatureProvider.kms", () => {
@@ -1043,7 +1100,9 @@ describe("mergeSignatureProviderKMS", () => {
             account: AWSAccountName.dev,
             regions: [KmsRegion],
             ssm: null,
-            kms: { awsRegion: KmsRegion } as ClusterBuildOptions["signatureProvider"]["kms"]
+            kms: {
+              awsRegion: KmsRegion
+            } as ClusterBuildOptions["awsClusterNodeConfig"]["kms"]
           }
         },
         {}
@@ -1344,7 +1403,8 @@ describe("--cluster-build-options-file", () => {
     expect(loaded.signatureProvider).toEqual({
       type: SignatureProviderType.SSM,
       ssm: { awsSecretIdPattern: SecretIdPattern },
-      kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion },
+      // The document's kms block, codec-resolved: `keyTypes` defaulted to EM + ED.
+      kms: ResolvedKmsOptions,
       batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
     })
   })

@@ -5,7 +5,11 @@ import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
-import { ethereumKeyPairFromKmsPublicKey } from "@wireio/cluster-tool/utils"
+import {
+  ethereumKeyPairFromKmsPublicKey,
+  solanaKeyPairFromKmsPublicKey,
+  solanaKeypair
+} from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   ClusterBuild,
@@ -17,7 +21,7 @@ import {
   type ClusterBuildPhaseGroup,
   type StepInput
 } from "@wireio/cluster-tool/orchestration"
-import type { KeyPair } from "@wireio/cluster-tool/types"
+import type { KeyPair, SolanaSigner } from "@wireio/cluster-tool/types"
 import {
   AWSAccountName,
   SignatureProviderKeyPolicy,
@@ -1016,7 +1020,7 @@ describe("WireOperatorProvisioningTool.runAuthexLink", () => {
     })
   })
 
-  it("signs the SVM link with the ed25519 key derived from the stored ED pair", async () => {
+  it("signs the SVM link through the custody facade — the STORED ED public key is linked, the signer derived from the pair", async () => {
     const ctx = fixtureContext(),
       operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
       createLink = jest
@@ -1035,7 +1039,50 @@ describe("WireOperatorProvisioningTool.runAuthexLink", () => {
     const params = createLink.mock.calls[0][1] as AuthExLinkTool.SolanaLinkParams
     expect(params.chainKind).toBe(ChainKind.SVM)
     expect(params.account).toBe(operator.account)
-    expect(params.privateKey.toString()).toBe(operator.solana.privateKey)
+    expect(params.publicKey).toBe(operator.solana.publicKey)
+    // The signer IS the stored pair's: same point as the stored public key, and
+    // it signs with the pair's material (no privateKey rides the params).
+    expect(params.signer.publicKey.toBase58()).toBe(
+      solanaKeypair(operator.solana).publicKey.toBase58()
+    )
+    expect(params).not.toHaveProperty("privateKey")
+  })
+
+  it("signs the SVM link through KMS when the stored ED pair is KMS-custodied — no material is ever read", async () => {
+    const ctx = fixtureContext(),
+      operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+      kmsPair = solanaKeyPairFromKmsPublicKey(
+        solanaKeypair(operator.solana).publicKey.toBytes(),
+        "us-east-1",
+        "alias/wire/test/batchopaaaa/ED"
+      ),
+      kmsSigner = {
+        publicKey: solanaKeypair(operator.solana).publicKey
+      } as unknown as SolanaSigner,
+      createSolanaSigner = jest
+        .spyOn(KMSClientProvider, "createSolanaSigner")
+        .mockResolvedValue(kmsSigner),
+      createLink = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator({ ...operator, solana: kmsPair })
+    await WireOperatorProvisioningTool.runAuthexLink(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.AuthexLinkInput",
+        label: operator.label,
+        chainKind: ChainKind.SVM
+      },
+      new AbortController().signal
+    )
+    expect(createSolanaSigner).toHaveBeenCalledWith(
+      "us-east-1",
+      "alias/wire/test/batchopaaaa/ED",
+      solanaKeypair(operator.solana).publicKey.toBytes()
+    )
+    const params = createLink.mock.calls[0][1] as AuthExLinkTool.SolanaLinkParams
+    expect(params.publicKey).toBe(kmsPair.publicKey)
+    expect(params.signer).toBe(kmsSigner)
   })
 })
 

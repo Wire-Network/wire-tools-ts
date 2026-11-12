@@ -41,6 +41,7 @@ import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstra
 import type {
   EthereumKeyPair,
   KeyPair,
+  SolanaKeyPair,
   WireFinalizerKeyPair
 } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -1097,7 +1098,10 @@ export namespace ExternalClusterConfigSteps {
           "create-external-config: SSM signature provider requires ssm settings"
         )
         if (isKMSCustodied(provider, keyPair.type)) {
-          const { awsKmsRegion, awsKmsKeyId } = keyPair as EthereumKeyPair
+          // The custodiable curves (EM / ED) carry the reference on the pair.
+          const { awsKmsRegion, awsKmsKeyId } = keyPair as
+            | EthereumKeyPair
+            | SolanaKeyPair
           Assert.ok(
             awsKmsRegion != null && awsKmsKeyId != null,
             `create-external-config: ${label} key ${KeyType[keyPair.type]} is KMS-custodied but its record carries no KMS reference`

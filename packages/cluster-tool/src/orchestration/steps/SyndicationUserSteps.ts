@@ -1,6 +1,6 @@
 import Assert from "node:assert"
 
-import { Base58, KeyType, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
@@ -8,7 +8,8 @@ import { EthereumFundingTool } from "../../tools/ethereum/EthereumFundingTool.js
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
 import {
   ethereumPublicKeyFromWallet,
-  privateKeyFromNativeString
+  solanaKeyPairFromKeypair,
+  solanaSignerFromKeypair
 } from "../../utils/keyPairUtils.js"
 import {
   ClusterBuildStep,
@@ -85,11 +86,9 @@ export namespace SyndicationUserSteps {
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.SVM,
       account: input.account,
-      // The web3 secret key IS the ED key's native form: base58 of its 64 bytes.
-      privateKey: privateKeyFromNativeString(
-        KeyType.ED,
-        Base58.encode(keypair.secretKey)
-      )
+      // The linked key is the keypair's own point; the keypair proves it.
+      publicKey: solanaKeyPairFromKeypair(keypair).publicKey,
+      signer: solanaSignerFromKeypair(keypair)
     })
   }
 
