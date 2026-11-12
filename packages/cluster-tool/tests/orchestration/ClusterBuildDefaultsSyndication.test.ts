@@ -169,6 +169,105 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
     }
   })
 
+  /** The phase named `name`, wherever the bootstrap registers it. */
+  function findPhase(
+    cluster: Awaited<ReturnType<typeof ClusterBuildDefaults.create>>,
+    name: string
+  ): ClusterBuildPhase {
+    const phase = cluster.children
+      .flatMap(child => (child instanceof ClusterBuildPhaseGroup ? child.children : [child]))
+      .find(child => child.name === name)
+    if (!(phase instanceof ClusterBuildPhase)) throw new Error(`missing phase ${name}`)
+    return phase
+  }
+
+  it("reserves the delegate name prefixes before either delegate account exists", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      names = collectPhaseNames(cluster.children),
+      phase = findPhase(cluster, "DelegateNamePrefixes")
+    expect([...Constants.DELEGATE_NAME_PREFIXES]).toEqual(["andon", "bond"])
+    expectInOrder(names, ["DelegateNamePrefixes", "PanicAccount", "JudgeAccount"])
+    expect(phase.steps.map(step => step.name)).toEqual(["reserve-andon", "reserve-bond"])
+    // Owned by sysio, with an active nothing satisfies: a node-owner claim of the name cannot match a key.
+    phase.steps.forEach((step, index) =>
+      expect(step.input).toEqual({
+        kind: "AccountSteps.CreateSystemInput",
+        account: Constants.DELEGATE_NAME_PREFIXES[index],
+        active: {
+          threshold: 1,
+          keys: [],
+          accounts: [{ permission: { actor: "sysio.null", permission: "active" }, weight: 1 }]
+        }
+      })
+    )
+  })
+
+  it("creates the judge account, funds native permissions, then delegates and links both rulings", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      names = collectPhaseNames(cluster.children),
+      steps = collectStepNames(cluster.children)
+    expect(Constants.JUDGE_ACCOUNT).toBe("bond.judge")
+    expect(names.indexOf("JudgeAccount")).toBe(names.indexOf("EmergencyStop") + 1)
+    expect(names.indexOf("BondRulings")).toBe(names.indexOf("JudgeAccount") + 1)
+    expectInOrder(steps, [
+      "create-judge-account",
+      "fund-bond-permission-ram",
+      "delegate-bond-rslvvalid",
+      "link-bond-rslvvalid",
+      "delegate-bond-rslvinvalid",
+      "link-bond-rslvinvalid"
+    ])
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "bond.judge",
+      fundWireAmount: 0n
+    })
+  })
+
+  it("funds sysio.bond, then delegates and links exactly rslvvalid and rslvinvalid", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      phase = findPhase(cluster, "BondRulings")
+    expect(phase.steps).toHaveLength(5)
+    expect(phase.steps[0].input).toEqual({
+      kind: "AccountSteps.RamGrantInput",
+      account: "sysio.bond",
+      ramBytes: 10_400
+    })
+    expect(
+      BigInt(Name.from(Constants.JUDGE_ACCOUNT).value.toString())
+    ).toBeLessThan(BigInt(Name.from("sysio").value.toString()))
+    for (const [index, permission] of ["rslvvalid", "rslvinvalid"].entries()) {
+      const authorization = [{ actor: "sysio.bond", permission: "active" }]
+      expect(phase.steps[1 + index * 2].input).toEqual({
+        kind: "SystemContractSteps.UpdateauthInput",
+        authorization,
+        data: {
+          account: "sysio.bond",
+          permission,
+          parent: "active",
+          auth: {
+            threshold: 1,
+            keys: [],
+            accounts: [
+              { permission: { actor: "bond.judge", permission: "active" }, weight: 1 },
+              { permission: { actor: "sysio", permission: "active" }, weight: 1 }
+            ]
+          }
+        }
+      })
+      expect(phase.steps[2 + index * 2].input).toEqual({
+        kind: "SystemContractSteps.LinkauthInput",
+        authorization,
+        data: {
+          account: "sysio.bond",
+          code: "sysio.bond",
+          type: permission,
+          requirement: permission
+        }
+      })
+    }
+  })
+
   it("configures sysio.synd for every pair unconditionally — no opt-in flag gates it", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions()),
       steps = collectStepNames(cluster.children)

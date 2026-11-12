@@ -120,7 +120,7 @@ export namespace SyndContractSteps {
   }
 
   /**
-   * `sysio.synd::challenge` — hold an envelope's request until `sysio` rules,
+   * `sysio.synd::challenge` — hold an envelope's request until a judge rules,
    * paying the hold bond plus the pair's `challenge_extra`. Signed by the
    * challenger.
    */

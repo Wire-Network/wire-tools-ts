@@ -1,5 +1,6 @@
+import Assert from "node:assert"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
-import { range } from "lodash"
+import { range, uniq } from "lodash"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
 import { KeyGenerator } from "./clients/wire/KeyGenerator.js"
@@ -243,6 +244,46 @@ export namespace Constants {
    * delegates the native `sysio.andon@pull` and `@clear` permissions to it.
    */
   export const PANIC_ACCOUNT = "andon.panic"
+
+  /**
+   * The `sysio.bond` judge account: besides `sysio`, the one account that may rule a
+   * request VALID or INVALID. The bootstrap creates it (under the dev key) and delegates
+   * the native `sysio.bond@rslvvalid` and `@rslvinvalid` permissions to it.
+   */
+  export const JUDGE_ACCOUNT = "bond.judge"
+
+  /**
+   * The accounts a system contract's native permissions delegate to. Each holds a key
+   * of its own, so each sits outside `sysio.*`, under a prefix of its own.
+   */
+  export const DELEGATE_ACCOUNTS = [PANIC_ACCOUNT, JUDGE_ACCOUNT] as const
+
+  /** The character between an account name's prefix and the rest of it. */
+  export const ACCOUNT_NAME_SEPARATOR = "."
+
+  /**
+   * The bare name a delegate account sits under.
+   *
+   * @param account - The delegate account.
+   * @returns Its name prefix.
+   * @throws When the account has no prefix: reserving it would take the delegate's own name.
+   */
+  export function delegateNamePrefix(account: string): string {
+    const [prefix, ...rest] = account.split(ACCOUNT_NAME_SEPARATOR)
+    Assert.ok(
+      prefix.length > 0 && rest.length > 0,
+      `delegate account ${account} must sit under a name prefix`
+    )
+    return prefix
+  }
+
+  /**
+   * The bare names the {@link DELEGATE_ACCOUNTS} sit under (`andon`, `bond`). The
+   * bootstrap creates each as an account nobody can act for, so no node owner can
+   * register the name itself, and no tier-1 owner can mint `<prefix>.<generated>`
+   * accounts under it.
+   */
+  export const DELEGATE_NAME_PREFIXES = uniq(DELEGATE_ACCOUNTS.map(delegateNamePrefix))
 
   /** Name of the kiod wallet the bootstrap creates and helpers re-open. */
   export const DEFAULT_WALLET_NAME = "default"

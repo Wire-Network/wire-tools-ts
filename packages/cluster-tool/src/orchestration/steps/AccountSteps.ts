@@ -13,24 +13,25 @@ export namespace AccountSteps {
   /** Input for {@link planCreateSystem}. */
   export interface CreateSystemInput extends StepInput {
     readonly kind: "AccountSteps.CreateSystemInput"
-    /** The `sysio.*` account to create. */
+    /** The account to create: a `sysio.*` account, or a reserved delegate name prefix. */
     readonly account: string
     /** Its `active` authority; its `owner` is always `sysio@active`. */
     readonly active: SysioContracts.SysioSystemAuthorityType
   }
 
   /**
-   * Create a `sysio.*` system account whose `owner` is `sysio@active`.
+   * Create a system account whose `owner` is `sysio@active`: a `sysio.*`
+   * account, or a reserved delegate name prefix.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Step option overrides.
-   * @param account - The `sysio.*` account to create.
+   * @param account - The account to create.
    * @param active - Its `active` authority: `sysio@active` by default; a
    *   governance authority starts with the unsatisfiable
    *   {@link WireSysioContractTool.sysioNullActiveAuthority} until
-   *   `sysio.councl` writes its members.
+   *   `sysio.councl` writes its members, and a reserved name keeps it.
    * @returns The definition step.
    */
   export function planCreateSystem<C extends ClusterBuildContext = ClusterBuildContext>(

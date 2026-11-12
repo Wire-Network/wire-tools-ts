@@ -1082,7 +1082,7 @@ describe("explicit governance settlement", () => {
       epoch
     )
 
-  it("performs one sysio-authorized VALID ruling on an unbonded OPEN request", async () => {
+  it("performs one VALID ruling on an unbonded OPEN request, declaring the linked rslvvalid permission", async () => {
     const { ctx, clients } = stubbedContext()
     serve(clients.synd.tables.envelopes, [
       envelope(Solana, Liqsol, epoch, SysioSyndEnvelopeState.REQUESTED)
@@ -1100,9 +1100,12 @@ describe("explicit governance settlement", () => {
     expect(invoke).toHaveBeenCalledWith(
       { request_id: String(RequestId) },
       {
-        authorization: WireClient.activeAuthorization(
-          SysioContracts.SysioContractAccount.system
-        )
+        authorization: [
+          {
+            actor: SysioContracts.SysioContractAccount.bond,
+            permission: Steps.contracts.sysio.bond.Permission.rslvvalid
+          }
+        ]
       }
     )
   })

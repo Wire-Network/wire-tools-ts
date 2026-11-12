@@ -474,8 +474,11 @@ depot needs them too:
 | Phase | What it does |
 |---|---|
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
+| `DelegateNamePrefixes` | creates `andon` and `bond` with an `active` nothing satisfies, so no node owner can register the names the delegate accounts sit under |
 | `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
+| `JudgeAccount` | creates `bond.judge`, the account that may rule a bond request besides `sysio` |
+| `BondRulings` | funds and delegates native `rslvvalid`/`rslvinvalid` permissions on `sysio.bond` to `bond.judge` and `sysio`, then links each ruling |
 | `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: free syndication and desyndication charged at floor(quantity × 5 / 10000) plus a pair-specific flat fee, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and flat fees / gross minima of 5,000,000 / 100,000,000 for LIQETH and 100,000 / 50,000,000 for LIQSOL (9 decimals; flat < minimum; both round-trip legs’ gas: Ethereum ≈507k gas, Solana 9k–104k lamports)), with custody shortfall allowance 100 bps for LIQETH and zero for LIQSOL; then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
 
 Break-even sizing assumes a syndication of the pair's `min_desyndicate`.

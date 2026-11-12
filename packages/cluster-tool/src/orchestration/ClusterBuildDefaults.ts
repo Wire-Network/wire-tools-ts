@@ -9,6 +9,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { WireClient } from "../clients/wire/WireClient.js"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
@@ -27,6 +28,7 @@ import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
+import type { ClusterBuildStep } from "./ClusterBuildStep.js"
 import { Steps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
@@ -58,6 +60,16 @@ const WireSymbol = "9,WIRE"
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
 const AndonPermissionRamBytes = 10_400
+/**
+ * WIRE the judge account is funded with: none. It only signs `sysio.bond::rslvvalid`
+ * and `rslvinvalid`, which move no funds and are billed to `sysio.bond`.
+ */
+const JudgeAccountWireFunding = 0n
+/**
+ * RAM for the bond ruling child permissions and action links, beyond the deployment
+ * gift: the same two permissions, two delegates each and two links Andon carries.
+ */
+const BondPermissionRamBytes = AndonPermissionRamBytes
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -860,6 +872,27 @@ export namespace ClusterBuildDefaults {
       )
     )
 
+    // ── delegate accounts ──
+    // Each delegate holds a key of its own and sits under a bare name outside `sysio.*`.
+    // Take those names first, so no node owner can register one, nor mint tier-1
+    // `<name>.<generated>` accounts under it.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "DelegateNamePrefixes",
+      `Reserve ${Constants.DELEGATE_NAME_PREFIXES.join(" + ")}, the names the delegate accounts sit under`
+    ).push(
+      ...Constants.DELEGATE_NAME_PREFIXES.map(prefix =>
+        Steps.account.planCreateSystem<C>(
+          Actor.Sysio,
+          `reserve-${prefix}`,
+          `create ${prefix} (owner sysio@active, active ${Constants.NULL_ACCOUNT}@active)`,
+          {},
+          prefix,
+          WireSysioContractTool.sysioNullActiveAuthority()
+        )
+      )
+    )
+
     // ── the depot's emergency stop ──
     // Provision the panic delegate before referencing it in native authorities.
     // Arm both action links before traffic; privileged sysio.synd needs no registry.
@@ -893,55 +926,56 @@ export namespace ClusterBuildDefaults {
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
         Steps.contracts.sysio.andon.Permission.clear
-      ].flatMap(permission => [
-        Steps.contracts.sysio.system.planUpdateauth<C>(
-          Actor.Sysio,
-          `delegate-andon-${permission}`,
-          `delegate sysio.andon@${permission} to panic and governance`,
-          {},
-          {
-            account: SysioContractAccount[SysioContractName.andon],
-            permission,
-            parent: "active",
-            auth: {
-              threshold: 1,
-              keys: [],
-              // Fixed harness accounts are ordered by chain name value: andon.panic < sysio.
-              accounts: [
-                Constants.PANIC_ACCOUNT,
-                SysioContractAccount[SysioContractName.system]
-              ].map(actor => ({
-                permission: { actor, permission: "active" },
-                weight: 1
-              }))
-            }
-          },
-          [
-            {
-              actor: SysioContractAccount[SysioContractName.andon],
-              permission: "active"
-            }
-          ]
-        ),
-        Steps.contracts.sysio.system.planLinkauth<C>(
-          Actor.Sysio,
-          `link-andon-${permission}`,
-          `link sysio.andon::${permission} to its native permission`,
-          {},
-          {
-            account: SysioContractAccount[SysioContractName.andon],
-            code: SysioContractAccount[SysioContractName.andon],
-            type: permission,
-            requirement: permission
-          },
-          [
-            {
-              actor: SysioContractAccount[SysioContractName.andon],
-              permission: "active"
-            }
-          ]
+      ].flatMap(permission =>
+        planDelegatedAction<C>(
+          SysioContractName.andon,
+          permission,
+          Constants.PANIC_ACCOUNT
         )
-      ])
+      )
+    )
+
+    // ── the bond rulings ──
+    // Same shape as the emergency stop: the judge delegate, then a native permission and
+    // an action link per ruling. Either delegate satisfies it; under the native rules the
+    // judge can also rewrite its own permission, which governance reverts through `active`.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "JudgeAccount",
+      "Create the sysio.bond judge account"
+    ).push(
+      Steps.user.planProvisionWire<C>(
+        Actor.Sysio,
+        "create-judge-account",
+        `create ${Constants.JUDGE_ACCOUNT}, the account that may rule a bond request`,
+        {},
+        Constants.JUDGE_ACCOUNT,
+        JudgeAccountWireFunding
+      )
+    )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "BondRulings",
+      "Arm sysio.bond with native rslvvalid and rslvinvalid permissions"
+    ).push(
+      Steps.account.planRamGrant<C>(
+        Actor.Sysio,
+        "fund-bond-permission-ram",
+        "fund RAM for sysio.bond native permissions and action links",
+        {},
+        SysioContractAccount[SysioContractName.bond],
+        BondPermissionRamBytes
+      ),
+      ...[
+        Steps.contracts.sysio.bond.Permission.rslvvalid,
+        Steps.contracts.sysio.bond.Permission.rslvinvalid
+      ].flatMap(permission =>
+        planDelegatedAction<C>(
+          SysioContractName.bond,
+          permission,
+          Constants.JUDGE_ACCOUNT
+        )
+      )
     )
 
     // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
@@ -1535,6 +1569,55 @@ export namespace ClusterBuildDefaults {
         )
       )
     Steps.startScript.planPhase<C>(phase, labels)
+  }
+
+  /** An action the bootstrap delegates through a native permission of the same name. */
+  type DelegatedAction =
+    | Steps.contracts.sysio.andon.Permission
+    | Steps.contracts.sysio.bond.Permission
+
+  /**
+   * The two steps that delegate one of a system contract's actions: an
+   * `updateauth` creating the native child permission named after the action,
+   * satisfied by `delegate@active` or `sysio@active`, then the `linkauth` that
+   * requires that permission for the action. The contract's own `active`
+   * authorizes both.
+   *
+   * @param contract - The contract whose action is delegated.
+   * @param action - The action, which also names the permission.
+   * @param delegate - The account delegated to beside `sysio`.
+   * @returns The updateauth step, then the linkauth step.
+   */
+  function planDelegatedAction<C extends ClusterBuildContext>(
+    contract: SysioContracts.SysioContractName,
+    action: DelegatedAction,
+    delegate: string
+  ): ClusterBuildStep.Any<C>[] {
+    const account = SysioContractAccount[contract],
+      authorization = WireClient.activeAuthorization(account)
+    return [
+      Steps.contracts.sysio.system.planUpdateauth<C>(
+        Actor.Sysio,
+        `delegate-${contract}-${action}`,
+        `delegate ${account}@${action} to ${delegate} and governance`,
+        {},
+        {
+          account,
+          permission: action,
+          parent: WireClient.ActivePermission,
+          auth: WireSysioContractTool.sysioActiveDelegateAuthority(delegate)
+        },
+        authorization
+      ),
+      Steps.contracts.sysio.system.planLinkauth<C>(
+        Actor.Sysio,
+        `link-${contract}-${action}`,
+        `link ${account}::${action} to its native permission`,
+        {},
+        { account, code: account, type: action, requirement: action },
+        authorization
+      )
+    ]
   }
 
   /**

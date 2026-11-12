@@ -91,7 +91,8 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
     means it was never written, and delegating to it leaves `sysio` unsatisfiable), and audit every
     `sysio.*` account: each permission resolves to `sysio@active` with no key of its own, except the
     documented exceptions (each OPP account's own `@sysio.code` on its `owner`, `sysio.andon`'s
-    `pull`/`clear` panic permissions, each governance authority's `active` — its expected members — and
+    `pull`/`clear` panic permissions, `sysio.bond`'s `rslvvalid`/`rslvinvalid` ruling permissions, each
+    governance authority's `active` — its expected members — and
     `sysio` itself, whose key is allowed only before a handoff). The cluster tooling's
     `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
     `floor(2N/3)+1` members' approvals, normally through `sysio.msig`.
@@ -142,9 +143,9 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It does not need one:
 
 - **CPU / NET** are billed to the contract an action runs on (or to an explicit `sysio.payer`), never to
-  the signer, and every `sysio.*` contract is unlimited. A batch operator, the panic account and a user
-  account therefore carry zero CPU/NET weight. A node subjectively bills a signer for transactions that
-  FAIL on it; an operator that hits that allowance is exempted with nodeop's
+  the signer, and every `sysio.*` contract is unlimited. A batch operator, the panic account, the judge
+  account and a user account therefore carry zero CPU/NET weight. A node subjectively bills a signer
+  for transactions that FAIL on it; an operator that hits that allowance is exempted with nodeop's
   `disable-subjective-account-billing`.
 - **RAM** — the `sysio.*` contracts bill their rows to the `sysio` pool, so an account needs only the
   `newaccount_ram` (1144 bytes) its creation transfers from `sysio`. The exception is rows any account
@@ -399,6 +400,17 @@ depot base units at precision 9. Production uses these values; the council can c
     indefinitely, including while awaiting account linking. `importseed` and `importdone` are
     external/operational tools, not part of this bootstrap sequence.
 
+## Stage 9a — Delegate name prefixes
+The delegate accounts of Stages 10 and 10a (`andon.panic`, `bond.judge`) hold keys, so they sit outside
+`sysio.*`, under the bare names `andon` and `bond`.
+
+26a. **Reserve each name** — for `andon`, then `bond`:
+    `sysio::newaccount({creator:"sysio", name, owner:sysio@active, active:{threshold:1, keys:[],
+    accounts:[{permission:{actor:"sysio.null",permission:"active"},weight:1}]}})` — `[sysio@active]`.
+    With the name taken and an `active` nothing satisfies, no node owner can register it (a claim of an
+    existing account must match its `active` key), so no tier-1 owner mints `<name>.<generated>`
+    accounts under it.
+
 ## Stage 10 — Emergency stop (`sysio.andon`)
 `sysio.andon` exposes `pull(reason)` and `clear(note)`. Authorization is configured with native
 `sysio::updateauth` and `sysio::linkauth`; there is no contract-managed panic account or puller registry.
@@ -433,6 +445,42 @@ Privileged `sysio.synd` automatically pulls on a custody shortfall using the exi
 `sysio.andon@active` permission; it needs no puller registration. Changing the panic delegate through
 `updateauth` does not revoke that privileged inline path. Neither `sysio.andon`'s owner nor its active
 authority is replaced by this setup.
+
+## Stage 10a — Bond rulings (`sysio.bond`)
+`sysio.bond::rslvvalid(request_id)` and `rslvinvalid(request_id)` rule a request. Like the emergency
+stop, they are authorized with native `sysio::updateauth` and `sysio::linkauth`: the contract requires
+its own account, and each ruling has a native permission the judge account and governance both satisfy.
+
+**Companion requirement:** deploy the `sysio.bond` contract whose rulings require `sysio.bond` rather
+than `sysio`. Against the earlier contract these permissions exist but a ruling signed through them is
+refused. `ClusterBuildDefaults` implements the sequence below; its bond steps declare the linked
+`sysio.bond@rslvvalid` and `@rslvinvalid` permissions.
+
+29a. **Judge account** — `sysio::newaccount({creator:"sysio", name:"bond.judge", owner:DEV_K1_PUBLIC_KEY,
+    active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]`. It gets no resource grant: the rulings are billed to
+    `sysio.bond`. No WIRE is transferred to it **(cluster dev key; production: the judge's hardware or
+    multisig key — whoever holds this key can rule any request VALID or INVALID)**.
+29b. **Permission RAM** — `sysio::setacctram({account:"sysio.bond", ram_bytes:<current limit + 10400>})` —
+    `[sysio@active]`, read and added as in step 28.
+29c. **Delegate and link each ruling**, first `rslvvalid`, then `rslvinvalid`. For each `permission`:
+    - `sysio::updateauth({account:"sysio.bond", permission, parent:"active", auth:{threshold:1,
+      keys:[], accounts:[{permission:{actor:"bond.judge",permission:"active"},weight:1},
+      {permission:{actor:"sysio",permission:"active"},weight:1}]}})` — `[sysio.bond@active]`.
+      Sort the authority's accounts by chain name value when substituting a production judge account.
+    - `sysio::linkauth({account:"sysio.bond", code:"sysio.bond", type:permission,
+      requirement:permission})` — `[sysio.bond@active]`.
+
+The judge account signs with its own key but declares `[sysio.bond@rslvvalid]` or
+`[sysio.bond@rslvinvalid]`. Governance is delegated in both authorities and retains control through
+the parent `active` permission, so it can rule, replace the judge or remove the delegation. The two
+permissions are separate, so the two rulings can be given different authorities. `setconfig` stays
+`[sysio@active]`.
+
+Under the native rules a permission can rewrite itself, so the judge can change the authority of the
+ruling permission it satisfies, add permissions beneath it and re-link or unlink that ruling. It cannot
+reach any other action. Governance reverts any of it through `sysio.bond@active`; read both authorities
+and links with `clio get account sysio.bond` after any change of judge. The same holds for the panic
+account and its `sysio.andon` permissions.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
