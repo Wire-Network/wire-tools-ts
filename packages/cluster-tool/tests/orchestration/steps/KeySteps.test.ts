@@ -109,8 +109,8 @@ interface MockKmsCommand {
 
 /**
  * One key the in-memory KMS holds: its ARN, its curve, and the LOCAL key whose
- * point it reports — an ethers wallet for a secp256k1 (EM) key, a web3 keypair
- * for an Ed25519 (ED) key.
+ * point it reports — an ethers wallet for a secp256k1 (K1 / EM) key, a web3
+ * keypair for an Ed25519 (ED) key.
  */
 interface MockKmsKey {
   arn: string
@@ -137,23 +137,23 @@ function kmsNotFound(keyId: string): Error {
 /** The DER `SubjectPublicKeyInfo` prefix of a secp256k1 public key. */
 const Secp256k1SpkiPrefix = "3056301006072a8648ce3d020106052b8104000a034200"
 
-/** The DER SPKI KMS returns for a held key — secp256k1 around the wallet's point, RFC 8410 around the keypair's. */
+/** The DER SPKI KMS returns for a held key — RFC 8410 around the keypair's point for ED, secp256k1 around the wallet's for K1 / EM. */
 function kmsSpki(key: MockKmsKey): Uint8Array {
-  return key.keyType === KeyType.EM
-    ? ethers.getBytes(
-        `0x${Secp256k1SpkiPrefix}${key.wallet.signingKey.publicKey.slice(2)}`
-      )
-    : Uint8Array.of(
+  return key.keyType === KeyType.ED
+    ? Uint8Array.of(
         ...KMSClientProvider.Ed25519SpkiPrefix,
         ...key.keypair.publicKey.toBytes()
       )
+    : ethers.getBytes(
+        `0x${Secp256k1SpkiPrefix}${key.wallet.signingKey.publicKey.slice(2)}`
+      )
 }
 
-/** The KMS key spec a held key reports. */
+/** The KMS key spec a held key reports — K1 and EM share the secp256k1 spec. */
 function kmsKeySpec(key: MockKmsKey): KeySpec {
-  return key.keyType === KeyType.EM
-    ? KeySpec.ECC_SECG_P256K1
-    : KeySpec.ECC_NIST_EDWARDS25519
+  return key.keyType === KeyType.ED
+    ? KeySpec.ECC_NIST_EDWARDS25519
+    : KeySpec.ECC_SECG_P256K1
 }
 
 /**
@@ -183,6 +183,17 @@ function seedKmsSolanaKey(aliasName: string, keypair = Keypair.generate()): Mock
     arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
     keyType: KeyType.ED,
     keypair
+  }
+  kmsStore.set(aliasName, key)
+  return key
+}
+
+/** Bind a secp256k1 key for `wallet` under `aliasName` as a WIRE K1 key — the adopt-existing case of a batch operator's account key. */
+function seedKmsWireKey(aliasName: string, wallet = ethers.Wallet.createRandom()): MockKmsKey {
+  const key: MockKmsKey = {
+    arn: `arn:aws:kms:us-east-1:123456789012:key/${kmsStore.size + 1}`,
+    keyType: KeyType.K1,
+    wallet
   }
   kmsStore.set(aliasName, key)
   return key
@@ -917,7 +928,7 @@ describe("Steps.keys", () => {
     })
   })
 
-  describe("KMS custody of the EM / ED keys (an SSM cluster with kms settings)", () => {
+  describe("KMS custody of the K1 / EM / ED keys (an SSM cluster with kms settings)", () => {
     /** The ONE region the KMS keys live in — one of the replication regions. */
     const KmsRegion = "us-east-1"
     /** The alias the KMS pattern renders for the first batch operator's EM key (`batchop.a` → `batchop-a`). */
@@ -935,7 +946,7 @@ describe("Steps.keys", () => {
       policy?: SignatureProviderKeyPolicy
     }
 
-    /** The SSM fixture plus kms settings — both custodiable curves unless `kms.keyTypes` narrows it (and, when given, an explicit key policy). */
+    /** The SSM fixture plus kms settings — both OUTPOST curves unless `kms.keyTypes` says otherwise (and, when given, an explicit key policy). */
     function ssmKmsConfig(
       overrides: Partial<ClusterConfig> = {},
       { kms = {}, policy = SignatureProviderKeyPolicy.adoptOrCreate }: KmsConfigOptions = {}
@@ -1240,6 +1251,225 @@ describe("Steps.keys", () => {
           /no existing ED key was found for batch operator batchop\.a at us-east-1:alias\/wire\/test\/batchop-a\/ED/
         )
         expect(kmsCommandInputs("CreateKey")).toEqual([])
+      })
+    })
+
+    describe("the K1 (wire) key — a BOOTSTRAP batch operator's ACCOUNT key, an ECC_SECG_P256K1 KMS key like EM", () => {
+      /** The alias the KMS pattern renders for the first batch operator's K1 key. */
+      const BatchOperatorWireAlias = "alias/wire/test/batchop-a/K1"
+      /** The kms settings custodying EVERY curve — K1 included (the roster's default). */
+      const AllCurvesKms: Partial<AWSKMSSignatureProviderOptions> = {
+        keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+      }
+      /** The `PUB_K1_…` a held secp256k1 point reports as. */
+      function wirePublicKeyOf(wallet: ethers.HDNodeWallet): string {
+        return PublicKey.from({
+          type: KeyType.K1,
+          compressed: ethers.getBytes(
+            ethers.SigningKey.computePublicKey(wallet.signingKey.publicKey, true)
+          )
+        }).toString()
+      }
+
+      it("custodySource renders the KMS source for a bootstrap batch operator's K1 under [K1, EM, ED], and the SSM source under the fixture's [EM, ED]", () => {
+        expect(
+          ClusterConfigProvider.custodySource(
+            ssmKmsConfig({}, { kms: AllCurvesKms }),
+            "batchop.a",
+            KeyType.K1
+          )
+        ).toEqual({
+          type: SignatureProviderType.KMS,
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: BatchOperatorWireAlias
+        })
+        expect(
+          ClusterConfigProvider.custodySource(ssmKmsConfig(), "batchop.a", KeyType.K1)
+        ).toEqual({
+          type: SignatureProviderType.SSM,
+          awsSecretId: "/wire/test/batchop.a/K1"
+        })
+      })
+
+      it("keeps every OTHER identity's K1 in SSM even under [K1, EM, ED] — a producer node, the genesis identity, a flow operator (nodeop requires a block-signing K1 local)", () => {
+        const config = ssmKmsConfig({}, { kms: AllCurvesKms })
+        ;["node_00", NodeConfig.BiosName, "depositoraaa"].forEach(account =>
+          expect(
+            ClusterConfigProvider.custodySource(config, account, KeyType.K1)
+          ).toEqual({
+            type: SignatureProviderType.SSM,
+            awsSecretId: `/wire/test/${account}/K1`
+          })
+        )
+        // …while the same identities' EM keys DO go to KMS — the account gate is on K1 only.
+        expect(
+          ClusterConfigProvider.custodySource(config, "depositoraaa", KeyType.EM).type
+        ).toBe(SignatureProviderType.KMS)
+      })
+
+      it("ADOPTS the secp256k1 key behind the rendered alias — a material-less PUB_K1_ pair carrying the key reference, SSM never consulted", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const { wallet, arn } = seedKmsWireKey(BatchOperatorWireAlias),
+          recorder = new StepExtraRecorder(),
+          adopted = await adoptOrCreate(
+            ssmKmsConfig(fakeExecutables(), { kms: AllCurvesKms }),
+            KeyType.K1,
+            "batchop.a",
+            recorder
+          )
+        expect(adopted).toEqual({
+          type: KeyType.K1,
+          publicKey: wirePublicKeyOf(wallet),
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: BatchOperatorWireAlias
+        })
+        expect(adopted).not.toHaveProperty("privateKey")
+        expect(kmsCommandInputs("GetPublicKey")).toEqual([{ KeyId: BatchOperatorWireAlias }])
+        expect(kmsCommandInputs("CreateKey")).toEqual([])
+        expect(mockSend).not.toHaveBeenCalled()
+        expect(recorder.calls).toEqual([
+          expect.objectContaining({
+            kind: "note",
+            text: "adopted batchop.a's existing K1 key from KMS",
+            keyType: "K1",
+            awsKmsKeyId: BatchOperatorWireAlias,
+            keyArn: arn
+          })
+        ])
+      })
+
+      it("CREATES the key INSIDE KMS with the secp256k1 spec when nothing is behind the alias, recorded as an aws-kms keygen, nothing put to SSM", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const recorder = new StepExtraRecorder(),
+          purpose = "batch operator batchop.a — WIRE account key (K1)",
+          created = await adoptOrCreate(
+            ssmKmsConfig(fakeExecutables(), { kms: { ...AllCurvesKms, version: "v4" } }),
+            KeyType.K1,
+            "batchop.a",
+            recorder,
+            purpose
+          ),
+          key = kmsStore.get(BatchOperatorWireAlias)
+        expect(key).toBeDefined()
+        expect(kmsCommandInputs("CreateKey")).toEqual([
+          {
+            KeySpec: KeySpec.ECC_SECG_P256K1,
+            KeyUsage: KeyUsageType.SIGN_VERIFY,
+            Description: purpose,
+            Tags: [{ TagKey: Steps.keys.PlatformVersionTagKey, TagValue: "v4" }]
+          }
+        ])
+        expect(kmsCommandInputs("CreateAlias")).toEqual([
+          { AliasName: BatchOperatorWireAlias, TargetKeyId: key.arn }
+        ])
+        expect(created).toEqual({
+          type: KeyType.K1,
+          publicKey: wirePublicKeyOf(key.wallet),
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: BatchOperatorWireAlias
+        })
+        expect(created).not.toHaveProperty("privateKey")
+        expect(recorder.calls).toEqual([
+          {
+            client: "aws-kms",
+            kind: "keygen",
+            keyType: "K1",
+            purpose,
+            keyArn: key.arn,
+            ...created
+          }
+        ])
+        expect(commandInputs("PutParameter")).toEqual([])
+      })
+
+      it("a producer node's K1 adopts from / generates into Parameter Store under [K1, EM, ED] — KMS is never consulted for a block-signing key", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        const existing = PrivateKey.generate(KeyType.K1)
+        publishEverywhere("/wire/test/node_00/K1", existing.toNativeString())
+        const adopted = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables(), { kms: AllCurvesKms }),
+          KeyType.K1,
+          "node_00"
+        )
+        expect(adopted.privateKey).toBe(existing.toString())
+        expect(adopted).not.toHaveProperty("awsKmsKeyId")
+        const generated = await adoptOrCreate(
+          ssmKmsConfig(fakeExecutables(), { kms: AllCurvesKms }),
+          KeyType.K1,
+          "node_01"
+        )
+        expect(generated.privateKey).toMatch(/^PVT_K1_/)
+        expect(generated).not.toHaveProperty("awsKmsKeyId")
+        expect(mockKmsSend).not.toHaveBeenCalled()
+      })
+
+      it("adoptOnly: a bootstrap batch operator's MISSING K1 FAILS naming the KMS custody id, nothing minted", async () => {
+        installSSMStoreMock()
+        installKMSStoreMock()
+        await expect(
+          adoptOrCreate(
+            ssmKmsConfig(fakeExecutables(), {
+              kms: AllCurvesKms,
+              policy: SignatureProviderKeyPolicy.adoptOnly
+            }),
+            KeyType.K1,
+            "batchop.a"
+          )
+        ).rejects.toThrow(
+          /no existing K1 key was found for batch operator batchop\.a at us-east-1:alias\/wire\/test\/batchop-a\/K1/
+        )
+        expect(kmsCommandInputs("CreateKey")).toEqual([])
+      })
+
+      it("the publication walkers EXCLUDE a bootstrap batch operator's K1 (no parameter to put) and KEEP a producer's / the genesis identity's", () => {
+        const allCurves = ssmKmsConfig({}, { kms: AllCurvesKms }),
+          without = Steps.keys.signatureProviderKeyPublications(ssmConfig()),
+          outpostCurves = [KeyType.EM, KeyType.ED]
+        expect(
+          Steps.keys.operatorKeyPublications(allCurves, "batchop.a", OperatorType.BATCH)
+        ).toEqual([])
+        const withAll = Steps.keys.signatureProviderKeyPublications(allCurves)
+        expect(
+          withAll.some(publication => Constants.isBatchOperatorLabel(publication.label))
+        ).toBe(false)
+        expect(withAll).toEqual(
+          without.filter(
+            publication =>
+              !Constants.isBatchOperatorLabel(publication.label) &&
+              !outpostCurves.includes(publication.keyType)
+          )
+        )
+        // The genesis identity's K1 row survives — nodeop requires that key local.
+        expect(
+          withAll.some(
+            publication =>
+              publication.publicationLabel === NodeConfig.BiosName &&
+              publication.keyType === KeyType.K1
+          )
+        ).toBe(true)
+        expect(
+          Steps.keys.signatureProviderSecretId(allCurves, "batchop.a", KeyType.K1)
+        ).toBeNull()
+        expect(
+          Steps.keys.signatureProviderSecretId(allCurves, "node_00", KeyType.K1)
+        ).toBe("/wire/test/node_00/K1")
+      })
+
+      it("custodyReference agrees with the ONE renderer — KMS:<region>:<alias> for the batch operator's K1, SSM:<secretId> for a node's", () => {
+        const allCurves = ssmKmsConfig({}, { kms: AllCurvesKms })
+        expect(
+          Steps.keys.custodyReference(
+            ClusterConfigProvider.custodySource(allCurves, "batchop.a", KeyType.K1)
+          )
+        ).toBe(`KMS:${KmsRegion}:${BatchOperatorWireAlias}`)
+        expect(
+          Steps.keys.custodyReference(
+            ClusterConfigProvider.custodySource(allCurves, "node_00", KeyType.K1)
+          )
+        ).toBe("SSM:/wire/test/node_00/K1")
       })
     })
 

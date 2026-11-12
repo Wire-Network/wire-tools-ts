@@ -21,7 +21,8 @@ import {
   ethereumKeyPairFromKmsPublicKey,
   ethereumKeyPairFromWallet,
   keyPairFromPrivate,
-  solanaKeyPairFromKmsPublicKey
+  solanaKeyPairFromKmsPublicKey,
+  wireKeyPairFromKmsPublicKey
 } from "@wireio/cluster-tool/utils"
 
 /** Every region the SSM parameters replicate to; the KMS keys live in the first. */
@@ -70,13 +71,23 @@ function settings(
 /**
  * A REAL random pair of `keyType` for `account`, in the custody form the
  * bootstrap's seam would hand back under `custody`: material for every SSM
- * curve, a material-less KMS reference for a KMS-custodied EM / ED.
+ * curve, a material-less KMS reference for a KMS-custodied K1 / EM / ED.
  */
 function fakePair(
   custody: KeyCustodySettings,
   keyType: KeyType,
   account: string
 ): KeyPair {
+  if (
+    keyType === KeyType.K1 &&
+    ClusterConfigProvider.isKMSCustodiedKey(custody, account, KeyType.K1)
+  ) {
+    return wireKeyPairFromKmsPublicKey(
+      PrivateKey.generate(KeyType.K1).toPublic().data.array,
+      KmsRegion,
+      ClusterConfigProvider.custodySource(custody, account, KeyType.K1).awsKmsKeyId
+    )
+  }
   if (keyType === KeyType.EM) {
     const wallet = ethers.Wallet.createRandom()
     return isKMSCustodied(custody.signatureProvider, KeyType.EM)
@@ -291,6 +302,38 @@ describe("BatchOperatorKeyTool", () => {
         )
         expect(operator.solana).not.toHaveProperty("privateKey")
       })
+    })
+
+    it("lists every curve's custody as KMS:<region>:<alias> under kms [K1, EM, ED] — the batch operators' K1 ACCOUNT keys included — and publishes NOTHING", async () => {
+      const custody = settings(SignatureProviderType.SSM, {
+          kms: [KeyType.K1, KeyType.EM, KeyType.ED]
+        }),
+        operators = await BatchOperatorKeyTool.adoptOrCreate(
+          custody,
+          Labels,
+          KeyGenerator.context()
+        ),
+        listing = BatchOperatorKeyTool.toListing(custody, operators)
+      expect(listing.map(row => [row.label, row.keyType, row.custody])).toEqual(
+        operators.flatMap(operator => {
+          const aliasSegment = operator.label.replace(".", "-")
+          return [
+            [operator.label, KeyType.K1, `KMS:${KmsRegion}:alias/wire/dev/${aliasSegment}/K1`],
+            [operator.label, KeyType.EM, `KMS:${KmsRegion}:alias/wire/dev/${aliasSegment}/EM`],
+            [operator.label, KeyType.ED, `KMS:${KmsRegion}:alias/wire/dev/${aliasSegment}/ED`]
+          ]
+        })
+      )
+      // No curve has a parameter to put — every key lives in KMS.
+      expect(publish).not.toHaveBeenCalled()
+      operators.forEach(operator => {
+        expect(operator.wire.awsKmsKeyId).toBe(
+          `alias/wire/dev/${operator.label.replace(".", "-")}/K1`
+        )
+        expect(operator.wire.publicKey).toMatch(/^PUB_K1_/)
+        expect(operator.wire).not.toHaveProperty("privateKey")
+      })
+      expect(findKeyMaterial(JSON.stringify(listing))).toEqual([])
     })
 
     it("lists 3 PUBLIC rows per operator (K1, EM, ED) under kms [EM] — the EM row carrying its address — with SSM / KMS custody references", async () => {

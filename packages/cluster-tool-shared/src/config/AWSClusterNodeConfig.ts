@@ -30,9 +30,9 @@ export enum AWSAccountName {
  * present. REQUIRED when `signatureProvider.type` is `SignatureProviderType.SSM`
  * (it sources the secret-id `{cluster}` segment and the replication regions);
  * accepted but unused under `KEY` / `KIOD`. A `kms` block moves the curves its
- * `keyTypes` names (EM and ED by default) of an SSM cluster into AWS KMS
- * (adopted by alias pattern, never leaving KMS); its `awsRegion` must be one of
- * `regions`.
+ * `keyTypes` names (K1, EM and ED by default — K1 for the batch operators'
+ * account keys only) of an SSM cluster into AWS KMS (adopted by alias pattern,
+ * never leaving KMS); its `awsRegion` must be one of `regions`.
  */
 export const AWSClusterNodeConfigSchema = z.object({
   /** The AWS account the cluster runs in — also the secret-id `{cluster}` value. */
@@ -41,7 +41,7 @@ export const AWSClusterNodeConfigSchema = z.object({
   regions: z.array(z.string().min(1)).min(1),
   /** AWS SSM publish settings, or `null` (`null`, not absence, so the slot round-trips through JSON). */
   ssm: AWSSSMSignatureProviderOptionsSchema.nullable().default(null),
-  /** AWS KMS custody settings for the EM / ED keys, or `null` (same JSON round-trip rule as `ssm`). */
+  /** AWS KMS custody settings for the K1 / EM / ED keys, or `null` (same JSON round-trip rule as `ssm`). */
   kms: AWSKMSSignatureProviderOptionsSchema.nullable().default(null)
 })
 /** The AWS placement of a cluster's nodes — the shape of {@link AWSClusterNodeConfigSchema}. */

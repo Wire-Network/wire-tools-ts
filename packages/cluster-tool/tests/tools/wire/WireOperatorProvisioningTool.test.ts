@@ -1,6 +1,6 @@
 import { ethers } from "ethers"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey, SysioContracts } from "@wireio/sdk-core"
 import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
@@ -8,7 +8,8 @@ import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
 import {
   ethereumKeyPairFromKmsPublicKey,
   solanaKeyPairFromKmsPublicKey,
-  solanaKeypair
+  solanaKeypair,
+  wireKeyPairFromKmsPublicKey
 } from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
@@ -437,7 +438,35 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       } as KeyPair<KeyType>
     }
 
-    /** A context whose key generation and wallet import are doubled at their seams. */
+    /** The ONE region a KMS key lives in, and the alias the harness renders for the first batch operator's K1. */
+    const KmsRegion = "us-east-1",
+      BootstrapWireAlias = "alias/wire/test/batchop-a/K1"
+
+    /** A KMS-custodied K1 pair whose public identity is a fresh random key's — no material. */
+    function wireKmsPair(alias = BootstrapWireAlias) {
+      return wireKeyPairFromKmsPublicKey(
+        PrivateKey.generate(KeyType.K1).toPublic().data.array,
+        KmsRegion,
+        alias
+      )
+    }
+
+    /** The signer the KMS arm hands back — DERIVED from the provider's own return type. */
+    type KmsWireSigner = Awaited<ReturnType<typeof KMSClientProvider.createWireSigner>>
+
+    /** A sdk-core signer double for `wire`, with `KMSClientProvider.createWireSigner` doubled to hand it back. */
+    function kmsSignerFor(wire: ReturnType<typeof wireKmsPair>) {
+      const kmsSigner = {
+          pubKey: PublicKey.from(wire.publicKey),
+          sign: jest.fn()
+        } as unknown as KmsWireSigner,
+        createWireSigner = jest
+          .spyOn(KMSClientProvider, "createWireSigner")
+          .mockResolvedValue(kmsSigner)
+      return { kmsSigner, createWireSigner }
+    }
+
+    /** A context whose key generation, wallet import and external-signer registration are doubled at their seams. */
     function materializationContext() {
       const ctx = fixtureContext(),
         addPrivateKey = jest.fn().mockResolvedValue(undefined),
@@ -446,11 +475,12 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
           .mockImplementation(
             (async (_config: unknown, keyType: KeyType, account: string) =>
               fakePair(keyType, account)) as never
-          )
+          ),
+        addSigner = jest.spyOn(ctx.wire, "addSigner").mockImplementation(() => undefined)
       jest
         .spyOn(ctx.wire.wallet, "getOrCreate")
         .mockResolvedValue({ addPrivateKey } as never)
-      return { ctx, adopt, addPrivateKey }
+      return { ctx, adopt, addPrivateKey, addSigner }
     }
 
     afterEach(() => jest.restoreAllMocks())
@@ -483,7 +513,7 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
     })
 
     it("mints NO finalizer key for a batch operator — it has no finality role", async () => {
-      const { ctx, adopt, addPrivateKey } = materializationContext()
+      const { ctx, adopt, addPrivateKey, addSigner } = materializationContext()
       await WireOperatorProvisioningTool.runIdentityMaterialization(
         ctx,
         {
@@ -500,6 +530,39 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       expect(ctx.keyStore.assertOperator("batchopaaaa").account).toBe("batchopaaaa")
       expect(addPrivateKey).toHaveBeenCalledTimes(1)
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_batchopaaaa")
+      // A wire key WITH material goes into kiod, never to the external-signer registry.
+      expect(addSigner).not.toHaveBeenCalled()
+    })
+
+    it("registers a freshly ADOPTED KMS-custodied wire key as an EXTERNAL signer instead of importing it — the adopt seam hands back a material-less K1", async () => {
+      const { ctx, adopt, addPrivateKey, addSigner } = materializationContext(),
+        label = Constants.batchOperatorLabel(1),
+        wire = wireKmsPair("alias/wire/test/batchop-b/K1"),
+        { kmsSigner, createWireSigner } = kmsSignerFor(wire)
+      adopt.mockImplementation(
+        (async (_config: unknown, keyType: KeyType, account: string) =>
+          keyType === KeyType.K1 ? wire : fakePair(keyType, account)) as never
+      )
+      await WireOperatorProvisioningTool.runIdentityMaterialization(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+          label,
+          type: OperatorType.BATCH
+        },
+        signal
+      )
+      expect(ctx.keyStore.assertOperator(label).wire).toBe(wire)
+      // The KMS arm of `wireSigner`: region + alias + the pinned K1 public key, off the pair.
+      expect(createWireSigner).toHaveBeenCalledTimes(1)
+      const [region, keyId, publicKey] = createWireSigner.mock.calls[0]
+      expect(region).toBe(KmsRegion)
+      expect(keyId).toBe("alias/wire/test/batchop-b/K1")
+      expect(publicKey.equals(wire.publicKey)).toBe(true)
+      // Registered for the ACCOUNT the pushes act as; kiod never sees a key that has no material.
+      expect(addSigner).toHaveBeenCalledTimes(1)
+      expect(addSigner).toHaveBeenCalledWith(label, kmsSigner)
+      expect(addPrivateKey).not.toHaveBeenCalled()
     })
 
     it("rejects a handle longer than 12 chars — it is the operator's WIRE account name", async () => {
@@ -573,6 +636,28 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
             solana: held.solana.publicKey
           }
         ])
+      })
+
+      it("registers a held identity's KMS-custodied wire key as an EXTERNAL signer — kiod never sees it, and the store keeps the pair as held", async () => {
+        const { ctx, adopt, addPrivateKey, addSigner } = materializationContext(),
+          label = Constants.batchOperatorLabel(0),
+          wire = wireKmsPair(),
+          held = { ...fixtureOperatorAccount(label, OperatorType.BATCH, label), wire },
+          { kmsSigner, createWireSigner } = kmsSignerFor(wire)
+        ctx.keyStore.setOperator(held)
+        await WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          input(label, OperatorType.BATCH),
+          signal
+        )
+        expect(adopt).not.toHaveBeenCalled()
+        expect(createWireSigner).toHaveBeenCalledTimes(1)
+        expect(createWireSigner.mock.calls[0][0]).toBe(KmsRegion)
+        expect(createWireSigner.mock.calls[0][1]).toBe(BootstrapWireAlias)
+        expect(addSigner).toHaveBeenCalledTimes(1)
+        expect(addSigner).toHaveBeenCalledWith(label, kmsSigner)
+        expect(addPrivateKey).not.toHaveBeenCalled()
+        expect(ctx.keyStore.assertOperator(label)).toBe(held)
       })
 
       it("imports a held PRODUCER's finalizer key alongside its wire key", async () => {

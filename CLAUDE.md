@@ -323,18 +323,28 @@ wire-cluster-tool fund-batch-operators \               # stake the pre-created o
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
 secret-id pattern), `--signature-provider-kms '<inline-json>'|<file>` (SSM
-clusters only: `{awsKeyAliasPattern, awsRegion, keyTypes?}` — the Ethereum EM
-and Solana ED keys named by `keyTypes` (default `["EM","ED"]`; `["EM"]` keeps
-ED in SSM for a nodeop without wire-sysio's Ed25519 KMS signing, which also
-needs aws-sdk-cpp ≥ 1.11.686) are created inside AWS KMS under the rendered
-alias — `ECC_SECG_P256K1` / `ECC_NIST_EDWARDS25519` — and never leave it; the
-pattern must carry `{account}` and `{keyType}`; the daemon spec renders
-`KMS:<region>:<alias>` and loads `signature_provider_kms_plugin`, the harness
-signs through `keyPairUtils.ethereumSigner`'s / `keyPairUtils.solanaSigner`'s
-KMS arm (`SolanaSigner` is the one Solana signer shape — the authex link
-proof and `fund-batch-operators`' Solana staking go through it), and
-`cluster-keys.json` persists the key reference `{awsKmsKeyId, awsKmsRegion}`
-in place of a secret), `--signature-provider-batch-operator-key-policy
+clusters only: `{awsKeyAliasPattern, awsRegion, keyTypes?}` — the batch
+operators' WIRE account K1, Ethereum EM and Solana ED keys named by `keyTypes`
+(default `["K1","EM","ED"]`; `["EM","ED"]` keeps the K1 in SSM for a nodeop
+without wire-sysio #768's K1 KMS signing, `["EM"]` keeps the ED keys there too
+for one without Ed25519 KMS signing, which also needs aws-sdk-cpp ≥ 1.11.686)
+are created inside AWS KMS under the rendered alias — `ECC_SECG_P256K1` for K1
+and EM, `ECC_NIST_EDWARDS25519` for ED — and never leave it; K1 custody is for
+the batch operators' account keys only, producer and node K1 keys stay in SSM
+because `producer_plugin` needs its block-signing key locally; the pattern must
+carry `{account}` and `{keyType}`; the daemon spec renders
+`KMS:<region>:<alias>` (the K1's as `wire-<pub>,wire,wire,<pub>,KMS:<region>:<alias>`)
+and loads `signature_provider_kms_plugin`, which signs a WIRE K1 with
+`ECDSA_SHA_256` as `MessageType=DIGEST` over the 32-byte signing digest, low-S
+normalised, the recovery id found against the pinned key; the harness signs
+the operator's own depot writes (`sysio.authex::createlink`) through sdk-core
+with the KMS `SignerProvider` of `keyPairUtils.wireSigner` registered via
+`WireClient.addSigner` (kiod never holds the key; IAM already grants `kms:Sign`
+on `key/*`), and through `keyPairUtils.ethereumSigner`'s /
+`keyPairUtils.solanaSigner`'s KMS arm (`SolanaSigner` is the one Solana signer
+shape — the authex link proof and `fund-batch-operators`' Solana staking go
+through it), and `cluster-keys.json` persists the key reference
+`{awsKmsKeyId, awsKmsRegion}` in place of a secret), `--signature-provider-batch-operator-key-policy
 <adoptOrCreate|adoptOnly>` (default `adoptOrCreate`; `adoptOnly` fails the
 bootstrap when a batch operator's key was not pre-created — the policy of a
 pre-funded launch), plus `--external-outpost-config <file>` (bootstrap the depot

@@ -30,8 +30,9 @@ const log = getLogger(__filename)
  * For every batch-operator label the tool obtains its wire K1, solana ED and
  * ethereum EM keys through the SAME adopt-or-create seam the bootstrap uses
  * (`KeySteps.adoptOrCreateSignatureProviderKey`: an existing SSM parameter or
- * KMS key — the EM / ED curves a `kms` block names — is adopted, never
- * replaced) and publishes every SSM-custodied curve
+ * KMS key — the K1 / EM / ED curves a `kms` block names; these ARE the batch
+ * operators' account keys, so a K1 in the roster lands in KMS here — is
+ * adopted, never replaced) and publishes every SSM-custodied curve
  * through the SAME publish primitive (`KeySteps.publishSignatureProviderKey`),
  * so a later `create` with `batchOperatorKeyPolicy: adoptOnly` finds exactly
  * these keys under exactly these ids. What it reports is PUBLIC only: the

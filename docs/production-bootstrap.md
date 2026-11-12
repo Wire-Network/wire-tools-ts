@@ -91,8 +91,8 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | `DEV_K1_PRIVATE_KEY` | Matching private key; imported into the `default` kiod wallet. | `DEV_K1.privateKey` (WIF spelling) |
 | `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer). | `DEV_BLS.publicKey` (`PUB_BLS_*` spelling) |
 | `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `DEV_BLS.proofOfPossession` (`SIG_BLS_*` spelling) |
-| Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (random K1 via sdk-core, `sys-util bls create key`) |
-| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, a random secp256k1 key) and a SOL key (ED25519, a random key) — or, on an SSM cluster with `kms` settings, keys of the curves `kms.keyTypes` names (EM and ED by default) created inside AWS KMS (`ECC_SECG_P256K1` / `ECC_NIST_EDWARDS25519`) that never leave it; signing a Solana transaction through KMS on the daemon side requires wire-sysio's Ed25519 KMS support and aws-sdk-cpp 1.11.686 or later. Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
+| Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. Never KMS-custodied, whatever `kms.keyTypes` names: `producer_plugin` needs its block-signing key locally, so under `SSM` these stay SSM parameters. | generated at runtime (random K1 via sdk-core, `sys-util bls create key`) |
+| Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1 — imported into kiod so `<account>@active` signs, or, KMS-custodied, signed for by the harness through sdk-core since kiod never holds it), an ETH key (EM, a random secp256k1 key) and a SOL key (ED25519, a random key) — or, on an SSM cluster with `kms` settings, keys of the curves `kms.keyTypes` names (K1, EM and ED by default) created inside AWS KMS (`ECC_SECG_P256K1` for K1 and EM, `ECC_NIST_EDWARDS25519` for ED) that never leave it. The daemon's K1 spec then reads `wire-<pub>,wire,wire,<pub>,KMS:<region>:<alias>` and `signature_provider_kms_plugin` signs with `ECDSA_SHA_256` as `MessageType=DIGEST` over the 32-byte signing digest (low-S normalised, the recovery id found against the pinned key; wire-sysio #768) — `["EM","ED"]` keeps the K1 in SSM for a nodeop without it; signing a Solana transaction through KMS on the daemon side requires wire-sysio's Ed25519 KMS support and aws-sdk-cpp 1.11.686 or later. Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
 | `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
 
 ¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the genesis block-signing key and the standalone key on `sysio`'s own `active` — nothing else. Producer accounts are keyed by their **hosting node's generated K1**, operators (`batchop.*`) by their **own per-operator generated K1**, and the `sysio.*` system accounts (and `dev.owner1`) by `sysio@active` — production substitutes real keys / msig throughout.
@@ -543,15 +543,21 @@ capital requirements, deployed-node recovery, and verification.
     K1>, active:<same>})` — `[sysio@active]` — one call per batch operator, accounts `batchop.a/b/c` (3)
     **(cluster count)**. The account takes `newaccount_ram` from the `sysio` pool and nothing else: no
     node owner sponsors it and no resource policy is issued. Each operator carries its OWN
-    runtime-generated identity: a unique WIRE K1 (the account key, imported into the kiod wallet so
-    `<account>@active` can sign), an ETH key (EM), and a SOL key (ED25519).
+    runtime-generated identity: a unique WIRE K1 (the account key — imported into the kiod wallet so
+    `<account>@active` can sign, or, when KMS custodies it, registered with `WireClient.addSigner` so the
+    harness signs `<account>@active` through sdk-core and a remote `KMS::Sign`; kiod never holds it), an
+    ETH key (EM), and a SOL key (ED25519).
     - SOL-side (not a depot action): each batch operator's ED keypair is airdropped **100 SOL** — its daemon
       pays the fees on every per-epoch `epoch_in` delivery. ETH-side: every operator's random EM address
       starts at zero on the run anvil and is funded through `anvil_setBalance`
       (`WireOperatorProvisioningTool.planEthereumFunding`, one Step per operator) under every provider.
 39. **Operator chain links** — `sysio.authex::createlink({chain_kind, account:<operator>, sig, pub_key,
     nonce})` — `[<operator>@active]` — per operator, one EVM link + one SVM link (signed by the operator's own
-    active authority over a nonce'd message; **not** `recordlink`):
+    active authority over a nonce'd message; **not** `recordlink`). The depot write is signed by kiod — or,
+    when the operator's K1 lives in KMS, by the `SignerProvider` registered with `WireClient.addSigner`
+    (`ECDSA_SHA_256` as `MessageType=DIGEST` over the 32-byte signing digest, low-S normalised, the recovery
+    id found against the pinned key), through sdk-core with the same irreversibility wait; IAM already grants
+    `kms:Sign` on `key/*`:
     - EVM (`chain_kind = CHAIN_KIND_EVM`, 2): `pub_key` = the operator's `PUB_EM_*` — its random EM key
       (or its KMS-custodied key, whose link signature is produced by a remote `KMS::Sign` through
       `keyPairUtils.ethereumSigner`). The link is what sweeps a pre-funded operator's parked launch

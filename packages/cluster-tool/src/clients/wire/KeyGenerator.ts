@@ -309,10 +309,12 @@ export namespace KeyGenerator {
    *
    * `keyMaterial` is a THUNK, and only the `KEY` arm calls it: under SSM / KMS
    * custody a pair rehydrated by `ClusterState.loadKeys` carries a reference
-   * and NO `privateKey`, and the EM / ED key-material derivations throw on an
-   * absent secret. Evaluating it eagerly would crash `wire-cluster-tool run` on
+   * and NO `privateKey` — a KMS-custodied pair never has one even in memory,
+   * a batch operator's K1 account key included — and the EM / ED key-material
+   * derivations throw on an absent secret (the K1 arm's thunk would yield
+   * nothing). Evaluating it eagerly would crash `wire-cluster-tool run` on
    * such a cluster while building a spec that never needed the key in the
-   * first place.
+   * first place; for a KMS source the thunk is never evaluated at all.
    */
   function toProviderSegment(
     source: SignatureProviderSource,

@@ -11,11 +11,13 @@ import nacl from "tweetnacl"
 import {
   Base58,
   Bytes,
+  createClassicSigner,
   getCompressedPublicKey,
   KeyType,
   PrivateKey,
   PublicKey,
-  type PublicKeyType
+  type PublicKeyType,
+  type SignerProvider
 } from "@wireio/sdk-core"
 import { WireKey, WireKeyType } from "@wireio/opp-typescript-models"
 import { KMSClientProvider } from "../config/KMSClientProvider.js"
@@ -23,7 +25,8 @@ import type {
   EthereumKeyPair,
   KeyPair,
   SolanaKeyPair,
-  WireFinalizerKeyPair
+  WireFinalizerKeyPair,
+  WireKeyPair
 } from "../types/KeyPair.js"
 import type { SolanaSigner } from "../types/SolanaSigner.js"
 import { mapSeries } from "./asyncUtils.js"
@@ -32,10 +35,10 @@ import { mapSeries } from "./asyncUtils.js"
  * Derivations between the strongly-typed KeyPair structures and the live chain-SDK
  * objects — BOTH directions. The typed pairs are the stored, JSON-round-trippable
  * form (in `ClusterKeyStore` / operator outputs); these helpers (a) reconstruct the
- * ephemeral ethers/web3 signing objects from a stored pair, and (b) build a stored
- * pair from a live ethers wallet or a KMS public key. This is DERIVATION only —
- * key GENERATION is the separate concern owned by `KeyGenerator` (see
- * `one-generic-facade-per-concept`).
+ * ephemeral sdk-core/ethers/web3 signing objects from a stored pair, and (b) build
+ * a stored pair from a live ethers wallet, a web3 keypair or a KMS public key. This
+ * is DERIVATION only — key GENERATION is the separate concern owned by
+ * `KeyGenerator` (see `one-generic-facade-per-concept`).
  */
 
 // ── WIRE-canonical / chain-native private-key string → sdk-core PrivateKey ──
@@ -138,15 +141,96 @@ export function keyPairFromPrivate<T extends KeyType>(
   return keyPair as KeyPair<T>
 }
 
-// ── stored EthereumKeyPair → live objects ───────────────────────────────────
+// ── stored WireKeyPair → live objects ───────────────────────────────────────
 
 /**
  * Whether a KMS-custodiable pair's secret lives in AWS KMS (the pair carries a
- * key ref, never material) — the EM and ED curves, the ones KMS can custody.
+ * key ref, never material) — the K1, EM and ED curves, the ones KMS can
+ * custody (a K1 only as a batch operator's WIRE account key).
  */
-export function isKmsCustodied(keyPair: EthereumKeyPair | SolanaKeyPair): boolean {
+export function isKmsCustodied(
+  keyPair: WireKeyPair | EthereumKeyPair | SolanaKeyPair
+): boolean {
   return keyPair.awsKmsKeyId != null
 }
+
+/**
+ * Assert a K1 pair carries its key MATERIAL — the WIRE twin of
+ * {@link assertEthereumKeyMaterial}, the precondition of every derivation that
+ * needs the secret itself (a kiod import, a local signer). A KMS-custodied
+ * pair never does: its secret never leaves KMS, so a consumer that needs raw
+ * material is simply incompatible with that custody.
+ */
+function assertWireKeyMaterial(wire: WireKeyPair): string {
+  Assert.ok(
+    wire.privateKey != null,
+    `keyPairUtils: the K1 key ${wire.publicKey} carries no key material (${
+      isKmsCustodied(wire)
+        ? `it is custodied by AWS KMS ${wire.awsKmsKeyId}`
+        : `it is referenced by ${wire.awsSecretId ?? "nothing"}`
+    }) — sign through wireSigner instead`
+  )
+  return wire.privateKey
+}
+
+/**
+ * The ONE signer facade over a K1 pair's custody forms — the WIRE twin of
+ * {@link ethereumSigner}: local material → sdk-core's `createClassicSigner`
+ * over the stored `PVT_K1_…`; AWS KMS → a signer whose every signature is a
+ * remote `KMS::Sign` (`KMSClientProvider.createWireSigner`), its recovery id
+ * found against the pair's stored public key. Either way a sdk-core
+ * `SignerProvider` that signs a transaction's 32-byte sha256 signing digest
+ * and carries the pair's public key — what `WireClient.addSigner` registers
+ * for a batch operator whose account key lives in KMS, so its
+ * `<account>@active` pushes never need kiod. Async because the KMS arm loads
+ * its SDK lazily.
+ *
+ * @param wire - The K1 pair.
+ * @returns The signer.
+ */
+export async function wireSigner(wire: WireKeyPair): Promise<SignerProvider> {
+  return isKmsCustodied(wire)
+    ? KMSClientProvider.createWireSigner(
+        wire.awsKmsRegion,
+        wire.awsKmsKeyId,
+        PublicKey.from(wire.publicKey)
+      )
+    : createClassicSigner(assertWireKeyMaterial(wire))
+}
+
+// ── KMS public key → typed K1 pair (the KMS-custody form) ───────────────────
+
+/**
+ * A stored {@link WireKeyPair} for a key AWS KMS custodies: its public identity
+ * (`PUB_K1_…`, derived from the compressed point KMS reports) plus the key
+ * reference — and NO `privateKey`, because the secret never leaves KMS. The K1
+ * twin of {@link ethereumKeyPairFromKmsPublicKey} — a batch operator's WIRE
+ * account key under SSM + kms custody.
+ *
+ * @param compressed - The 33-byte compressed secp256k1 point (`KMSClientProvider.PublicKey`).
+ * @param awsKmsRegion - The ONE region the key lives in.
+ * @param awsKmsKeyId - The `KeyId` the key is addressed by (its alias name).
+ * @returns The KMS-custodied pair.
+ */
+export function wireKeyPairFromKmsPublicKey(
+  compressed: Uint8Array,
+  awsKmsRegion: string,
+  awsKmsKeyId: string
+): WireKeyPair {
+  Assert.strictEqual(
+    compressed.length,
+    KMSClientProvider.CompressedPointLength,
+    `keyPairUtils: a K1 public key is a ${KMSClientProvider.CompressedPointLength}-byte compressed secp256k1 point, got ${compressed.length} bytes`
+  )
+  return {
+    type: KeyType.K1,
+    publicKey: PublicKey.from({ type: KeyType.K1, compressed }).toString(),
+    awsKmsRegion,
+    awsKmsKeyId
+  }
+}
+
+// ── stored EthereumKeyPair → live objects ───────────────────────────────────
 
 /**
  * Assert an EM pair carries its key MATERIAL — the precondition of every

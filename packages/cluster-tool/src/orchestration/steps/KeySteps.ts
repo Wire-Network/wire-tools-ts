@@ -7,7 +7,6 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { NestedError } from "@wireio/shared"
 import {
   isKMSCustodiableKeyType,
-  isKMSCustodied,
   KMSCustodiedKeyTypes,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
@@ -22,7 +21,8 @@ import {
   ethereumKeyPairFromKmsPublicKey,
   keyPairFromPrivate,
   privateKeyFromNativeString,
-  solanaKeyPairFromKmsPublicKey
+  solanaKeyPairFromKmsPublicKey,
+  wireKeyPairFromKmsPublicKey
 } from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
@@ -181,8 +181,12 @@ export namespace KeySteps {
   /**
    * Obtain `account`'s `keyType` signing key: ADOPT the key the custody store
    * already holds — the SSM parameter, or the KMS key behind the rendered alias
-   * for a KMS-custodied curve — else GENERATE a new one (in KMS, for a
-   * KMS-custodied curve; a random local pair otherwise).
+   * for a KMS-custodied key — else GENERATE a new one (in KMS, for a
+   * KMS-custodied key; a random local pair otherwise). Which keys KMS
+   * custodies is `ClusterConfigProvider.custodySource`'s decision: the curves
+   * `kms.keyTypes` names, a K1 among them for a BATCH OPERATOR's account only
+   * (a producer node's block-signing K1 always stays in SSM — nodeop requires
+   * it local).
    *
    * D21 — an existing key is the account's DURABLE key identity and is never
    * regenerated. The read happens HERE, where key material is FIRST created,
@@ -304,7 +308,8 @@ export namespace KeySteps {
   }
 
   /**
-   * The stored pair of a KMS key's public identity: EM → the ethereum pair
+   * The stored pair of a KMS key's public identity: K1 → the wire pair
+   * (`PUB_K1_…`, a batch operator's account key), EM → the ethereum pair
    * (`PUB_EM_…` + address), ED → the solana pair (`PUB_ED_…`); each carries the
    * source's key reference and NO material.
    */
@@ -314,6 +319,9 @@ export namespace KeySteps {
   ): KeyPair {
     const { awsKmsRegion, awsKmsKeyId } = source
     return match(identity.keyType)
+      .with(KeyType.K1, () =>
+        wireKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
       .with(KeyType.EM, () =>
         ethereumKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
       )
@@ -378,7 +386,7 @@ export namespace KeySteps {
 
   /**
    * Generate a KMS-custodied key: a new key of the curve's spec inside KMS
-   * (secp256k1 for EM, Ed25519 for ED), bound to the rendered alias. The pair
+   * (secp256k1 for K1 / EM, Ed25519 for ED), bound to the rendered alias. The pair
    * carries the key's public identity + reference, recorded in the step's
    * `extra` the way `KeyGenerator.create` records a local generation (public
    * half, purpose, mechanism — never material, of which KMS has none to give).
@@ -449,8 +457,9 @@ export namespace KeySteps {
 
   /**
    * The SSM secret id `account`'s `keyType` key is published under, or nothing
-   * when the key is not SSM-custodied — under KEY / KIOD, or for a curve KMS
-   * custodies (`isKMSCustodied`), which has no parameter. Rendered through the
+   * when the key is not SSM-custodied — under KEY / KIOD, or for a key KMS
+   * custodies (`ClusterConfigProvider.isKMSCustodiedKey`), which has no
+   * parameter. Rendered through the
    * SAME `ClusterConfigProvider.signatureProviderSource` the daemon
    * `--signature-provider` args use, so the adopt read, the publish write and
    * the rendered spec can never disagree on an id.
@@ -676,7 +685,10 @@ export namespace KeySteps {
 
   /**
    * The curves of `identity` that are PUBLISHED to SSM — every curve it
-   * materializes except the ones KMS custodies (`isKMSCustodied`): a
+   * materializes except the ones KMS custodies FOR IT
+   * (`ClusterConfigProvider.isKMSCustodiedKey`, gated on the identity's
+   * publication label: a batch operator's K1 is excluded when `kms.keyTypes`
+   * names K1, a producer's or the genesis identity's never is). A
    * KMS-custodied key has no material to put, and its daemon spec resolves
    * through `KMS:` rather than an SSM parameter.
    */
@@ -685,7 +697,12 @@ export namespace KeySteps {
     identity: SignatureProviderKeyIdentity
   ): readonly KeyType[] {
     return identity.keyTypes.filter(
-      keyType => !isKMSCustodied(settings.signatureProvider, keyType)
+      keyType =>
+        !ClusterConfigProvider.isKMSCustodiedKey(
+          settings,
+          identity.publicationLabel,
+          keyType
+        )
     )
   }
 

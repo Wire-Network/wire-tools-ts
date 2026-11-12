@@ -15,7 +15,8 @@
  *   node hosts this producer alone, else a finalizer key minted for the account)
  *   → create the WIRE account with that K1.
  * - **batch operator / underwriter**: materialize (UNIQUE generated K1 + EM + ED;
- *   the K1 imported into the kiod wallet so `account@active` signs) → (SSM, a
+ *   the K1 imported into the kiod wallet so `account@active` signs — or, when
+ *   the K1 lives in KMS, registered as an external signer on the WireClient) → (SSM, a
  *   FLOW's operator only: publish each key, so the daemon's `SSM:` specs
  *   resolve — the bootstrap's own operators are published by its operator
  *   publish phase) → create the WIRE account with that K1 → (optional) fund
@@ -58,8 +59,10 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import type { WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import {
   ethereumSigner,
+  isKmsCustodied,
   solanaPublicKey,
-  solanaSigner
+  solanaSigner,
+  wireSigner
 } from "../../utils/keyPairUtils.js"
 import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
 
@@ -597,16 +600,25 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /**
-   * Import the operator's unique wire key so kiod can sign `account@active`
-   * (authex links, registration, and any operator-signed flow actions), and its
-   * finalizer key so a KIOD-provider node can vote with it.
+   * Make the operator's unique wire key sign `account@active` (authex links,
+   * registration, and any operator-signed flow actions): imported into kiod
+   * when the pair carries its material, or registered as an external signer
+   * (`WireClient.addSigner`) when the key lives in KMS — a KMS-custodied key
+   * never enters kiod, there is no material to import, and every
+   * `<account>@active` push then routes through sdk-core's signer
+   * (`keyPairUtils.wireSigner`, a remote `KMS::Sign` per transaction). The
+   * finalizer key is imported so a KIOD-provider node can vote with it.
    */
   async function importSigningKeys<C extends ClusterBuildContext>(
     ctx: C,
     operator: OperatorAccount
   ): Promise<void> {
     const wallet = await ctx.wire.wallet.getOrCreate()
-    await wallet.addPrivateKey(operator.wire.privateKey)
+    if (isKmsCustodied(operator.wire)) {
+      ctx.wire.addSigner(operator.account, await wireSigner(operator.wire))
+    } else {
+      await wallet.addPrivateKey(operator.wire.privateKey)
+    }
     if (operator.wireFinalizer != null) {
       await wallet.addPrivateKey(operator.wireFinalizer.privateKey)
     }

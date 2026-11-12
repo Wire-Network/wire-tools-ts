@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { ethers } from "ethers"
 import {
   Keypair,
@@ -8,7 +9,7 @@ import {
   VersionedTransaction
 } from "@solana/web3.js"
 import nacl from "tweetnacl"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, Signature } from "@wireio/sdk-core"
 import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 
 const mockSend = jest.fn()
@@ -112,6 +113,93 @@ function ed25519SpkiFor(keypair: Keypair): Uint8Array {
   )
 }
 
+/** A fresh random sdk-core K1 key — the type is INFERRED (an explicit `PrivateKey` annotation would force sdk-core's cjs + esm declaration flavors into one nominal type). */
+function randomWireKey() {
+  return PrivateKey.generate(KeyType.K1)
+}
+
+/** The public key `createWireSigner` pins — the provider's own parameter type (sdk-core's cjs declaration flavor). */
+type PinnedPublicKey = Parameters<typeof KMSClientProvider.createWireSigner>[2]
+
+/**
+ * `privateKey`'s public key as the provider's parameter type. Under jest both
+ * flavors are ONE runtime module; the cast only bridges the test file's esm
+ * declaration of `PublicKey` to the provider's cjs one.
+ */
+function pinnedPublicKeyOf(privateKey: ReturnType<typeof randomWireKey>): PinnedPublicKey {
+  return privateKey.toPublic() as unknown as PinnedPublicKey
+}
+
+/**
+ * A real DER SPKI around a K1 key's uncompressed point — the SAME secp256k1
+ * header KMS returns for an EM key (one curve, one spec).
+ */
+function k1SpkiFor(privateKey: ReturnType<typeof randomWireKey>): Uint8Array {
+  const uncompressed = ethers.SigningKey.computePublicKey(
+    ethers.hexlify(privateKey.toPublic().data.array),
+    false
+  )
+  return ethers.getBytes(`0x${Secp256k1SpkiPrefix}${uncompressed.slice(2)}`)
+}
+
+/** A `GetPublicKey` response for a K1 (secp256k1) signing key. */
+function k1PublicKeyResponse(
+  privateKey: ReturnType<typeof randomWireKey>,
+  keyArn: string
+): Record<string, unknown> {
+  return {
+    KeyId: keyArn,
+    PublicKey: k1SpkiFor(privateKey),
+    KeySpec: KeySpec.ECC_SECG_P256K1,
+    KeyUsage: KeyUsageType.SIGN_VERIFY
+  }
+}
+
+/** The high bit a DER INTEGER pads with a zero octet to stay positive. */
+const DerSignBit = 0x80
+
+/** The DER `INTEGER` of a big-endian scalar — leading zeros dropped, a zero octet prepended when the high bit is set (RFC 3279). */
+function derInteger(scalar: Uint8Array): number[] {
+  const firstSignificant = Math.max(scalar.findIndex(byte => byte !== 0), 0),
+    magnitude = Array.from(scalar.subarray(firstSignificant)),
+    padded = magnitude[0] >= DerSignBit ? [0, ...magnitude] : magnitude
+  return [KMSClientProvider.DerIntegerTag, padded.length, ...padded]
+}
+
+/** The DER `SEQUENCE { INTEGER r, INTEGER s }` KMS's `Sign` returns for `r` / `s`. */
+function derSignature(r: Uint8Array, s: Uint8Array): Uint8Array {
+  const body = [...derInteger(r), ...derInteger(s)]
+  return Uint8Array.of(KMSClientProvider.DerSequenceTag, body.length, ...body)
+}
+
+/** `r`, `s` and the recovery id of an sdk-core K1 signature — `toHex()`'s raw `[r ‖ s ‖ recid]`, split. */
+function signatureParts(signature: Signature) {
+  const raw = ethers.getBytes(signature.toHex()),
+    sOffset = KMSClientProvider.Secp256k1ScalarLength,
+    recoveryIdOffset = KMSClientProvider.Secp256k1ScalarLength * 2
+  return {
+    raw,
+    r: raw.subarray(0, sOffset),
+    s: raw.subarray(sOffset, recoveryIdOffset),
+    recid: raw[recoveryIdOffset]
+  }
+}
+
+/** The OTHER valid `s` of a signature — `n − s`, the high-S form KMS may return. */
+function highS(s: Uint8Array): Uint8Array {
+  return ethers.getBytes(
+    ethers.toBeHex(
+      KMSClientProvider.Secp256k1GroupOrder - ethers.toBigInt(s),
+      KMSClientProvider.Secp256k1ScalarLength
+    )
+  )
+}
+
+/** A random 32-byte digest — the shape of a transaction's sha256 signing digest. */
+function randomDigest(): Uint8Array {
+  return new Uint8Array(randomBytes(KMSClientProvider.Sha256DigestLength))
+}
+
 /** A `GetPublicKey` response for a secp256k1 signing key. */
 function publicKeyResponse(
   wallet: ethers.HDNodeWallet,
@@ -161,6 +249,8 @@ const Rfc8410ExampleSpki = Uint8Array.of(
 const Region = "us-east-1"
 const AliasName = "alias/wire/dev/batchop-a/EM"
 const SolanaAliasName = "alias/wire/dev/batchop-a/ED"
+/** The alias the harness renders for the same operator's K1 (WIRE account) key. */
+const WireAliasName = "alias/wire/dev/batchop-a/K1"
 const KeyArn =
   "arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555"
 
@@ -329,6 +419,30 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
         keyType: KeyType.ED,
         publicKey: keypair.publicKey.toBytes()
       })
+    })
+
+    it("returns the key ARN + compressed point of a secp256k1 SIGN_VERIFY key for a K1 key — the EM spec, a batch operator's WIRE account key", async () => {
+      const privateKey = randomWireKey()
+      mockSend.mockResolvedValueOnce(k1PublicKeyResponse(privateKey, KeyArn))
+      await expect(
+        KMSClientProvider.getPublicKey(Region, WireAliasName, KeyType.K1)
+      ).resolves.toEqual({
+        keyArn: KeyArn,
+        keyType: KeyType.K1,
+        publicKey: privateKey.toPublic().data.array
+      })
+      expect(sentCommands()).toEqual([
+        { kind: "GetPublicKey", input: { KeyId: WireAliasName } }
+      ])
+    })
+
+    it("rejects an Ed25519 key for a K1 key — a WIRE account key is secp256k1", async () => {
+      mockSend.mockResolvedValueOnce(ed25519PublicKeyResponse(Keypair.generate(), KeyArn))
+      await expect(
+        KMSClientProvider.getPublicKey(Region, WireAliasName, KeyType.K1)
+      ).rejects.toThrow(
+        /is a ECC_NIST_EDWARDS25519 key, not ECC_SECG_P256K1 \(the spec a K1 key needs\)/
+      )
     })
 
     it("rejects a key of another spec — an RSA key cannot sign for ethereum", async () => {
@@ -503,6 +617,38 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
           Description: "batchop.a ED signing key"
         }
       })
+    })
+
+    it("creates a secp256k1 SIGN_VERIFY key for a K1 key — the same spec as EM — and reads back its compressed point as a K1 identity", async () => {
+      const privateKey = randomWireKey()
+      mockSend
+        .mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(k1PublicKeyResponse(privateKey, KeyArn))
+      await expect(
+        KMSClientProvider.createKey(
+          Region,
+          WireAliasName,
+          KeyType.K1,
+          "batch operator batchop.a — WIRE account key (K1)"
+        )
+      ).resolves.toEqual({
+        keyArn: KeyArn,
+        keyType: KeyType.K1,
+        publicKey: privateKey.toPublic().data.array
+      })
+      expect(sentCommands()).toEqual([
+        {
+          kind: "CreateKey",
+          input: {
+            KeySpec: KeySpec.ECC_SECG_P256K1,
+            KeyUsage: KeyUsageType.SIGN_VERIFY,
+            Description: "batch operator batchop.a — WIRE account key (K1)"
+          }
+        },
+        { kind: "CreateAlias", input: { AliasName: WireAliasName, TargetKeyId: KeyArn } },
+        { kind: "GetPublicKey", input: { KeyId: WireAliasName } }
+      ])
     })
 
     it("forwards the tags on the CreateKey itself", async () => {
@@ -705,6 +851,198 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
     it("a transaction without its fee payer / blockhash is refused before any Sign — the caller sets both", async () => {
       const signer = await signerFor(Keypair.generate())
       await expect(signer.signTransaction(new Transaction())).rejects.toThrow()
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("secp256k1SignatureFromDer (the DER `SEQUENCE { INTEGER r, INTEGER s }` KMS's Sign returns)", () => {
+    it("parses r and s out of the DER of a real K1 signature, each 32 bytes", () => {
+      const { r, s } = signatureParts(randomWireKey().signDigest(randomDigest()))
+      expect(KMSClientProvider.secp256k1SignatureFromDer(derSignature(r, s))).toEqual({
+        r,
+        s
+      })
+    })
+
+    it("strips the sign-padding zero octet of a high-bit scalar and left-pads a short one back to 32 bytes", () => {
+      const r = Uint8Array.of(DerSignBit, ...new Uint8Array(31)),
+        s = Uint8Array.of(...new Uint8Array(31), 0x7f),
+        der = derSignature(r, s)
+      // r's INTEGER carries a leading zero (33 content bytes); s's is the single byte 0x7f.
+      expect(der).toHaveLength(2 + (2 + 33) + (2 + 1))
+      expect(KMSClientProvider.secp256k1SignatureFromDer(der)).toEqual({ r, s })
+    })
+
+    it("rejects anything that is not SEQUENCE { INTEGER, INTEGER } — wrong tag, wrong length, a missing INTEGER tag, trailing bytes, an empty buffer", () => {
+      const { r, s } = signatureParts(randomWireKey().signDigest(randomDigest())),
+        der = derSignature(r, s),
+        parse = (bytes: Uint8Array) => () =>
+          KMSClientProvider.secp256k1SignatureFromDer(bytes)
+      expect(parse(new Uint8Array(0))).toThrow(/is not a DER SEQUENCE/)
+      expect(
+        parse(Uint8Array.of(KMSClientProvider.DerIntegerTag, ...der.subarray(1)))
+      ).toThrow(/is not a DER SEQUENCE/)
+      expect(parse(Uint8Array.of(der[0], der[1] + 1, ...der.subarray(2)))).toThrow(
+        /SEQUENCE length/
+      )
+      const notInteger = Uint8Array.from(der)
+      notInteger[2] = 0x04
+      expect(parse(notInteger)).toThrow(/carries no INTEGER r/)
+      expect(
+        parse(Uint8Array.of(der[0], der[1] + 1, ...der.subarray(2), 0x00))
+      ).toThrow(/trailing bytes after s/)
+    })
+
+    it("rejects a zero scalar, one longer than 32 bytes and one not below the group order", () => {
+      const { s } = signatureParts(randomWireKey().signDigest(randomDigest())),
+        parse = (bytes: Uint8Array) => () =>
+          KMSClientProvider.secp256k1SignatureFromDer(bytes)
+      expect(parse(derSignature(new Uint8Array(32), s))).toThrow(
+        /ECDSA signature r is not a secp256k1 scalar \(0 significant bytes\)/
+      )
+      const tooLong = Uint8Array.of(0x01, ...new Uint8Array(32)),
+        longBody = [KMSClientProvider.DerIntegerTag, tooLong.length, ...tooLong, ...derInteger(s)]
+      expect(
+        parse(
+          Uint8Array.of(KMSClientProvider.DerSequenceTag, longBody.length, ...longBody)
+        )
+      ).toThrow(/ECDSA signature r is not a secp256k1 scalar \(33 significant bytes\)/)
+      const groupOrder = ethers.getBytes(
+        ethers.toBeHex(
+          KMSClientProvider.Secp256k1GroupOrder,
+          KMSClientProvider.Secp256k1ScalarLength
+        )
+      )
+      expect(parse(derSignature(s, groupOrder))).toThrow(
+        /ECDSA signature s is not below the secp256k1 group order/
+      )
+    })
+  })
+
+  describe("createWireSigner (the KMS arm of keyPairUtils.wireSigner)", () => {
+    /**
+     * The signer pinned to `privateKey`'s public key, with the KMS double
+     * answering `Sign` with the DER of the key's OWN signature of the digest
+     * it receives — a stand-in for the HSM holding that key.
+     */
+    async function signerFor(privateKey = randomWireKey()) {
+      const signer = await KMSClientProvider.createWireSigner(
+        Region,
+        WireAliasName,
+        pinnedPublicKeyOf(privateKey)
+      )
+      mockSend.mockImplementation(async (command: SentCommand) => {
+        const { r, s } = signatureParts(
+          privateKey.signDigest(command.input.Message as Uint8Array)
+        )
+        return { Signature: derSignature(r, s) }
+      })
+      return { signer, privateKey }
+    }
+
+    it("carries the pinned public key and sends ONE DIGEST / ECDSA_SHA_256 Sign per digest, returning the 65-byte [r ‖ s ‖ recid] the key itself produces", async () => {
+      const { signer, privateKey } = await signerFor(),
+        digest = randomDigest()
+      expect(signer.pubKey.equals(privateKey.toPublic().toString())).toBe(true)
+      const raw = await signer.sign(digest)
+      expect(raw).toHaveLength(KMSClientProvider.K1RawSignatureLength)
+      // sdk-core's own K1 signature is deterministic and canonical (low-S), so
+      // the KMS-derived raw form is byte-identical to it — recid included.
+      expect(raw).toEqual(signatureParts(privateKey.signDigest(digest)).raw)
+      expect(
+        Signature.fromRaw(raw, KeyType.K1)
+          .recoverDigest(digest)
+          .equals(privateKey.toPublic())
+      ).toBe(true)
+      expect(sentCommands()).toEqual([
+        {
+          kind: "Sign",
+          input: {
+            KeyId: WireAliasName,
+            Message: digest,
+            MessageType: MessageType.DIGEST,
+            SigningAlgorithm: SigningAlgorithmSpec.ECDSA_SHA_256
+          }
+        }
+      ])
+    })
+
+    it("accepts the digest as bare hex too — the same two forms createClassicSigner takes", async () => {
+      const { signer, privateKey } = await signerFor(),
+        digest = randomDigest()
+      expect(await signer.sign(ethers.hexlify(digest).slice(2))).toEqual(
+        signatureParts(privateKey.signDigest(digest)).raw
+      )
+      expect(sentCommands()[0].input.Message).toEqual(digest)
+    })
+
+    it("normalises a HIGH-S signature to the low-S form and finds the flipped recovery id — the same output as the low-S case", async () => {
+      const { signer, privateKey } = await signerFor(),
+        digest = randomDigest(),
+        expected = signatureParts(privateKey.signDigest(digest))
+      mockSend.mockImplementationOnce(async (command: SentCommand) => {
+        const { r, s } = signatureParts(
+          privateKey.signDigest(command.input.Message as Uint8Array)
+        )
+        return { Signature: derSignature(r, highS(s)) }
+      })
+      const raw = await signer.sign(digest)
+      expect(raw).toEqual(expected.raw)
+      expect(ethers.toBigInt(signatureParts(Signature.fromRaw(raw, KeyType.K1)).s)).toBeLessThanOrEqual(
+        KMSClientProvider.Secp256k1GroupOrder / 2n
+      )
+    })
+
+    it("refuses a signature from ANOTHER key — neither recovery id recovers the pinned public key", async () => {
+      const { signer } = await signerFor(),
+        other = randomWireKey()
+      mockSend.mockImplementation(async (command: SentCommand) => {
+        const { r, s } = signatureParts(
+          other.signDigest(command.input.Message as Uint8Array)
+        )
+        return { Signature: derSignature(r, s) }
+      })
+      await expect(signer.sign(randomDigest())).rejects.toThrow(
+        /could not find a recovery id for the ECDSA signature alias\/wire\/dev\/batchop-a\/K1 in us-east-1 produced — it recovers to neither parity of the pinned public key PUB_K1_/
+      )
+    })
+
+    it("refuses a message that is not a 32-byte digest BEFORE any Sign is sent", async () => {
+      const { signer } = await signerFor()
+      await expect(signer.sign(new Uint8Array(31))).rejects.toThrow(
+        /signs the 32-byte sha256 signing digest, got 31 bytes/
+      )
+      await expect(signer.sign(new Uint8Array(33))).rejects.toThrow(/got 33 bytes/)
+      await expect(signer.sign(ethers.hexlify(new Uint8Array(31)).slice(2))).rejects.toThrow(
+        /got 31 bytes/
+      )
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it("rejects an empty Sign response and a malformed DER", async () => {
+      const { signer } = await signerFor()
+      mockSend.mockResolvedValueOnce({})
+      await expect(signer.sign(randomDigest())).rejects.toThrow(
+        /returned no ECDSA signature/
+      )
+      mockSend.mockResolvedValueOnce({ Signature: new Uint8Array(0) })
+      await expect(signer.sign(randomDigest())).rejects.toThrow(
+        /returned no ECDSA signature/
+      )
+      mockSend.mockResolvedValueOnce({
+        Signature: Uint8Array.of(KMSClientProvider.DerIntegerTag, 0x01, 0x01)
+      })
+      await expect(signer.sign(randomDigest())).rejects.toThrow(/is not a DER SEQUENCE/)
+    })
+
+    it("pins a K1 public key only — an ED key is refused before any client is built", async () => {
+      await expect(
+        KMSClientProvider.createWireSigner(
+          Region,
+          WireAliasName,
+          PrivateKey.generate(KeyType.ED).toPublic() as unknown as PinnedPublicKey
+        )
+      ).rejects.toThrow(/a WIRE signer pins a K1 public key, got ED/)
       expect(mockSend).not.toHaveBeenCalled()
     })
   })

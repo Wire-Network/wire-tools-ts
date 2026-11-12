@@ -760,8 +760,10 @@ export namespace ClusterConfigProvider {
 
   /**
    * Resolve the KMS custody settings a caller authored: `keyTypes` defaults to
-   * every curve KMS can custody ({@link KMSCustodiedKeyTypes} — EM + ED) and
-   * must otherwise be a non-empty, duplicate-free subset of them.
+   * every curve KMS can custody ({@link KMSCustodiedKeyTypes} — K1 + EM + ED)
+   * and must otherwise be a non-empty, duplicate-free subset of them. (A K1
+   * in the roster reaches the batch operators' account keys only — see
+   * {@link isKMSCustodiedKey}.)
    *
    * @param kms - The authored settings.
    * @returns The resolved settings.
@@ -839,7 +841,7 @@ export namespace ClusterConfigProvider {
     )
     Assert.ok(
       kms == null || type === SignatureProviderType.SSM,
-      "signatureProvider.kms is only valid when type is SSM (KMS custodies the EM / ED keys of an SSM cluster)"
+      "signatureProvider.kms is only valid when type is SSM (KMS custodies the K1 / EM / ED keys of an SSM cluster)"
     )
     Assert.ok(
       kms == null || awsClusterNodeConfig.regions.includes(kms.awsRegion),
@@ -1247,16 +1249,48 @@ export namespace ClusterConfigProvider {
   }
 
   /**
+   * Whether `account`'s `keyType` key lives in AWS KMS — the ACCOUNT-level
+   * gate over the curve-level `isKMSCustodied`: an SSM cluster with KMS
+   * settings custodies the curves its `kms.keyTypes` names there, EXCEPT that
+   * a K1 is custodied for the BATCH OPERATORS' WIRE account keys only
+   * (`Constants.isBatchOperatorLabel`, the same policy discriminator
+   * `KeySteps.assertKeyCreatable` gates the key policy on). A producer / node
+   * K1 signs blocks, and nodeop's `producer_plugin` requires a local private
+   * key for every WIRE key on a node with producers configured (wire-sysio
+   * #768 — `signature_provider_kms_plugin` suits an account key, not a
+   * producer's), so those keys stay in Parameter Store whatever the roster
+   * says; the genesis identity (`node_bios`) and a flow-provisioned operator's
+   * handle are not batch-operator labels either, so theirs do too. Every
+   * custody decision — the adopt read, the publish walker, the persisted ref,
+   * the daemon spec, the emitted external config — goes through here.
+   *
+   * @param settings - The key-custody settings (a `ClusterConfig` is one).
+   * @param account - The key's DURABLE handle (the `{account}` placeholder).
+   * @param keyType - The key's curve.
+   * @returns `true` when the key is KMS-custodied.
+   */
+  export function isKMSCustodiedKey(
+    settings: KeyCustodySettings,
+    account: string,
+    keyType: KeyType
+  ): boolean {
+    return (
+      isKMSCustodied(settings.signatureProvider, keyType) &&
+      (keyType !== KeyType.K1 || Constants.isBatchOperatorLabel(account))
+    )
+  }
+
+  /**
    * Where an SSM cluster custodies `account`'s `keyType` key — the ONE renderer
    * of every custody id: the `SSM` source carrying the per-key secret id (via
    * {@link toSecretId}; REGION-LESS — the depot plugin resolves the region from
-   * the AWS environment), or, for a curve the cluster custodies in KMS
-   * (`isKMSCustodied`), the `KMS` source: the ONE key region plus the alias
-   * rendered from the KMS pattern (same placeholders, `{account}` dots mapped
-   * per `KMSClientProvider.aliasAccountSegment`). Nothing under KEY / KIOD —
-   * those have no custody store to adopt from or publish to. The adopt read,
-   * the publish write, the persisted ref and the daemon spec all render through
-   * here, so none of them can disagree on an id.
+   * the AWS environment), or, for a key the cluster custodies in KMS
+   * ({@link isKMSCustodiedKey}), the `KMS` source: the ONE key region plus the
+   * alias rendered from the KMS pattern (same placeholders, `{account}` dots
+   * mapped per `KMSClientProvider.aliasAccountSegment`). Nothing under KEY /
+   * KIOD — those have no custody store to adopt from or publish to. The adopt
+   * read, the publish write, the persisted ref and the daemon spec all render
+   * through here, so none of them can disagree on an id.
    *
    * @param settings - The key-custody settings (a `ClusterConfig` is one).
    * @param account - The key's DURABLE handle (the `{account}` placeholder).
@@ -1270,7 +1304,7 @@ export namespace ClusterConfigProvider {
   ): KeyGenerator.SignatureProviderSource {
     const provider = settings.signatureProvider
     if (provider.type !== SignatureProviderType.SSM) return null
-    return isKMSCustodied(provider, keyType)
+    return isKMSCustodiedKey(settings, account, keyType)
       ? {
           type: SignatureProviderType.KMS,
           awsKmsRegion: provider.kms.awsRegion,

@@ -15,8 +15,11 @@ const KmsSettings = {
   awsKeyAliasPattern: "alias/wire/{cluster}/{account}/{keyType}",
   awsRegion: "us-east-1"
 }
-/** {@link KmsSettings} as the schema resolves it — `keyTypes` defaulted to both custodiable curves. */
-const ResolvedKmsSettings = { ...KmsSettings, keyTypes: [KeyType.EM, KeyType.ED] }
+/** {@link KmsSettings} as the schema resolves it — `keyTypes` defaulted to every custodiable curve. */
+const ResolvedKmsSettings = {
+  ...KmsSettings,
+  keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+}
 
 describe("AWSAccountName", () => {
   it("is an identity-mapped string enum (value === key)", () => {
@@ -126,8 +129,8 @@ describe("AWSClusterNodeConfigSchemaCodec", () => {
   })
 })
 
-describe("AWSClusterNodeConfig.kms (the EM / ED keys' KMS custody settings)", () => {
-  it("defaults to null — an SSM cluster without a kms block keeps its EM / ED keys in Parameter Store", () => {
+describe("AWSClusterNodeConfig.kms (the K1 / EM / ED keys' KMS custody settings)", () => {
+  it("defaults to null — an SSM cluster without a kms block keeps its K1 / EM / ED keys in Parameter Store", () => {
     expect(
       AWSClusterNodeConfigSchema.parse({
         account: AWSAccountName.dev,
@@ -162,11 +165,19 @@ describe("AWSClusterNodeConfig.kms (the EM / ED keys' KMS custody settings)", ()
         AWSClusterNodeConfigSchemaCodec.serialize(config)
       ).kms.keyTypes
     ).toEqual([KeyType.EM])
+    // K1 is custodiable (a batch operator's account key); BLS never is.
+    expect(
+      AWSClusterNodeConfigSchema.parse({
+        account: AWSAccountName.prod,
+        regions: ["us-east-1"],
+        kms: { ...KmsSettings, keyTypes: [KeyType.K1] }
+      }).kms.keyTypes
+    ).toEqual([KeyType.K1])
     expect(
       AWSClusterNodeConfigSchema.safeParse({
         account: AWSAccountName.prod,
         regions: ["us-east-1"],
-        kms: { ...KmsSettings, keyTypes: [KeyType.K1] }
+        kms: { ...KmsSettings, keyTypes: [KeyType.BLS] }
       }).success
     ).toBe(false)
   })

@@ -885,11 +885,11 @@ const KmsAliasPattern = "alias/wire/{cluster}/{account}/{keyType}"
 const KmsRegion = "us-east-1"
 const KmsJson = `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}"}`
 const KmsFlag = "signature-provider-kms"
-/** The codec-resolved form of {@link KmsJson}: `keyTypes` defaulted to both custodiable curves. */
+/** The codec-resolved form of {@link KmsJson}: `keyTypes` defaulted to every custodiable curve. */
 const ResolvedKmsOptions = {
   awsKeyAliasPattern: KmsAliasPattern,
   awsRegion: KmsRegion,
-  keyTypes: [KeyType.EM, KeyType.ED]
+  keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
 }
 
 describe("toAWSKMSSignatureProviderOptions", () => {
@@ -897,18 +897,29 @@ describe("toAWSKMSSignatureProviderOptions", () => {
     expect(SignatureProviderKMSFlag).toBe(KmsFlag)
   })
 
-  it("parses inline JSON — the alias pattern + the ONE key region, keyTypes defaulting to EM + ED", () => {
+  it("parses inline JSON — the alias pattern + the ONE key region, keyTypes defaulting to K1 + EM + ED", () => {
     expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: KmsJson })).toEqual(
       ResolvedKmsOptions
     )
   })
 
-  it("parses an authored keyTypes, and rejects a repeated or non-custodiable curve", () => {
+  it("parses an authored keyTypes (K1 included), and rejects a repeated or non-custodiable curve", () => {
     expect(
       toAWSKMSSignatureProviderOptions({
         [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM"]}`
       }).keyTypes
     ).toEqual([KeyType.EM])
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["K1"]}`
+      }).keyTypes
+    ).toEqual([KeyType.K1])
+    // The pre-#768 roster — K1 kept in SSM.
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM","ED"]}`
+      }).keyTypes
+    ).toEqual([KeyType.EM, KeyType.ED])
     expect(() =>
       toAWSKMSSignatureProviderOptions({
         [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["ED","ED"]}`
@@ -916,7 +927,7 @@ describe("toAWSKMSSignatureProviderOptions", () => {
     ).toThrow(/must not repeat a curve/)
     expect(() =>
       toAWSKMSSignatureProviderOptions({
-        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["K1"]}`
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["BLS"]}`
       })
     ).toThrow()
     expect(() =>
@@ -1403,7 +1414,7 @@ describe("--cluster-build-options-file", () => {
     expect(loaded.signatureProvider).toEqual({
       type: SignatureProviderType.SSM,
       ssm: { awsSecretIdPattern: SecretIdPattern },
-      // The document's kms block, codec-resolved: `keyTypes` defaulted to EM + ED.
+      // The document's kms block, codec-resolved: `keyTypes` defaulted to K1 + EM + ED.
       kms: ResolvedKmsOptions,
       batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
     })

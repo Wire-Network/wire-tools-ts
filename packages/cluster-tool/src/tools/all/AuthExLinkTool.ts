@@ -107,6 +107,11 @@ export namespace AuthExLinkTool {
    * Invokes `sysio.authex::createlink`, authorized by `account@active`. The
    * linked key is the params' public key for BOTH chains; the signer only
    * proves it.
+   *
+   * The depot write itself is signed by kiod — or, when the operator's WIRE key
+   * lives in KMS and kiod never holds it, by the signer registered with
+   * `WireClient.addSigner` for `account`, through sdk-core with the same
+   * finality wait. Nothing here chooses: the client routes on the actor.
    */
   export async function createLink(wire: WireClient, params: LinkParams): Promise<void> {
     // Native discriminated-union narrowing: ts-pattern cannot prove

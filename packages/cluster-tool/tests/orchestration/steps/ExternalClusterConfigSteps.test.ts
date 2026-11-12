@@ -4,7 +4,7 @@ import Os from "node:os"
 import Path from "node:path"
 import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { Base58, KeyType } from "@wireio/sdk-core"
+import { Base58, KeyType, PrivateKey } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   type AWSClusterNodeConfig,
@@ -92,13 +92,22 @@ const External = Steps.externalClusterConfig,
       keyTypes: [KeyType.EM]
     }
   },
-  // An SSM cluster whose EM AND ED keys AWS KMS custodies (the default roster).
+  // An SSM cluster whose EM AND ED keys AWS KMS custodies (K1 stays in SSM — a nodeop without wire-sysio #768).
   KMSBothProvider: ClusterSignatureProviderConfig = {
     ...SSMProvider,
     kms: {
       awsKeyAliasPattern: KmsAliasPattern,
       awsRegion: KmsRegion,
       keyTypes: [KeyType.EM, KeyType.ED]
+    }
+  },
+  // An SSM cluster whose K1 (the bootstrap batch operators' account keys), EM AND ED keys AWS KMS custodies (the default roster).
+  KMSAllProvider: ClusterSignatureProviderConfig = {
+    ...SSMProvider,
+    kms: {
+      awsKeyAliasPattern: KmsAliasPattern,
+      awsRegion: KmsRegion,
+      keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
     }
   },
   // The SOURCE cluster's AWS placement — `{cluster}` renders its ACCOUNT.
@@ -777,6 +786,39 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         })
     ClusterState.saveKeys(config, keys)
     return aliases
+  }
+
+  /**
+   * Rewrite every BOOTSTRAP batch operator's persisted K1 record into the KMS
+   * custody form — the record an SSM + kms cluster custodying K1 writes for the
+   * operators' ACCOUNT keys, and only those (a producer's block-signing K1
+   * stays an SSM ref — nodeop requires it local). The public key is a real
+   * random K1's. Returns the aliases, in operator order.
+   */
+  function injectKmsWireRefs(): string[] {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config),
+      aliases = keys.operators
+        .filter(entry => Constants.isBatchOperatorLabel(entry.publicationLabel))
+        .map(entry => {
+          const alias = `alias/wire/${SourceClusterLabel}/${KMSClientProvider.aliasAccountSegment(
+            entry.publicationLabel
+          )}/K1`
+          entry.wire = {
+            type: KeyType.K1,
+            publicKey: PrivateKey.generate(KeyType.K1).toPublic().toString(),
+            awsKmsRegion: KmsRegion,
+            awsKmsKeyId: alias
+          }
+          return alias
+        })
+    ClusterState.saveKeys(config, keys)
+    return aliases
+  }
+
+  /** Whether an emitted account is a BOOTSTRAP batch operator — resolved through its persisted record's handle. */
+  function isBootstrapBatchOperator(accountName: string): boolean {
+    return Constants.isBatchOperatorLabel(keyEntryFor(accountName).label)
   }
 
   beforeEach(() => {
@@ -1771,6 +1813,68 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       .forEach(provider =>
         expect(provider.providerType).toBe(SignatureProviderType.SSM)
       )
+  })
+
+  it("emits a KMS provider for each BOOTSTRAP batch operator's K1 under keyTypes [K1, EM, ED] — alias from the RECORD, material-less; every other identity's K1 stays an SSM ref", async () => {
+    injectKmsEthereumRefs()
+    injectKmsSolanaRefs()
+    const wireAliases = injectKmsWireRefs(),
+      emitted = await emitWithProvider(KMSAllProvider)
+    expect(wireAliases.length).toBeGreaterThan(0)
+    const batchOperators = emitted.accounts.operators.filter(op =>
+        isBootstrapBatchOperator(op.accountName)
+      ),
+      batchWireProviders = batchOperators.flatMap(op =>
+        op.keyProviders.filter(provider => provider.type === KeyType.K1)
+      )
+    expect(batchWireProviders).toHaveLength(wireAliases.length)
+    expect(
+      batchWireProviders.flatMap(provider =>
+        provider.providerType === SignatureProviderType.KMS
+          ? [provider.awsKmsKeyId]
+          : []
+      )
+    ).toEqual(wireAliases)
+    batchWireProviders.forEach(provider => {
+      expect(provider).toMatchObject({
+        providerType: SignatureProviderType.KMS,
+        type: KeyType.K1,
+        awsKmsRegion: KmsRegion
+      })
+      expect(provider.publicKey).toMatch(/^PUB_K1_/)
+      expect(provider).not.toHaveProperty("privateKey")
+      expect(provider).not.toHaveProperty("awsSecretId")
+      expect(provider).not.toHaveProperty("awsRegions")
+    })
+    // The same operators' outpost curves ride their KMS entries too.
+    batchOperators.forEach(op =>
+      op.keyProviders.forEach(provider =>
+        expect(provider.providerType).toBe(SignatureProviderType.KMS)
+      )
+    )
+    // The producers' and the genesis identity's K1 — never KMS: the SSM
+    // parameter the publication walker wrote.
+    emitted.accounts.operators
+      .filter(op => !isBootstrapBatchOperator(op.accountName))
+      .flatMap(op => op.keyProviders.filter(provider => provider.type === KeyType.K1))
+      .forEach(provider =>
+        expect(provider.providerType).toBe(SignatureProviderType.SSM)
+      )
+    const fileText = Fs.readFileSync(externalConfigFile(), "utf-8")
+    expect(fileText).not.toContain("PVT_")
+    expect(fileText).not.toContain("privateKey")
+  })
+
+  it("refuses a KMS-custodied K1 key whose record carries no KMS reference — a batch operator's K1 record still in the KEY form under keyTypes [K1, EM, ED]", async () => {
+    injectKmsEthereumRefs()
+    injectKmsSolanaRefs()
+    const ctx = runContext(externalBindFile, KMSAllProvider)
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
+      /key K1 is KMS-custodied but its record carries no KMS reference/
+    )
   })
 
   it("refuses a KMS-custodied ED key whose record carries no KMS reference", async () => {

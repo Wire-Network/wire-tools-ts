@@ -1,7 +1,8 @@
+import { randomBytes } from "node:crypto"
 import { ethers } from "ethers"
 import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
 import nacl from "tweetnacl"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey, Signature } from "@wireio/sdk-core"
 import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
   ethereumCompressedPubkey,
@@ -23,7 +24,9 @@ import {
   solanaSdkPrivateKey,
   solanaSigner,
   solanaSignerFromKeypair,
-  wireKeyFromPublicKey
+  wireKeyFromPublicKey,
+  wireKeyPairFromKmsPublicKey,
+  wireSigner
 } from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
@@ -31,7 +34,8 @@ import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider
 import type {
   EthereumKeyPair,
   SolanaKeyPair,
-  SolanaSigner
+  SolanaSigner,
+  WireKeyPair
 } from "@wireio/cluster-tool/types"
 
 /** A fresh random ethers wallet — the only kind the harness ever holds. */
@@ -44,6 +48,35 @@ const KmsRegion = "us-east-1"
 const KmsAliasName = "alias/wire/test/batchop-a/EM"
 /** The alias the harness renders for the same operator's ED key. */
 const SolanaKmsAliasName = "alias/wire/test/batchop-a/ED"
+/** The alias the harness renders for the same operator's K1 (WIRE account) key. */
+const WireKmsAliasName = "alias/wire/test/batchop-a/K1"
+
+/** A fresh random K1 pair with its material — what the harness mints for a WIRE account key. */
+function wireFixture(): WireKeyPair {
+  const priv = PrivateKey.generate(KeyType.K1)
+  return {
+    type: KeyType.K1,
+    publicKey: priv.toPublic().toString(),
+    privateKey: priv.toString()
+  }
+}
+
+/** A KMS-custodied K1 pair whose public identity is `fixture`'s — no material. */
+function wireKmsPairOf(fixture: WireKeyPair): WireKeyPair {
+  return wireKeyPairFromKmsPublicKey(
+    PublicKey.from(fixture.publicKey).data.array,
+    KmsRegion,
+    WireKmsAliasName
+  )
+}
+
+/** A random 32-byte digest — the shape of a transaction's sha256 signing digest. */
+function randomDigest(): Uint8Array {
+  return new Uint8Array(randomBytes(KMSClientProvider.Sha256DigestLength))
+}
+
+/** The signer the KMS arm hands back — DERIVED from the provider's own return type (its cjs declaration flavor of sdk-core's `SignerProvider`). */
+type KmsWireSigner = Awaited<ReturnType<typeof KMSClientProvider.createWireSigner>>
 
 /** A KMS-custodied ED pair whose public identity is `fixture`'s — no material. */
 function solanaKmsPairOf(fixture: SolanaKeyPair): SolanaKeyPair {
@@ -300,6 +333,91 @@ describe("keyPairUtils", () => {
       expect(isKmsCustodied(kmsPairOf(wallet))).toBe(true)
       expect(isKmsCustodied(generated)).toBe(false)
       expect(isKmsCustodied(ssmRefsOnly)).toBe(false)
+    })
+
+    it("answers for a WIRE (K1) pair too — a batch operator's account key is the third KMS-custodiable curve", () => {
+      const fixture = wireFixture(),
+        ssmRefsOnly: WireKeyPair = {
+          type: KeyType.K1,
+          publicKey: fixture.publicKey,
+          awsSecretId: "/wire/test/batchop.a/K1"
+        }
+      expect(isKmsCustodied(wireKmsPairOf(fixture))).toBe(true)
+      expect(isKmsCustodied(fixture)).toBe(false)
+      expect(isKmsCustodied(ssmRefsOnly)).toBe(false)
+    })
+  })
+
+  // ── the KMS custody form of a K1 pair + the signer facade over both forms ──
+  describe("wireKeyPairFromKmsPublicKey", () => {
+    it("builds the pair's PUBLIC identity from the compressed point — PUB_K1_, the key ref, and NO privateKey", () => {
+      const fixture = wireFixture(),
+        pair = wireKmsPairOf(fixture)
+      expect(pair.type).toBe(KeyType.K1)
+      // The same PUB_K1_ the local key derives — the point IS the identity.
+      expect(pair.publicKey).toBe(fixture.publicKey)
+      expect(pair.awsKmsRegion).toBe(KmsRegion)
+      expect(pair.awsKmsKeyId).toBe(WireKmsAliasName)
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(pair).not.toHaveProperty("awsSecretId")
+    })
+
+    it("rejects a point that is not 33 bytes", () => {
+      expect(() =>
+        wireKeyPairFromKmsPublicKey(new Uint8Array(32), KmsRegion, WireKmsAliasName)
+      ).toThrow(/a K1 public key is a 33-byte compressed secp256k1 point, got 32 bytes/)
+    })
+  })
+
+  describe("wireSigner (THE facade over a K1 pair's custody forms)", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    it("local material → sdk-core's classic signer: carries the pair's public key and signs a 32-byte digest to a raw [r ‖ s ‖ recid] that recovers to it", async () => {
+      const fixture = wireFixture(),
+        signer = await wireSigner(fixture),
+        digest = randomDigest(),
+        raw = await signer.sign(digest)
+      expect(signer.pubKey.equals(fixture.publicKey)).toBe(true)
+      expect(raw).toHaveLength(KMSClientProvider.K1RawSignatureLength)
+      expect(
+        Signature.fromRaw(raw, KeyType.K1)
+          .recoverDigest(digest)
+          .equals(PublicKey.from(fixture.publicKey))
+      ).toBe(true)
+      // Byte-identical to signing with the key directly — the same deterministic signer.
+      expect(raw).toEqual(
+        ethers.getBytes(PrivateKey.from(fixture.privateKey).signDigest(digest).toHex())
+      )
+    })
+
+    it("KMS reference → KMSClientProvider.createWireSigner with the pair's region, key id and K1 public key", async () => {
+      const fixture = wireFixture(),
+        pair = wireKmsPairOf(fixture),
+        kmsSigner = {
+          pubKey: PublicKey.from(fixture.publicKey),
+          sign: jest.fn()
+        } as unknown as KmsWireSigner,
+        createWireSigner = jest
+          .spyOn(KMSClientProvider, "createWireSigner")
+          .mockResolvedValue(kmsSigner)
+      await expect(wireSigner(pair)).resolves.toBe(kmsSigner)
+      expect(createWireSigner).toHaveBeenCalledTimes(1)
+      const [region, keyId, publicKey] = createWireSigner.mock.calls[0]
+      expect(region).toBe(KmsRegion)
+      expect(keyId).toBe(WireKmsAliasName)
+      expect(publicKey.equals(fixture.publicKey)).toBe(true)
+    })
+
+    it("a refs-only SSM pair (no material, no KMS ref) fails naming the SSM reference and the facade", async () => {
+      await expect(
+        wireSigner({
+          type: KeyType.K1,
+          publicKey: wireFixture().publicKey,
+          awsSecretId: "/wire/test/batchop.a/K1"
+        })
+      ).rejects.toThrow(
+        /the K1 key PUB_K1_\S+ carries no key material \(it is referenced by \/wire\/test\/batchop\.a\/K1\) — sign through wireSigner instead/
+      )
     })
   })
 

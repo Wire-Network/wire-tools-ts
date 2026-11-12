@@ -500,6 +500,65 @@ describe("OperatorDaemonTool", () => {
       expect(solProvider).toMatch(/,SSM:\/wire\/dev\//)
       expect(solProvider).not.toMatch(/,KEY:/)
     })
+
+    it("renders a BOOTSTRAP batch operator's WIRE (K1) provider as KMS:<region>:<alias> under an SSM + kms [K1, EM, ED] cluster — its account key custody, dots mapped to dashes; a non-bootstrap handle's K1 stays SSM", () => {
+      const kmsKeySourceFor = ClusterConfigProvider.signatureProviderSource(
+          fixtureConfig({
+            clusterPath: "/tmp/wire-ssm-kms",
+            signatureProvider: {
+              type: SignatureProviderType.SSM,
+              ssm: {
+                awsRegions: ["us-east-1"],
+                awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+              },
+              kms: {
+                awsKeyAliasPattern: "alias/wire/{cluster}/{account}/{keyType}",
+                awsRegion: "us-east-1",
+                keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+              },
+              batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+            },
+            awsClusterNodeConfig: {
+              account: AWSAccountName.dev,
+              regions: ["us-east-1"],
+              ssm: null,
+              kms: null
+            }
+          })
+        ),
+        bootstrap = operatorAccount(Constants.batchOperatorLabel(0), OperatorType.BATCH),
+        [wireProvider, ethereumProvider, solanaProvider] = valuesOf(
+          OperatorDaemonTool.batchOperatorArgs(
+            bootstrap,
+            artifacts,
+            network,
+            kmsKeySourceFor,
+            OperatorDaemonTool.NoBatchUnderwriting
+          ),
+          "--signature-provider"
+        )
+      // The spec wire-sysio #768's `signature_provider_kms_plugin` parses for a WIRE K1 key.
+      expect(wireProvider).toBe(
+        `wire-${bootstrap.wire.publicKey},wire,wire,${bootstrap.wire.publicKey},KMS:us-east-1:alias/wire/dev/batchop-a/K1`
+      )
+      expect(ethereumProvider).toMatch(/,KMS:us-east-1:alias\/wire\/dev\/batchop-a\/EM$/)
+      expect(solanaProvider).toMatch(/,KMS:us-east-1:alias\/wire\/dev\/batchop-a\/ED$/)
+      // `batchopaaaa` is not a bootstrap label: its K1 is the SSM parameter, its outpost keys KMS.
+      const [otherWireProvider, otherEthereumProvider] = valuesOf(
+        OperatorDaemonTool.batchOperatorArgs(
+          operator,
+          artifacts,
+          network,
+          kmsKeySourceFor,
+          OperatorDaemonTool.NoBatchUnderwriting
+        ),
+        "--signature-provider"
+      )
+      expect(otherWireProvider).toBe(
+        "wire-PUB_K1_batchopaaaa,wire,wire,PUB_K1_batchopaaaa,SSM:/wire/dev/batchopaaaa/K1"
+      )
+      expect(otherEthereumProvider).toMatch(/,KMS:us-east-1:alias\/wire\/dev\/batchopaaaa\/EM$/)
+    })
   })
 
   describe("batchOperatorArgs — underwriter role", () => {

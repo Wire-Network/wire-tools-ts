@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   ClusterStateNodeRole,
@@ -13,13 +13,14 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 import { ethers } from "ethers"
-import { ClusterState } from "@wireio/cluster-tool"
+import { ClusterState, Constants } from "@wireio/cluster-tool"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import {
   ethereumKeyPairFromKmsPublicKey,
   solanaKeyPairFromKmsPublicKey,
-  solanaKeypair
+  solanaKeypair,
+  wireKeyPairFromKmsPublicKey
 } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 import { fixtureProducerTopologyOverrides } from "../config/clusterConfigFixture.js"
@@ -29,6 +30,7 @@ import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccount
 /** One persisted operator record of a raw `cluster-keys.json`, as a test mutates it before re-saving. */
 interface RawOperatorRecord {
   account: string
+  wire: Record<string, unknown>
   ethereum: Record<string, unknown>
   solana: Record<string, unknown>
 }
@@ -422,15 +424,25 @@ describe("ClusterState", () => {
     })
   })
 
-  describe("an SSM cluster with KMS settings persists its EM / ED keys as KMS REFERENCES", () => {
+  describe("an SSM cluster with KMS settings persists its K1 / EM / ED keys as KMS REFERENCES", () => {
     /** The ONE region the KMS keys live in — one of the replication regions. */
     const KmsRegion = "us-east-1"
     /** The alias the KMS pattern renders for the fixture batch operator's EM key (no dots to map). */
     const BatchOperatorAlias = `alias/wire/test/${BatchOperatorLabel}/EM`
     /** The alias the KMS pattern renders for the fixture batch operator's ED key. */
     const BatchOperatorSolanaAlias = `alias/wire/test/${BatchOperatorLabel}/ED`
+    /** A BOOTSTRAP batch operator — a real `batchop.<letter>` label, the only kind whose K1 KMS custody reaches. */
+    const BootstrapLabel = Constants.batchOperatorLabel(0)
+    /** The alias the KMS pattern renders for the bootstrap operator's K1 key (`batchop.a` → `batchop-a`). */
+    const BootstrapWireAlias = "alias/wire/test/batchop-a/K1"
+    /** Every custodiable curve in KMS — K1 included (the roster's default). */
+    const AllCurves: ClusterConfig["signatureProvider"]["kms"]["keyTypes"] = [
+      KeyType.K1,
+      KeyType.EM,
+      KeyType.ED
+    ]
 
-    /** The SSM overrides plus the kms custody block (both custodiable curves unless `keyTypes` narrows it). */
+    /** The SSM overrides plus the kms custody block (both OUTPOST curves unless `keyTypes` says otherwise). */
     function ssmKmsOverrides(
       keyTypes: ClusterConfig["signatureProvider"]["kms"]["keyTypes"] = [
         KeyType.EM,
@@ -618,21 +630,137 @@ describe("ClusterState", () => {
       )
     })
 
-    it("a KMS reference is EM-only — a K1 record carrying one is refused", () => {
+    it("a KMS reference is K1 / EM / ED-only — a BLS record carrying one is refused", () => {
       const ctx = seededContext(ssmKmsOverrides())
       ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
       const keysFile = ClusterState.keysFilePath(ctx.config),
         mislabeled: RawClusterKeysDocument = JSON.parse(
           Fs.readFileSync(keysFile, "utf8")
         )
-      mislabeled.nodes[0].wire = {
-        type: KeyType.K1,
-        publicKey: "PUB_K1_node0",
-        awsKmsKeyId: "alias/wire/test/node_00/K1",
+      mislabeled.nodes[0].wireFinalizer = {
+        type: KeyType.BLS,
+        publicKey: "PUB_BLS_node0",
+        proofOfPossession: "SIG_BLS_node0",
+        awsKmsKeyId: "alias/wire/test/node_00/BLS",
         awsKmsRegion: KmsRegion
       }
       Fs.writeFileSync(keysFile, JSON.stringify(mislabeled))
       expect(() => ClusterState.loadKeys(ctx.config)).toThrow()
+    })
+
+    describe("the K1 custody form — a BOOTSTRAP batch operator's WIRE account key", () => {
+      /** The bootstrap operator's K1 pair in whichever custody form the context under test holds it. */
+      type BootstrapWire = ReturnType<typeof wireKeyPairFromKmsPublicKey>
+
+      /** A KMS-custodied K1 pair whose public identity is a fresh random key's — no material at all. */
+      function wireKmsPair(): BootstrapWire {
+        return wireKeyPairFromKmsPublicKey(
+          PrivateKey.generate(KeyType.K1).toPublic().data.array,
+          KmsRegion,
+          BootstrapWireAlias
+        )
+      }
+
+      /**
+       * A context under `keyTypes` holding the fixture operator AND a bootstrap
+       * one carrying `wire` — the KMS-custodied pair the adopt seam hands back
+       * when the roster names K1, a material pair (the fixture's) when it does
+       * not: the in-memory custody form always matches the config it was
+       * obtained under.
+       */
+      function bootstrapContext(keyTypes = AllCurves, wire: BootstrapWire = wireKmsPair()) {
+        const ctx = seededContext(ssmKmsOverrides(keyTypes)),
+          bootstrap = {
+            ...fixtureOperatorAccount(BootstrapLabel, OperatorType.BATCH, BootstrapLabel),
+            wire
+          }
+        ctx.keyStore.setOperator(bootstrap)
+        return { ctx, bootstrap }
+      }
+
+      it("persists the bootstrap operator's K1 as { awsKmsKeyId, awsKmsRegion } under keyTypes [K1, EM, ED] — no privateKey, no awsSecretId — while a non-bootstrap handle's K1 and every node K1 keep their SSM refs", () => {
+        const { ctx, bootstrap } = bootstrapContext(),
+          keys = ClusterState.captureKeys(ctx),
+          entry = keys.operators.find(record => record.account === BootstrapLabel),
+          other = keys.operators.find(record => record.account === BatchOperatorAccount)
+        expect(entry.wire).toEqual({
+          type: KeyType.K1,
+          publicKey: bootstrap.wire.publicKey,
+          awsKmsKeyId: BootstrapWireAlias,
+          awsKmsRegion: KmsRegion
+        })
+        expect(entry.wire).not.toHaveProperty("privateKey")
+        expect(entry.wire).not.toHaveProperty("awsSecretId")
+        // The ACCOUNT gate: `batchopaaaa` is not a bootstrap label, so its K1 stays
+        // an SSM parameter even with K1 in the roster…
+        expect(other.wire.awsSecretId).toBe(`/wire/test/${BatchOperatorLabel}/K1`)
+        expect(other.wire).not.toHaveProperty("awsKmsKeyId")
+        // …and a producer node's block-signing K1 never leaves Parameter Store.
+        expect(keys.nodes[0].wire.awsSecretId).toBe("/wire/test/node_00/K1")
+        expect(keys.nodes[0].wire).not.toHaveProperty("awsKmsKeyId")
+        // The outpost curves of both operators go to KMS exactly as before.
+        expect(entry.ethereum.awsKmsKeyId).toBe("alias/wire/test/batchop-a/EM")
+        expect(other.ethereum.awsKmsKeyId).toBe(BatchOperatorAlias)
+      })
+
+      it("keeps the bootstrap operator's K1 an SSM reference under keyTypes [EM, ED] — the roster for a nodeop without wire-sysio #768 — its material replaced by the parameter id", () => {
+        // Under [EM, ED] the seam adopts / generates a MATERIAL K1 (the fixture's), never a KMS pair.
+        const material = fixtureOperatorAccount(BootstrapLabel, OperatorType.BATCH, BootstrapLabel).wire,
+          { ctx } = bootstrapContext([KeyType.EM, KeyType.ED], material),
+          entry = ClusterState.captureKeys(ctx).operators.find(
+            record => record.account === BootstrapLabel
+          )
+        expect(material.privateKey).toMatch(/^PVT_K1_/)
+        expect(entry.wire).toEqual({
+          type: KeyType.K1,
+          publicKey: material.publicKey,
+          awsSecretId: `/wire/test/${BootstrapLabel}/K1`
+        })
+        expect(entry.wire).not.toHaveProperty("awsKmsKeyId")
+        expect(entry.wire).not.toHaveProperty("privateKey")
+      })
+
+      it("round-trips the K1 KMS record through saveKeys / loadKeys / rehydrate, with ZERO key material on disk", () => {
+        const { ctx } = bootstrapContext(),
+          keys = ClusterState.captureKeys(ctx)
+        ClusterState.saveKeys(ctx.config, keys)
+        const raw = Fs.readFileSync(ClusterState.keysFilePath(ctx.config), "utf8")
+        expect(raw).not.toContain("privateKey")
+        expect(findKeyMaterial(raw)).toEqual([])
+        expect(raw).toContain(BootstrapWireAlias)
+        const loaded = ClusterState.loadKeys(ctx.config)
+        expect(loaded).toEqual(keys)
+        const store = new ClusterKeyStore()
+        ClusterState.rehydrate(store, loaded)
+        const rehydrated = store.assertOperator(BootstrapLabel)
+        expect(rehydrated.wire.awsKmsKeyId).toBe(BootstrapWireAlias)
+        expect(rehydrated.wire.awsKmsRegion).toBe(KmsRegion)
+        expect(rehydrated.wire.privateKey).toBeUndefined()
+        expect(rehydrated.wire.publicKey).toMatch(/^PUB_K1_/)
+      })
+
+      it("still enforces EXACTLY ONE custody form on a K1 record — an SSM ref beside the KMS ref, or a KMS ref without its region, is refused", () => {
+        const { ctx } = bootstrapContext()
+        ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
+        const keysFile = ClusterState.keysFilePath(ctx.config),
+          document: RawClusterKeysDocument = JSON.parse(
+            Fs.readFileSync(keysFile, "utf8")
+          ),
+          operator = document.operators.find(
+            entry => entry.account === BootstrapLabel
+          )
+        operator.wire.awsSecretId = `/wire/test/${BootstrapLabel}/K1`
+        Fs.writeFileSync(keysFile, JSON.stringify(document))
+        expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
+          /EXACTLY ONE custody form/
+        )
+        delete operator.wire.awsSecretId
+        delete operator.wire.awsKmsRegion
+        Fs.writeFileSync(keysFile, JSON.stringify(document))
+        expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
+          /EXACTLY ONE custody form/
+        )
+      })
     })
   })
 

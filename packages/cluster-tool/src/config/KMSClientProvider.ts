@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
+import { identity } from "lodash"
 import {
   PublicKey as SolanaPublicKey,
   Transaction,
@@ -7,7 +8,14 @@ import {
 } from "@solana/web3.js"
 import { match, P } from "ts-pattern"
 import nacl from "tweetnacl"
-import { KeyType } from "@wireio/sdk-core"
+import {
+  hexToArray,
+  KeyType,
+  PublicKey as WirePublicKey,
+  Signature,
+  type SignatureParts,
+  type SignerProvider
+} from "@wireio/sdk-core"
 import { Deferred, getLogger } from "@wireio/shared"
 import type { KMSCustodiedKeyType } from "@wireio/cluster-tool-shared"
 import type { KeySpec, KMSClient, Tag } from "@aws-sdk/client-kms"
@@ -68,15 +76,20 @@ function importKMSSignerModule(): Promise<KMSSignerModule> {
  * `KMSClient` cache shared by every KMS path: the create path's GENERATION seam
  * (`KeySteps.adoptOrCreateSignatureProviderKey`, which ADOPTS an existing key
  * by alias rather than mint a replacement), the batch-operator key
- * pre-creation, `keyPairUtils.ethereumSigner`, whose KMS arm signs through
- * {@link createSigner}, and `keyPairUtils.solanaSigner`, whose KMS arm signs
- * through {@link createSolanaSigner}.
+ * pre-creation, `keyPairUtils.wireSigner`, whose KMS arm signs through
+ * {@link createWireSigner}, `keyPairUtils.ethereumSigner`, whose KMS arm signs
+ * through {@link createSigner}, and `keyPairUtils.solanaSigner`, whose KMS arm
+ * signs through {@link createSolanaSigner}.
  *
- * KMS custodies the ethereum (secp256k1, `ECC_SECG_P256K1`) and solana
- * (Ed25519, `ECC_NIST_EDWARDS25519`) keys — `KMSCustodiedKeyTypes` — never a
- * K1 / BLS key: the private key is generated inside KMS and never leaves it —
- * there is no material to fetch, so unlike `SSMClientProvider` nothing here
- * ever returns a secret. There is deliberately NO delete
+ * KMS custodies the wire (K1, secp256k1, `ECC_SECG_P256K1`), ethereum (EM,
+ * secp256k1, `ECC_SECG_P256K1`) and solana (ED, Ed25519,
+ * `ECC_NIST_EDWARDS25519`) keys — `KMSCustodiedKeyTypes` — never a BLS key,
+ * and a K1 only as a batch operator's WIRE account key: a producer's
+ * block-signing K1 must stay local (`producer_plugin` requires a local
+ * private key for every WIRE key on a node with producers configured —
+ * wire-sysio #768). The private key is generated inside KMS and never leaves
+ * it — there is no material to fetch, so unlike `SSMClientProvider` nothing
+ * here ever returns a secret. There is deliberately NO delete
  * (`ScheduleKeyDeletion`): a key under an alias is the AWS ACCOUNT's durable
  * key identity, which the next `create` adopts — and the funding a pre-launch
  * deployment binds to it is unrecoverable once the key is gone.
@@ -129,6 +142,38 @@ export namespace KMSClientProvider {
   /** Length of a compressed secp256k1 point (`02|03 || X`). */
   export const CompressedPointLength = 33
 
+  /** Length of the SHA-256 digest a WIRE K1 signer signs — a transaction's signing digest. */
+  export const Sha256DigestLength = 32
+  /** Length of a secp256k1 scalar — each of an ECDSA signature's `r` and `s`. */
+  export const Secp256k1ScalarLength = 32
+  /** Length of a WIRE K1 raw signature `[r(32) ‖ s(32) ‖ recid(1)]` — what `Signature.fromRaw` takes. */
+  export const K1RawSignatureLength = Secp256k1ScalarLength * 2 + 1
+  /** Offset of `s` inside a K1 raw signature. */
+  const K1RawSignatureSOffset = Secp256k1ScalarLength
+  /** Offset of the recovery id inside a K1 raw signature. */
+  const K1RawSignatureRecoveryIdOffset = Secp256k1ScalarLength * 2
+  /**
+   * The order `n` of the secp256k1 group. An ECDSA `s` and `n − s` are both
+   * valid; the WIRE form is the LOW one (`s ≤ n / 2`), as wire-sysio #768's
+   * `der_to_wire_k1_signature` normalises it.
+   */
+  export const Secp256k1GroupOrder =
+    0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+  /** The largest low-S `s` — `n / 2` (`n` is odd, so the integer half). */
+  const Secp256k1HalfGroupOrder = Secp256k1GroupOrder / 2n
+  /** The two recovery ids a K1 signature can carry — the parity of the ephemeral point. */
+  const RecoveryIds = [0, 1] as const
+  /** The DER tag of a `SEQUENCE` — the wrapper of the signature KMS returns. */
+  export const DerSequenceTag = 0x30
+  /** The DER tag of an `INTEGER` — each of the signature's two scalars. */
+  export const DerIntegerTag = 0x02
+  /** Bytes of a DER tag + short-form length header. */
+  const DerHeaderLength = 2
+  /** A DER short-form length is below this; the signature never needs the long form (at most 70 bytes). */
+  const DerShortFormLengthLimit = 0x80
+  /** The zero octet DER prepends to an INTEGER whose high bit is set (sign padding). */
+  const DerZeroOctet = 0x00
+
   /**
    * The `name` AWS KMS gives the error for a key id / alias that does not
    * exist. It is the ONLY failure {@link tryGetPublicKey} treats as "nothing to
@@ -152,13 +197,33 @@ export namespace KMSClientProvider {
     readonly keyType: KMSCustodiedKeyType
     /**
      * The curve-canonical public key bytes: the 33-byte compressed secp256k1
-     * point of an EM key, the 32-byte Ed25519 point of an ED key.
+     * point of a K1 or EM key, the 32-byte Ed25519 point of an ED key.
      */
     readonly publicKey: Uint8Array
   }
 
   /**
-   * The KMS key spec a custodied curve needs — secp256k1 for an EM key,
+   * The two scalars of an ECDSA signature as KMS returns them — the `r` / `s`
+   * members of sdk-core's `SignatureParts` (typed off it), each left-padded to
+   * {@link Secp256k1ScalarLength}; no recovery id yet (KMS reports none).
+   */
+  export interface Secp256k1SignatureScalars {
+    /** The signature's `r` scalar, 32 bytes. */
+    readonly r: SignatureParts["r"]
+    /** The signature's `s` scalar, 32 bytes — as KMS signed it, not yet low-S. */
+    readonly s: SignatureParts["s"]
+  }
+
+  /** One DER `INTEGER` read off a signature: its fixed-width scalar and the offset after it. */
+  interface DerIntegerRead {
+    /** The scalar, left-padded to {@link Secp256k1ScalarLength}. */
+    readonly scalar: Uint8Array
+    /** The offset of the byte after the INTEGER. */
+    readonly next: number
+  }
+
+  /**
+   * The KMS key spec a custodied curve needs — secp256k1 for a K1 / EM key,
    * Ed25519 for an ED key: the ONE map from `KeyType` to key spec, read off
    * the SDK's own roster.
    */
@@ -167,6 +232,7 @@ export namespace KMSClientProvider {
     keyType: KMSCustodiedKeyType
   ): KeySpec {
     return match(keyType)
+      .with(KeyType.K1, () => kms.KeySpec.ECC_SECG_P256K1)
       .with(KeyType.EM, () => kms.KeySpec.ECC_SECG_P256K1)
       .with(KeyType.ED, () => kms.KeySpec.ECC_NIST_EDWARDS25519)
       .exhaustive()
@@ -284,14 +350,127 @@ export namespace KMSClientProvider {
     spki: Uint8Array
   ): Uint8Array {
     return match(keyType)
+      .with(KeyType.K1, () => compressedPointFromSpki(spki))
       .with(KeyType.EM, () => compressedPointFromSpki(spki))
       .with(KeyType.ED, () => ed25519PublicKeyFromSpki(spki))
       .exhaustive()
   }
 
   /**
+   * Read the DER `INTEGER` at `offset`: the tag, a short-form length, then the
+   * big-endian magnitude — whose sign-padding zero octet(s) are stripped and
+   * which is left-padded back to {@link Secp256k1ScalarLength}. A scalar that
+   * is zero, longer than a secp256k1 scalar or not below the group order is
+   * refused: KMS never produces one, so it is a corrupted response.
+   */
+  function derInteger(der: Uint8Array, offset: number, what: string): DerIntegerRead {
+    Assert.ok(
+      der.length >= offset + DerHeaderLength && der[offset] === DerIntegerTag,
+      `KMSClientProvider: ECDSA signature DER carries no INTEGER ${what} at offset ${offset}`
+    )
+    const length = der[offset + DerHeaderLength - 1],
+      start = offset + DerHeaderLength,
+      next = start + length
+    Assert.ok(
+      length > 0 && length < DerShortFormLengthLimit && next <= der.length,
+      `KMSClientProvider: ECDSA signature DER INTEGER ${what} has an invalid length ${length}`
+    )
+    const integer = der.subarray(start, next),
+      leadingZeros = integer.findIndex(byte => byte !== DerZeroOctet),
+      magnitude = leadingZeros < 0 ? new Uint8Array(0) : integer.subarray(leadingZeros)
+    Assert.ok(
+      magnitude.length > 0 && magnitude.length <= Secp256k1ScalarLength,
+      `KMSClientProvider: ECDSA signature ${what} is not a secp256k1 scalar (${magnitude.length} significant bytes)`
+    )
+    const scalar = new Uint8Array(Secp256k1ScalarLength)
+    scalar.set(magnitude, Secp256k1ScalarLength - magnitude.length)
+    Assert.ok(
+      ethers.toBigInt(scalar) < Secp256k1GroupOrder,
+      `KMSClientProvider: ECDSA signature ${what} is not below the secp256k1 group order`
+    )
+    return { scalar, next }
+  }
+
+  /**
+   * The `r` and `s` of the DER-encoded ECDSA signature KMS's `Sign` returns —
+   * `SEQUENCE { INTEGER r, INTEGER s }` (RFC 3279), the ONE encoding
+   * `ECDSA_SHA_256` produces. A minimal, asserting parser like
+   * {@link ed25519PublicKeyFromSpki}: the sequence tag and length, exactly two
+   * INTEGERs, nothing trailing; each scalar's sign padding stripped and the
+   * value left-padded to 32 bytes. The scalars come back exactly as KMS signed
+   * them — low-S normalisation and the recovery id are
+   * {@link createWireSigner}'s job.
+   *
+   * @param der - The DER-encoded signature.
+   * @returns The two 32-byte scalars.
+   */
+  export function secp256k1SignatureFromDer(
+    der: Uint8Array
+  ): Secp256k1SignatureScalars {
+    Assert.ok(
+      der.length > DerHeaderLength && der[0] === DerSequenceTag,
+      `KMSClientProvider: ECDSA signature of ${der.length} bytes is not a DER SEQUENCE`
+    )
+    const sequenceLength = der[DerHeaderLength - 1]
+    Assert.ok(
+      sequenceLength < DerShortFormLengthLimit &&
+        sequenceLength === der.length - DerHeaderLength,
+      `KMSClientProvider: ECDSA signature DER SEQUENCE length ${sequenceLength} does not match its ${der.length - DerHeaderLength} content bytes`
+    )
+    const { scalar: r, next: afterR } = derInteger(der, DerHeaderLength, "r"),
+      { scalar: s, next: afterS } = derInteger(der, afterR, "s")
+    Assert.strictEqual(
+      afterS,
+      der.length,
+      `KMSClientProvider: ECDSA signature DER carries ${der.length - afterS} trailing bytes after s`
+    )
+    return { r, s }
+  }
+
+  /**
+   * `s` normalised to the low half of the group order — `n − s` when `s > n / 2`,
+   * else `s` as is — the WIRE K1 signature form (wire-sysio #768's
+   * `der_to_wire_k1_signature`). The complement signs the same digest under
+   * the opposite recovery-id parity, which {@link createWireSigner} re-derives.
+   */
+  function lowS(s: Uint8Array): Uint8Array {
+    const value = ethers.toBigInt(s)
+    return value > Secp256k1HalfGroupOrder
+      ? ethers.getBytes(
+          ethers.toBeHex(Secp256k1GroupOrder - value, Secp256k1ScalarLength)
+        )
+      : s
+  }
+
+  /** The 65-byte WIRE K1 raw signature `[r ‖ s ‖ recid]` — the layout `Signature.fromRaw(…, KeyType.K1)` takes. */
+  function k1RawSignature(r: Uint8Array, s: Uint8Array, recoveryId: number): Uint8Array {
+    const raw = new Uint8Array(K1RawSignatureLength)
+    raw.set(r, 0)
+    raw.set(s, K1RawSignatureSOffset)
+    raw[K1RawSignatureRecoveryIdOffset] = recoveryId
+    return raw
+  }
+
+  /**
+   * The 32-byte signing digest a WIRE K1 signer receives — a `Uint8Array`, or
+   * its bare hex (the same two forms `createClassicSigner` takes, parsed with
+   * the same `hexToArray`). For a K1 key `Transaction.signingDigest`'s
+   * `msgBytes` IS this digest; anything of another length is refused before a
+   * `Sign` is sent.
+   */
+  function signingDigest(message: string | Uint8Array): Uint8Array {
+    const digest = match(message).with(P.string, hexToArray).otherwise(identity)
+    Assert.strictEqual(
+      digest.length,
+      Sha256DigestLength,
+      `KMSClientProvider: a WIRE K1 signer signs the ${Sha256DigestLength}-byte sha256 signing digest, got ${digest.length} bytes`
+    )
+    return digest
+  }
+
+  /**
    * Fetch a signing key's public identity — `GetPublicKey`, requiring the
-   * `SIGN_VERIFY` key of the spec `keyType` needs (secp256k1 for an EM key,
+   * `SIGN_VERIFY` key of the spec `keyType` needs (secp256k1 for a K1 / EM key,
    * Ed25519 for an ED key).
    *
    * @param region - The region the key lives in.
@@ -361,9 +540,9 @@ export namespace KMSClientProvider {
   }
 
   /**
-   * Create a NEW signing key of the spec `keyType` needs (secp256k1 for EM,
-   * Ed25519 for ED) and bind `aliasName` to it — the generation backend of a
-   * KMS-custodied key. The alias is the key's durable id: `CreateAlias` fails
+   * Create a NEW signing key of the spec `keyType` needs (secp256k1 for K1 /
+   * EM, Ed25519 for ED) and bind `aliasName` to it — the generation backend of
+   * a KMS-custodied key. The alias is the key's durable id: `CreateAlias` fails
    * when the name is already bound, so reaching here for an existing alias
    * means the adopt probe and this write disagreed, and the run fails loudly
    * instead of re-pointing the alias.
@@ -506,5 +685,75 @@ export namespace KMSClientProvider {
         transactions: T[]
       ): Promise<T[]> => mapSeries(transactions, signTransaction)
     }
+  }
+
+  /**
+   * A sdk-core {@link SignerProvider} whose every signature is a remote
+   * `KMS::Sign` of an `ECC_SECG_P256K1` key — the KMS-custody arm of
+   * `keyPairUtils.wireSigner`, what `WireClient.addSigner` registers for a
+   * batch operator whose WIRE account key lives in KMS, so its
+   * `<account>@active` pushes sign through sdk-core instead of kiod. It
+   * mirrors wire-sysio #768's `der_to_wire_k1_signature` (low-S + recovery
+   * id): `sign` takes the transaction's 32-byte sha256 signing digest
+   * (`Transaction.signingDigest`'s `msgBytes` for a K1 key — a `Uint8Array`,
+   * or its hex as `createClassicSigner` also accepts), sends it as
+   * `MessageType = DIGEST` under `SigningAlgorithm = ECDSA_SHA_256`, parses
+   * the DER `SEQUENCE { INTEGER r, INTEGER s }` KMS returns
+   * ({@link secp256k1SignatureFromDer}), normalises `s` to the low half of
+   * the group order, finds the recovery id by recovering each parity against
+   * the pinned `publicKey`, and returns the 65-byte raw `[r ‖ s ‖ recid]` —
+   * which `Signature.fromRaw(…, KeyType.K1)` packs as `(31 + recid) ‖ r ‖ s`,
+   * exactly #768's wire form. A signature that recovers to neither parity is
+   * refused naming the key, so a signer wired to the wrong key fails before
+   * its transaction is sent. There is no re-sign loop: nodeop's K1
+   * `public_key::recover` (libfc `elliptic_secp256k1.cpp`) asserts NO
+   * canonical form, so every low-S signature is accepted as is. The regional
+   * client carries the same adaptive-retry treatment every other KMS call gets.
+   *
+   * @param region - The region the key lives in.
+   * @param keyId - Any `KeyId` KMS accepts.
+   * @param publicKey - The key's K1 public key, as adopted from KMS.
+   * @returns The signer.
+   */
+  export async function createWireSigner(
+    region: string,
+    keyId: string,
+    publicKey: WirePublicKey
+  ): Promise<SignerProvider> {
+    Assert.strictEqual(
+      publicKey.type,
+      KeyType.K1,
+      `KMSClientProvider: a WIRE signer pins a K1 public key, got ${publicKey.type}`
+    )
+    const kms = await importKMSModule(),
+      client = await kmsClientForRegion(region),
+      sign = async (message: string | Uint8Array): Promise<Uint8Array> => {
+        const digest = signingDigest(message),
+          { Signature: der } = await client.send(
+            new kms.SignCommand({
+              KeyId: keyId,
+              Message: digest,
+              MessageType: kms.MessageType.DIGEST,
+              SigningAlgorithm: kms.SigningAlgorithmSpec.ECDSA_SHA_256
+            })
+          )
+        Assert.ok(
+          der != null && der.length > 0,
+          `KMSClientProvider: ${keyId} in ${region} returned no ECDSA signature`
+        )
+        const { r, s } = secp256k1SignatureFromDer(der),
+          normalised = lowS(s),
+          recoveryId = RecoveryIds.find(candidate =>
+            Signature.fromRaw(k1RawSignature(r, normalised, candidate), KeyType.K1)
+              .recoverDigest(digest)
+              .equals(publicKey)
+          )
+        Assert.ok(
+          recoveryId != null,
+          `KMSClientProvider: could not find a recovery id for the ECDSA signature ${keyId} in ${region} produced — it recovers to neither parity of the pinned public key ${publicKey.toString()}`
+        )
+        return k1RawSignature(r, normalised, recoveryId)
+      }
+    return { pubKey: publicKey, sign }
   }
 }

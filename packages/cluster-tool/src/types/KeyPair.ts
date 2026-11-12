@@ -15,10 +15,11 @@ import { KeyType } from "@wireio/sdk-core"
  *   the daemon's `--signature-provider …,SSM:<id>` spec is what fetches the key
  *   at startup, so nothing downstream of `ClusterState.loadKeys` may read
  *   `privateKey`.
- * - `awsKmsKeyId` (+ `awsKmsRegion`, {@link KeyPairKmsCustody} — the EM and ED
- *   curves, which AWS KMS can custody) — the AWS KMS key the secret lives in
- *   and NEVER leaves: the pair carries no `privateKey` even in memory, every
- *   signature is a remote `KMS::Sign` (`keyPairUtils.ethereumSigner` /
+ * - `awsKmsKeyId` (+ `awsKmsRegion`, {@link KeyPairKmsCustody} — the K1, EM
+ *   and ED curves, which AWS KMS can custody) — the AWS KMS key the secret
+ *   lives in and NEVER leaves: the pair carries no `privateKey` even in
+ *   memory, every signature is a remote `KMS::Sign`
+ *   (`keyPairUtils.wireSigner` / `keyPairUtils.ethereumSigner` /
  *   `keyPairUtils.solanaSigner`), and the daemon's spec is
  *   `…,KMS:<region>:<keyId>`.
  *
@@ -43,11 +44,13 @@ export interface KeyPairAddress {
 }
 
 /**
- * The {@link KeyPair} extension of the curves AWS KMS can custody (EM, ED —
- * `KMSCustodiedKeyTypes`): the THIRD custody form, an AWS KMS key reference
+ * The {@link KeyPair} extension of the curves AWS KMS can custody (K1, EM, ED
+ * — `KMSCustodiedKeyTypes`): the THIRD custody form, an AWS KMS key reference
  * (`awsKmsKeyId` is any `KeyId` KMS accepts, an alias name for
  * harness-rendered keys; `awsKmsRegion` the ONE region it lives in). Both are
- * present or both absent.
+ * present or both absent. On a K1 pair it is the batch operators' WIRE
+ * account key custody (`keyPairUtils.wireSigner`) — a producer's
+ * block-signing K1 never carries one, since nodeop requires that key local.
  */
 export interface KeyPairKmsCustody {
   readonly awsKmsKeyId?: string
@@ -56,7 +59,7 @@ export interface KeyPairKmsCustody {
 
 /**
  * The {@link KeyPair} extension for a curve that adds NO members beyond
- * {@link KeyPairCommon} (K1, R1, WA) — deliberately empty.
+ * {@link KeyPairCommon} (R1, WA) — deliberately empty.
  */
 export interface KeyPairNoExtension {}
 
@@ -64,7 +67,7 @@ export interface KeyPairNoExtension {}
  * A key pair tagged with its curve. String members are Wire-canonical
  * (`PUB_<KeyType>_…` / `PVT_<KeyType>_…` / `SIG_BLS_…`) so they round-trip
  * through JSON cluster state. BLS — and only BLS — additionally carries a proof
- * of possession; EM carries its address; EM and ED may carry a KMS key
+ * of possession; EM carries its address; K1, EM and ED may carry a KMS key
  * reference — the conditional makes each compile-enforced. Replaces the
  * duplicated `K1KeyPair` / `BLSKeyPair` interfaces.
  */
@@ -73,11 +76,11 @@ export type KeyPair<T extends KeyType = KeyType> = KeyPairCommon<T> &
     ? KeyPairProofOfPossession
     : T extends KeyType.EM
       ? KeyPairAddress & KeyPairKmsCustody
-      : T extends KeyType.ED
+      : T extends KeyType.K1 | KeyType.ED
         ? KeyPairKmsCustody
         : KeyPairNoExtension)
 
-/** WIRE operator key pair (`PUB_K1_…` / `PVT_K1_…`). */
+/** WIRE operator key pair (`PUB_K1_…` / `PVT_K1_…`, or a KMS key reference for a batch operator's account key). */
 export type WireKeyPair = KeyPair<KeyType.K1>
 /** Finalizer (BLS) key pair (`PUB_BLS_…` / `PVT_BLS_…` + proof of possession). */
 export type WireFinalizerKeyPair = KeyPair<KeyType.BLS>

@@ -114,10 +114,10 @@ const keyCustodyShape = {
 }
 
 /**
- * The THIRD custody form, on the curves KMS can custody (EM, ED): the AWS KMS
- * key the secret lives in and never leaves (an SSM cluster with `kms`
- * settings naming the curve). Both members ride together — see
- * {@link hasSingleCustodyForm}.
+ * The THIRD custody form, on the curves KMS can custody (K1, EM, ED): the AWS
+ * KMS key the secret lives in and never leaves (an SSM cluster with `kms`
+ * settings naming the curve — for K1, a batch operator's account key only).
+ * Both members ride together — see {@link hasSingleCustodyForm}.
  */
 const kmsCustodyShape = {
   /** The KMS `KeyId` (an alias name for harness-rendered keys). */
@@ -132,7 +132,7 @@ interface PersistedKeyCustody {
   privateKey?: string
   /** The SSM parameter id, when the record references it instead. */
   awsSecretId?: string
-  /** The KMS key reference, when the record references that instead (EM / ED). */
+  /** The KMS key reference, when the record references that instead (K1 / EM / ED). */
   awsKmsKeyId?: string
   /** The KMS key's region — present exactly when `awsKmsKeyId` is. */
   awsKmsRegion?: string
@@ -157,14 +157,18 @@ function hasSingleCustodyForm(record: PersistedKeyCustody): boolean {
 
 /** Why {@link hasSingleCustodyForm} rejected a record. */
 const SingleCustodyFormMessage =
-  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD), awsSecretId (SSM) or awsKmsKeyId + awsKmsRegion (KMS — EM / ED), never two and never none"
+  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD), awsSecretId (SSM) or awsKmsKeyId + awsKmsRegion (KMS — K1 / EM / ED), never two and never none"
 
-/** Schema validating a WIRE (K1) key pair record against the grandfathered `WireKeyPair`. */
+/** Schema validating a WIRE (K1) key pair record against the grandfathered
+ *  `WireKeyPair`. K1 is KMS-custodiable like EM and ED — the KMS form is what
+ *  a batch operator's account key persists as under SSM + kms (a producer's
+ *  block-signing K1 never does; nodeop requires it local). */
 const WireKeyPairSchema: z.ZodType<WireKeyPair> = z
   .object({
     type: z.literal(KeyType.K1),
     publicKey: z.string(),
-    ...keyCustodyShape
+    ...keyCustodyShape,
+    ...kmsCustodyShape
   })
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
@@ -183,8 +187,8 @@ const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z
 
 /** Schema validating an Ethereum (EM) key pair record. `address` is NON-SECRET
  *  and rides EVERY custody variant — every ETH funding / collateral read uses
- *  it, and `ExternalClusterConfigSteps` emits from the same record. EM and ED
- *  are the curves with the KMS custody form. */
+ *  it, and `ExternalClusterConfigSteps` emits from the same record. K1, EM and
+ *  ED are the curves with the KMS custody form. */
 const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z
   .object({
     type: z.literal(KeyType.EM),
@@ -376,9 +380,11 @@ export namespace ClusterState {
 
   /**
    * The custody members a provider source persists IN PLACE of the secret: the
-   * SSM parameter id, or — for a KMS-custodied EM / ED key — the KMS key reference
-   * (which the in-memory pair already carries; the rendered source is spread
-   * so the persisted ref and the daemon's spec can never disagree).
+   * SSM parameter id, or — for a KMS-custodied K1 / EM / ED key — the KMS key
+   * reference (which the in-memory pair already carries; the rendered source is
+   * spread so the persisted ref and the daemon's spec can never disagree).
+   * Generic by SOURCE TYPE, so a batch operator's K1 persists its KMS reference
+   * exactly as its EM / ED do.
    */
   function custodyReference(
     source: KeyGenerator.SignatureProviderSource

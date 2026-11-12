@@ -645,7 +645,7 @@ export function buildOptionShape(
       type: choicesLeaf(
         ClusterSignatureProviderTypes,
         SignatureProviderType.KEY,
-        "signature provider type: KEY (inline), SSM, or KIOD (KMS custodies an SSM cluster's EM / ED keys via --signature-provider-kms, never the cluster type)"
+        "signature provider type: KEY (inline), SSM, or KIOD (KMS custodies an SSM cluster's K1 / EM / ED keys via --signature-provider-kms, never the cluster type)"
       ),
       batchOperatorKeyPolicy: choicesLeaf(
         Object.values(SignatureProviderKeyPolicy),
@@ -826,7 +826,7 @@ export function applyCustodyDocumentArgs(yargs: Argv): Argv {
     .option(SignatureProviderKMSFlag, {
       type: "string",
       describe:
-        "KMS custody settings for the EM / ED keys as inline JSON ({awsKeyAliasPattern, awsRegion, keyTypes?, version?}) or a file path (SSM clusters only; keyTypes names the custodied curves, default [\"EM\",\"ED\"] — [\"EM\"] keeps ED in SSM for a nodeop without Solana KMS signing; the keys are adopted by alias and never leave KMS)"
+        "KMS custody settings for the K1 / EM / ED keys as inline JSON ({awsKeyAliasPattern, awsRegion, keyTypes?, version?}) or a file path (SSM clusters only; keyTypes names the custodied curves, default [\"K1\",\"EM\",\"ED\"] — K1 reaches the batch operators' account keys only, never a producer's block-signing key; [\"EM\",\"ED\"] keeps K1 in SSM for a nodeop without WIRE K1 KMS signing, dropping ED keeps it in SSM for one without Solana KMS signing; the keys are adopted by alias and never leave KMS)"
     })
     .option(ClusterBuildOptionsFileFlag, {
       type: "string",

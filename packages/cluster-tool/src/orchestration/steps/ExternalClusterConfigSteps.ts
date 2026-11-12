@@ -6,11 +6,11 @@ import type {
   BindConfig,
   BindConfigNodeopClusterPorts,
   ClusterConfig,
-  ClusterSignatureProviderConfig,
   ExternalClusterConfig,
   ExternalClusterConfigAccount,
   ExternalClusterConfigEthereum,
   ExternalClusterConfigSolana,
+  KeyCustodySettings,
   SignatureProviderConfig
 } from "@wireio/cluster-tool-shared"
 import {
@@ -18,7 +18,6 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   ExternalClusterConfigSchemaCodec,
-  isKMSCustodied,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -42,7 +41,8 @@ import type {
   EthereumKeyPair,
   KeyPair,
   SolanaKeyPair,
-  WireFinalizerKeyPair
+  WireFinalizerKeyPair,
+  WireKeyPair
 } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -919,10 +919,11 @@ export namespace ExternalClusterConfigSteps {
     const merged = ctx.outputs.assert(MergedConfigKey),
       externalBind = ctx.outputs.assert(ExternalBindKey),
       keys = ClusterState.loadKeys(merged),
-      // The provider type + SSM settings are the SOURCE cluster's; SSM secret
-      // ids were PutParameter'd at CREATE time under the SOURCE cluster's AWS
-      // account — reconstruct against ctx.config (source), NOT merged (external root).
-      provider = ctx.config.signatureProvider,
+      // The provider type, SSM settings and KMS custody settings are the SOURCE
+      // cluster's; SSM secret ids were PutParameter'd at CREATE time under the
+      // SOURCE cluster's AWS account — reconstruct against ctx.config (source),
+      // NOT merged (external root). A `ClusterConfig` IS the key-custody settings.
+      settings: KeyCustodySettings = ctx.config,
       // What create ACTUALLY published, from the walker that published it — the
       // emitted refs are those rows verbatim, so a ref can never name a
       // parameter that does not exist. Empty under KEY / KIOD.
@@ -932,7 +933,7 @@ export namespace ExternalClusterConfigSteps {
         bindings: externalBind,
         accounts: {
           operators: keys.operators.map(operator =>
-            toAccount(operator, provider, lookup)
+            toAccount(operator, settings, lookup)
           )
         },
         wire: {
@@ -963,14 +964,14 @@ export namespace ExternalClusterConfigSteps {
    */
   function toAccount(
     operator: ClusterKeysOperatorEntry,
-    provider: ClusterSignatureProviderConfig,
+    settings: KeyCustodySettings,
     lookup: SSMPublicationLookup
   ): ExternalClusterConfigAccount {
     // The SSM secret id is keyed by the DURABLE handle (what `KeySteps`
     // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
     // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.publicationLabel, provider, lookup)
+      keyProviderFor(keyPair, operator.publicationLabel, settings, lookup)
     return {
       accountName: operator.account,
       type: operator.type,
@@ -1050,8 +1051,10 @@ export namespace ExternalClusterConfigSteps {
    * - `SSM`  → the replication regions + `awsSecretId` taken VERBATIM from the
    *   publication row create wrote (NO private key), so the emitted ref is the
    *   published parameter by construction rather than by two render sites
-   *   agreeing — or, for a curve the SSM cluster custodies in KMS, the `KMS`
-   *   entry carrying the key reference persisted on the pair itself
+   *   agreeing — or, for a key the SSM cluster custodies in KMS
+   *   (`ClusterConfigProvider.isKMSCustodiedKey` on the SAME publication label
+   *   the lookup keys on — a batch operator's K1 included, a producer's never),
+   *   the `KMS` entry carrying the key reference persisted on the pair itself
    *   (`awsKmsRegion` + `awsKmsKeyId`, rendered by the same ONE renderer that
    *   adopted the key).
    * - `KIOD` → material-less (`publicKey` + BLS proof only); hydration is deferred.
@@ -1062,8 +1065,8 @@ export namespace ExternalClusterConfigSteps {
    * emitted as a dangling ref.
    *
    * @param keyPair - The stored key pair.
-   * @param label - The operator label (the secret-id `{account}`).
-   * @param provider - The source cluster's signature-provider config.
+   * @param label - The operator's publication label (the secret-id / alias `{account}`).
+   * @param settings - The source cluster's key-custody settings (its config).
    * @param lookup - Resolves an identity's curve to the publication create
    *   wrote for it; yields nothing under KEY / KIOD, where it is unused.
    * @returns The provider entry for this key.
@@ -1071,9 +1074,10 @@ export namespace ExternalClusterConfigSteps {
   function keyProviderFor(
     keyPair: KeyPair,
     label: string,
-    provider: ClusterSignatureProviderConfig,
+    settings: KeyCustodySettings,
     lookup: SSMPublicationLookup
   ): SignatureProviderConfig {
+    const provider = settings.signatureProvider
     const base = {
       type: keyPair.type,
       publicKey: keyPair.publicKey,
@@ -1097,9 +1101,10 @@ export namespace ExternalClusterConfigSteps {
           provider.ssm != null,
           "create-external-config: SSM signature provider requires ssm settings"
         )
-        if (isKMSCustodied(provider, keyPair.type)) {
-          // The custodiable curves (EM / ED) carry the reference on the pair.
+        if (ClusterConfigProvider.isKMSCustodiedKey(settings, label, keyPair.type)) {
+          // The custodiable curves (K1 / EM / ED) carry the reference on the pair.
           const { awsKmsRegion, awsKmsKeyId } = keyPair as
+            | WireKeyPair
             | EthereumKeyPair
             | SolanaKeyPair
           Assert.ok(
