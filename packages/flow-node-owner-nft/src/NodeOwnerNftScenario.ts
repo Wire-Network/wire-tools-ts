@@ -1,5 +1,10 @@
 import Assert from "node:assert"
-import { SysioContracts } from "@wireio/sdk-core"
+import {
+  getCompressedPublicKey,
+  KeyType,
+  PublicKey,
+  SysioContracts
+} from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
   FlowScenario,
@@ -57,6 +62,17 @@ async function assertRejectedWithoutRow(
   await assertRejectedAudit(ctx, account, reason)
 }
 
+/** Compare Ethereum identities in compressed SEC1 form, regardless of RPC encoding. */
+function compressedEthereumKey(value: string): string {
+  const key = PublicKey.from(value)
+  Assert.strictEqual(
+    key.type,
+    KeyType.EM,
+    "AuthEx Ethereum link must contain an EM key"
+  )
+  return getCompressedPublicKey(key.data.hexString, KeyType.EM)
+}
+
 /** Verify that the original Ethereum identity survived and the rejected key was not linked. */
 async function assertPreservedEthereumLink(
   ctx: ClusterBuildContext,
@@ -64,27 +80,37 @@ async function assertPreservedEthereumLink(
   linkedHdIndex: number,
   rejectedHdIndex: number
 ): Promise<void> {
-  const linkedKey = await RegistrationSteps.newEthereumPublicKey(ctx, linkedHdIndex),
-    rejectedKey = await RegistrationSteps.newEthereumPublicKey(ctx, rejectedHdIndex),
+  const linkedKey = await RegistrationSteps.newEthereumPublicKey(
+      ctx,
+      linkedHdIndex
+    ),
+    rejectedKey = await RegistrationSteps.newEthereumPublicKey(
+      ctx,
+      rejectedHdIndex
+    ),
     links = await ctx.wire
       .getSysioContract(SysioContractName.authex)
       .tables.links.queryAll(),
-    accountLinks = links.filter(
-      row =>
-        row.username === account &&
+    ethereumLinks = links
+      .filter(row =>
         matchesProtoEnum(
           row.chain_kind,
           SysioAuthexChainkind,
           SysioAuthexChainkind.CHAIN_KIND_EVM
         )
-    )
+      )
+      .map(row => ({
+        username: row.username,
+        key: compressedEthereumKey(row.pub_key)
+      }))
   Assert.deepStrictEqual(
-    accountLinks.map(row => row.pub_key),
-    [linkedKey],
+    ethereumLinks.filter(row => row.username === account).map(row => row.key),
+    [compressedEthereumKey(linkedKey)],
     `original Ethereum link must be preserved for ${account}`
   )
+  const rejectedPoint = compressedEthereumKey(rejectedKey)
   Assert.ok(
-    !links.some(row => row.pub_key === rejectedKey),
+    !ethereumLinks.some(row => row.key === rejectedPoint),
     `rejected depositor key must remain unlinked for ${account}`
   )
 }

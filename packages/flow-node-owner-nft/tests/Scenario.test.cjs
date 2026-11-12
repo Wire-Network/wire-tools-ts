@@ -12,6 +12,9 @@ const {
 
 const { NodeOwnerNftScenario } = require("../lib/NodeOwnerNftScenario.js")
 const {
+  NodeOwnerNftScenarioConstants: Constants
+} = require("../lib/NodeOwnerNftScenarioConstants.js")
+const {
   NodeOwnerNftScenarioRegistrationSteps: RegistrationSteps
 } = require("../lib/steps/NodeOwnerNftScenarioRegistrationSteps.js")
 
@@ -49,27 +52,42 @@ test("only the rejection fixtures create accounts before registration", () => {
   }
 })
 
-test("rejection checks fail if an Ethereum link or original tier changes", async () => {
+// Two valid points with the same X coordinate and opposite Y parity.
+const keyX = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  originalKey = {
+    compressed: `PUB_EM_02${keyX}`,
+    uncompressed: `PUB_EM_04${keyX}483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8`
+  },
+  rejectedKey = {
+    compressed: `PUB_EM_03${keyX}`,
+    uncompressed: `PUB_EM_04${keyX}b7c52588d95c3b9aa25b0403f1eef75702e84bb7597aabe663b82f6f04ef2777`
+  }
+
+async function checkRejectionState(readbackEncoding) {
+  const linkedIndices = new Set([
+    Constants.WrongKeyLinkedEthereumHdIndex,
+    Constants.ExistingLinkedEthereumHdIndex,
+    Constants.DuplicateEthereumHdIndex
+  ])
   mock.method(
     RegistrationSteps,
     "newEthereumPublicKey",
-    async (_ctx, index) => `key-${index}`
+    async (_ctx, index) =>
+      (linkedIndices.has(index) ? originalKey : rejectedKey).compressed
   )
   const phases = planPhases()
   for (const name of ["WrongKey", "ExistingAccount", "Duplicate"]) {
     const { steps } = phases.find(phase => phase.name === name),
-      [first, second, third] = steps,
+      [first] = steps,
       duplicate = name === "Duplicate",
       account = duplicate ? first.input.ownerAccount : first.input.account,
-      original = duplicate ? first : second,
-      rejected = duplicate ? second : third,
       verify = steps.at(-1),
       linked = {
         username: account,
         chain_kind: SysioContracts.SysioAuthexChainkind.CHAIN_KIND_EVM,
-        pub_key: `key-${original.input.ethereumHdIndex}`
+        pub_key: originalKey[readbackEncoding]
       },
-      rejectedKey = `key-${rejected.input.ethereumHdIndex}`,
+      rejectedLink = rejectedKey[readbackEncoding],
       members = duplicate ? [{ owner: account, tier: NodeOwnerTier.T1 }] : [],
       audit = {
         owner: account,
@@ -95,13 +113,13 @@ test("rejection checks fail if an Ethereum link or original tier changes", async
     }
     await verifyState([linked])
     await Assert.rejects(
-      verifyState([{ ...linked, pub_key: rejectedKey }]),
+      verifyState([{ ...linked, pub_key: rejectedLink }]),
       /original Ethereum link/
     )
     await Assert.rejects(
       verifyState([
         linked,
-        { ...linked, username: "other", pub_key: rejectedKey }
+        { ...linked, username: "other", pub_key: rejectedLink }
       ]),
       /rejected depositor key/
     )
@@ -117,4 +135,10 @@ test("rejection checks fail if an Ethereum link or original tier changes", async
       )
     }
   }
-})
+}
+
+test("rejection checks fail if an Ethereum link or original tier changes", () =>
+  checkRejectionState("compressed"))
+
+test("uncompressed AuthEx rows match compressed fixture keys and expose rejected links", () =>
+  checkRejectionState("uncompressed"))
