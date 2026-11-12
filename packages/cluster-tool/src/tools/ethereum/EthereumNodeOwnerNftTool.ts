@@ -17,14 +17,10 @@
  *     `NodeOwnerRegistration` attestation via OPP, which the depot
  *     (`sysio.msgch::dispatch_node_owner_reg`) consumes end-to-end.
  *
- *   - sysio.roa create-in-flow node-owner registration (wire-sysio):
- *     the two actions the depot inline-sends when an inbound
- *     NodeOwnerRegistration decodes — sysio.roa::newnameduser (create
- *     the account from the claim's Wire key) then sysio.roa::nodeownreg
- *     (register + inline-record the depositor's ETH link in
- *     sysio.authex). The flow's soft-fail / hard-abort probes drive
- *     these directly (as the depot inline-sends them); the commit path
- *     above exercises the same pair through the real OPP hop.
+ *   - sysio.roa::nodeownreg (wire-sysio): one authenticated claim creates a
+ *     new account, registers the owner and records its Ethereum link atomically.
+ *     Existing account names soft-reject, regardless of the submitted Wire key.
+ *     Direct-drive cases exercise rejection reasons; BAR.commitNode covers OPP.
  */
 
 import Assert from "node:assert"
@@ -55,11 +51,15 @@ export enum NodeOwnerRegStatus {
 export enum NodeOwnerRejectReason {
   None = 0,
   NameInvalid = 1,
+  /** Historical audit value. Fresh claims create the account inside nodeownreg. */
   OwnerNotAccount = 2,
+  /** Historical audit value. Existing names reject regardless of the submitted key. */
   AccountKeyMismatch = 3,
   Duplicate = 4,
   LinkKeyMismatch = 5,
-  TierCapReached = 6
+  TierCapReached = 6,
+  /** Target existed before the claim; only new accounts may register. */
+  AccountExists = 7
 }
 
 /** Minimal `ethers` surface of `MockWireNodes.sol`. */
@@ -214,8 +214,8 @@ export async function commitNode(
 }
 
 /**
- * Create the claim account in-flow via `sysio.roa::newnameduser` (the create step the depot
- * inline-sends first). `wirePubKey` becomes the account's owner/active authority. Idempotent and
+ * Create a privileged fixture account via `sysio.roa::newnameduser`.
+ * This account is deliberately ineligible for a subsequent node-owner claim. `wirePubKey` becomes the account's owner/active authority. Idempotent and
  * non-throwing on a tier-invalid name, matching the contract.
  *
  * @param account     The vanity account name to create (tier-1 = 2-6 chars; tier 2/3 = 1-12).
@@ -237,8 +237,8 @@ export async function pushNewNamedUser(
 }
 
 /**
- * Drive `sysio.roa::nodeownreg` directly, as the depot inline-sends it. The account is expected to
- * already exist (created by pushNewNamedUser). Under create-in-flow this RECORDS the depositor's ETH
+ * Drive `sysio.roa::nodeownreg` directly, as the depot inline-sends it. The account must not
+ * already exist. The action creates it and RECORDS the depositor's ETH
  * key (it is not verified against a pre-existing link), so claim-payload problems soft-fail into a
  * `nodeownerreg` audit row (read with `readNodeOwnerReg`) rather than throwing. Depot/system
  * invariants -- tier out of [1,3], a non-EM eth key, or an address not exactly 20 bytes -- hard-abort,
@@ -248,7 +248,7 @@ export async function pushNewNamedUser(
  * @param tier          1 (T1), 2 (T2), or 3 (T3).
  * @param ethAddress    Depositor's canonical 20-byte ETH address (lowercase hex, no `0x`).
  * @param ethPubKey     Depositor's `PUB_EM_*` secp256k1 key (recorded as the sysio.authex link).
- * @param wirePubKey    The account's owner/active key; an existing account must be controlled by it.
+ * @param wirePubKey    The new account's owner/active key.
  */
 export async function pushNodeOwnerReg(
   wire: WireClient,
