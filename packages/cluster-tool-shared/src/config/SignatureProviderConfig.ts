@@ -269,8 +269,12 @@ export type AWSSSMSignatureProviderOptions = z.infer<
  * {@link SignatureProviderKeyPolicy.adoptOrCreate}, created under) and the ONE
  * region the keys live in.
  *
- * `keyTypes` defaults to every custodiable curve — K1, EM and ED. K1 custody
- * applies to the BATCH OPERATORS' WIRE account keys only: a producer / node K1
+ * `keyTypes` defaults to every custodiable curve — K1, EM and ED. EM and ED
+ * custody reaches EVERY identity the bootstrap provisions through
+ * `KeySteps.adoptOrCreateSignatureProviderKey` — batch operators, underwriters
+ * and collateral-backed producers alike ({@link isKMSCustodied}, the
+ * curve-level gate); K1 custody applies to the BATCH OPERATORS' WIRE account
+ * keys only: a producer / node K1
  * signs blocks, and nodeop's `producer_plugin` requires a local private key for
  * every WIRE key on a node with producers configured (wire-sysio #768), so
  * those keys stay in Parameter Store whatever `keyTypes` names — the gate is
@@ -357,7 +361,7 @@ export interface ClusterSignatureProviderOptions {
   type?: ClusterSignatureProviderType
   /** AWS SSM publish settings — required when `type === SSM`. */
   ssm?: AWSSSMSignatureProviderOptions
-  /** AWS KMS custody settings for the K1 / EM / ED keys — only valid when `type === SSM`. */
+  /** AWS KMS custody settings — the EM / ED outpost keys of every provisioned identity, the batch operators' K1 — only valid when `type === SSM`. */
   kms?: AWSKMSSignatureProviderOptionsInput
   /** How the bootstrap obtains the batch operators' keys. Default: adoptOrCreate. */
   batchOperatorKeyPolicy?: SignatureProviderKeyPolicy
@@ -374,7 +378,7 @@ export const ClusterSignatureProviderConfigSchema = z
     type: z.enum(ClusterSignatureProviderTypes),
     /** AWS SSM publish settings, or `null` under KEY/KIOD (round-trips through JSON). */
     ssm: AWSSSMSignatureProviderOptionsSchema.nullable(),
-    /** AWS KMS custody settings for the K1 / EM / ED keys, or `null` (round-trips through JSON). */
+    /** AWS KMS custody settings (the EM / ED outpost keys of every provisioned identity, the batch operators' K1), or `null` (round-trips through JSON). */
     kms: AWSKMSSignatureProviderOptionsSchema.nullable().default(null),
     /** How the bootstrap obtains the batch operators' keys. */
     batchOperatorKeyPolicy: z

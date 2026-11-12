@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { ethers } from "ethers"
+import { identity } from "lodash"
 import {
   Keypair,
   PublicKey,
@@ -10,6 +11,12 @@ import {
 } from "@solana/web3.js"
 import nacl from "tweetnacl"
 import { KeyType, PrivateKey, Signature } from "@wireio/sdk-core"
+import {
+  ConsoleAppender,
+  Level,
+  type LogRecord,
+  NestedError
+} from "@wireio/shared"
 import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 
 const mockSend = jest.fn()
@@ -42,17 +49,6 @@ jest.mock("@aws-sdk/client-kms", () => ({
   SignCommand: jest
     .fn()
     .mockImplementation((input: unknown) => ({ kind: "Sign", input }))
-}))
-
-/** The ethers-over-KMS signer, doubled: records what it was constructed with. */
-const mockAwsKmsSigner = jest
-  .fn()
-  .mockImplementation((config: unknown, provider: unknown) => ({
-    config,
-    provider
-  }))
-jest.mock("@cuonghx.gu-tech/ethers-aws-kms-signer", () => ({
-  AwsKmsSigner: mockAwsKmsSigner
 }))
 
 /** One captured command: its kind + the input its constructor received. */
@@ -172,6 +168,24 @@ function derSignature(r: Uint8Array, s: Uint8Array): Uint8Array {
   return Uint8Array.of(KMSClientProvider.DerSequenceTag, body.length, ...body)
 }
 
+/** The DER KMS's `Sign` returns for `wallet`'s OWN signature of `digest` — the HSM holding that key, doubled. */
+function walletDerSignature(
+  wallet: ethers.HDNodeWallet,
+  digest: Uint8Array
+): Uint8Array {
+  const { r, s } = wallet.signingKey.sign(digest)
+  return derSignature(ethers.getBytes(r), ethers.getBytes(s))
+}
+
+/** The rejection of `promise` — the subject when a call MUST fail (a resolution is the failure). */
+function rejectionOf<E extends Error = NestedError>(
+  promise: Promise<unknown>
+): Promise<E> {
+  return promise.then(() => {
+    throw new Error("expected a rejection, got a resolution")
+  }, identity) as Promise<E>
+}
+
 /** `r`, `s` and the recovery id of an sdk-core K1 signature — `toHex()`'s raw `[r ‖ s ‖ recid]`, split. */
 function signatureParts(signature: Signature) {
   const raw = ethers.getBytes(signature.toHex()),
@@ -283,7 +297,6 @@ function preparedVersionedTransaction(payer: PublicKey): VersionedTransaction {
 describe("KMSClientProvider (jest module mock — no live AWS)", () => {
   beforeEach(() => {
     mockSend.mockReset()
-    mockAwsKmsSigner.mockClear()
   })
 
   describe("aliasAccountSegment", () => {
@@ -612,6 +625,27 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
   })
 
   describe("createKey", () => {
+    /** The console appender's `append`, spied so the orphan line `createKey` logs is observable (and never printed). */
+    let consoleAppend: jest.SpyInstance
+
+    beforeEach(() => {
+      consoleAppend = jest
+        .spyOn(ConsoleAppender.prototype, "append")
+        .mockImplementation(() => undefined)
+    })
+
+    afterEach(() => {
+      consoleAppend.mockRestore()
+    })
+
+    /** Every error logged so far — the messages of the `error` records the console appender received. */
+    function errorsLogged(): string[] {
+      return consoleAppend.mock.calls
+        .map(([record]: [LogRecord]) => record)
+        .filter(record => record.level === Level.error)
+        .map(record => record.message)
+    }
+
     /** Answer CreateKey → CreateAlias → GetPublicKey for `wallet`'s key — a multi-Region key, as KMS mints when asked. */
     function answerCreation(wallet: ethers.HDNodeWallet): void {
       mockSend
@@ -726,14 +760,51 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       ])
     })
 
-    it("REFUSES a CreateKey response whose key is not multi-Region — KMS did not honour the flag — before any alias is bound", async () => {
+    it("REFUSES a CreateKey response whose key is not multi-Region — KMS did not honour the flag — before any alias is bound: the created key is an ORPHAN, logged and thrown with its ARN, the alias and the region, the assertion kept as the cause", async () => {
       mockSend.mockResolvedValueOnce({ KeyMetadata: { Arn: KeyArn } })
-      await expect(
+      const failure = await rejectionOf(
         KMSClientProvider.createKey(Region, AliasName, KeyType.EM, "p")
-      ).rejects.toThrow(
+      )
+      expect(failure).toBeInstanceOf(NestedError)
+      expect(failure.message).toMatch(
+        new RegExp(
+          `created key ${KeyArn} in ${Region} is orphaned — binding ${AliasName} to it failed, so the key is billable and invisible to adoption; alias it or schedule its deletion by hand \\(the harness has no delete permission\\)`
+        )
+      )
+      expect(failure.message).toContain(
+        `(keyArn=${KeyArn}, aliasName=${AliasName}, region=${Region})`
+      )
+      expect(failure.context).toEqual({
+        keyArn: KeyArn,
+        aliasName: AliasName,
+        region: Region
+      })
+      expect(failure.causes).toHaveLength(1)
+      expect(failure.cause).toBe(failure.causes[0])
+      expect(failure.causes[0].message).toMatch(
         /returned arn:aws:kms:us-east-1:123456789012:key\/11111111-2222-3333-4444-555555555555, which is not a multi-Region key \(its key id must begin with mrk-\)/
       )
       expect(sentCommands().map(command => command.kind)).toEqual(["CreateKey"])
+      expect(errorsLogged()).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `key ${KeyArn} in ${Region} is ORPHANED — created, but binding ${AliasName} to it failed \\(.*which is not a multi-Region key.*\\); it is billable and invisible to adoption — alias it or schedule its deletion by hand, the harness has no delete permission`
+          )
+        )
+      ])
+    })
+
+    it("a CreateKey refusal is no orphan — nothing was created: it propagates as is and nothing is logged", async () => {
+      mockSend.mockRejectedValueOnce(
+        kmsError("LimitExceededException", "key limit reached")
+      )
+      const failure = await rejectionOf<Error>(
+        KMSClientProvider.createKey(Region, AliasName, KeyType.EM, "p")
+      )
+      expect(failure).not.toBeInstanceOf(NestedError)
+      expect(failure.name).toBe("LimitExceededException")
+      expect(failure.message).toBe("key limit reached")
+      expect(errorsLogged()).toEqual([])
     })
 
     it("forwards the tags on the CreateKey itself", async () => {
@@ -766,44 +837,271 @@ describe("KMSClientProvider (jest module mock — no live AWS)", () => {
       expect(sentCommands().map(command => command.kind)).toEqual(["CreateKey"])
     })
 
-    it("propagates a CreateAlias refusal (an alias already bound is never re-pointed)", async () => {
+    it("propagates a CreateAlias refusal (an alias already bound is never re-pointed) as an ORPHAN — the created key is logged and thrown with its ARN, the alias and the region, the refusal kept as the cause, and nothing is read back", async () => {
       mockSend
         .mockResolvedValueOnce({ KeyMetadata: { Arn: MultiRegionKeyArn } })
         .mockRejectedValueOnce(
           kmsError("AlreadyExistsException", `${AliasName} already exists`)
         )
-      await expect(
+      const failure = await rejectionOf(
         KMSClientProvider.createKey(Region, AliasName, KeyType.EM, "p")
-      ).rejects.toThrow(/already exists/)
+      )
+      expect(failure).toBeInstanceOf(NestedError)
+      expect(failure.message).toMatch(
+        new RegExp(
+          `created key ${MultiRegionKeyArn} in ${Region} is orphaned — binding ${AliasName} to it failed`
+        )
+      )
+      expect(failure.context).toEqual({
+        keyArn: MultiRegionKeyArn,
+        aliasName: AliasName,
+        region: Region
+      })
+      expect(
+        failure.causes.map(({ name, message }) => `${name}: ${message}`)
+      ).toEqual([`AlreadyExistsException: ${AliasName} already exists`])
+      // The orphan is on the record at error level — ARN, region, alias and the refusal itself.
+      expect(errorsLogged()).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `key ${MultiRegionKeyArn} in ${Region} is ORPHANED — created, but binding ${AliasName} to it failed \\(${AliasName} already exists\\)`
+          )
+        )
+      ])
+      // No GetPublicKey through an alias that was never bound.
+      expect(sentCommands().map(command => command.kind)).toEqual([
+        "CreateKey",
+        "CreateAlias"
+      ])
+    })
+
+    it("a creation that binds its alias logs no orphan", async () => {
+      answerCreation(ethers.Wallet.createRandom())
+      await KMSClientProvider.createKey(Region, AliasName, KeyType.EM, "p")
+      expect(errorsLogged()).toEqual([])
     })
   })
 
-  describe("createSigner", () => {
-    it("builds the ethers-over-KMS signer for { region, keyId }, connected to the provider", async () => {
-      const provider = new ethers.JsonRpcProvider()
+  describe("createSigner (the KMS arm of keyPairUtils.ethereumSigner — the in-house ethers signer)", () => {
+    /** The chain id of the offline EIP-1559 request. */
+    const ChainId = 31_337
+    /** The nonce of the offline EIP-1559 request (and of the typed-data value). */
+    const Nonce = 7
+    /** The gas limit of the offline EIP-1559 request — a plain transfer. */
+    const TransferGasLimit = 21_000
+    /** The max fee per gas of the offline EIP-1559 request. */
+    const MaxFeePerGas = ethers.parseUnits("30", "gwei")
+    /** The max priority fee per gas of the offline EIP-1559 request. */
+    const MaxPriorityFeePerGas = ethers.parseUnits("1", "gwei")
+    /** The value of the offline EIP-1559 request. */
+    const TransferValue = ethers.parseEther("0.25")
+    /** An authex-link-shaped message. */
+    const Message = "authex createlink payload"
+    /** EIP-712 typed data: the domain … */
+    const TypedDataDomain: ethers.TypedDataDomain = {
+      name: "WIRE",
+      version: "1",
+      chainId: ChainId,
+      verifyingContract: ethers.ZeroAddress
+    }
+    /** … its one struct … */
+    const TypedDataTypes: Record<string, ethers.TypedDataField[]> = {
+      Link: [
+        { name: "account", type: "string" },
+        { name: "nonce", type: "uint256" }
+      ]
+    }
+    /** … and one value of it. */
+    const TypedDataValue = { account: "batchop.a", nonce: Nonce }
+
+    /** A fully specified EIP-1559 request to `to` — signable with no provider, exactly as an offline wallet signs it. */
+    function eip1559Request(to: string): ethers.TransactionLike<string> {
+      return {
+        chainId: ChainId,
+        nonce: Nonce,
+        gasLimit: TransferGasLimit,
+        maxFeePerGas: MaxFeePerGas,
+        maxPriorityFeePerGas: MaxPriorityFeePerGas,
+        to,
+        value: TransferValue
+      }
+    }
+
+    /**
+     * The signer pinned to `wallet`'s address, with the KMS double answering
+     * the creation-time `GetPublicKey` with the wallet's SPKI and, from then
+     * on, every `Sign` with the DER of the wallet's OWN signature of the digest
+     * it receives — a stand-in for the HSM holding that key. The creation call
+     * is cleared off the record, so `sentCommands()` is the signing alone.
+     */
+    async function signerFor(
+      wallet = ethers.Wallet.createRandom(),
+      provider?: ethers.Provider
+    ) {
+      mockSend.mockResolvedValueOnce(publicKeyResponse(wallet, KeyArn))
       const signer = await KMSClientProvider.createSigner(
         Region,
         AliasName,
         provider
       )
-      expect(mockAwsKmsSigner).toHaveBeenCalledTimes(1)
-      expect(mockAwsKmsSigner).toHaveBeenCalledWith(
-        { region: Region, keyId: AliasName },
-        provider
-      )
-      expect(signer).toEqual({
-        config: { region: Region, keyId: AliasName },
-        provider
-      })
-      provider.destroy()
+      mockSend.mockClear()
+      mockSend.mockImplementation(async (command: SentCommand) => ({
+        Signature: walletDerSignature(wallet, command.input.Message as Uint8Array)
+      }))
+      return { signer, wallet }
+    }
+
+    it("pins the address of the key's public point at creation — ONE GetPublicKey for the alias, as an EM key — an ethers AbstractSigner with no provider until one is given", async () => {
+      const wallet = ethers.Wallet.createRandom()
+      mockSend.mockResolvedValueOnce(publicKeyResponse(wallet, KeyArn))
+      const signer = await KMSClientProvider.createSigner(Region, AliasName)
+      expect(signer).toBeInstanceOf(ethers.AbstractSigner)
+      await expect(signer.getAddress()).resolves.toBe(wallet.address)
+      expect(signer.provider).toBeNull()
+      expect(sentCommands()).toEqual([
+        { kind: "GetPublicKey", input: { KeyId: AliasName } }
+      ])
     })
 
-    it("signs offline (no provider) when none is given", async () => {
-      await KMSClientProvider.createSigner(Region, AliasName)
-      expect(mockAwsKmsSigner).toHaveBeenCalledWith(
-        { region: Region, keyId: AliasName },
-        null
+    it("refuses a key that is not a secp256k1 SIGN_VERIFY key at creation, before it signs anything", async () => {
+      mockSend.mockResolvedValueOnce(
+        ed25519PublicKeyResponse(Keypair.generate(), KeyArn)
       )
+      await expect(
+        KMSClientProvider.createSigner(Region, AliasName)
+      ).rejects.toThrow(
+        /is a ECC_NIST_EDWARDS25519 key, not ECC_SECG_P256K1 \(the spec a EM key needs\)/
+      )
+    })
+
+    it("signMessage: ONE DIGEST / ECDSA_SHA_256 Sign of the message hash through the cached regional client — byte-identical to the wallet's own signature", async () => {
+      const { signer, wallet } = await signerFor()
+      await expect(signer.signMessage(Message)).resolves.toBe(
+        await wallet.signMessage(Message)
+      )
+      expect(sentCommands()).toEqual([
+        {
+          kind: "Sign",
+          input: {
+            KeyId: AliasName,
+            Message: ethers.getBytes(ethers.hashMessage(Message)),
+            MessageType: MessageType.DIGEST,
+            SigningAlgorithm: SigningAlgorithmSpec.ECDSA_SHA_256
+          }
+        }
+      ])
+      // The region's ONE client — the same cached, adaptive-retry client every other KMS call uses.
+      expect(clientConstructionsFor(Region)).toHaveLength(1)
+    })
+
+    it("signTransaction: a fully specified EIP-1559 request with no provider — byte-identical to the wallet's, recovering to the pinned address", async () => {
+      const { signer, wallet } = await signerFor(),
+        request = eip1559Request(ethers.Wallet.createRandom().address),
+        signed = await signer.signTransaction(request)
+      expect(signed).toBe(await wallet.signTransaction(request))
+      expect(ethers.Transaction.from(signed).from).toBe(wallet.address)
+      expect(sentCommands().map(command => command.input.Message)).toEqual([
+        ethers.getBytes(ethers.Transaction.from(request).unsignedHash)
+      ])
+    })
+
+    it("signTransaction accepts a from that IS the pinned address and refuses any other BEFORE any Sign", async () => {
+      const { signer, wallet } = await signerFor(),
+        to = ethers.Wallet.createRandom().address
+      await expect(
+        signer.signTransaction({ ...eip1559Request(to), from: wallet.address })
+      ).resolves.toBe(await wallet.signTransaction(eip1559Request(to)))
+      mockSend.mockClear()
+      await expect(
+        signer.signTransaction({ ...eip1559Request(to), from: to })
+      ).rejects.toThrow(
+        new RegExp(
+          `transaction from ${to} is not ${wallet.address}, the address of ${AliasName} in ${Region}`
+        )
+      )
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+
+    it("signTypedData: ONE Sign of the EIP-712 hash — byte-identical to the wallet's", async () => {
+      const { signer, wallet } = await signerFor()
+      await expect(
+        signer.signTypedData(TypedDataDomain, TypedDataTypes, TypedDataValue)
+      ).resolves.toBe(
+        await wallet.signTypedData(TypedDataDomain, TypedDataTypes, TypedDataValue)
+      )
+      expect(sentCommands().map(command => command.input.Message)).toEqual([
+        ethers.getBytes(
+          ethers.TypedDataEncoder.hash(TypedDataDomain, TypedDataTypes, TypedDataValue)
+        )
+      ])
+    })
+
+    it("normalises a HIGH-S signature to the low-S form and finds the flipped recovery id — the same output as the wallet's", async () => {
+      const { signer, wallet } = await signerFor()
+      mockSend.mockImplementationOnce(async (command: SentCommand) => {
+        const { r, s } = wallet.signingKey.sign(command.input.Message as Uint8Array)
+        return {
+          Signature: derSignature(ethers.getBytes(r), highS(ethers.getBytes(s)))
+        }
+      })
+      await expect(signer.signMessage(Message)).resolves.toBe(
+        await wallet.signMessage(Message)
+      )
+    })
+
+    it("refuses a signature from ANOTHER key — it recovers to neither parity of the pinned address", async () => {
+      const { signer, wallet } = await signerFor(),
+        other = ethers.Wallet.createRandom()
+      mockSend.mockImplementation(async (command: SentCommand) => ({
+        Signature: walletDerSignature(other, command.input.Message as Uint8Array)
+      }))
+      await expect(signer.signMessage(Message)).rejects.toThrow(
+        new RegExp(
+          `could not find a recovery id for the ECDSA signature ${AliasName} in ${Region} produced — it recovers to neither parity of the pinned address ${wallet.address}`
+        )
+      )
+    })
+
+    it("rejects an empty Sign response and a malformed DER", async () => {
+      const { signer } = await signerFor()
+      mockSend.mockResolvedValueOnce({})
+      await expect(signer.signMessage(Message)).rejects.toThrow(
+        /returned no ECDSA signature/
+      )
+      mockSend.mockResolvedValueOnce({
+        Signature: Uint8Array.of(KMSClientProvider.DerIntegerTag, 0x01, 0x01)
+      })
+      await expect(signer.signMessage(Message)).rejects.toThrow(
+        /is not a DER SEQUENCE/
+      )
+    })
+
+    it("connect(provider) keeps the pinned key — the same address, the given provider, still signing through the cached client with no second GetPublicKey", async () => {
+      const { signer, wallet } = await signerFor(),
+        provider = new ethers.JsonRpcProvider()
+      try {
+        const connected = signer.connect(provider)
+        expect(connected).not.toBe(signer)
+        expect(connected.provider).toBe(provider)
+        expect(signer.provider).toBeNull()
+        await expect(connected.getAddress()).resolves.toBe(wallet.address)
+        await expect(connected.signMessage(Message)).resolves.toBe(
+          await wallet.signMessage(Message)
+        )
+        expect(sentCommands().map(command => command.kind)).toEqual(["Sign"])
+      } finally {
+        provider.destroy()
+      }
+    })
+
+    it("a provider given at creation is the signer's", async () => {
+      const provider = new ethers.JsonRpcProvider()
+      try {
+        const { signer } = await signerFor(ethers.Wallet.createRandom(), provider)
+        expect(signer.provider).toBe(provider)
+      } finally {
+        provider.destroy()
+      }
     })
   })
 

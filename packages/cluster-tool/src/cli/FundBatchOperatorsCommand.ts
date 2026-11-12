@@ -124,17 +124,18 @@ export function createFundBatchOperatorsCommand(commandLine: string[] = []) {
     handler: async (args: Record<string, unknown>) => {
       configureCommandLogging()
       const outcome = await runFundBatchOperators(
-        toFundBatchOperatorsOptions(args, fileOptions)
-      )
-      stdout.info(BatchOperatorFundingTool.toListingJson(outcome.receipts))
-      if (outcome.failure != null) {
+          toFundBatchOperatorsOptions(args, fileOptions)
+        ),
+        { receipts, skips, failure } = outcome
+      stdout.info(BatchOperatorFundingTool.toListingJson(outcome))
+      if (failure != null) {
         log.error(
-          `[fund-batch-operators] FAILED funding ${outcome.failure.label} on ${outcome.failure.chain}: ${outcome.failure.error.message} — ${outcome.receipts.length} transactions landed before it (listed on stdout)`
+          `[fund-batch-operators] FAILED funding ${failure.label} on ${failure.chain}: ${failure.error.message} — ${receipts.length} transactions landed and ${skips.length} legs were skipped before it (listed on stdout)`
         )
         process.exit(1)
       }
       log.info(
-        `[fund-batch-operators] ${outcome.receipts.length} transactions landed — every operator funded on both outposts`
+        `[fund-batch-operators] ${receipts.length} transactions landed, ${skips.length} legs skipped for an existing position — every operator funded on both outposts`
       )
       process.exit(0)
     }

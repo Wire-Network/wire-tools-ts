@@ -278,7 +278,7 @@ describe("FundBatchOperatorsCommand", () => {
           TokenAmount.create({ tokenCode: BigInt(SlugName.from(Constants.SOL_TOKEN_CODENAME)), amount: 6n })
         ],
         operators = [{ label: "batchop.a" }, { label: "batchop.b" }] as never,
-        outcome: BatchOperatorFundingTool.Outcome = { receipts: [] },
+        outcome: BatchOperatorFundingTool.Outcome = { receipts: [], skips: [] },
         adopt = jest
           .spyOn(BatchOperatorFundingTool, "adoptOperators")
           .mockResolvedValue(operators),
@@ -307,13 +307,83 @@ describe("FundBatchOperatorsCommand", () => {
       jest.spyOn(BatchOperatorFundingTool, "adoptOperators").mockResolvedValue([])
       const fund = jest
         .spyOn(BatchOperatorFundingTool, "fund")
-        .mockResolvedValue({ receipts: [] })
+        .mockResolvedValue({ receipts: [], skips: [] })
       await runFundBatchOperators(fundableOptions())
       const [, allocation] = fund.mock.calls[0],
         [, labels] = (BatchOperatorFundingTool.adoptOperators as jest.Mock).mock.calls[0]
       expect(labels).toEqual(["batchop.a", "batchop.b", "batchop.c"])
       expect(allocation.stake).toEqual(BatchOperatorUnderwritingConfig.DefaultStake)
       expect(allocation.reserve).toEqual(BatchOperatorUnderwritingConfig.DefaultReserve)
+    })
+  })
+
+  describe("handler", () => {
+    let exitSpy: jest.SpiedFunction<typeof process.exit>
+
+    beforeEach(() => {
+      exitSpy = jest
+        .spyOn(process, "exit")
+        .mockImplementation((() => undefined) as never)
+    })
+
+    /**
+     * Run the handler over a complete, fundable launch — every input by flag,
+     * as yargs hands them over after applying a document's defaults, the SSM
+     * custody from the node-config file — with the adoption + funding stubbed
+     * to `outcome`.
+     */
+    async function runHandler(outcome: BatchOperatorFundingTool.Outcome): Promise<void> {
+      jest.spyOn(BatchOperatorFundingTool, "adoptOperators").mockResolvedValue([])
+      jest.spyOn(BatchOperatorFundingTool, "fund").mockResolvedValue(outcome)
+      const {
+          batchOperatorCount,
+          enableBatchOperatorUnderwriting,
+          ethereumPath,
+          solanaPath,
+          externalOutpostConfig
+        } = fundableOptions(),
+        nodeConfigFile = writeDocument("handler-node-config.json", {
+          ...AwsClusterNodeConfig,
+          ssm: SsmSignatureProvider.ssm
+        })
+      await createFundBatchOperatorsCommand().handler({
+        "batch-operator-count": batchOperatorCount,
+        "enable-batch-operator-underwriting": enableBatchOperatorUnderwriting,
+        "ethereum-path": ethereumPath,
+        "solana-path": solanaPath,
+        "external-outpost-config": externalOutpostConfig,
+        "signature-provider-type": SignatureProviderType.SSM,
+        [AWSClusterNodeConfigFlag]: nodeConfigFile
+      })
+    }
+
+    it("exits 0 when every leg landed or was skipped for an existing position", async () => {
+      await runHandler({
+        receipts: [],
+        skips: [
+          {
+            label: "batchop.a",
+            chain: Constants.ETHEREUM_CHAIN_CODENAME,
+            reason: BatchOperatorFundingTool.SkipReason.existingPosition,
+            amount: 1n
+          }
+        ]
+      })
+      expect(BatchOperatorFundingTool.fund).toHaveBeenCalledTimes(1)
+      expect(exitSpy.mock.calls[0]).toEqual([0])
+    })
+
+    it("exits 1 when a write failed, after printing what landed", async () => {
+      await runHandler({
+        receipts: [],
+        skips: [],
+        failure: {
+          label: "batchop.a",
+          chain: Constants.SOLANA_CHAIN_CODENAME,
+          error: new Error("custom program error: 0x1dc5")
+        }
+      })
+      expect(exitSpy.mock.calls[0]).toEqual([1])
     })
   })
 })

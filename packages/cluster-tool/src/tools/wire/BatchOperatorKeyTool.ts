@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import { match } from "ts-pattern"
 import { KeyType } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
@@ -324,14 +325,11 @@ export namespace BatchOperatorKeyTool {
     operator: OperatorAccount,
     keyType: KeyType
   ): OperatorAccount["wire"] | OperatorAccount["ethereum"] | OperatorAccount["solana"] {
-    const keyPair =
-      keyType === KeyType.K1
-        ? operator.wire
-        : keyType === KeyType.EM
-          ? operator.ethereum
-          : keyType === KeyType.ED
-            ? operator.solana
-            : null
+    const keyPair = match(keyType)
+      .with(KeyType.K1, () => operator.wire)
+      .with(KeyType.EM, () => operator.ethereum)
+      .with(KeyType.ED, () => operator.solana)
+      .otherwise(() => null)
     Assert.ok(
       keyPair != null,
       `BatchOperatorKeyTool: ${operator.label} has no ${KeyType[keyType]} key`

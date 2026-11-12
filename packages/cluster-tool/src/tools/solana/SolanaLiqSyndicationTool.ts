@@ -352,7 +352,7 @@ export namespace SolanaLiqSyndicationTool {
         instruction: "setTokenAddress",
         accounts: setLiqTokenAddressAccounts(base, placeholder)
       },
-      { instruction: "synd", accounts: syndAccounts(user) },
+      { instruction: SyndMethodName, accounts: syndAccounts(user) },
       {
         instruction: "injectBonusSyndYield",
         accounts: injectBonusSyndYieldAccounts(base, placeholder)
@@ -607,6 +607,147 @@ export namespace SolanaLiqSyndicationTool {
       )
       return 0n
     }
+  }
+
+  /** Name of the `OutpostAccount` account as the camelCased Anchor coder keys it. */
+  export const OutpostAccountName = "outpostAccount"
+
+  /** Camel-cased IDL method of the user syndication instruction. */
+  export const SyndMethodName = "synd"
+
+  /**
+   * Most recent confirmed signatures of a user {@link readSyndicatedPosition}
+   * inspects for PostLaunch syndications. A batch operator's outpost key is
+   * pre-created for the launch and signs a handful of transactions before it
+   * is funded, so its whole history fits; a wallet with a longer one is read
+   * from its latest.
+   */
+  export const UserSignatureScanLimit = 200
+
+  /** The `OutpostAccount` field this tool consumes, as the Anchor coder decodes it. */
+  interface OutpostAccountRecord {
+    stakedLiqsol: anchor.BN
+  }
+
+  /** `synd`'s arguments, as the Anchor instruction coder decodes them. */
+  interface SyndArguments {
+    amount: anchor.BN
+  }
+
+  /**
+   * The liqSOL `user` has syndicated into the outpost-owned pool, in base
+   * units; `0n` for a wallet that never syndicated. A READ over the two
+   * records the program keeps:
+   *
+   * - PreLaunch `synd` writes the per-user `OutpostAccount`
+   *   (`staked_liqsol`; created by the user's first `synd`, so an absent
+   *   account is a position of `0n`, never a failure) — the authoritative
+   *   figure, returned whenever it is positive.
+   * - PostLaunch `synd` touches no per-user account: the syndicated liqSOL is
+   *   outpost property and the depot is the ledger of record, so the user's
+   *   own confirmed transactions are the outpost's only record of it. The
+   *   last {@link UserSignatureScanLimit} are read and every successful
+   *   `synd` to the deployed `liqsol_core` is summed.
+   *
+   * @param source - The build context, or a target (RPC connection + `solanaPath` + program id).
+   * @param user - The syndicating wallet.
+   * @returns The syndicated position, in liqSOL base units.
+   * @throws When a confirmed transaction of `user` is unavailable.
+   */
+  export async function readSyndicatedPosition<C extends ClusterBuildContext>(
+    source: SolanaOutpostSource<C>,
+    user: PublicKey
+  ): Promise<bigint> {
+    const target = SolanaOutpostTarget.resolve(source),
+      staked = await readOutpostAccountStake(target, user)
+    return staked > 0n ? staked : readSyndHistory(target, user)
+  }
+
+  /** `OutpostAccount.staked_liqsol` of `user`; `0n` while the account was never created. */
+  async function readOutpostAccountStake(
+    target: SolanaOutpostTarget,
+    user: PublicKey
+  ): Promise<bigint> {
+    const { outpostAccount } = deriveUserPdas(
+        target.solanaPath,
+        user,
+        target.programId
+      ),
+      account = await target.connection.getAccountInfo(outpostAccount)
+    if (account == null) return 0n
+    const { stakedLiqsol } = loadReadOnlyLiqsolProgram(
+      target
+    ).coder.accounts.decode<OutpostAccountRecord>(
+      OutpostAccountName,
+      account.data
+    )
+    return BigInt(stakedLiqsol.toString())
+  }
+
+  /** The liqSOL of every successful `synd` among `user`'s latest confirmed transactions, summed. */
+  async function readSyndHistory(
+    target: SolanaOutpostTarget,
+    user: PublicKey
+  ): Promise<bigint> {
+    // The program's OWN (camelCased) IDL, as `BorshCoder` builds its instruction coder from it.
+    const decoder = new anchor.BorshInstructionCoder(
+        loadReadOnlyLiqsolProgram(target).idl
+      ),
+      signatures = (
+        await target.connection.getSignaturesForAddress(
+          user,
+          { limit: UserSignatureScanLimit },
+          SolanaClient.ConfirmationStatus.confirmed
+        )
+      ).filter(info => info.err == null),
+      amounts = await mapSeries(signatures, async info => {
+        const response = await target.connection.getTransaction(
+          info.signature,
+          {
+            commitment: SolanaClient.ConfirmationStatus.confirmed,
+            maxSupportedTransactionVersion: 0
+          }
+        )
+        Assert.ok(
+          response != null,
+          `SolanaLiqSyndicationTool: transaction ${info.signature} of ${user.toBase58()} is unavailable`
+        )
+        return syndAmountOf(response, target.programId, decoder)
+      })
+    return amounts.reduce((total, amount) => total + amount, 0n)
+  }
+
+  /**
+   * The liqSOL every `synd` to `programId` in one confirmed transaction
+   * carries, summed — each instruction decoded through the program's own
+   * coder, so another program's or another instruction's data counts `0n`.
+   *
+   * @param response - The confirmed transaction.
+   * @param programId - The deployed `liqsol_core`.
+   * @param decoder - The program's instruction decoder (its IDL's borsh coder).
+   * @returns The transaction's syndicated liqSOL, in base units.
+   */
+  function syndAmountOf(
+    response: VersionedTransactionResponse,
+    programId: PublicKey,
+    decoder: anchor.BorshInstructionCoder
+  ): bigint {
+    const { message } = response.transaction,
+      keys = new MessageAccountKeys(
+        message.staticAccountKeys,
+        response.meta.loadedAddresses
+      )
+    return message.compiledInstructions
+      .filter(instruction =>
+        keys.get(instruction.programIdIndex)?.equals(programId)
+      )
+      .map(instruction => decoder.decode(Buffer.from(instruction.data)))
+      .filter(decoded => decoded?.name === SyndMethodName)
+      .reduce(
+        (total, decoded) =>
+          total + BigInt((decoded.data as SyndArguments).amount.toString()),
+        0n
+      )
   }
 
   /**

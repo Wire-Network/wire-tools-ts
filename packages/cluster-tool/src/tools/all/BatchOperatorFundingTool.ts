@@ -2,21 +2,23 @@
  * BatchOperatorFundingTool — the pre-launch FUNDING of a cluster's bootstrap
  * batch operators on BOTH outposts (`wire-cluster-tool fund-batch-operators`):
  * for each operator whose keys `create-batch-operator-keys` pre-created, ADOPT
- * those keys (adopt-ONLY — a missing key fails, never silently minting a
- * replacement the funding would then bind to), check the operator's native
- * balance on each outpost covers `stake + reserve`, and STAKE the configured
- * amount so the launch snapshot carries the operator's position:
+ * its two outpost keys — the ethereum EM and the solana ED, the only keys that
+ * sign here; the WIRE K1 signs no funding write and is never read — (adopt-ONLY:
+ * a missing key fails, never silently minting a replacement the funding would
+ * then bind to), check the operator's native balance on each outpost covers
+ * what its leg still needs, and STAKE the configured amount so the launch
+ * snapshot carries the operator's position:
  *
  * - Ethereum, PRE-launch — ONE `Depositor.depositAndStake{value: stake}`
  *   through {@link EthereumPreLaunchStakingTool}, signed by the operator's EM
  *   key (`keyPairUtils.ethereumSigner`, so a KMS-custodied key signs remotely).
  * - Ethereum, POST-launch — `DepositManager.deposit{value: stake}` → liqETH
- *   `approve(SyndicationPool)` → `SyndicationPool.syndicate(liqETH,
+ *   `approve(SyndicationPool, stake)` → `SyndicationPool.syndicate(stake,
  *   compressedPubkey)`, the post-launch user path of
  *   {@link EthereumSyndicationTool}; one transaction per write.
- * - Solana — `sol_to_liqsol(stake)` then `synd(all minted liqSOL)` signed by
- *   the operator's ED keypair, in the account form of the outpost's launch
- *   state ({@link SolanaLiqSyndicationTool.syndAccounts}).
+ * - Solana — `sol_to_liqsol(stake)` then `synd(stake)` signed by the
+ *   operator's ED keypair, in the account form of the outpost's launch state
+ *   ({@link SolanaLiqSyndicationTool.syndAccounts}).
  *
  * Decision rules, read ON CHAIN before any write ({@link assertFundable}):
  * Ethereum is pre-launch while the address book records the staking proxy
@@ -26,12 +28,28 @@
  * and `PostLaunch`; `Launching` (the frozen snapshot window) and `Refund` are
  * refused, as are a frozen (emergency stop) or paused surface.
  *
+ * A re-run is SAFE. The preflight reads every operator's position on each
+ * outpost and plans each leg from it ({@link LegPlan}): an operator that
+ * already holds staked liq there — Depositor shares (Ethereum, staked
+ * pre-launch; past D-Day too), a `Syndicated` total on the pool (Ethereum
+ * post-launch), a PreLaunch `OutpostAccount` stake or a PostLaunch `synd` in
+ * its own history (Solana) — is SKIPPED on that outpost, reported as a
+ * {@link Skip} and counted as funded. A leg that stopped half-way resumes
+ * where it stopped: a liqETH / liqSOL balance that already covers the stake
+ * skips the deposit, an allowance that already covers it skips the approve,
+ * and every syndication is EXACTLY the configured stake — never the whole
+ * balance, so a resumed leg can neither double the stake nor exceed the
+ * per-transfer maximum the preflight checked against `stake`. The native
+ * balance a leg requires follows its plan: `stake + reserve` while it still
+ * deposits, the reserve alone once it does not.
+ *
  * Every precondition of EVERY operator (balances, launch states, per-transfer
- * maxima, the chain id) is checked before the first transaction, so the
- * common failure class never leaves one operator funded and the next not.
- * The writes then run operator by operator, Ethereum then Solana; the first
- * write failure stops the run and is reported with every receipt that landed
- * before it. Nothing is idempotent: a re-run stakes again.
+ * maxima, the chain id, the positions and the plans) is established before
+ * the first transaction, so the common failure class never leaves one
+ * operator funded and the next not, and the writes make no decision of their
+ * own. They then run operator by operator, Ethereum then Solana; the first
+ * write failure stops the run and is reported with every receipt and skip
+ * that preceded it.
  *
  * A cluster-less surface — the `create-batch-operator-keys` departure: no
  * `ClusterBuildContext`, no Step, no Report. The reads and builds go through
@@ -47,7 +65,7 @@ import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
 import { identity } from "lodash"
 import { match, P } from "ts-pattern"
 import { KeyType, SlugName } from "@wireio/sdk-core"
-import { OperatorType, TokenAmount } from "@wireio/opp-typescript-models"
+import { TokenAmount } from "@wireio/opp-typescript-models"
 import {
   SignatureProviderKeyPolicy,
   SignatureProviderType,
@@ -57,8 +75,9 @@ import {
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { getLogger } from "../../logging/Logger.js"
-import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
+import type { EthereumKeyPair, SolanaKeyPair } from "../../types/KeyPair.js"
+import type { SolanaSigner } from "../../types/SolanaSigner.js"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
 import {
   clearNonceCache,
@@ -108,6 +127,23 @@ export namespace BatchOperatorFundingTool {
   }
 
   /**
+   * The writes that spend the operator's NATIVE balance — the ones a leg's
+   * balance requirement adds the stake for; every other write spends gas or
+   * fees from the reserve alone.
+   */
+  export const NativeDepositActions: ReadonlySet<FundingAction> = new Set([
+    FundingAction.depositAndStake,
+    FundingAction.deposit,
+    FundingAction.solToLiqsol
+  ])
+
+  /** Why a leg wrote nothing. Identity enum (value === key). */
+  export enum SkipReason {
+    /** The operator already holds staked liq on the outpost — its launch position is there. */
+    existingPosition = "existingPosition"
+  }
+
+  /**
    * Which Ethereum staking surface is live, decided from the chain
    * ({@link resolveEthereumLaunchPhase}). Identity enum (value === key).
    */
@@ -116,6 +152,21 @@ export namespace BatchOperatorFundingTool {
     preLaunch = "preLaunch",
     /** `dDay()` is true, or no staking proxy is recorded: the `SyndicationPool` path. */
     postLaunch = "postLaunch"
+  }
+
+  /**
+   * The identity the funding acts as — the batch operator's durable handle
+   * and the two outpost keys that sign here. Nothing else of an
+   * `OperatorAccount` is adopted: the WIRE K1 signs no funding write, so it is
+   * never read from custody.
+   */
+  export interface FundedOperator {
+    /** The batch operator's durable handle (`batchop.a`). */
+    readonly label: string
+    /** The ethereum EM key — signs every Ethereum write; its address holds the ETH. */
+    readonly ethereum: EthereumKeyPair
+    /** The solana ED key — signs every Solana write; its pubkey holds the SOL. */
+    readonly solana: SolanaKeyPair
   }
 
   /**
@@ -155,6 +206,22 @@ export namespace BatchOperatorFundingTool {
     readonly amount: bigint
   }
 
+  /** One leg skipped — a row of the listing beside the receipts; it counts as funded. */
+  export interface Skip {
+    /** The batch operator's durable handle (`batchop.a`). */
+    readonly label: string
+    /** The outpost chain the leg was skipped on. */
+    readonly chain: Constants.OutpostChainCodename
+    /** Why. */
+    readonly reason: SkipReason
+    /**
+     * The existing position, in the units of the surface holding it: Depositor
+     * shares (Ethereum, staked pre-launch), liqETH wei syndicated (Ethereum
+     * post-launch), liqSOL base units (Solana).
+     */
+    readonly amount: bigint
+  }
+
   /** The first write failure of a run — which operator, on which chain, and why. */
   export interface Failure {
     /** The batch operator's durable handle. */
@@ -165,10 +232,16 @@ export namespace BatchOperatorFundingTool {
     readonly error: Error
   }
 
-  /** What a run produced: every landed receipt, and the failure that stopped it if one did. */
-  export interface Outcome {
+  /** The document `fund-batch-operators` prints on stdout: every landed transaction and every skipped leg. */
+  export interface Listing {
     /** Every transaction that landed, in submission order. */
-    readonly receipts: Receipt[]
+    readonly receipts: readonly Receipt[]
+    /** Every leg skipped for an existing position, in walk order. */
+    readonly skips: readonly Skip[]
+  }
+
+  /** What a run produced: the listing, and the failure that stopped it if one did. */
+  export interface Outcome extends Listing {
     /** The failure that stopped the run; absent when every operator was funded on every outpost. */
     readonly failure?: Failure
   }
@@ -186,6 +259,31 @@ export namespace BatchOperatorFundingTool {
   }
 
   /**
+   * What one leg of one operator still has to write, decided from the chain
+   * in the preflight: the operator's existing position on the outpost, and
+   * the writes in submission order — empty exactly when the position is
+   * positive (the leg is skipped); otherwise the deposit only while the liq
+   * balance does not yet cover the stake, the approve only while the pool's
+   * allowance does not, and the syndication always.
+   */
+  export interface LegPlan {
+    /** The liq the operator already holds staked on the outpost ({@link Skip.amount}'s units); `0n` when none. */
+    readonly position: bigint
+    /** The writes the leg still needs, in submission order. */
+    readonly writes: readonly FundingAction[]
+  }
+
+  /** Both legs of one operator. */
+  export interface OperatorPlan {
+    /** The operator the legs fund. */
+    readonly operator: FundedOperator
+    /** The Ethereum leg. */
+    readonly ethereum: LegPlan
+    /** The Solana leg. */
+    readonly solana: LegPlan
+  }
+
+  /**
    * Everything {@link assertFundable} establishes before the first write, so
    * the writes make no decision of their own.
    */
@@ -196,24 +294,51 @@ export namespace BatchOperatorFundingTool {
     readonly ethereumPhase: EthereumLaunchPhase
     /** The Solana outpost's launch state (`preLaunch` or `postLaunch`). */
     readonly wireState: WireState
+    /** One plan per operator, in the operators' order. */
+    readonly plans: readonly OperatorPlan[]
   }
 
-  /** One chain's funding of one operator, for the stop-at-first-failure walk. */
+  /**
+   * One chain's funding of one operator, for the stop-at-first-failure walk:
+   * appends each receipt to `receipts` AS IT LANDS (a later failure in the
+   * leg loses none of them) and returns the skip when the leg wrote nothing.
+   */
   interface FundingLeg {
     readonly chain: Constants.OutpostChainCodename
-    readonly fund: () => Promise<Receipt[]>
+    readonly fund: (receipts: Receipt[]) => Promise<Skip>
+  }
+
+  /** What every Ethereum write of one operator resolves once. */
+  interface EthereumWriteContext {
+    readonly operator: FundedOperator
+    /** The operator's EM key, connected to the outpost. */
+    readonly signer: ethers.Signer
+    readonly native: NativeAllocation
+    readonly target: EthereumOutpostTarget
+  }
+
+  /** What every Solana write of one operator resolves once. */
+  interface SolanaWriteContext {
+    readonly operator: FundedOperator
+    /** The operator's ED key, through the custody facade. */
+    readonly user: SolanaSigner
+    readonly native: NativeAllocation
+    /** The outpost's launch state, selecting `synd`'s account form. */
+    readonly wireState: WireState
+    readonly target: SolanaOutpostTarget
   }
 
   // ── key adoption ──────────────────────────────────────────────────────────
 
   /**
-   * Adopt every batch operator's pre-created keys — wire K1, solana ED and
-   * ethereum EM, through the SAME seam the bootstrap uses
-   * (`KeySteps.adoptOrCreateSignatureProviderKey`), under the ADOPT-ONLY
-   * policy: a key the custody store does not hold fails naming its id, and is
-   * never created — funding a key this run minted would bind real value to an
-   * identity no launch adopts. Refuses a KEY / KIOD provider (no custody store
-   * to adopt from) and a label that is not a bootstrap batch operator's.
+   * Adopt every batch operator's pre-created OUTPOST keys — solana ED and
+   * ethereum EM, the two that sign a funding write — through the SAME seam the
+   * bootstrap uses (`KeySteps.adoptOrCreateSignatureProviderKey`), under the
+   * ADOPT-ONLY policy: a key the custody store does not hold fails naming its
+   * id, and is never created — funding a key this run minted would bind real
+   * value to an identity no launch adopts. The WIRE K1 is not adopted: nothing
+   * here signs with it. Refuses a KEY / KIOD provider (no custody store to
+   * adopt from) and a label that is not a bootstrap batch operator's.
    *
    * @param settings - The resolved key-custody settings (SSM, optionally with KMS).
    * @param labels - The batch operators' durable handles (`Constants.batchOperatorLabels`).
@@ -224,7 +349,7 @@ export namespace BatchOperatorFundingTool {
     settings: KeyCustodySettings,
     labels: readonly string[],
     keyContext: KeyGenerator.Context
-  ): Promise<OperatorAccount[]> {
+  ): Promise<FundedOperator[]> {
     Assert.ok(
       settings.signatureProvider.type === SignatureProviderType.SSM,
       `BatchOperatorFundingTool: funding requires an SSM signature provider (got ${settings.signatureProvider.type}) — a KEY / KIOD cluster has no custody store to adopt the pre-created keys from`
@@ -243,13 +368,7 @@ export namespace BatchOperatorFundingTool {
       }
     }
     return mapSeries(labels, async label => {
-      const [wire, solana, ethereum] = await Promise.all([
-        KeySteps.adoptOrCreateSignatureProviderKey(
-          adopting,
-          KeyType.K1,
-          label,
-          keyContext
-        ),
+      const [solana, ethereum] = await Promise.all([
         KeySteps.adoptOrCreateSignatureProviderKey(
           adopting,
           KeyType.ED,
@@ -266,15 +385,7 @@ export namespace BatchOperatorFundingTool {
       log.info(
         `[fund-batch-operators] ${label} — adopted ETH ${ethereum.address}, SOL ${solanaNativePublicKey(solana)}`
       )
-      return {
-        label,
-        publicationLabel: label,
-        account: label,
-        type: OperatorType.BATCH,
-        wire,
-        ethereum,
-        solana
-      }
+      return { label, ethereum, solana }
     })
   }
 
@@ -343,13 +454,33 @@ export namespace BatchOperatorFundingTool {
     }
   }
 
+  /**
+   * The native balance a leg requires: `stake + reserve` while its plan still
+   * deposits native value, the reserve alone once it does not — skipped for an
+   * existing position, or resumed past a deposit that already landed.
+   *
+   * @param plan - The leg's plan.
+   * @param stake - The stake, in the chain's base units.
+   * @param reserve - The reserve, in the chain's base units.
+   * @returns The required balance.
+   */
+  export function requiredNative(
+    plan: LegPlan,
+    stake: bigint,
+    reserve: bigint
+  ): bigint {
+    return plan.writes.some(action => NativeDepositActions.has(action))
+      ? stake + reserve
+      : reserve
+  }
+
   /** The Solana wallet of an operator's ED pair, read off its stored public key (no secret). */
-  function solanaWallet(operator: OperatorAccount): PublicKey {
+  function solanaWallet(operator: FundedOperator): PublicKey {
     return new PublicKey(solanaNativePublicKey(operator.solana))
   }
 
   /** An operator whose both outpost keys were adopted — the precondition of every check and write. */
-  function assertOutpostKeys(operator: OperatorAccount): OperatorAccount {
+  function assertOutpostKeys(operator: FundedOperator): FundedOperator {
     Assert.ok(
       operator.ethereum != null && operator.solana != null,
       `BatchOperatorFundingTool: ${operator.label} carries no ${operator.ethereum == null ? "ethereum" : "solana"} key`
@@ -494,39 +625,212 @@ export namespace BatchOperatorFundingTool {
     )
   }
 
-  /** The operator holds `stake + reserve` on each outpost. */
+  /** A leg an existing position skips: nothing to write. */
+  function skippedLeg(position: bigint): LegPlan {
+    return { position, writes: [] }
+  }
+
+  /**
+   * `action` when `needed`, else nothing — the resumption logged, naming what
+   * already covers the stake, so a resumed leg's dropped writes are on the
+   * record (a skipped write produces no receipt).
+   */
+  function stillNeeded(
+    label: string,
+    action: FundingAction,
+    needed: boolean,
+    covering: string
+  ): FundingAction[] {
+    if (needed) return [action]
+    log.info(
+      `[fund-batch-operators] ${label} ${action} skipped — ${covering} already covers the stake`
+    )
+    return []
+  }
+
+  /**
+   * The liq the operator already holds staked on a post-launch Ethereum
+   * outpost: its `Syndicated` total on the pool, or — while the address book
+   * still records the pre-launch Depositor — the shares it staked pre-launch
+   * and carries past D-Day.
+   */
+  async function readPostLaunchEthereumPosition(
+    target: EthereumOutpostTarget,
+    address: string
+  ): Promise<bigint> {
+    const syndicated = await EthereumSyndicationTool.readSyndicatedPosition(
+      target,
+      address
+    )
+    if (syndicated > 0n) return syndicated
+    return EthereumPreLaunchStakingTool.hasStakingContract(
+      target.outpostAddresses
+    )
+      ? EthereumPreLaunchStakingTool.readStakedShares(target, address)
+      : 0n
+  }
+
+  /**
+   * The Ethereum leg's plan, read from the chain. Pre-launch: skipped when
+   * the operator holds Depositor shares, else ONE `depositAndStake`.
+   * Post-launch: skipped when it holds a position
+   * ({@link readPostLaunchEthereumPosition}), else `deposit` unless its
+   * liqETH already covers the stake, `approve` unless the pool's allowance
+   * already does, and `syndicate`.
+   */
+  async function planEthereumLeg(
+    operator: FundedOperator,
+    native: NativeAllocation,
+    phase: EthereumLaunchPhase,
+    target: EthereumOutpostTarget
+  ): Promise<LegPlan> {
+    const { label } = operator,
+      { address } = operator.ethereum
+    return match(phase)
+      .with(EthereumLaunchPhase.preLaunch, async (): Promise<LegPlan> => {
+        const shares = await EthereumPreLaunchStakingTool.readStakedShares(
+          target,
+          address
+        )
+        return shares > 0n
+          ? skippedLeg(shares)
+          : { position: 0n, writes: [FundingAction.depositAndStake] }
+      })
+      .with(EthereumLaunchPhase.postLaunch, async (): Promise<LegPlan> => {
+        const position = await readPostLaunchEthereumPosition(target, address)
+        if (position > 0n) return skippedLeg(position)
+        const poolAddress = await EthereumSyndicationTool.loadSyndicationPool(
+            target,
+            target.provider
+          ).getAddress(),
+          held = await EthereumSyndicationTool.readLiqEthBalance(target, address),
+          allowance = await EthereumSyndicationTool.readLiqEthAllowance(
+            target,
+            address,
+            poolAddress
+          )
+        return {
+          position: 0n,
+          writes: [
+            ...stillNeeded(
+              label,
+              FundingAction.deposit,
+              held < native.stakeWei,
+              `liqETH ${held} wei`
+            ),
+            ...stillNeeded(
+              label,
+              FundingAction.approve,
+              allowance < native.stakeWei,
+              `the pool's allowance ${allowance} wei`
+            ),
+            FundingAction.syndicate
+          ]
+        }
+      })
+      .exhaustive()
+  }
+
+  /**
+   * The Solana leg's plan, read from the chain: skipped when the operator
+   * holds a syndicated position ({@link SolanaLiqSyndicationTool.readSyndicatedPosition}),
+   * else `sol_to_liqsol` unless its liqSOL already covers the stake, and `synd`.
+   */
+  async function planSolanaLeg(
+    operator: FundedOperator,
+    native: NativeAllocation,
+    target: SolanaOutpostTarget
+  ): Promise<LegPlan> {
+    const { label } = operator,
+      wallet = solanaWallet(operator),
+      position = await SolanaLiqSyndicationTool.readSyndicatedPosition(
+        target,
+        wallet
+      )
+    if (position > 0n) return skippedLeg(position)
+    const held = await SolanaLiqSyndicationTool.readLiqsolBalanceOf(
+      target,
+      wallet
+    )
+    return {
+      position: 0n,
+      writes: [
+        ...stillNeeded(
+          label,
+          FundingAction.solToLiqsol,
+          held < native.stakeLamports,
+          `liqSOL ${held}`
+        ),
+        FundingAction.synd
+      ]
+    }
+  }
+
+  /** The operator holds what each leg's plan requires on its outpost ({@link requiredNative}). */
   async function assertBalances(
-    operator: OperatorAccount,
+    plan: OperatorPlan,
     native: NativeAllocation,
     targets: Targets
   ): Promise<void> {
-    const { ethereum, solana } = assertOutpostKeys(operator),
+    const { operator } = plan,
+      { label, ethereum, solana } = operator,
       ethereumBalance = await targets.ethereum.provider.getBalance(
         ethereum.address
       ),
-      ethereumRequired = native.stakeWei + native.reserveWei
+      ethereumRequired = requiredNative(
+        plan.ethereum,
+        native.stakeWei,
+        native.reserveWei
+      )
     Assert.ok(
       ethereumBalance >= ethereumRequired,
-      `BatchOperatorFundingTool: ${operator.label}'s Ethereum balance ${ethereumBalance} wei at ${ethereum.address} is below stake + reserve ${ethereumRequired} wei`
+      `BatchOperatorFundingTool: ${label}'s Ethereum balance ${ethereumBalance} wei at ${ethereum.address} is below the required ${ethereumRequired} wei`
     )
     const wallet = solanaWallet(operator),
       lamports = BigInt(await targets.solana.connection.getBalance(wallet)),
-      solanaRequired = native.stakeLamports + native.reserveLamports
+      solanaRequired = requiredNative(
+        plan.solana,
+        native.stakeLamports,
+        native.reserveLamports
+      )
     Assert.ok(
       lamports >= solanaRequired,
-      `BatchOperatorFundingTool: ${operator.label}'s Solana balance ${lamports} lamports at ${wallet.toBase58()} is below stake + reserve ${solanaRequired} lamports`
+      `BatchOperatorFundingTool: ${label}'s Solana balance ${lamports} lamports at ${wallet.toBase58()} is below the required ${solanaRequired} lamports`
     )
     log.info(
-      `[fund-batch-operators] ${operator.label} holds ${ethereumBalance} wei (needs ${ethereumRequired}) and ${lamports} lamports (needs ${solanaRequired}) — ${solanaNativePublicKey(solana)}`
+      `[fund-batch-operators] ${label} holds ${ethereumBalance} wei (needs ${ethereumRequired}) and ${lamports} lamports (needs ${solanaRequired}) — ${solanaNativePublicKey(solana)}`
     )
+  }
+
+  /** One operator's plan: both legs read from the chain, then its balances asserted against them. */
+  async function planOperator(
+    operator: FundedOperator,
+    native: NativeAllocation,
+    ethereumPhase: EthereumLaunchPhase,
+    targets: Targets
+  ): Promise<OperatorPlan> {
+    assertOutpostKeys(operator)
+    const plan: OperatorPlan = {
+      operator,
+      ethereum: await planEthereumLeg(
+        operator,
+        native,
+        ethereumPhase,
+        targets.ethereum
+      ),
+      solana: await planSolanaLeg(operator, native, targets.solana)
+    }
+    await assertBalances(plan, native, targets)
+    return plan
   }
 
   /**
    * Establish every precondition of the run BEFORE the first write — the
    * chain id behind the Ethereum endpoint, the LIQSOL mint, both launch
-   * states, both per-transfer maxima, and every operator's balance on both
-   * outposts — so a refusal (the common failure class) never leaves one
-   * operator funded and the next not. Reads only.
+   * states, both per-transfer maxima, and, per operator, its position and
+   * plan on each outpost ({@link LegPlan}) and the balance that plan requires
+   * — so a refusal (the common failure class) never leaves one operator funded
+   * and the next not. Reads only.
    *
    * @param operators - The adopted identities.
    * @param allocation - The stake + reserve, in depot units.
@@ -535,7 +839,7 @@ export namespace BatchOperatorFundingTool {
    * @throws On the first unmet precondition, naming it.
    */
   export async function assertFundable(
-    operators: readonly OperatorAccount[],
+    operators: readonly FundedOperator[],
     allocation: Allocation,
     targets: Targets
   ): Promise<FundingPreflight> {
@@ -553,10 +857,10 @@ export namespace BatchOperatorFundingTool {
     }
     const wireState = await resolveWireState(targets.solana)
     await assertSolanaSyndicationMaximum(targets.solana, native)
-    await eachSeries(operators, operator =>
-      assertBalances(operator, native, targets)
+    const plans = await mapSeries(operators, operator =>
+      planOperator(operator, native, ethereumPhase, targets)
     )
-    return { native, ethereumPhase, wireState }
+    return { native, ethereumPhase, wireState, plans }
   }
 
   // ── writes ────────────────────────────────────────────────────────────────
@@ -592,6 +896,11 @@ export namespace BatchOperatorFundingTool {
     }
   }
 
+  /** What a write is, for its submission + failure messages. */
+  function writeLabel(operator: FundedOperator, action: FundingAction): string {
+    return `fund-batch-operators ${operator.label} ${action}`
+  }
+
   /** One receipt row. */
   function receipt(
     label: string,
@@ -606,14 +915,25 @@ export namespace BatchOperatorFundingTool {
     return { label, chain, action, transaction, amount }
   }
 
-  /** Ethereum pre-launch: ONE `depositAndStake{value: stake}`. */
-  async function stakePreLaunchEthereum(
-    operator: OperatorAccount,
-    signer: ethers.Signer,
-    native: NativeAllocation,
-    target: EthereumOutpostTarget
-  ): Promise<Receipt[]> {
-    const staking = EthereumPreLaunchStakingTool.loadStakingContract(
+  /** One skip row, logged like a receipt. */
+  function skip(
+    label: string,
+    chain: Constants.OutpostChainCodename,
+    reason: SkipReason,
+    amount: bigint
+  ): Skip {
+    log.info(
+      `[fund-batch-operators] ${label} ${chain} skipped — ${reason} ${amount}`
+    )
+    return { label, chain, reason, amount }
+  }
+
+  /** Ethereum pre-launch: ONE `Depositor.depositAndStake{value: stake}`. */
+  async function sendDepositAndStake(
+    context: EthereumWriteContext
+  ): Promise<Receipt> {
+    const { operator, signer, native, target } = context,
+      staking = EthereumPreLaunchStakingTool.loadStakingContract(
         target,
         signer
       ),
@@ -623,112 +943,139 @@ export namespace BatchOperatorFundingTool {
           staking,
           native.stakeWei
         ),
-        `fund-batch-operators ${operator.label} ${FundingAction.depositAndStake}`
+        writeLabel(operator, FundingAction.depositAndStake)
       )
-    return [
-      receipt(
-        operator.label,
-        Constants.ETHEREUM_CHAIN_CODENAME,
-        FundingAction.depositAndStake,
-        hash,
-        native.stakeWei
-      )
-    ]
+    return receipt(
+      operator.label,
+      Constants.ETHEREUM_CHAIN_CODENAME,
+      FundingAction.depositAndStake,
+      hash,
+      native.stakeWei
+    )
   }
 
-  /** Ethereum post-launch: `deposit{value}` → `approve(pool, minted)` → `syndicate(minted, compressedPubkey)`. */
-  async function syndicatePostLaunchEthereum(
-    operator: OperatorAccount,
-    signer: ethers.Signer,
-    native: NativeAllocation,
-    target: EthereumOutpostTarget
-  ): Promise<Receipt[]> {
-    const { label } = operator,
-      chain = Constants.ETHEREUM_CHAIN_CODENAME,
+  /** Ethereum post-launch: ONE `DepositManager.deposit{value: stake}` (ETH → liqETH). */
+  async function sendDepositLiqEth(
+    context: EthereumWriteContext
+  ): Promise<Receipt> {
+    const { operator, signer, native, target } = context,
       depositManager = EthereumSyndicationTool.loadDepositManager(target, signer),
-      liqEth = EthereumSyndicationTool.loadLiqEthToken(target, signer),
-      pool = EthereumSyndicationTool.loadSyndicationPool(target, signer),
-      poolAddress = await pool.getAddress(),
-      depositHash = await sendEthereum(
+      hash = await sendEthereum(
         signer,
         EthereumSyndicationTool.depositLiqEthRequest(
           depositManager,
           native.stakeWei
         ),
-        `fund-batch-operators ${label} ${FundingAction.deposit}`
-      ),
-      minted = await EthereumSyndicationTool.readLiqEthBalance(
+        writeLabel(operator, FundingAction.deposit)
+      )
+    return receipt(
+      operator.label,
+      Constants.ETHEREUM_CHAIN_CODENAME,
+      FundingAction.deposit,
+      hash,
+      native.stakeWei
+    )
+  }
+
+  /** Ethereum post-launch: ONE liqETH `approve(SyndicationPool, stake)` — exactly the stake, never the balance. */
+  async function sendApproveLiqEth(
+    context: EthereumWriteContext
+  ): Promise<Receipt> {
+    const { operator, signer, native, target } = context,
+      liqEth = EthereumSyndicationTool.loadLiqEthToken(target, signer),
+      poolAddress = await EthereumSyndicationTool.loadSyndicationPool(
+        target,
+        signer
+      ).getAddress(),
+      hash = await sendEthereum(
+        signer,
+        EthereumSyndicationTool.approveLiqEthRequest(
+          liqEth,
+          poolAddress,
+          native.stakeWei
+        ),
+        writeLabel(operator, FundingAction.approve)
+      )
+    return receipt(
+      operator.label,
+      Constants.ETHEREUM_CHAIN_CODENAME,
+      FundingAction.approve,
+      hash,
+      native.stakeWei
+    )
+  }
+
+  /**
+   * Ethereum post-launch: ONE `SyndicationPool.syndicate(stake,
+   * compressedPubkey)` — exactly the stake, never the balance — once the
+   * operator's liqETH is confirmed to cover it (the deposit landed, or was
+   * already held).
+   */
+  async function sendSyndicate(context: EthereumWriteContext): Promise<Receipt> {
+    const { operator, signer, native, target } = context,
+      { label } = operator,
+      held = await EthereumSyndicationTool.readLiqEthBalance(
         target,
         operator.ethereum.address
       )
     Assert.ok(
-      minted > 0n,
-      `BatchOperatorFundingTool: ${label} holds no liqETH after depositing ${native.stakeWei} wei`
+      held >= native.stakeWei,
+      `BatchOperatorFundingTool: ${label} holds ${held} liqETH wei — below the stake ${native.stakeWei} wei to syndicate`
     )
-    const approveHash = await sendEthereum(
-        signer,
-        EthereumSyndicationTool.approveLiqEthRequest(liqEth, poolAddress, minted),
-        `fund-batch-operators ${label} ${FundingAction.approve}`
+    const hash = await sendEthereum(
+      signer,
+      EthereumSyndicationTool.syndicateRequest(
+        EthereumSyndicationTool.loadSyndicationPool(target, signer),
+        native.stakeWei,
+        ethers.hexlify(ethereumCompressedPubkey(operator.ethereum))
       ),
-      syndicateHash = await sendEthereum(
-        signer,
-        EthereumSyndicationTool.syndicateRequest(
-          pool,
-          minted,
-          ethers.hexlify(ethereumCompressedPubkey(operator.ethereum))
-        ),
-        `fund-batch-operators ${label} ${FundingAction.syndicate}`
-      )
-    return [
-      receipt(label, chain, FundingAction.deposit, depositHash, native.stakeWei),
-      receipt(label, chain, FundingAction.approve, approveHash, minted),
-      receipt(label, chain, FundingAction.syndicate, syndicateHash, minted)
-    ]
+      writeLabel(operator, FundingAction.syndicate)
+    )
+    return receipt(
+      label,
+      Constants.ETHEREUM_CHAIN_CODENAME,
+      FundingAction.syndicate,
+      hash,
+      native.stakeWei
+    )
   }
 
-  /** Fund one operator on Ethereum, in the preflight's phase. */
-  async function fundEthereum(
-    operator: OperatorAccount,
-    preflight: FundingPreflight,
-    target: EthereumOutpostTarget
-  ): Promise<Receipt[]> {
-    const signer = await ethereumSigner(operator.ethereum, target.provider)
-    return match(preflight.ethereumPhase)
-      .with(EthereumLaunchPhase.preLaunch, () =>
-        stakePreLaunchEthereum(operator, signer, preflight.native, target)
-      )
-      .with(EthereumLaunchPhase.postLaunch, () =>
-        syndicatePostLaunchEthereum(operator, signer, preflight.native, target)
-      )
-      .exhaustive()
+  /** ONE Ethereum write of `action` — the dispatch of a leg's plan. */
+  function sendEthereumWrite(
+    context: EthereumWriteContext,
+    action: FundingAction
+  ): Promise<Receipt> {
+    return match(action)
+      .with(FundingAction.depositAndStake, () => sendDepositAndStake(context))
+      .with(FundingAction.deposit, () => sendDepositLiqEth(context))
+      .with(FundingAction.approve, () => sendApproveLiqEth(context))
+      .with(FundingAction.syndicate, () => sendSyndicate(context))
+      .otherwise(() => {
+        throw new Error(
+          `BatchOperatorFundingTool: ${action} is not an Ethereum write`
+        )
+      })
   }
 
   /**
-   * Fund one operator on Solana: `sol_to_liqsol(stake)` — standing off the
-   * runtime's epoch-rewards window exactly as the deposit Step does — then
-   * `synd` of EVERY liqSOL the operator then holds, in the launch state's
-   * account form. Both are signed by the operator's ED key through the
-   * custody facade (`keyPairUtils.solanaSigner`), so a KMS-custodied key signs
-   * remotely.
+   * Solana: ONE `sol_to_liqsol(stake)` — standing off the runtime's
+   * epoch-rewards window exactly as the deposit Step does.
    */
-  async function fundSolana(
-    operator: OperatorAccount,
-    preflight: FundingPreflight,
-    target: SolanaOutpostTarget
-  ): Promise<Receipt[]> {
-    const { label } = operator,
-      chain = Constants.SOLANA_CHAIN_CODENAME,
-      user = await solanaSigner(operator.solana),
-      { stakeLamports } = preflight.native,
+  async function sendDepositForLiqsol(
+    context: SolanaWriteContext
+  ): Promise<Receipt> {
+    const { operator, user, native, target } = context,
+      { label } = operator,
+      { stakeLamports } = native,
       ephemeralStakeSeed = SolanaLiqSyndicationTool.nextEphemeralStakeSeed(label),
-      depositLabel = `fund-batch-operators ${label} ${FundingAction.solToLiqsol}`
-    let depositSignature: string = null
+      depositLabel = writeLabel(operator, FundingAction.solToLiqsol)
+    let signature: string = null
     await SolanaLiqSyndicationTool.waitForEpochRewardsIdle(target, depositLabel)
     await SolanaLiqSyndicationTool.submitWithEpochRewardsRetry(
       target,
       depositLabel,
       async () => {
-        depositSignature = await SolanaLiqSyndicationTool.submit(
+        signature = await SolanaLiqSyndicationTool.submit(
           target,
           await SolanaLiqSyndicationTool.depositForLiqsolTransaction(
             target,
@@ -741,40 +1088,135 @@ export namespace BatchOperatorFundingTool {
         )
       }
     )
-    const minted = await SolanaLiqSyndicationTool.readLiqsolBalanceOf(
-      target,
-      user.publicKey
+    return receipt(
+      label,
+      Constants.SOLANA_CHAIN_CODENAME,
+      FundingAction.solToLiqsol,
+      signature,
+      stakeLamports
     )
+  }
+
+  /**
+   * Solana: ONE `synd(stake)` in the launch state's account form — exactly
+   * the stake, never the balance — once the operator's liqSOL is confirmed to
+   * cover it (the deposit landed, or was already held).
+   */
+  async function sendSynd(context: SolanaWriteContext): Promise<Receipt> {
+    const { operator, user, native, wireState, target } = context,
+      { label } = operator,
+      { stakeLamports } = native,
+      held = await SolanaLiqSyndicationTool.readLiqsolBalanceOf(
+        target,
+        user.publicKey
+      )
     Assert.ok(
-      minted > 0n,
-      `BatchOperatorFundingTool: ${label} holds no liqSOL after depositing ${stakeLamports} lamports`
+      held >= stakeLamports,
+      `BatchOperatorFundingTool: ${label} holds ${held} liqSOL — below the stake ${stakeLamports} to syndicate`
     )
-    const syndSignature = await SolanaLiqSyndicationTool.submit(
+    const signature = await SolanaLiqSyndicationTool.submit(
       target,
       await SolanaLiqSyndicationTool.syndTransaction(
         target,
         user,
-        minted,
-        preflight.wireState
+        stakeLamports,
+        wireState
       ),
       user,
-      `fund-batch-operators ${label} ${FundingAction.synd}`
+      writeLabel(operator, FundingAction.synd)
     )
-    return [
-      receipt(label, chain, FundingAction.solToLiqsol, depositSignature, stakeLamports),
-      receipt(label, chain, FundingAction.synd, syndSignature, minted)
-    ]
+    return receipt(
+      label,
+      Constants.SOLANA_CHAIN_CODENAME,
+      FundingAction.synd,
+      signature,
+      stakeLamports
+    )
   }
 
-  /** Run one leg, appending its receipts; a rejection becomes the run's {@link Failure}. */
-  async function fundLeg(
-    operator: OperatorAccount,
-    leg: FundingLeg,
+  /** ONE Solana write of `action` — the dispatch of a leg's plan. */
+  function sendSolanaWrite(
+    context: SolanaWriteContext,
+    action: FundingAction
+  ): Promise<Receipt> {
+    return match(action)
+      .with(FundingAction.solToLiqsol, () => sendDepositForLiqsol(context))
+      .with(FundingAction.synd, () => sendSynd(context))
+      .otherwise(() => {
+        throw new Error(`BatchOperatorFundingTool: ${action} is not a Solana write`)
+      })
+  }
+
+  /**
+   * Fund one operator on Ethereum per its leg's plan: skipped outright for an
+   * existing position (the skip returned), else the planned writes in order,
+   * each signed by the operator's EM key through the custody facade
+   * (`keyPairUtils.ethereumSigner`) and its receipt appended as it lands.
+   */
+  async function fundEthereum(
+    operator: FundedOperator,
+    preflight: FundingPreflight,
+    plan: LegPlan,
+    target: EthereumOutpostTarget,
     receipts: Receipt[]
+  ): Promise<Skip> {
+    const chain = Constants.ETHEREUM_CHAIN_CODENAME
+    if (plan.writes.length === 0) {
+      return skip(operator.label, chain, SkipReason.existingPosition, plan.position)
+    }
+    const context: EthereumWriteContext = {
+      operator,
+      signer: await ethereumSigner(operator.ethereum, target.provider),
+      native: preflight.native,
+      target
+    }
+    await eachSeries(plan.writes, async action => {
+      receipts.push(await sendEthereumWrite(context, action))
+    })
+    return null
+  }
+
+  /**
+   * Fund one operator on Solana per its leg's plan: skipped outright for an
+   * existing position (the skip returned), else the planned writes in order,
+   * each signed by the operator's ED key through the custody facade
+   * (`keyPairUtils.solanaSigner`, so a KMS-custodied key signs remotely) and
+   * its receipt appended as it lands.
+   */
+  async function fundSolana(
+    operator: FundedOperator,
+    preflight: FundingPreflight,
+    plan: LegPlan,
+    target: SolanaOutpostTarget,
+    receipts: Receipt[]
+  ): Promise<Skip> {
+    const chain = Constants.SOLANA_CHAIN_CODENAME
+    if (plan.writes.length === 0) {
+      return skip(operator.label, chain, SkipReason.existingPosition, plan.position)
+    }
+    const context: SolanaWriteContext = {
+      operator,
+      user: await solanaSigner(operator.solana),
+      native: preflight.native,
+      wireState: preflight.wireState,
+      target
+    }
+    await eachSeries(plan.writes, async action => {
+      receipts.push(await sendSolanaWrite(context, action))
+    })
+    return null
+  }
+
+  /** Run one leg over `receipts`, recording its skip; a rejection becomes the run's {@link Failure}. */
+  async function fundLeg(
+    operator: FundedOperator,
+    leg: FundingLeg,
+    receipts: Receipt[],
+    skips: Skip[]
   ): Promise<Failure> {
-    return leg.fund().then(
-      legReceipts => {
-        receipts.push(...legReceipts)
+    return leg.fund(receipts).then(
+      legSkip => {
+        if (legSkip != null) skips.push(legSkip)
         return null
       },
       (error: Error) => {
@@ -786,56 +1228,66 @@ export namespace BatchOperatorFundingTool {
     )
   }
 
-  /** Fund one operator, Ethereum then Solana, stopping at the first failed leg. */
+  /** Fund one operator per its plan, Ethereum then Solana, stopping at the first failed leg. */
   async function fundOperator(
-    operator: OperatorAccount,
+    plan: OperatorPlan,
     preflight: FundingPreflight,
     targets: Targets,
-    receipts: Receipt[]
+    receipts: Receipt[],
+    skips: Skip[]
   ): Promise<Failure> {
-    const legs: FundingLeg[] = [
-      {
-        chain: Constants.ETHEREUM_CHAIN_CODENAME,
-        fund: () => fundEthereum(operator, preflight, targets.ethereum)
-      },
-      {
-        chain: Constants.SOLANA_CHAIN_CODENAME,
-        fund: () => fundSolana(operator, preflight, targets.solana)
-      }
-    ]
+    const { operator } = plan,
+      legs: FundingLeg[] = [
+        {
+          chain: Constants.ETHEREUM_CHAIN_CODENAME,
+          fund: receipts =>
+            fundEthereum(operator, preflight, plan.ethereum, targets.ethereum, receipts)
+        },
+        {
+          chain: Constants.SOLANA_CHAIN_CODENAME,
+          fund: receipts =>
+            fundSolana(operator, preflight, plan.solana, targets.solana, receipts)
+        }
+      ]
     return legs.reduce<Promise<Failure>>(
       async (previous, leg) =>
-        (await previous) ?? fundLeg(operator, leg, receipts),
+        (await previous) ?? fundLeg(operator, leg, receipts, skips),
       Promise.resolve(null)
     )
   }
 
   /**
    * Fund every operator on both outposts: {@link assertFundable} first (a
-   * refusal there writes nothing), then operator by operator, Ethereum then
-   * Solana, one transaction per write, each awaited for its receipt. The first
-   * write failure stops the run; what landed before it is returned either way.
+   * refusal there writes nothing; its plans decide every skip and
+   * resumption), then operator by operator, Ethereum then Solana, one
+   * transaction per write, each awaited for its receipt and recorded as it
+   * lands. The first write failure stops the run; every receipt and skip
+   * that preceded it — the failed leg's own landed writes included — is
+   * returned either way.
    *
    * @param operators - The adopted identities ({@link adoptOperators}).
    * @param allocation - The stake + reserve, in depot units.
    * @param targets - The two outposts.
-   * @returns Every landed receipt, plus the failure that stopped the run if one did.
+   * @returns Every landed receipt and skipped leg, plus the failure that stopped the run if one did.
    * @throws If a precondition is unmet — before any write.
    */
   export async function fund(
-    operators: readonly OperatorAccount[],
+    operators: readonly FundedOperator[],
     allocation: Allocation,
     targets: Targets
   ): Promise<Outcome> {
     const preflight = await assertFundable(operators, allocation, targets),
       receipts: Receipt[] = [],
-      failure = await operators.reduce<Promise<Failure>>(
-        async (previous, operator) =>
+      skips: Skip[] = [],
+      failure = await preflight.plans.reduce<Promise<Failure>>(
+        async (previous, plan) =>
           (await previous) ??
-          fundOperator(operator, preflight, targets, receipts),
+          fundOperator(plan, preflight, targets, receipts, skips),
         Promise.resolve(null)
       )
-    return failure == null ? { receipts } : { receipts, failure }
+    return failure == null
+      ? { receipts, skips }
+      : { receipts, skips, failure }
   }
 
   // ── output ────────────────────────────────────────────────────────────────
@@ -848,13 +1300,16 @@ export namespace BatchOperatorFundingTool {
   }
 
   /**
-   * The receipt listing as the JSON document `fund-batch-operators` prints on
-   * stdout — amounts rendered as decimal strings (JSON has no bigint).
+   * The listing as the JSON document `fund-batch-operators` prints on stdout
+   * — `{ receipts, skips }` and nothing else (an {@link Outcome}'s failure
+   * goes to the log), amounts rendered as decimal strings (JSON has no
+   * bigint).
    *
-   * @param receipts - The landed receipts.
+   * @param listing - The landed receipts and skipped legs.
    * @returns The JSON text.
    */
-  export function toListingJson(receipts: readonly Receipt[]): string {
-    return JSON.stringify(receipts, listingReplacer, ListingIndent)
+  export function toListingJson(listing: Listing): string {
+    const { receipts, skips } = listing
+    return JSON.stringify({ receipts, skips }, listingReplacer, ListingIndent)
   }
 }

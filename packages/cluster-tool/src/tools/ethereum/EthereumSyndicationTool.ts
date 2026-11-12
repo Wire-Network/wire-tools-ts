@@ -151,6 +151,7 @@ export namespace EthereumSyndicationTool {
    * `SyndicationPool` events this tool reads, by ABI name.
    */
   export enum PoolEvent {
+    Syndicated = "Syndicated",
     Desyndicated = "Desyndicated",
     CustodyShortfall = "CustodyShortfall",
     CustodyShortfallTolerated = "CustodyShortfallTolerated"
@@ -179,6 +180,12 @@ export namespace EthereumSyndicationTool {
    */
   export interface LiqEthTokenView {
     balanceOf(account: string, overrides?: ethers.Overrides): Promise<bigint>
+    /** The ERC-20 allowance `owner` has granted `spender`. */
+    allowance(
+      owner: string,
+      spender: string,
+      overrides?: ethers.Overrides
+    ): Promise<bigint>
     /** The rebasing index (`RewardsERC20.index`). */
     index(overrides?: ethers.Overrides): Promise<bigint>
     /** The index's fixed-point unit (`RewardsERC20.unit`). */
@@ -777,6 +784,33 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
+   * The liqETH allowance `owner` has granted `spender` — what the pool's
+   * `syndicate` draws with `transferFrom`. A READ.
+   *
+   * @param source - The build context, or a target.
+   * @param owner - The token holder.
+   * @param spender - The address allowed to draw (the pool).
+   * @returns The allowance, in wei.
+   */
+  export function readLiqEthAllowance(
+    target: EthereumOutpostTarget,
+    owner: string,
+    spender: string
+  ): Promise<bigint>
+  export function readLiqEthAllowance<C extends ClusterBuildContext>(
+    ctx: C,
+    owner: string,
+    spender: string
+  ): Promise<bigint>
+  export async function readLiqEthAllowance<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    owner: string,
+    spender: string
+  ): Promise<bigint> {
+    return loadLiqEthToken(source, providerOf(source)).allowance(owner, spender)
+  }
+
+  /**
    * liqETH's share rate at `blockTag`. A READ.
    *
    * @param source - The build context, or a target.
@@ -1091,6 +1125,47 @@ export namespace EthereumSyndicationTool {
     source: EthereumOutpostSource<C>
   ): Promise<bigint> {
     return loadSyndicationPool(source, providerOf(source)).syndicatedPrincipal()
+  }
+
+  /**
+   * The liqETH `syndicator` has syndicated into the pool, in wei — the sum of
+   * `nativeTaken` over its `Syndicated` events, the pool's only per-account
+   * record (the depot is the ledger of a syndicated position; the pool keeps
+   * no per-holder balance). `0n` for an address that never syndicated. A
+   * READ, scanned from {@link EventScanFromBlock} by the event's indexed
+   * `syndicator` topic.
+   *
+   * @param source - The build context, or a target.
+   * @param syndicator - The address that sent the syndications.
+   * @returns The syndicated total, in wei.
+   * @throws If a `Syndicated` log cannot be decoded.
+   */
+  export function readSyndicatedPosition(
+    target: EthereumOutpostTarget,
+    syndicator: string
+  ): Promise<bigint>
+  export function readSyndicatedPosition<C extends ClusterBuildContext>(
+    ctx: C,
+    syndicator: string
+  ): Promise<bigint>
+  export async function readSyndicatedPosition<C extends ClusterBuildContext>(
+    source: EthereumOutpostSource<C>,
+    syndicator: string
+  ): Promise<bigint> {
+    const pool = loadSyndicationPool(source, providerOf(source)),
+      events = await pool.queryFilter(
+        pool.filters[PoolEvent.Syndicated](syndicator),
+        EventScanFromBlock
+      )
+    return events
+      .map(event => {
+        Assert.ok(
+          event instanceof ethers.EventLog,
+          `EthereumSyndicationTool: an undecoded ${PoolEvent.Syndicated} log in tx ${event.transactionHash}`
+        )
+        return event
+      })
+      .reduce((total, event) => total + BigInt(event.args.nativeTaken), 0n)
   }
 
   // ── Step: liqETH allowance for the pool (`approve`) ──────────────────────

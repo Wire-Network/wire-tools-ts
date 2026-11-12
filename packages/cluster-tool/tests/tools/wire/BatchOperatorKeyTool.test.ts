@@ -404,13 +404,19 @@ describe("BatchOperatorKeyTool", () => {
       expect(findKeyMaterial(serialized)).toEqual([])
     })
 
-    it("refuses an identity missing one of its curves", async () => {
+    it("refuses an identity missing one of its curves, naming the curve", async () => {
       const custody = settings(),
         [operator] = await BatchOperatorKeyTool.adoptOrCreate(
           custody,
           [Labels[0]],
           KeyGenerator.context()
         )
+      expect(() =>
+        BatchOperatorKeyTool.toListing(custody, [{ ...operator, wire: undefined }])
+      ).toThrow(/batchop\.a has no K1 key/)
+      expect(() =>
+        BatchOperatorKeyTool.toListing(custody, [{ ...operator, ethereum: undefined }])
+      ).toThrow(/batchop\.a has no EM key/)
       expect(() =>
         BatchOperatorKeyTool.toListing(custody, [{ ...operator, solana: undefined }])
       ).toThrow(/batchop\.a has no ED key/)

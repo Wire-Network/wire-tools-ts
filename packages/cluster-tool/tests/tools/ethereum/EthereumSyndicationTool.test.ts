@@ -772,6 +772,109 @@ describe("EthereumSyndicationTool", () => {
       })
     })
 
+    it("readLiqEthAllowance reads the allowance the holder granted the pool", async () => {
+      await expect(
+        EthereumSyndicationTool.readLiqEthAllowance(
+          context(answeringRunner({ [`${token}:allowance`]: [55n] })),
+          HolderPair.address,
+          PoolAddress
+        )
+      ).resolves.toBe(55n)
+    })
+
+    describe("readSyndicatedPosition", () => {
+      /** The 33-byte compressed-key field a `Syndicated` log carries (any bytes encode). */
+      const CompressedPubkeyLength = 33
+
+      /** A real ABI-encoded `Syndicated` log of the pool for `syndicator`. */
+      function syndicatedLog(
+        syndicator: string,
+        nativeTaken: bigint,
+        data?: string
+      ): ethers.Log {
+        const encoded = poolInterface.encodeEventLog(
+          EthereumSyndicationTool.PoolEvent.Syndicated,
+          [
+            syndicator,
+            ethers.hexlify(new Uint8Array(CompressedPubkeyLength)),
+            nativeTaken,
+            7n,
+            3n
+          ]
+        )
+        return {
+          address: PoolAddress,
+          data: data ?? encoded.data,
+          topics: encoded.topics,
+          blockHash: ethers.ZeroHash,
+          blockNumber: 5,
+          transactionHash: ethers.ZeroHash,
+          transactionIndex: 0,
+          index: 0,
+          removed: false
+        } as unknown as ethers.Log
+      }
+
+      /** A runner whose provider answers `getLogs` with `logs`, recording each filter. */
+      function positionRunner(
+        logs: ReadonlyArray<ethers.Log>,
+        filters: ethers.Filter[]
+      ): ethers.ContractRunner {
+        const provider = {
+          getLogs: async (filter: ethers.Filter) => {
+            filters.push(filter)
+            return logs.map(
+              log => new ethers.Log(log, provider as unknown as ethers.Provider)
+            )
+          }
+        }
+        return { provider } as unknown as ethers.ContractRunner
+      }
+
+      it("sums nativeTaken over the syndicator's events, filtered by its indexed address from the first block", async () => {
+        const filters: ethers.Filter[] = [],
+          holder = HolderPair.address
+        await expect(
+          EthereumSyndicationTool.readSyndicatedPosition(
+            context(
+              positionRunner(
+                [syndicatedLog(holder, 300n), syndicatedLog(holder, 700n)],
+                filters
+              )
+            ),
+            holder
+          )
+        ).resolves.toBe(1_000n)
+        expect(filters).toHaveLength(1)
+        expect(filters[0].topics).toEqual([
+          poolInterface.getEvent(EthereumSyndicationTool.PoolEvent.Syndicated)
+            .topicHash,
+          ethers.zeroPadValue(holder, 32)
+        ])
+        expect(filters[0].fromBlock).toBe(EthereumSyndicationTool.EventScanFromBlock)
+      })
+
+      it("is 0n for an address that never syndicated", async () => {
+        await expect(
+          EthereumSyndicationTool.readSyndicatedPosition(
+            context(positionRunner([], [])),
+            HolderPair.address
+          )
+        ).resolves.toBe(0n)
+      })
+
+      it("refuses a Syndicated log it cannot decode", async () => {
+        await expect(
+          EthereumSyndicationTool.readSyndicatedPosition(
+            context(
+              positionRunner([syndicatedLog(HolderPair.address, 1n, "0x")], [])
+            ),
+            HolderPair.address
+          )
+        ).rejects.toThrow(/an undecoded Syndicated log/)
+      })
+    })
+
     it("readPoolConfiguration reads the four configured values", async () => {
       await expect(
         EthereumSyndicationTool.readPoolConfiguration(

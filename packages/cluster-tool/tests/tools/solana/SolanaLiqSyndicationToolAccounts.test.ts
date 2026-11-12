@@ -3,7 +3,14 @@ import Os from "node:os"
 import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
 import { ACCOUNT_SIZE, AccountLayout, AccountState, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token"
-import { Connection, Keypair, PublicKey, type MessageCompiledInstruction, type TokenBalance } from "@solana/web3.js"
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  type MessageCompiledInstruction,
+  type SignaturesForAddressOptions,
+  type TokenBalance
+} from "@solana/web3.js"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
   AnchorEnumVariant,
@@ -675,6 +682,161 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
       expect(records[0].requestId).toBe(3n)
       expect(records[0].reason).toBe(PendingPayoutReason.outpostFrozen)
       expect(records[0].custodyShortfall).toBeUndefined()
+    })
+
+    /** `_reserved`'s length on `OutpostAccount` — the retired bond block the layout keeps. */
+    const OutpostAccountReservedLength = 42
+
+    /** `user`'s `OutpostAccount`, encoded through the coder with `stakedLiqsol` staked. */
+    async function outpostAccount(user: PublicKey, stakedLiqsol: bigint): Promise<Buffer> {
+      return program.coder.accounts.encode(SolanaLiqSyndicationTool.OutpostAccountName, {
+        user,
+        stakedLiqsol: new anchor.BN(stakedLiqsol.toString()),
+        stakedShares: new anchor.BN(stakedLiqsol.toString()),
+        purchasedLiqsol: new anchor.BN(0),
+        purchasedShares: new anchor.BN(0),
+        reserved: Array.from({ length: OutpostAccountReservedLength }, () => 0),
+        bump: 254,
+        accumulatedPretokenYield: null,
+        lastEpochSyndLiqsol: null,
+        lastSyndEpoch: null
+      })
+    }
+
+    /** One `user` transaction the history mock serves. */
+    interface UserTransactionFixture {
+      signature: string
+      failed?: boolean
+      instructions: MessageCompiledInstruction[]
+    }
+
+    /**
+     * A context whose connection serves `accounts` to `getAccountInfo` and the
+     * user's confirmed history from `transactions` (given oldest first; an
+     * `unavailable` signature has no transaction to serve).
+     */
+    function positionContext(
+      accounts: Map<string, Buffer>,
+      transactions: UserTransactionFixture[],
+      unavailable: string[] = []
+    ): Parameters<typeof SolanaLiqSyndicationTool.readSyndicatedPosition>[0] {
+      return {
+        solana: {
+          connection: {
+            getAccountInfo: async (address: PublicKey) =>
+              accounts.has(address.toBase58())
+                ? {
+                    data: accounts.get(address.toBase58()),
+                    owner: basePdas.liqsolCoreProgram,
+                    lamports: 1,
+                    executable: false
+                  }
+                : null,
+            getSignaturesForAddress: async (
+              address: PublicKey,
+              options: SignaturesForAddressOptions
+            ) => {
+              expect(address.toBase58()).toBe(signer.toBase58())
+              expect(options.limit).toBe(SolanaLiqSyndicationTool.UserSignatureScanLimit)
+              return [...transactions].reverse().map(entry => ({
+                signature: entry.signature,
+                err: entry.failed ? { InstructionError: [0, "Custom"] } : null
+              }))
+            },
+            getTransaction: async (signature: string) => {
+              const entry = transactions.find(value => value.signature === signature)
+              expect(entry.failed).toBeFalsy()
+              return unavailable.includes(signature)
+                ? null
+                : {
+                    slot: transactions.indexOf(entry),
+                    transaction: {
+                      message: {
+                        staticAccountKeys: [signer, basePdas.liqsolCoreProgram, TOKEN_2022_PROGRAM_ID],
+                        compiledInstructions: entry.instructions
+                      }
+                    },
+                    meta: { loadedAddresses: { writable: [], readonly: [] }, logMessages: [] }
+                  }
+            }
+          }
+        },
+        config: { solanaPath }
+      } as unknown as Parameters<typeof SolanaLiqSyndicationTool.readSyndicatedPosition>[0]
+    }
+
+    /** A real IDL-encoded `synd(amount)`, to the program at `programIdIndex` (1 = liqsol_core). */
+    function syndInstruction(amount: bigint, programIdIndex = 1): MessageCompiledInstruction {
+      return {
+        programIdIndex,
+        accountKeyIndexes: [0],
+        data: program.coder.instruction.encode(SolanaLiqSyndicationTool.SyndMethodName, {
+          amount: new anchor.BN(amount.toString())
+        })
+      }
+    }
+
+    it("readSyndicatedPosition names the OutpostAccount the way the camelCased coder keys it", () => {
+      expect(SolanaLiqSyndicationTool.OutpostAccountName).toBe("outpostAccount")
+      expect(SolanaLiqSyndicationTool.SyndMethodName).toBe("synd")
+    })
+
+    it("readSyndicatedPosition returns the PreLaunch OutpostAccount stake when one is held", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map([[userPdas.outpostAccount.toBase58(), await outpostAccount(signer, 6_000_000_000n)]]),
+            [{ signature: "later", instructions: [syndInstruction(1n)] }]
+          ),
+          signer
+        )
+      ).resolves.toBe(6_000_000_000n)
+    })
+
+    it("readSyndicatedPosition sums the user's successful synds to liqsol_core when no OutpostAccount stake is held", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(new Map(), [
+            {
+              signature: "crank",
+              instructions: [
+                {
+                  programIdIndex: 1,
+                  accountKeyIndexes: [0],
+                  data: program.coder.instruction.encode(
+                    SolanaLiqSyndicationTool.ReportLiqYieldMethodName,
+                    {}
+                  )
+                }
+              ]
+            },
+            { signature: "synd-1", instructions: [syndInstruction(4_000_000_000n)] },
+            { signature: "rejected", failed: true, instructions: [syndInstruction(9n)] },
+            { signature: "foreign", instructions: [syndInstruction(5n, 2)] },
+            { signature: "synd-2", instructions: [syndInstruction(2_000_000_000n)] }
+          ]),
+          signer
+        )
+      ).resolves.toBe(6_000_000_000n)
+    })
+
+    it("readSyndicatedPosition is 0n for a wallet that never syndicated — an absent OutpostAccount is not a failure", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(positionContext(new Map(), []), signer)
+      ).resolves.toBe(0n)
+    })
+
+    it("readSyndicatedPosition refuses a confirmed transaction it cannot read", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [{ signature: "synd-1", instructions: [syndInstruction(1n)] }],
+            ["synd-1"]
+          ),
+          signer
+        )
+      ).rejects.toThrow(/transaction synd-1 .* is unavailable/)
     })
 
     it("toPendingPayoutRecord refuses a reason no member names", () => {

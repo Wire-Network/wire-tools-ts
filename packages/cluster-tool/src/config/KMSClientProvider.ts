@@ -17,7 +17,7 @@ import {
   type SignatureParts,
   type SignerProvider
 } from "@wireio/sdk-core"
-import { Deferred, getLogger } from "@wireio/shared"
+import { Deferred, getLogger, NestedError } from "@wireio/shared"
 import type { KMSCustodiedKeyType } from "@wireio/cluster-tool-shared"
 import type { KeySpec, KMSClient, Tag } from "@aws-sdk/client-kms"
 import type { SolanaSigner } from "../types/SolanaSigner.js"
@@ -27,11 +27,8 @@ const log = getLogger(__filename)
 
 /** The `@aws-sdk/client-kms` module surface, loaded lazily (type-only static import). */
 type KMSModule = typeof import("@aws-sdk/client-kms")
-/** The ethers-over-KMS signer module surface, loaded lazily (type-only static import). */
-type KMSSignerModule = typeof import("@cuonghx.gu-tech/ethers-aws-kms-signer")
 
 let importKMSModuleDeferred: Deferred<KMSModule> = null
-let importKMSSignerModuleDeferred: Deferred<KMSSignerModule> = null
 
 /**
  * Load `@aws-sdk/client-kms` once through a single cached accessor
@@ -54,25 +51,6 @@ function importKMSModule(): Promise<KMSModule> {
 }
 
 /**
- * Load the ethers-over-KMS signer once, the same way: it statically pulls the
- * whole KMS SDK in, so a KEY cluster that never signs through KMS must never
- * load it.
- */
-function importKMSSignerModule(): Promise<KMSSignerModule> {
-  if (importKMSSignerModuleDeferred === null) {
-    importKMSSignerModuleDeferred = new Deferred()
-    import("@cuonghx.gu-tech/ethers-aws-kms-signer")
-      .then(signerModule => importKMSSignerModuleDeferred.resolve(signerModule))
-      .catch(error => {
-        const failed = importKMSSignerModuleDeferred
-        importKMSSignerModuleDeferred = null
-        failed.reject(error)
-      })
-  }
-  return importKMSSignerModuleDeferred.promise
-}
-
-/**
  * THE single AWS KMS access surface — the cached SDK accessor + per-region
  * `KMSClient` cache shared by every KMS path: the create path's GENERATION seam
  * (`KeySteps.adoptOrCreateSignatureProviderKey`, which ADOPTS an existing key
@@ -80,7 +58,9 @@ function importKMSSignerModule(): Promise<KMSSignerModule> {
  * pre-creation, `keyPairUtils.wireSigner`, whose KMS arm signs through
  * {@link createWireSigner}, `keyPairUtils.ethereumSigner`, whose KMS arm signs
  * through {@link createSigner}, and `keyPairUtils.solanaSigner`, whose KMS arm
- * signs through {@link createSolanaSigner}.
+ * signs through {@link createSolanaSigner}. Every signer is this module's own,
+ * built on that one cached client per region — no other KMS client exists in
+ * the harness, so every `Sign` gets the same adaptive-retry treatment.
  *
  * KMS custodies the wire (K1, secp256k1, `ECC_SECG_P256K1`), ethereum (EM,
  * secp256k1, `ECC_SECG_P256K1`) and solana (ED, Ed25519,
@@ -98,7 +78,10 @@ function importKMSSignerModule(): Promise<KMSSignerModule> {
  * off its ARN ({@link isMultiRegionKeyArn}). There is deliberately NO delete
  * (`ScheduleKeyDeletion`): a key under an alias is the AWS ACCOUNT's durable
  * key identity, which the next `create` adopts — and the funding a pre-launch
- * deployment binds to it is unrecoverable once the key is gone.
+ * deployment binds to it is unrecoverable once the key is gone. The one key
+ * nothing adopts — one {@link createKey} minted but could not bind its alias
+ * to — is reported as ORPHANED (logged, and thrown with its ARN) for hand
+ * cleanup, never deleted.
  */
 export namespace KMSClientProvider {
   /**
@@ -166,6 +149,12 @@ export namespace KMSClientProvider {
 
   /** Length of the SHA-256 digest a WIRE K1 signer signs — a transaction's signing digest. */
   export const Sha256DigestLength = 32
+  /**
+   * Length of the keccak256 digest an Ethereum signer signs — a message hash
+   * (`hashMessage`), a transaction's `unsignedHash` or a typed-data hash — the
+   * same 32 bytes `ECDSA_SHA_256` as `MessageType = DIGEST` takes.
+   */
+  export const Keccak256DigestLength = 32
   /** Length of a secp256k1 scalar — each of an ECDSA signature's `r` and `s`. */
   export const Secp256k1ScalarLength = 32
   /** Length of a WIRE K1 raw signature `[r(32) ‖ s(32) ‖ recid(1)]` — what `Signature.fromRaw` takes. */
@@ -239,7 +228,10 @@ export namespace KMSClientProvider {
   export interface Secp256k1SignatureScalars {
     /** The signature's `r` scalar, 32 bytes. */
     readonly r: SignatureParts["r"]
-    /** The signature's `s` scalar, 32 bytes — as KMS signed it, not yet low-S. */
+    /**
+     * The signature's `s` scalar, 32 bytes — as KMS signed it off
+     * {@link secp256k1SignatureFromDer}, low-S normalised off {@link signEcdsaDigest}.
+     */
     readonly s: SignatureParts["s"]
   }
 
@@ -249,6 +241,16 @@ export namespace KMSClientProvider {
     readonly scalar: Uint8Array
     /** The offset of the byte after the INTEGER. */
     readonly next: number
+  }
+
+  /** The KMS key an Ethereum signer is pinned to: where it lives, how it is addressed and the address it signs for. */
+  interface KMSEthereumSignerKey {
+    /** The region the key lives in. */
+    readonly region: string
+    /** Any `KeyId` KMS accepts (alias name, key id, key / alias ARN). */
+    readonly keyId: string
+    /** The checksummed address of the key's public point — what every signature must recover to. */
+    readonly address: string
   }
 
   /**
@@ -458,8 +460,8 @@ export namespace KMSClientProvider {
    * {@link ed25519PublicKeyFromSpki}: the sequence tag and length, exactly two
    * INTEGERs, nothing trailing; each scalar's sign padding stripped and the
    * value left-padded to 32 bytes. The scalars come back exactly as KMS signed
-   * them — low-S normalisation and the recovery id are
-   * {@link createWireSigner}'s job.
+   * them — low-S normalisation is {@link signEcdsaDigest}'s job, the recovery
+   * id each signer's own.
    *
    * @param der - The DER-encoded signature.
    * @returns The two 32-byte scalars.
@@ -491,7 +493,9 @@ export namespace KMSClientProvider {
    * `s` normalised to the low half of the group order — `n − s` when `s > n / 2`,
    * else `s` as is — the WIRE K1 signature form (wire-sysio #768's
    * `der_to_wire_k1_signature`). The complement signs the same digest under
-   * the opposite recovery-id parity, which {@link createWireSigner} re-derives.
+   * the opposite recovery-id parity, which each signer re-derives —
+   * {@link createWireSigner} against the pinned public key, {@link createSigner}
+   * against the pinned address.
    */
   function lowS(s: Uint8Array): Uint8Array {
     const value = ethers.toBigInt(s)
@@ -526,6 +530,40 @@ export namespace KMSClientProvider {
       `KMSClientProvider: a WIRE K1 signer signs the ${Sha256DigestLength}-byte sha256 signing digest, got ${digest.length} bytes`
     )
     return digest
+  }
+
+  /**
+   * ONE `KMS::Sign` of a 32-byte digest by an `ECC_SECG_P256K1` key —
+   * `MessageType = DIGEST` under `SigningAlgorithm = ECDSA_SHA_256`, the DER
+   * `SEQUENCE { INTEGER r, INTEGER s }` it returns parsed
+   * ({@link secp256k1SignatureFromDer}) and `s` normalised to the low half of
+   * the group order ({@link lowS}). The ECDSA core both secp256k1 signers
+   * share; the recovery id is each one's own — {@link createWireSigner}
+   * recovers against the pinned WIRE public key, {@link createSigner} against
+   * the pinned Ethereum address — so a signer wired to the wrong key is refused
+   * there, before anything is sent on chain.
+   */
+  async function signEcdsaDigest(
+    kms: KMSModule,
+    client: KMSClient,
+    region: string,
+    keyId: string,
+    digest: Uint8Array
+  ): Promise<Secp256k1SignatureScalars> {
+    const { Signature: der } = await client.send(
+      new kms.SignCommand({
+        KeyId: keyId,
+        Message: digest,
+        MessageType: kms.MessageType.DIGEST,
+        SigningAlgorithm: kms.SigningAlgorithmSpec.ECDSA_SHA_256
+      })
+    )
+    Assert.ok(
+      der != null && der.length > 0,
+      `KMSClientProvider: ${keyId} in ${region} returned no ECDSA signature`
+    )
+    const { r, s } = secp256k1SignatureFromDer(der)
+    return { r, s: lowS(s) }
   }
 
   /**
@@ -619,7 +657,15 @@ export namespace KMSClientProvider {
    * The alias is the key's durable id: `CreateAlias` fails when the name is
    * already bound, so reaching here for an existing alias means the adopt probe
    * and this write disagreed, and the run fails loudly instead of re-pointing
-   * the alias.
+   * the alias. `CreateKey` and `CreateAlias` are two calls with no transaction
+   * around them: once the key exists, anything that stops the alias from being
+   * bound to it — the multi-Region check, the `CreateAlias` itself — leaves a
+   * key that is billable and that no adopt probe will ever find, and the
+   * harness has no `ScheduleKeyDeletion` to take it back. Such a key is
+   * reported as ORPHANED: logged at error level with its ARN, the region and
+   * the alias it was meant to carry, and thrown as a `NestedError` naming the
+   * same three (with the failure as its cause), so an operator can alias it or
+   * schedule its deletion by hand.
    *
    * @param region - The region the key lives in — the primary's region.
    * @param aliasName - The alias to bind (`alias/…`).
@@ -653,13 +699,24 @@ export namespace KMSClientProvider {
       keyArn != null,
       `KMSClientProvider: CreateKey in ${region} returned no key ARN`
     )
-    Assert.ok(
-      isMultiRegionKeyArn(keyArn),
-      `KMSClientProvider: CreateKey in ${region} returned ${keyArn}, which is not a multi-Region key (its key id must begin with ${MultiRegionKeyIdPrefix}) — KMS did not honour MultiRegion, and a single-Region key can never be replicated`
-    )
-    await client.send(
-      new kms.CreateAliasCommand({ AliasName: aliasName, TargetKeyId: keyArn })
-    )
+    try {
+      Assert.ok(
+        isMultiRegionKeyArn(keyArn),
+        `KMSClientProvider: CreateKey in ${region} returned ${keyArn}, which is not a multi-Region key (its key id must begin with ${MultiRegionKeyIdPrefix}) — KMS did not honour MultiRegion, and a single-Region key can never be replicated`
+      )
+      await client.send(
+        new kms.CreateAliasCommand({ AliasName: aliasName, TargetKeyId: keyArn })
+      )
+    } catch (error) {
+      // The key exists and nothing names it — say so where an operator will read it.
+      log.error(
+        `KMSClientProvider: key ${keyArn} in ${region} is ORPHANED — created, but binding ${aliasName} to it failed (${NestedError.toError(error).message}); it is billable and invisible to adoption — alias it or schedule its deletion by hand, the harness has no delete permission`
+      )
+      throw new NestedError(
+        `KMSClientProvider: created key ${keyArn} in ${region} is orphaned — binding ${aliasName} to it failed, so the key is billable and invisible to adoption; alias it or schedule its deletion by hand (the harness has no delete permission)`,
+        { cause: error, context: { keyArn, aliasName, region } }
+      )
+    }
     log.info(
       `KMSClientProvider: created ${KeyType[keyType]} multi-Region key ${keyArn} in ${region} as ${aliasName}`
     )
@@ -667,9 +724,152 @@ export namespace KMSClientProvider {
   }
 
   /**
-   * An ethers signer whose every signature is a remote `KMS::Sign` — the
-   * KMS-custody arm of `keyPairUtils.ethereumSigner`. Connected to `provider`
-   * when one is given; without one it signs offline only (messages, typed data).
+   * The ethers signer over a KMS-custodied `ECC_SECG_P256K1` key — what
+   * {@link createSigner} returns: an ethers `AbstractSigner` pinned at creation
+   * to the address its KMS public key derives, whose every signature — a
+   * message, a transaction, typed data — is ONE remote `KMS::Sign` of the
+   * 32-byte keccak256 digest through the cached regional client
+   * ({@link signEcdsaDigest}: `MessageType = DIGEST`, `ECDSA_SHA_256`, the DER
+   * parsed, `s` low-S normalised), with the recovery id found by recovering
+   * each parity to the pinned address — so a signer wired to the wrong key is
+   * refused before its transaction is sent. `connect` hands the same pinned key
+   * to a provider-bound twin; the `AbstractSigner` base supplies
+   * `populateTransaction` / `sendTransaction` / `estimateGas` / `call` over that
+   * provider, exactly as an ethers wallet does, and the signing methods mirror
+   * `BaseWallet`'s (its `from` check, its ENS-name resolution) so a consumer
+   * cannot tell the two apart.
+   */
+  class KMSEthereumSigner extends ethers.AbstractSigner {
+    constructor(
+      private readonly kms: KMSModule,
+      private readonly client: KMSClient,
+      private readonly key: KMSEthereumSignerKey,
+      provider?: ethers.Provider
+    ) {
+      super(provider)
+    }
+
+    /** @inheritdoc */
+    async getAddress(): Promise<string> {
+      return this.key.address
+    }
+
+    /** @inheritdoc */
+    connect(provider: ethers.Provider): ethers.Signer {
+      return new KMSEthereumSigner(this.kms, this.client, this.key, provider)
+    }
+
+    /** @inheritdoc */
+    async signTransaction(tx: ethers.TransactionRequest): Promise<string> {
+      const request = ethers.copyRequest(tx),
+        { region, keyId, address } = this.key,
+        // An Addressable or an ENS name becomes an address (a name needs the provider).
+        { to, from } = await ethers.resolveProperties({
+          to: request.to != null ? ethers.resolveAddress(request.to, this) : null,
+          from: request.from != null ? ethers.resolveAddress(request.from, this) : null
+        })
+      Assert.ok(
+        from == null || ethers.getAddress(from) === address,
+        `KMSClientProvider: transaction from ${from} is not ${address}, the address of ${keyId} in ${region}`
+      )
+      // `from` is what the signature proves — never an input of the unsigned transaction.
+      const transaction = ethers.Transaction.from({
+        ...request,
+        to,
+        from: null
+      } as ethers.TransactionLike<string>)
+      transaction.signature = await this.signDigest(
+        ethers.getBytes(transaction.unsignedHash)
+      )
+      return transaction.serialized
+    }
+
+    /** @inheritdoc */
+    async signMessage(message: string | Uint8Array): Promise<string> {
+      const signature = await this.signDigest(
+        ethers.getBytes(ethers.hashMessage(message))
+      )
+      return signature.serialized
+    }
+
+    /** @inheritdoc */
+    async signTypedData(
+      domain: ethers.TypedDataDomain,
+      types: Record<string, ethers.TypedDataField[]>,
+      value: Record<string, any>
+    ): Promise<string> {
+      const populated = await ethers.TypedDataEncoder.resolveNames(
+          domain,
+          types,
+          value,
+          name => this.resolveTypedDataName(name)
+        ),
+        signature = await this.signDigest(
+          ethers.getBytes(
+            ethers.TypedDataEncoder.hash(populated.domain, types, populated.value)
+          )
+        )
+      return signature.serialized
+    }
+
+    /**
+     * Resolve an ENS name inside typed data through the provider — an ethers
+     * wallet's rule: no provider, no names (`AbstractSigner.resolveName`
+     * refuses without one), and an unconfigured name is refused by name.
+     */
+    private async resolveTypedDataName(name: string): Promise<string> {
+      const address = await this.resolveName(name)
+      Assert.ok(
+        address != null,
+        `KMSClientProvider: the ENS name ${name} is unconfigured`
+      )
+      return address
+    }
+
+    /**
+     * ONE `KMS::Sign` of a 32-byte keccak256 digest, as the ethers `Signature`
+     * whose parity recovers to the pinned address — the core every signing
+     * method reduces to.
+     */
+    private async signDigest(digest: Uint8Array): Promise<ethers.Signature> {
+      const { region, keyId, address } = this.key
+      Assert.strictEqual(
+        digest.length,
+        Keccak256DigestLength,
+        `KMSClientProvider: an Ethereum signer signs a ${Keccak256DigestLength}-byte keccak256 digest, got ${digest.length} bytes`
+      )
+      const { r, s } = await signEcdsaDigest(
+          this.kms,
+          this.client,
+          region,
+          keyId,
+          digest
+        ),
+        signature = RecoveryIds.map(recoveryId =>
+          ethers.Signature.from({
+            r: ethers.hexlify(r),
+            s: ethers.hexlify(s),
+            yParity: recoveryId
+          })
+        ).find(candidate => ethers.recoverAddress(digest, candidate) === address)
+      Assert.ok(
+        signature != null,
+        `KMSClientProvider: could not find a recovery id for the ECDSA signature ${keyId} in ${region} produced — it recovers to neither parity of the pinned address ${address}`
+      )
+      return signature
+    }
+  }
+
+  /**
+   * An ethers signer whose every signature is a remote `KMS::Sign` of an
+   * `ECC_SECG_P256K1` key — the KMS-custody arm of
+   * `keyPairUtils.ethereumSigner`: the in-house {@link KMSEthereumSigner},
+   * pinned at creation to the address of the key's public point
+   * ({@link getPublicKey} — so a key of another spec or usage is refused here,
+   * before it signs anything) and signing through the cached regional client,
+   * with the same adaptive-retry treatment every other KMS call gets.
+   * Connected to `provider` when one is given; without one it signs offline
+   * only (messages, typed data, fully specified transactions).
    *
    * @param region - The region the key lives in.
    * @param keyId - Any `KeyId` KMS accepts.
@@ -681,8 +881,11 @@ export namespace KMSClientProvider {
     keyId: string,
     provider?: ethers.Provider
   ): Promise<ethers.Signer> {
-    const { AwsKmsSigner } = await importKMSSignerModule()
-    return new AwsKmsSigner({ region, keyId }, provider ?? null)
+    const kms = await importKMSModule(),
+      client = await kmsClientForRegion(region),
+      { publicKey } = await getPublicKey(region, keyId, KeyType.EM),
+      address = ethers.computeAddress(ethers.hexlify(publicKey))
+    return new KMSEthereumSigner(kms, client, { region, keyId, address }, provider)
   }
 
   /**
@@ -780,8 +983,9 @@ export namespace KMSClientProvider {
    * `MessageType = DIGEST` under `SigningAlgorithm = ECDSA_SHA_256`, parses
    * the DER `SEQUENCE { INTEGER r, INTEGER s }` KMS returns
    * ({@link secp256k1SignatureFromDer}), normalises `s` to the low half of
-   * the group order, finds the recovery id by recovering each parity against
-   * the pinned `publicKey`, and returns the 65-byte raw `[r ‖ s ‖ recid]` —
+   * the group order (the {@link signEcdsaDigest} core it shares with
+   * {@link createSigner}), finds the recovery id by recovering each parity
+   * against the pinned `publicKey`, and returns the 65-byte raw `[r ‖ s ‖ recid]` —
    * which `Signature.fromRaw(…, KeyType.K1)` packs as `(31 + recid) ‖ r ‖ s`,
    * exactly #768's wire form. A signature that recovers to neither parity is
    * refused naming the key, so a signer wired to the wrong key fails before
@@ -809,22 +1013,9 @@ export namespace KMSClientProvider {
       client = await kmsClientForRegion(region),
       sign = async (message: string | Uint8Array): Promise<Uint8Array> => {
         const digest = signingDigest(message),
-          { Signature: der } = await client.send(
-            new kms.SignCommand({
-              KeyId: keyId,
-              Message: digest,
-              MessageType: kms.MessageType.DIGEST,
-              SigningAlgorithm: kms.SigningAlgorithmSpec.ECDSA_SHA_256
-            })
-          )
-        Assert.ok(
-          der != null && der.length > 0,
-          `KMSClientProvider: ${keyId} in ${region} returned no ECDSA signature`
-        )
-        const { r, s } = secp256k1SignatureFromDer(der),
-          normalised = lowS(s),
+          { r, s } = await signEcdsaDigest(kms, client, region, keyId, digest),
           recoveryId = RecoveryIds.find(candidate =>
-            Signature.fromRaw(k1RawSignature(r, normalised, candidate), KeyType.K1)
+            Signature.fromRaw(k1RawSignature(r, s, candidate), KeyType.K1)
               .recoverDigest(digest)
               .equals(publicKey)
           )
@@ -832,7 +1023,7 @@ export namespace KMSClientProvider {
           recoveryId != null,
           `KMSClientProvider: could not find a recovery id for the ECDSA signature ${keyId} in ${region} produced — it recovers to neither parity of the pinned public key ${publicKey.toString()}`
         )
-        return k1RawSignature(r, normalised, recoveryId)
+        return k1RawSignature(r, s, recoveryId)
       }
     return { pubKey: publicKey, sign }
   }

@@ -35,7 +35,6 @@
     "@aws-sdk/client-kms": "3.1102.0",
     "@aws-sdk/client-ssm": "3.1102.0",
     "@coral-xyz/anchor": "^0.31.0",
-    "@cuonghx.gu-tech/ethers-aws-kms-signer": "^0.9.1",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool-shared": "workspace:*",
