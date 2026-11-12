@@ -210,7 +210,7 @@ export namespace SignatureProviderConfigProvider {
    *
    * The exemption is a POLICY choice, not a capability gap — TS-side BLS
    * public-key derivation does exist (`PrivateKey.toPublic()` handles BLS, as
-   * `Constants.DefaultBLSKeyPair` and `keyPairUtils.keyPairFromPrivate` both
+   * `KeyGenerator.BiosBLSKey` and `keyPairUtils.keyPairFromPrivate` both
    * rely on). An earlier revision of this comment claimed otherwise; it was
    * wrong.
    */

@@ -1,17 +1,19 @@
 import { KeyType } from "@wireio/sdk-core"
+import { KeyGenerator } from "../../../clients/wire/KeyGenerator.js"
+import { Report } from "../../../report/Report.js"
 import {
-  ClusterBuildContext,
-  ClusterBuildStep,
-  KeyGenerator,
   NodeOwnerTier,
   pushNewNamedUser,
-  pushNodeOwnerReg,
-  Report,
-  Steps,
-  type ClusterBuildStepOptions,
-  type EthereumIdentity,
-  type StepInput
-} from "@wireio/cluster-tool"
+  pushNodeOwnerReg
+} from "../../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import type { EthereumIdentity } from "../../../types/KeyPair.js"
+import { ClusterBuildContext } from "../../ClusterBuildContext.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../../ClusterBuildStep.js"
+import type { StepInput } from "../../StepRunner.js"
+import { KeySteps } from "../KeySteps.js"
 
 /**
  * Step factories for the `sysio.roa` create-in-flow registration WRITES — the
@@ -22,12 +24,16 @@ import {
  * depositor's ETH link in `sysio.authex`). Each write is its OWN
  * {@link ClusterBuildStep} so the `Report` records it — including the
  * intentionally-bad claims, whose transactions SUCCEED and soft-fail into a
- * `nodeownerreg` audit row that the scenario's verify steps assert.
+ * `nodeownerreg` audit row that a scenario's verify steps assert.
+ *
+ * Before a governance handoff `sysio.roa@active` is the bootstrap `sysio` key,
+ * so these writes stand in for the depot's dispatch; after one, an owner claims
+ * through the OPP path ({@link NodeOwnerCommitSteps}).
  */
-export namespace NodeOwnerNftScenarioRegistrationSteps {
+export namespace NodeOwnerRegistrationSteps {
   /**
    * A new depositor `PUB_EM_*` public key, derived from the run's Ethereum
-   * mnemonic (`Steps.keys.keyGeneratorContext`) at `ethereumHdIndex` —
+   * mnemonic (`KeySteps.keyGeneratorContext`) at `ethereumHdIndex` —
    * deterministic, and distinct per claim when each claim carries its own
    * index. A pure value helper: used inside the {@link planRegisterNodeOwner}
    * runner and the scenario's hard-abort probes.
@@ -48,7 +54,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     ctx: C,
     ethereumHdIndex: number
   ): Promise<EthereumIdentity> {
-    const pair = await KeyGenerator.create(KeyType.EM, Steps.keys.keyGeneratorContext(ctx), {
+    const pair = await KeyGenerator.create(KeyType.EM, KeySteps.keyGeneratorContext(ctx), {
       ethereumHdIndex
     })
     return {
@@ -59,7 +65,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
   export interface CreateNamedUserInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput"
+    readonly kind: "NodeOwnerRegistrationSteps.CreateNamedUserInput"
     /** The vanity account to create (tier-1 names are a 2-6 char prefix). */
     readonly account: string
     /** The holder's Wire owner/active public key (`PUB_K1_*`). */
@@ -99,7 +105,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       description,
       options,
       {
-        kind: "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput",
+        kind: "NodeOwnerRegistrationSteps.CreateNamedUserInput",
         account,
         wirePublicKey,
         tier
@@ -125,7 +131,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
 
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
   export interface RegisterNodeOwnerInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput"
+    readonly kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
     /** The Wire account the claim registers. */
     readonly ownerAccount: string
     /** The claimed tier (1-3 for valid claims). */
@@ -175,7 +181,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       description,
       options,
       {
-        kind: "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput",
+        kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
         ownerAccount,
         tier,
         ethereumHdIndex,

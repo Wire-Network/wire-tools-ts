@@ -59,15 +59,42 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
   reserves + roa allocation + `sysio` pool + every gifted account/contract} == `total_sys * bytes_per_unit`.
 
 ## Governance & privilege
-- **All `sysio.*` accounts: owner = active = `sysio@active`** — an account-authority delegating to `sysio`:
-  `{threshold:1, keys:[], accounts:[{permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}`; no
+- **All `sysio.*` accounts: owner = active = `sysio@active`** (the governance authorities' `active`, below,
+  excepted) — an account-authority delegating to `sysio`:
+  `{threshold:1, keys:[], accounts:[{permission:{actor:"sysio",permission:"active"},weight:1}]}`; no
   standalone key. Governance (`sysio`, msig-backed in production) controls every system account and signs every
   `[sysio.X@active]` step. Stage 8 only ADDs `@sysio.code` weights on the eleven OPP accounts' **owner**
   authorities on top of that `sysio@active` base (never removing it). Stage 10 additionally creates and
   links `sysio.andon@pull` and `sysio.andon@clear`, both children of its unchanged `active` permission.
-- The root **`sysio`** account is the one exception: its own `active` authority carries a **standalone key**
-  from genesis (cluster: `DEV_K1`; production: the governance key / msig) and is never rewritten. It is never
-  a `sysio@active` self-reference.
+- The root **`sysio`** account is the one exception: its own `owner` and `active` carry a **standalone key**
+  from genesis (cluster: `DEV_K1`; production: the bootstrap key). The bootstrap never rewrites them; a later
+  governance **handoff** (below) replaces both with a governance authority. It is never a `sysio@active`
+  self-reference.
+- **Governance authorities.** `sysio.nodes` and `sysio.cncl` are the two accounts `sysio` can be handed to.
+  Their `owner` is `sysio@active` like every system account, but their `active` is written by
+  `sysio.councl`, never by the bootstrap: `sysio.councl::syncnodes(caller)` (any authenticated account)
+  replaces `sysio.nodes@active` with the current tier-1 node owners, and the `settle` that seats an
+  election's 21st member replaces `sysio.cncl@active` with the 21 members. Each member is listed through its
+  own `active` at weight 1, sorted by name value, at threshold `floor(2N/3)+1` (15 of 21). Until written,
+  each `active` is the unsatisfiable `{threshold:1, keys:[], accounts:[{sysio.null@active,1}]}`
+  (`sysio.null` is the genesis account nobody can authorize). `sysio.councl` never changes `sysio` itself.
+- **Handoffs** are governance transactions, not bootstrap steps:
+  - **To the node owners** — one transaction signed by `sysio`'s current authority: `sysio.councl::syncnodes`
+    (`caller` `sysio`, `[sysio@active]`) FIRST, then `sysio::updateauth` of `sysio@active` (parent `owner`),
+    then of `sysio@owner` (parent `""`), both to `{threshold:1, keys:[], accounts:[{sysio.nodes@active,1}]}`,
+    each `[sysio@owner]`. Syncing inside the handoff lands `sysio` on the live roster even if a
+    supermajority of the previous one rewrote `sysio.nodes@active` by hand. A later tier-1 registration
+    joins at the next `syncnodes`, with no further approval, up to the 21-owner cap.
+  - **To the council** — the same two `updateauth`s to `sysio.cncl@active`, proposed through `sysio.msig`
+    by the node owners; nothing re-syncs `sysio.cncl` outside an election.
+  - **Before signing** read the target's `active` (exactly the intended members, no key; `sysio.null@active`
+    means it was never written, and delegating to it leaves `sysio` unsatisfiable), and audit every
+    `sysio.*` account: each permission resolves to `sysio@active` with no key of its own, except the
+    documented exceptions (each OPP account's own `@sysio.code` on its `owner`, `sysio.andon`'s
+    `pull`/`clear` panic permissions, each governance authority's `active` — its expected members — and
+    `sysio` itself, whose key is allowed only before a handoff). The cluster tooling's
+    `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
+    `floor(2N/3)+1` members' approvals, normally through `sysio.msig`.
 - All system contracts are privileged: `sysio`/`bios`/`system` from genesis; the **sys**-deployed set via
   `setsyscode`. Hard requirements (from source): `sysio.token` (bills rows to `sysio`), `sysio.msig`,
   `sysio.wrap` (both `act.send()` arbitrary-auth actions).
@@ -206,6 +233,18 @@ unlimited.
 | OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.swap`, `sysio.liq`, `sysio.andon`, `sysio.bond`, `sysio.synd`, `sysio.councl` |
 | T5 buckets | `sysio.gov` (governance), `sysio.ops` (capex/ops) |
 | Dev-only (cluster) | `dev.owner1` |
+| Governance authorities | `sysio.nodes`, `sysio.cncl` — created by step 10a, not here |
+
+10a. **Governance authorities** — for each of `sysio.nodes`, then `sysio.cncl`:
+    - `sysio::newaccount({creator:"sysio", name, owner:sysio@active, active:{threshold:1, keys:[],
+      accounts:[{permission:{actor:"sysio.null",permission:"active"},weight:1}]}})` —
+      `[sysio@active]` — `owner` delegates to `sysio@active` like every system account; `active` is the
+      unsatisfiable placeholder until `sysio.councl` writes the members in.
+    - `sysio::setacctram({account, ram_bytes:<the account's current ram_quota + 640>})` — `[sysio@active]` —
+      `setacctram` takes an ABSOLUTE limit, so read the current limit first. 640 bytes is what a full
+      authority of 21 members bills beyond the one-entry placeholder (each entry bills 32 bytes after the
+      chain's 16-byte alignment). The contract bills the permission to the account itself: without the
+      account or the RAM, `syncnodes` fails and the last seat of an election cannot be tabulated.
 11. `sysio::setprodkeys({schedule:[{producer_name, block_signing_key}…]})` — `[sysio@active]` — one row per
     producer; `block_signing_key` = the **generated K1 pubkey of the node hosting that producer** (the same
     key the account is keyed with; cluster single-node: all 21 map to that one node's key). Then poll
@@ -236,7 +275,7 @@ standalone key, and `sysio.authex` keeps the plain `sysio@active` owner/active i
     (Stage 11). `sysio.councl` uses the same SYSIO-built artifacts and privileged deployment path;
     candidate registration and election initialization are separate governance operations.
 19. `sysio::updateauth` on **each OPP account's owner** (`grantSysioCode`) — `[<account>@owner]` — owner ←
-    `{threshold:1, keys:[], accounts:[{sysio@active,1},{<account>@sysio.code,1}], waits:[]}` (sorted by name
+    `{threshold:1, keys:[], accounts:[{sysio@active,1},{<account>@sysio.code,1}]}` (sorted by name
     value; `sysio` sorts first). (11 calls: every OPP account except `sysio.andon` and `sysio.councl`, which send no inline
     actions.) Lets each contract inline-send its own actions (epoch `advance`, `evalcons`, `dispatch`, …)
     while staying governed by `sysio@active`.
@@ -380,7 +419,7 @@ declare the linked `sysio.andon@pull` and `@clear` permissions.
 29. **Delegate and link each action**, first `pull`, then `clear`. For each `permission`:
     - `sysio::updateauth({account:"sysio.andon", permission, parent:"active", auth:{threshold:1,
       keys:[], accounts:[{permission:{actor:"andon.panic",permission:"active"},weight:1},
-      {permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}})` — `[sysio.andon@active]`.
+      {permission:{actor:"sysio",permission:"active"},weight:1}]}})` — `[sysio.andon@active]`.
       Sort the authority's accounts by chain name value when substituting a production panic account.
     - `sysio::linkauth({account:"sysio.andon", code:"sysio.andon", type:permission,
       requirement:permission})` — `[sysio.andon@active]`.
@@ -641,8 +680,8 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
   production to the producer nodes' generated K1 keys — the same node K1s the producer accounts are keyed
   with and register with `regproducer`. Batch operators carry their own per-operator generated K1s.
-  `DEV_K1` remains only as `sysio`'s active key; production replaces all of these with
-  real keys / msig.
+  `DEV_K1` remains only as `sysio`'s owner/active key; production replaces all of these with
+  real keys / msig, and the governance handoff replaces `sysio`'s with `sysio.nodes@active`.
 - **`activateroa` sizing:** the bootstrap passes `total_sys = ROA_TOTAL_SYS = 75496.0000 SYS` and
   `bytes_per_unit = ROA_BYTES_PER_UNIT = 104` (both from `Constants.ts`). Per the asset-amount semantics in the
   RAM model above, that is `754,960,000 × 104` ≈ 78.5 GB of total RAM, not `75496 × 104`.

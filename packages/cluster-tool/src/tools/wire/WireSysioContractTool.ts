@@ -6,7 +6,8 @@ import {
   Serializer,
   SysioContracts
 } from "@wireio/sdk-core"
-import type { WireClient } from "../../clients/wire/WireClient.js"
+import { WireClient } from "../../clients/wire/WireClient.js"
+import { Constants } from "../../Constants.js"
 
 /** Every system account is governed solely by `sysio@active`. */
 const SysioActiveAuthorization: PermissionLevelType[] = [
@@ -52,13 +53,27 @@ export class WireSysioContractTool {
     )
   }
 
-  /** Create a `sysio.*` system account governed solely by `sysio@active`. */
-  async createSysioAccount(name: string): Promise<void> {
-    const authority = WireSysioContractTool.sysioActiveAuthority()
-    await this.wire.invoke(
-      "sysio",
+  /**
+   * Create a `sysio.*` system account whose `owner` is `sysio@active`.
+   *
+   * @param name - The account to create.
+   * @param active - Its `active` authority: `sysio@active` unless the account's
+   *   contract writes it later (a governance authority's
+   *   {@link WireSysioContractTool.sysioNullActiveAuthority} placeholder).
+   */
+  async createSysioAccount(
+    name: string,
+    active: SysioContracts.SysioSystemAuthorityType = WireSysioContractTool.sysioActiveAuthority()
+  ): Promise<void> {
+    await this.wire.invoke<SysioContracts.SysioSystemNewaccountAction>(
+      Constants.SYSIO_ACCOUNT,
       "newaccount",
-      { creator: "sysio", name, owner: authority, active: authority },
+      {
+        creator: Constants.SYSIO_ACCOUNT,
+        name,
+        owner: WireSysioContractTool.sysioActiveAuthority(),
+        active
+      },
       SysioActiveAuthorization
     )
   }
@@ -74,25 +89,34 @@ export class WireSysioContractTool {
       "updateauth",
       {
         account,
-        permission: "owner",
-        parent: "",
+        permission: WireClient.OwnerPermission,
+        parent: WireClient.OwnerParent,
         auth: WireSysioContractTool.sysioActiveCodeAuthority([account])
       },
-      [{ actor: account, permission: "owner" }]
+      [{ actor: account, permission: WireClient.OwnerPermission }]
     )
   }
 }
 
 export namespace WireSysioContractTool {
-  /** A permission-weighted authority entry. */
-  export interface AuthorityKeyWeight {
-    key: string
-    weight: number
-  }
-  /** A permission-level-weighted authority entry. */
-  export interface AuthorityWaitWeight {
-    wait_sec: number
-    weight: number
+  /**
+   * The weight and threshold of an authority one delegation satisfies alone; also
+   * the weight of each `@sysio.code` grant beside `sysio@active`.
+   */
+  export const DelegationWeight = 1
+
+  /**
+   * The chain's order of two names — by their 64-bit value, the order every
+   * authority's entries must follow.
+   *
+   * @param a - A name.
+   * @param b - Another name.
+   * @returns Negative, zero or positive, as `Array.sort` expects.
+   */
+  export function compareNames(a: string, b: string): number {
+    const valueA = Name.from(a).value,
+      valueB = Name.from(b).value
+    return valueA.equals(valueB) ? 0 : valueA.lt(valueB) ? -1 : 1
   }
 
   /** Pack a JSON `abi_def` into its binary form as a lowercase hex string. */
@@ -101,43 +125,71 @@ export namespace WireSysioContractTool {
     return Serializer.encode({ object: ABI.from(object), type: ABI }).hexString
   }
 
-  /** Authority controlled solely by `sysio@active` (no standalone key). */
-  export function sysioActiveAuthority() {
+  /**
+   * Authority satisfied by `actor@active` alone: one delegation at weight and
+   * threshold {@link DelegationWeight}, no key.
+   *
+   * @param actor - The account delegated to.
+   * @returns The authority.
+   */
+  export function delegatedAuthority(
+    actor: string
+  ): SysioContracts.SysioSystemAuthorityType {
     return {
-      threshold: 1,
-      keys: [] as AuthorityKeyWeight[],
+      threshold: DelegationWeight,
+      keys: [],
       accounts: [
-        { permission: { actor: "sysio", permission: "active" }, weight: 1 }
-      ],
-      waits: [] as AuthorityWaitWeight[]
+        {
+          permission: { actor, permission: WireClient.ActivePermission },
+          weight: DelegationWeight
+        }
+      ]
     }
+  }
+
+  /**
+   * Authority controlled solely by `sysio@active` (no standalone key).
+   *
+   * @returns The authority.
+   */
+  export function sysioActiveAuthority(): SysioContracts.SysioSystemAuthorityType {
+    return delegatedAuthority(Constants.SYSIO_ACCOUNT)
+  }
+
+  /**
+   * Authority delegating solely to `sysio.null@active` — the genesis account
+   * nobody can authorize, so nothing satisfies it. A governance authority
+   * account is created with it as `active` until `sysio.councl` writes the
+   * members in.
+   *
+   * @returns The authority.
+   */
+  export function sysioNullActiveAuthority(): SysioContracts.SysioSystemAuthorityType {
+    return delegatedAuthority(Constants.NULL_ACCOUNT)
   }
 
   /**
    * Authority controlled by `sysio@active` PLUS each account's `@sysio.code`
    * permission, sorted by account name value (the chain's required encoding;
    * `sysio` sorts first).
+   *
+   * @param codeAccounts - The accounts whose contract code may act through the authority.
+   * @returns The authority.
    */
-  export function sysioActiveCodeAuthority(codeAccounts: string[]) {
+  export function sysioActiveCodeAuthority(
+    codeAccounts: string[]
+  ): SysioContracts.SysioSystemAuthorityType {
     const accounts = [
-      { permission: { actor: "sysio", permission: "active" }, weight: 1 },
+      ...sysioActiveAuthority().accounts,
       ...codeAccounts.map(actor => ({
-        permission: { actor, permission: "sysio.code" },
-        weight: 1
+        permission: { actor, permission: WireClient.CodePermission },
+        weight: DelegationWeight
       }))
-    ].sort((a, b) => {
-      const actorA = Name.from(a.permission.actor).value.value,
-        actorB = Name.from(b.permission.actor).value.value
-      if (actorA !== actorB) return actorA < actorB ? -1 : 1
-      const permissionA = Name.from(a.permission.permission).value.value,
-        permissionB = Name.from(b.permission.permission).value.value
-      return permissionA === permissionB ? 0 : permissionA < permissionB ? -1 : 1
-    })
-    return {
-      threshold: 1,
-      keys: [] as AuthorityKeyWeight[],
-      accounts,
-      waits: [] as AuthorityWaitWeight[]
-    }
+    ].sort(
+      (a, b) =>
+        compareNames(a.permission.actor, b.permission.actor) ||
+        compareNames(a.permission.permission, b.permission.permission)
+    )
+    return { threshold: DelegationWeight, keys: [], accounts }
   }
 }

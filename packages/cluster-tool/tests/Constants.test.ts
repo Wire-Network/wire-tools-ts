@@ -160,6 +160,44 @@ describe("Constants", () => {
       expect(Constants.PANIC_ACCOUNT).toBe("andon.panic")
       expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.PANIC_ACCOUNT)
     })
+    it("creates both governance authorities as system accounts", () => {
+      expect([...Constants.GOVERNANCE_AUTHORITY_ACCOUNTS]).toEqual([
+        "sysio.nodes",
+        "sysio.cncl"
+      ])
+      expect(Constants.SYSTEM_ACCOUNTS).toEqual(
+        expect.arrayContaining([...Constants.GOVERNANCE_AUTHORITY_ACCOUNTS])
+      )
+      // Neither sends an inline action: sysio.councl writes them.
+      Constants.GOVERNANCE_AUTHORITY_ACCOUNTS.forEach(account =>
+        expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain(account)
+      )
+    })
+    it("recognizes exactly the governance authorities", () => {
+      Constants.GOVERNANCE_AUTHORITY_ACCOUNTS.forEach(account =>
+        expect(Constants.isGovernanceAuthorityAccount(account)).toBe(true)
+      )
+      ;["sysio", "sysio.councl", Constants.NULL_ACCOUNT, "sysio.node"].forEach(account =>
+        expect(Constants.isGovernanceAuthorityAccount(account)).toBe(false)
+      )
+    })
+    it("keeps the genesis accounts out of the bootstrap-created set", () => {
+      expect(Constants.NULL_ACCOUNT).toBe("sysio.null")
+      expect(Constants.PRODUCERS_ACCOUNT).toBe("sysio.prods")
+      expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.NULL_ACCOUNT)
+      expect(Constants.SYSTEM_ACCOUNTS).not.toContain(Constants.PRODUCERS_ACCOUNT)
+    })
+  })
+
+  describe("governance authority RAM", () => {
+    it("adds 640 bytes: 21 member entries of 32 bytes less the placeholder entry", () => {
+      expect(Constants.GOVERNANCE_AUTHORITY_RAM_BYTES).toBe(640)
+      expect(Constants.GOVERNANCE_AUTHORITY_RAM_BYTES).toBe(
+        (Constants.T1_MAX_NODE_OWNERS -
+          Constants.GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES) *
+          Constants.GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES
+      )
+    })
   })
 
   describe("plugin sets", () => {

@@ -1438,3 +1438,39 @@ describe("Steps.keys", () => {
     })
   })
 })
+
+describe("Steps.keys.importSeededKey", () => {
+  it("records the seed the key regenerates from and its public half", () => {
+    const step = Steps.keys.planImportSeededKey(
+      Report.Actor.User,
+      "import-key-gova",
+      "import gova's key",
+      {},
+      "flow-governance-handoff/gova"
+    )
+    expect(step.input).toEqual({
+      kind: "KeySteps.ImportSeededKeyInput",
+      seed: "flow-governance-handoff/gova",
+      publicKey: KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/gova").publicKey
+    })
+    expect(step.runner).toBe(Steps.keys.runImportSeededKey)
+  })
+
+  it("imports the seed's private key into the wallet once, and nothing when aborted", async () => {
+    const addPrivateKey = jest.fn().mockResolvedValue(undefined),
+      ctx = {
+        wire: { wallet: { getOrCreate: jest.fn().mockResolvedValue({ addPrivateKey }) } }
+      } as never,
+      seeded = KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/govb"),
+      input = {
+        kind: "KeySteps.ImportSeededKeyInput" as const,
+        seed: "flow-governance-handoff/govb",
+        publicKey: seeded.publicKey
+      }
+    await Steps.keys.runImportSeededKey(ctx, input, new AbortController().signal)
+    expect(addPrivateKey).toHaveBeenCalledTimes(1)
+    expect(addPrivateKey).toHaveBeenCalledWith(seeded.privateKey)
+    await expect(Steps.keys.runImportSeededKey(ctx, input, AbortSignal.abort())).rejects.toThrow()
+    expect(addPrivateKey).toHaveBeenCalledTimes(1)
+  })
+})

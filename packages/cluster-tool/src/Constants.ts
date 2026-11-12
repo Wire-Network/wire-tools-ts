@@ -1,8 +1,8 @@
-import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range } from "lodash"
 
 import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
+import { KeyGenerator } from "./clients/wire/KeyGenerator.js"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
@@ -16,23 +16,6 @@ export namespace Constants {
   export const DepotPrecisionCap = 9
   export const WireChainCode = Number(SlugName.from("WIRE"))
   export const WireTokenCode = WireChainCode
-  /** Seed for the deterministic dev K1 key pair (matches the genesis bios key). */
-  const DefaultK1KeyPairSeed = "nathan"
-
-  /** The deterministic development K1 key pair (genesis bios key). */
-  export const DefaultK1KeyPair = Option.try(() => {
-    const privKeyDigest = Hash.sha256().update(DefaultK1KeyPairSeed).digest(),
-      privateKey = PrivateKey.regenerate(KeyType.K1, privKeyDigest),
-      publicKey = privateKey.toPublic()
-    return {
-      privateKey,
-      publicKey,
-      privateKeyWIF: privateKey.toWif(),
-      publicKeyWIF: publicKey.toLegacyString()
-    }
-  }).getOrThrow(`Failed to create default key pair: ${DefaultK1KeyPairSeed}`)
-
-  export type DefaultK1KeyPairType = typeof DefaultK1KeyPair
 
   /**
    * The Solana liq token's codename (`LIQSOL`): the shadow symbol code, the `sysio.tokens`
@@ -41,40 +24,18 @@ export namespace Constants {
    */
   export const LIQSOL_CODENAME = "LIQSOL"
 
-  /** Default sysio development private key (WIF format). */
-  export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
-  /** Default sysio development public key (SYS prefix). */
-  export const DEV_K1_PUBLIC_KEY = DefaultK1KeyPair.publicKeyWIF
+  /** Default sysio development private key (WIF format) — the genesis bios key. */
+  export const DEV_K1_PRIVATE_KEY = KeyGenerator.BiosK1Key.privateKey
+  /** Default sysio development public key (SYS prefix) — the genesis bios key. */
+  export const DEV_K1_PUBLIC_KEY = KeyGenerator.BiosK1Key.publicKey
 
-  /** Seed for the deterministic dev BLS key pair. */
-  const DefaultBLSKeyPairSeed = "wire"
-
-  /** The deterministic development BLS key pair (genesis finalizer key). */
-  export const DefaultBLSKeyPair = Option.try(() => {
-    const privKeyDigest = Hash.sha256().update(DefaultBLSKeyPairSeed).digest(),
-      privateKey = PrivateKey.regenerate(KeyType.BLS, privKeyDigest),
-      publicKey = privateKey.toPublic()
-    return {
-      privateKey,
-      publicKey,
-      proofOfPossession: privateKey.proofOfPossessionSignature,
-      privateKeyStr: privateKey.toString(),
-      publicKeyStr: publicKey.toString(),
-      proofOfPossessionStr: privateKey.proofOfPossessionString
-    }
-  }).getOrThrow(
-    `Failed to create default BLS key pair: ${DefaultBLSKeyPairSeed}`
-  )
-
-  export type DefaultBLSKeyPairType = typeof DefaultBLSKeyPair
-
-  /** Default sysio development BLS private key. */
-  export const DEV_BLS_PRIVATE_KEY = DefaultBLSKeyPair.privateKeyStr
+  /** Default sysio development BLS private key — the genesis finalizer key. */
+  export const DEV_BLS_PRIVATE_KEY = KeyGenerator.BiosBLSKey.privateKey
   /** Default sysio development BLS public key. */
-  export const DEV_BLS_PUBLIC_KEY = DefaultBLSKeyPair.publicKeyStr
+  export const DEV_BLS_PUBLIC_KEY = KeyGenerator.BiosBLSKey.publicKey
   /** Default sysio development BLS proof of possession. */
   export const DEV_BLS_PROOF_OF_POSSESSION =
-    DefaultBLSKeyPair.proofOfPossessionStr
+    KeyGenerator.BiosBLSKey.proofOfPossession
 
   /**
    * Format a nodeop signature-provider config value:
@@ -108,6 +69,50 @@ export namespace Constants {
     )
   }
 
+  /**
+   * The governance authority `sysio.councl::syncnodes` writes: its `active` is a
+   * supermajority of the `sysio.roa` tier-1 node owners. `sysio` can be handed to it.
+   */
+  export const NODE_OWNERS_AUTHORITY = "sysio.nodes"
+  /**
+   * The governance authority `sysio.councl` writes when an election seats its last
+   * member: its `active` is a supermajority of the seated council.
+   */
+  export const COUNCIL_AUTHORITY = "sysio.cncl"
+  /**
+   * The accounts `sysio` can be delegated to. The bootstrap creates each with an
+   * `owner` of `sysio@active` and an `active` nobody can satisfy until the contract
+   * first writes it.
+   */
+  export const GOVERNANCE_AUTHORITY_ACCOUNTS = [
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY
+  ] as const
+
+  /** One of {@link GOVERNANCE_AUTHORITY_ACCOUNTS}. */
+  export type GovernanceAuthorityAccount =
+    (typeof GOVERNANCE_AUTHORITY_ACCOUNTS)[number]
+
+  /**
+   * Whether `account` is one of the {@link GOVERNANCE_AUTHORITY_ACCOUNTS}.
+   *
+   * @param account - The account name.
+   * @returns True for `sysio.nodes` and `sysio.cncl`.
+   */
+  export function isGovernanceAuthorityAccount(
+    account: string
+  ): account is GovernanceAuthorityAccount {
+    return GOVERNANCE_AUTHORITY_ACCOUNTS.some(authority => authority === account)
+  }
+
+  /** The root account: every system account is governed by its `active`, and a handoff repoints it. */
+  export const SYSIO_ACCOUNT =
+    SysioContracts.SysioContractAccount[SysioContracts.SysioContractName.system]
+  /** The genesis account nobody can authorize; an authority delegating to it is unsatisfiable. */
+  export const NULL_ACCOUNT = "sysio.null"
+  /** The genesis account whose permissions the chain keeps equal to the producer schedule. */
+  export const PRODUCERS_ACCOUNT = "sysio.prods"
+
   /** System accounts created during bootstrap. */
   export const SYSTEM_ACCOUNTS = [
     "sysio.noop",
@@ -133,6 +138,8 @@ export namespace Constants {
     "sysio.bond",
     "sysio.synd",
     "sysio.councl",
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY,
     "sysio.kicker",
     "sysio.gov",
     "sysio.ops",
@@ -252,6 +259,12 @@ export namespace Constants {
    * default; governance changes it through `setparams`.
    */
   export const NOTIFY_CPU_STIPEND = 100
+  /**
+   * The genesis `max_authority_depth`: how many delegations deep the chain follows
+   * when it checks whether an authority is satisfied. A delegation past it counts as
+   * unsatisfied, so raising it lets deeper delegation chains carry weight.
+   */
+  export const MAX_AUTHORITY_DEPTH = 10
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
   /**
@@ -599,6 +612,23 @@ export namespace Constants {
 
   /** The node owners tier 1 admits at most (wire-sysio `emissions.hpp` `T1_MAX_NODE_OWNERS`). */
   export const T1_MAX_NODE_OWNERS = 21
+  /**
+   * RAM one member entry of a governance authority bills: a `permission_level_weight`
+   * rounded up to the chain's 16-byte billing alignment.
+   */
+  export const GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES = 32
+  /** Entries of the placeholder `active` a governance authority is created with: `sysio.null@active`. */
+  export const GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES = 1
+  /**
+   * RAM added to each governance authority's limit at bootstrap (640 bytes): a full
+   * authority of {@link T1_MAX_NODE_OWNERS} members (the council's 21 seats, the tier-1
+   * cap) less the placeholder entry the account was created with. Without it
+   * `sysio.councl` cannot write the authority, so `syncnodes` fails and the last seat
+   * of an election cannot be tabulated.
+   */
+  export const GOVERNANCE_AUTHORITY_RAM_BYTES =
+    (T1_MAX_NODE_OWNERS - GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES) *
+    GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES
   /** The node owners tier 2 admits at most (`T2_MAX_NODE_OWNERS`). */
   export const T2_MAX_NODE_OWNERS = 84
   /** The node owners tier 3 admits at most (`T3_MAX_NODE_OWNERS`). */

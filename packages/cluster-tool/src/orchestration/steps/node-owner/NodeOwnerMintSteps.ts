@@ -1,17 +1,19 @@
 import Assert from "node:assert"
+import { Report } from "../../../report/Report.js"
 import {
-  ClusterBuildContext,
-  ClusterBuildStep,
-  OperatorDaemonArtifactsKey,
   loadMockWireNodes,
   mintNodeNFT,
   NodeOwnerTier,
-  outputKey,
-  Report,
-  type ClusterBuildStepOptions,
-  type MockWireNodesContract,
-  type StepInput
-} from "@wireio/cluster-tool"
+  type MockWireNodesContract
+} from "../../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { ClusterBuildContext } from "../../ClusterBuildContext.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../../ClusterBuildStep.js"
+import { outputKey } from "../../OutputStore.js"
+import { OperatorDaemonArtifactsKey } from "../../outputs/OperatorDaemonArtifacts.js"
+import type { StepInput } from "../../StepRunner.js"
 
 /**
  * Step factory + companions for the `MockWireNodes.sol` ERC-1155 mint — the
@@ -21,10 +23,10 @@ import {
  * `ctx.outputs` under {@link TotalSupplyBeforeKey} so the scenario's supply
  * verify reads it back without shared mutable closures.
  */
-export namespace NodeOwnerNftScenarioMintSteps {
+export namespace NodeOwnerMintSteps {
   /** `viewTotalSupply` snapshot taken before the planMint (consumed by the supply verify). */
   export const TotalSupplyBeforeKey = outputKey<bigint>(
-    "NodeOwnerNftScenarioMintSteps.totalSupplyBefore",
+    "NodeOwnerMintSteps.totalSupplyBefore",
     "MockWireNodes totalSupply for the minted tier, snapshotted before the mint"
   )
 
@@ -49,7 +51,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
 
   /** Input for {@link planMint} — one MockWireNodes ERC-1155 mint write. */
   export interface MintInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioMintSteps.MintInput"
+    readonly kind: "NodeOwnerMintSteps.MintInput"
     /** The ERC-1155 id minted (the node-owner tier). */
     readonly tier: NodeOwnerTier
     /** Units minted; the contract charges `1 ether * amount`. */
@@ -81,7 +83,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
       name,
       description,
       options,
-      { kind: "NodeOwnerNftScenarioMintSteps.MintInput", tier, amount },
+      { kind: "NodeOwnerMintSteps.MintInput", tier, amount },
       runMint
     )
   }

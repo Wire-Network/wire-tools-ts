@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 
-import { SysioContracts } from "@wireio/sdk-core"
+import { Action, Authority, Name, PublicKey, SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
@@ -884,6 +884,49 @@ describe("WireClient", () => {
     })
   })
 
+  describe("toAuthorityType", () => {
+    /**
+     * A decoded authority. The test's sdk-core types resolve to the ESM declarations and the
+     * client's to the CJS ones, so the instance crosses into the client as the client's own
+     * `Authority`; at run time both are the one CJS module.
+     */
+    function decoded(
+      authority: Parameters<typeof Authority.from>[0]
+    ): Parameters<typeof WireClient.toAuthorityType>[0] {
+      return Authority.from(authority) as never
+    }
+
+    it("spells a decoded authority as the generated type: plain numbers, string names and keys", () => {
+      const key = PublicKey.from(Constants.DEV_K1_PUBLIC_KEY),
+        authority = decoded({
+          threshold: 2,
+          keys: [{ key, weight: 1 }],
+          accounts: [
+            { permission: { actor: "sysio.nodes", permission: "active" }, weight: 1 }
+          ]
+        })
+      expect(WireClient.toAuthorityType(authority)).toEqual({
+        threshold: 2,
+        keys: [{ key: key.toString(), weight: 1 }],
+        accounts: [
+          { permission: { actor: "sysio.nodes", permission: "active" }, weight: 1 }
+        ]
+      })
+    })
+
+    it("keeps an authority with neither keys nor accounts empty", () => {
+      expect(WireClient.toAuthorityType(decoded({ threshold: 1 }))).toEqual({
+        threshold: 1,
+        keys: [],
+        accounts: []
+      })
+    })
+  })
+
+  it("spells the root permission's parent empty", () => {
+    expect(WireClient.OwnerParent).toBe("")
+  })
+
   describe("getRamQuota", () => {
     it("reads get_account's ram_quota for the named account as a number", async () => {
       const client = new WireClient(config),
@@ -943,6 +986,61 @@ describe("WireClient", () => {
         /positive byte count/
       )
       expect(setacctram).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("encoded actions", () => {
+    /**
+     * An already-encoded `sysio.councl::syncnodes` (its data is the caller's name). The test
+     * build types sdk-core from its ESM declarations and the source from its CJS ones, so the
+     * instance crosses into the client as the client's own `Action`; at run time both are the
+     * one CJS module.
+     */
+    function encodedSyncnodes(): Parameters<typeof WireClient.toEncodedActionJson>[0] {
+      return Action.from({
+        account: "sysio.councl",
+        name: "syncnodes",
+        authorization: [{ actor: "sysio", permission: "active" }],
+        data: Name.from("sysio").value.byteArray
+      }) as never
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("spells an encoded action as clio's push form with hex data", () => {
+      const action = encodedSyncnodes()
+      expect(WireClient.toEncodedActionJson(action)).toEqual({
+        account: "sysio.councl",
+        name: "syncnodes",
+        authorization: [{ actor: "sysio", permission: "active" }],
+        data: action.data.hexString
+      })
+    })
+
+    it("pushes encoded and typed actions as ONE transaction, in order", async () => {
+      const client = new WireClient(config),
+        send = jest.spyOn(client["runner"], "run").mockResolvedValue({
+          transaction_id: WireClient.NoTransactionSentTransactionId
+        } as never),
+        typed = client
+          .getSysioContract(SysioContracts.SysioContractName.system)
+          .actions.updateauth.prepare(
+            {
+              account: "sysio",
+              permission: "active",
+              parent: "owner",
+              auth: { threshold: 1, keys: [], accounts: [] }
+            },
+            { authorization: WireClient.activeAuthorization("sysio") }
+          ),
+        action = encodedSyncnodes()
+      await client.invokeTransaction(action, typed)
+      expect(send).toHaveBeenCalledTimes(1)
+      const [args] = send.mock.calls[0] as [string[]],
+        { actions } = JSON.parse(args[args.indexOf("-j") + 1])
+      expect(actions).toHaveLength(2)
+      expect(actions[0]).toEqual(WireClient.toEncodedActionJson(action))
+      expect(actions[1]).toMatchObject({ account: "sysio", name: "updateauth" })
     })
   })
 

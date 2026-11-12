@@ -2,9 +2,10 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey } from "@wireio/sdk-core"
 import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { Constants } from "@wireio/cluster-tool/Constants"
 
 const K1_OUTPUT =
   "Private key: PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i\n" +
@@ -147,6 +148,38 @@ describe("KeyGenerator", () => {
     expect(KeyGenerator.BiosBLSKey.type).toBe(KeyType.BLS)
     expect(KeyGenerator.BiosBLSKey.publicKey).toMatch(/^PUB_BLS_/)
     expect(KeyGenerator.BiosBLSKey.proofOfPossession).toMatch(/^SIG_BLS_/)
+  })
+
+  it("keeps the bios K1 key the launcher's well-known development key, in its legacy spelling", () => {
+    expect(KeyGenerator.BiosK1Key).toEqual({
+      type: KeyType.K1,
+      publicKey: "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV",
+      privateKey: "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"
+    })
+    expect(Constants.DEV_K1_PUBLIC_KEY).toBe(KeyGenerator.BiosK1Key.publicKey)
+    expect(Constants.DEV_K1_PRIVATE_KEY).toBe(KeyGenerator.BiosK1Key.privateKey)
+  })
+
+  it("regenerates the bios keys from their seeds", () => {
+    const k1 = KeyGenerator.createSeeded(KeyType.K1, KeyGenerator.BiosK1KeySeed)
+    expect(PublicKey.from(k1.publicKey).toLegacyString()).toBe(KeyGenerator.BiosK1Key.publicKey)
+    expect(PrivateKey.from(k1.privateKey).toWif()).toBe(KeyGenerator.BiosK1Key.privateKey)
+    expect(KeyGenerator.createSeeded(KeyType.BLS, KeyGenerator.BiosBLSKeySeed)).toEqual(
+      KeyGenerator.BiosBLSKey
+    )
+    expect(Constants.DEV_BLS_PUBLIC_KEY).toBe(KeyGenerator.BiosBLSKey.publicKey)
+    expect(Constants.DEV_BLS_PROOF_OF_POSSESSION).toBe(KeyGenerator.BiosBLSKey.proofOfPossession)
+  })
+
+  it("createSeeded regenerates the same pair for a seed and distinct pairs for distinct seeds", () => {
+    const pair = KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/gova")
+    expect(pair.type).toBe(KeyType.K1)
+    expect(pair.publicKey).toMatch(/^PUB_K1_/)
+    expect(KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/gova")).toEqual(pair)
+    expect(PrivateKey.from(pair.privateKey).toPublic().toString()).toBe(pair.publicKey)
+    expect(
+      KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/govb").publicKey
+    ).not.toBe(pair.publicKey)
   })
 
   it("toSignatureProvider renders SSM: / KIOD: segments per the provider source", () => {

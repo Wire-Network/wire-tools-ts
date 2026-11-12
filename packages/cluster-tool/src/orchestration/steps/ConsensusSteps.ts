@@ -3,6 +3,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../report/Report.js"
 import { sleep } from "../../utils/asyncUtils.js"
+import { supermajorityThreshold } from "../../utils/quorumUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -76,7 +77,7 @@ export namespace ConsensusSteps {
         pop: producer.wireFinalizer.proofOfPossession
       }
     })
-    const threshold = Math.floor((finalizers.length * 2) / 3) + 1
+    const threshold = supermajorityThreshold(finalizers.length)
     await ctx.wire
       .getSysioContract(SysioContractName.bios)
       .actions.setfinalizer.invoke({ finalizer_policy: { threshold, finalizers } })

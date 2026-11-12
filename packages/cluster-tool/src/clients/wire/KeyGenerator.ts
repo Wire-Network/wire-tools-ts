@@ -2,19 +2,20 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import Path from "node:path"
 import Assert from "node:assert"
+import { asOption } from "@3fv/prelude-ts"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Hash, KeyType, PrivateKey, PublicKey } from "@wireio/sdk-core"
 import {
   SignatureProviderType,
   type ClusterSignatureProviderConfig
 } from "@wireio/cluster-tool-shared"
-import { Constants } from "../../Constants.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
   ethereumKeyPairFromWallet,
   ethereumSdkPrivateKey,
   ethereumUncompressedPublicKeyHex,
+  keyPairFromPrivate,
   solanaNativePublicKey,
   solanaSdkPrivateKey
 } from "../../utils/keyPairUtils.js"
@@ -460,22 +461,55 @@ export namespace KeyGenerator {
     ].join(",")
   }
 
+  /** The curves sdk-core regenerates from a seed digest: the WIRE signing and finalizer keys. */
+  export type SeededKeyType = KeyType.K1 | KeyType.BLS
+
   /**
-   * Dev-only, bootstrap-only bios K1 key (mirrors the Python launcher). NEVER
-   * authoritative outside a test cluster — changing its source without updating the
-   * launcher breaks cross-tool parity.
+   * Generate the deterministic development {@link KeyPair} of curve `T` from
+   * `seed`: the private key sdk-core regenerates from SHA-256(`seed`). The pair
+   * is known before anything runs, so a plan can carry its public key. Anyone
+   * who knows the seed holds the key: test identities only, never a real one.
+   *
+   * @param type - The curve (`K1` or `BLS`).
+   * @param seed - The seed text.
+   * @returns The `KeyPair<T>`, in sdk-core's `PUB_` / `PVT_` spelling.
    */
-  export const BiosK1Key: WireKeyPair = {
-    type: KeyType.K1,
-    publicKey: Constants.DefaultK1KeyPair.publicKeyWIF,
-    privateKey: Constants.DefaultK1KeyPair.privateKeyWIF
+  export function createSeeded<T extends SeededKeyType>(
+    type: T,
+    seed: string
+  ): KeyPair<T> {
+    return keyPairFromPrivate(
+      type,
+      PrivateKey.regenerate(type, Hash.sha256().update(seed).digest()).toString()
+    )
   }
 
+  /** Seed of {@link BiosK1Key}: the launcher's well-known development key. */
+  export const BiosK1KeySeed = "nathan"
+  /** Seed of {@link BiosBLSKey}. */
+  export const BiosBLSKeySeed = "wire"
+
+  /**
+   * Dev-only, bootstrap-only bios K1 key (mirrors the Python launcher), in the
+   * launcher's legacy `SYS…` / WIF spelling. NEVER authoritative outside a test
+   * cluster — changing its seed or spelling without updating the launcher breaks
+   * cross-tool parity and the dev chain id.
+   */
+  export const BiosK1Key: WireKeyPair = asOption(
+    createSeeded(KeyType.K1, BiosK1KeySeed)
+  )
+    .map(
+      (pair): WireKeyPair => ({
+        type: KeyType.K1,
+        publicKey: PublicKey.from(pair.publicKey).toLegacyString(),
+        privateKey: PrivateKey.from(pair.privateKey).toWif()
+      })
+    )
+    .get()
+
   /** Dev-only, bootstrap-only bios BLS finalizer key. Same parity caveat as {@link BiosK1Key}. */
-  export const BiosBLSKey: WireFinalizerKeyPair = {
-    type: KeyType.BLS,
-    publicKey: Constants.DefaultBLSKeyPair.publicKeyStr,
-    privateKey: Constants.DefaultBLSKeyPair.privateKeyStr,
-    proofOfPossession: Constants.DefaultBLSKeyPair.proofOfPossessionStr
-  }
+  export const BiosBLSKey: WireFinalizerKeyPair = createSeeded(
+    KeyType.BLS,
+    BiosBLSKeySeed
+  )
 }

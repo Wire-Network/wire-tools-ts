@@ -13,9 +13,11 @@ import {
   NestedError
 } from "@wireio/shared"
 import {
+  Action,
   API,
   APIClient,
   Asset,
+  type Authority,
   Name,
   type PermissionLevelType,
   SysioContracts
@@ -229,13 +231,25 @@ export class WireClient {
     return ["--expiration", String(WireClient.TransactionExpirationSec)]
   }
 
-  /** Multi-action tx; variadic + flatten. Waits by default. */
+  /**
+   * Multi-action tx; variadic + flatten. Waits by default. A typed payload's
+   * data is encoded by clio against the deployed ABI; an sdk-core
+   * {@link Action} rides already encoded, for an action whose data the
+   * generated payload types cannot carry (`sysio.msig::propose`'s whole
+   * proposed transaction).
+   */
   async invokeTransaction(
     ...payloads: Array<
-      WireClient.ActionPayload<any, any> | WireClient.ActionPayload<any, any>[]
+      | WireClient.ActionPayload<any, any>
+      | WireClient.ActionPayload<any, any>[]
+      | Action
     >
   ): Promise<API.v1.SendTransactionResponse> {
-    const actions = flatten(payloads),
+    const actions = flatten(payloads).map(payload =>
+        payload instanceof Action
+          ? WireClient.toEncodedActionJson(payload)
+          : payload
+      ),
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
@@ -366,10 +380,11 @@ export class WireClient {
    * so the grant is the account's current limit plus `ramBytes`.
    *
    * Bootstrap uses this for `sysio.andon`, whose native permissions and action
-   * links outgrow its code + abi allowance. OPP bond rows use the privileged
-   * request issuer's system-pool payer, so batch operators need no separate
-   * bond-row grant. Other accounts' RAM needs depend on the rows they create
-   * and the payer selected for those rows.
+   * links outgrow its code + abi allowance, and for the governance authorities
+   * `sysio.nodes` and `sysio.cncl`, whose `active` `sysio.councl` rewrites. OPP
+   * bond rows use the privileged request issuer's system-pool payer, so batch
+   * operators need no separate bond-row grant. Other accounts' RAM needs depend
+   * on the rows they create and the payer selected for those rows.
    *
    * @param account - The account whose RAM limit is raised.
    * @param ramBytes - Bytes added to the account's current RAM limit.
@@ -1196,6 +1211,16 @@ export namespace WireClient {
     readonly authorization: ReadonlyArray<PermissionLevelType>
     readonly data: ActionData<Name, Action>
   }
+  /**
+   * Any typed {@link ActionPayload} of any generated system contract — the element
+   * of a transaction that mixes contracts, each payload still checked against its
+   * own contract's action names and data.
+   */
+  export type AnyActionPayload = {
+    [Name in SysioContractName]: {
+      [Action in ActionName<Name>]: ActionPayload<Name, Action>
+    }[ActionName<Name>]
+  }[SysioContractName]
   export interface ActionInvoker<
     Name extends SysioContractName,
     Action extends ActionName<Name>
@@ -1364,6 +1389,16 @@ export namespace WireClient {
 
   /** The permission an account signs its own actions with. */
   export const ActivePermission = "active"
+  /** The root permission of every account; it can change any of the account's permissions. */
+  export const OwnerPermission = "owner"
+  /**
+   * The virtual permission a contract's own code holds: an authority that lists
+   * `<contract>@sysio.code` lets that contract's inline actions act for it. No key
+   * satisfies it.
+   */
+  export const CodePermission = "sysio.code"
+  /** The parent `owner` carries, spelled empty: `owner` is every account's root permission. */
+  export const OwnerParent = ""
 
   /**
    * `<account>@active` — the authorization for an action the ACCOUNT itself signs: a
@@ -1397,6 +1432,67 @@ export namespace WireClient {
     limit?: number
     lowerBound?: string | null
     upperBound?: string | null
+  }
+
+  /**
+   * An already-encoded action as `clio push transaction` takes it: `data` is
+   * the action's hex bytes, so clio needs no ABI to push it.
+   */
+  export interface EncodedActionJson {
+    /** The contract account. */
+    readonly account: string
+    /** The action name. */
+    readonly name: string
+    /** The declared authorizations, in order. */
+    readonly authorization: PermissionLevelType[]
+    /** The encoded action data, as hex. */
+    readonly data: string
+  }
+
+  /**
+   * The {@link EncodedActionJson} form of an sdk-core {@link Action}.
+   *
+   * @param action - The encoded action.
+   * @returns Its push form, every name spelled as a string.
+   */
+  export function toEncodedActionJson(action: Action): EncodedActionJson {
+    return {
+      account: String(action.account),
+      name: String(action.name),
+      authorization: action.authorization.map(level => ({
+        actor: String(level.actor),
+        permission: String(level.permission)
+      })),
+      data: action.data.hexString
+    }
+  }
+
+  /**
+   * The generated {@link SysioContracts.SysioSystemAuthorityType} form of an
+   * sdk-core {@link Authority} — what `get_account` decodes a permission's
+   * `required_auth` into — with every number plain and every name and key a
+   * string (keys in sdk-core's `PUB_` spelling).
+   *
+   * @param authority - The decoded authority.
+   * @returns Its threshold, keys and accounts as the generated type spells them.
+   */
+  export function toAuthorityType(
+    authority: Authority
+  ): SysioContracts.SysioSystemAuthorityType {
+    return {
+      threshold: Number(authority.threshold),
+      keys: authority.keys.map(({ key, weight }) => ({
+        key: String(key),
+        weight: Number(weight)
+      })),
+      accounts: authority.accounts.map(({ permission, weight }) => ({
+        permission: {
+          actor: String(permission.actor),
+          permission: String(permission.permission)
+        },
+        weight: Number(weight)
+      }))
+    }
   }
 
   // ── Response shapes ──

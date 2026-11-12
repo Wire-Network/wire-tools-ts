@@ -163,6 +163,59 @@ export namespace KeySteps {
     ctx.keyStore.pushNodes(...nodes)
   }
 
+  /** Input for {@link planImportSeededKey}. */
+  export interface ImportSeededKeyInput extends StepInput {
+    readonly kind: "KeySteps.ImportSeededKeyInput"
+    /** The seed the K1 key regenerates from ({@link KeyGenerator.createSeeded}). */
+    readonly seed: string
+    /** The key's public half, for the Report. */
+    readonly publicKey: string
+  }
+
+  /**
+   * Import the seeded development K1 key ({@link KeyGenerator.createSeeded})
+   * into the kiod wallet, so the account it controls can sign — a flow's test
+   * identity whose public key its plan already carries.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param seed - The key's seed.
+   * @returns The definition step.
+   */
+  export function planImportSeededKey<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    seed: string
+  ): ClusterBuildStep<C, ImportSeededKeyInput> {
+    return ClusterBuildStep.create<C, ImportSeededKeyInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "KeySteps.ImportSeededKeyInput",
+        seed,
+        publicKey: KeyGenerator.createSeeded(KeyType.K1, seed).publicKey
+      },
+      runImportSeededKey
+    )
+  }
+
+  /** Named runner — ONE wallet import of the seed's private key. */
+  export async function runImportSeededKey<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ImportSeededKeyInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const wallet = await ctx.wire.wallet.getOrCreate()
+    await wallet.addPrivateKey(KeyGenerator.createSeeded(KeyType.K1, input.seed).privateKey)
+  }
+
   /**
    * Open the kiod wallet and import every key needed for the run: the BIOS dev
    * K1 + BLS keys plus every generated node K1/BLS and operator K1. Requires
