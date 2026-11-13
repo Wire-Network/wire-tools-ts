@@ -933,14 +933,18 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       )
 
     expect(argv.length).toBeGreaterThan(0)
-    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([
-      [
-        OperatorDaemonTool.EthereumClientId,
-        `eth-${account}`,
-        externalEthereumRpcUrl,
-        String(AnvilProcess.DefaultChainId)
-      ].join(",")
+    const clientFile = Path.join(
+        merged.dataPath,
+        OperatorDaemonTool.EthereumClientConfigurationFilename
+      ),
+      client = JSON.parse(Fs.readFileSync(clientFile, "utf-8")).clients[0]
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
+      `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
     ])
+    expect(client.connection.rpc_url).toBe(externalEthereumRpcUrl)
+    expect(client.chain_id).toBe(AnvilProcess.DefaultChainId)
+    expect(client.transaction_policy).toBeDefined()
+    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([])
     expect(argvValuesOf(argv, "--outpost-solana-client")).toEqual([
       [
         OperatorDaemonTool.SolanaClientId,
@@ -953,9 +957,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ])
     // Target the SPECIFIC option specs, never a blanket scan of the file: a
     // `--signature-provider` value legitimately contains `ethereum` / `solana`.
-    const [ethereumSpec] = argvValuesOf(argv, "--outpost-ethereum-client"),
-      [solanaSpec] = argvValuesOf(argv, "--outpost-solana-client")
-    expect(ethereumSpec).not.toContain(localEthereumRpcUrl)
+    const [solanaSpec] = argvValuesOf(argv, "--outpost-solana-client")
+    expect(client.connection.rpc_url).not.toBe(localEthereumRpcUrl)
     expect(solanaSpec).not.toContain(localSolanaRpcUrl)
     expect(argvValuesOf(argv, "--ext-debugging-server")).not.toContain(
       localDebuggingServerUrl
@@ -1226,16 +1229,18 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // `rpcUrl` included; nothing in it points at a file.
     expect(merged.externalOutposts).toEqual(authoritativeExternalOutposts())
 
-    // The 4-field ETH client spec: id, provider, the AUTHORITATIVE endpoint,
-    // and the config's REAL chain id (never the anvil default).
-    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([
-      [
-        OperatorDaemonTool.EthereumClientId,
-        `eth-${account}`,
-        ExternalEthereumRpcUrl,
-        String(ExternalChainId)
-      ].join(",")
+    // The generated client keeps the authoritative endpoint and real chain id.
+    const clientFile = Path.join(
+        merged.dataPath,
+        OperatorDaemonTool.EthereumClientConfigurationFilename
+      ),
+      client = JSON.parse(Fs.readFileSync(clientFile, "utf-8")).clients[0]
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
+      `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
     ])
+    expect(client.connection.rpc_url).toBe(ExternalEthereumRpcUrl)
+    expect(client.chain_id).toBe(ExternalChainId)
+    expect(client.transaction_policy).toBeUndefined()
     expect(argvValuesOf(argv, "--outpost-solana-client")).toEqual([
       [
         OperatorDaemonTool.SolanaClientId,

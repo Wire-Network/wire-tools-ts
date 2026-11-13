@@ -385,8 +385,8 @@ is always rendered, every other member only when set, so nodeop and the plugin
 own those defaults; any member the caller sets requires `--api-count` ≥ 1),
 `--ethereum-read-block-tag <finalized|safe|latest>` / `--ethereum-read-confirmations <n>` /
 `--ethereum-read-max-finality-lag-sec <s>` (the operator daemons' Ethereum read
-confirmation, persisted as `ClusterConfig.ethereumRead`; each member rendered as
-nodeop's `--outpost-ethereum-read-*` only when set, so nodeop owns the defaults:
+confirmation, persisted as `ClusterConfig.ethereumRead`; each set member written
+to the Ethereum client's `read_confirmation` JSON, so nodeop owns the defaults:
 `latest`, 12 confirmations, 1152 s); `package` writes
 one `<node>.<ext>` per node under `<cluster>/packages/` (a hand-off artifact for
 a multihost environment with distinct compute + storage — S3/EC2, GCS, or any
