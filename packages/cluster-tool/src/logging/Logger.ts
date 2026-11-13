@@ -81,6 +81,23 @@ class LevelConsoleAppender extends ConsoleAppender<LogRecord> {
 }
 
 /**
+ * {@link LevelConsoleAppender} for a CLUSTER-LESS command: every diagnostic
+ * line goes to STDERR whatever its level. The command's stdout is the raw DATA
+ * channel ({@link StdoutAppender}) a caller captures whole —
+ * `create-batch-operator-keys > listing.json` — and Node routes
+ * `console.info` / `log` / `debug` to stdout, so a level-routed diagnostic
+ * would land inside the capture. Every line is therefore written through the
+ * base appender's `error` binding — `console.error`, which Node sends to
+ * stderr — so the console is still reached only by the shared
+ * `ConsoleAppender`.
+ */
+class StderrConsoleAppender extends LevelConsoleAppender {
+  protected override write(_level: LevelKind, ...args: any[]): void {
+    super.write(Level.error, ...args)
+  }
+}
+
+/**
  * Wire the shared logging manager for a run: set the root level to the union of
  * the console and file levels, then install a level-gated console appender and a
  * per-run {@link LogFileAppender}. Called once by the cluster build / CLI.
@@ -103,15 +120,17 @@ export function configureLogging(options: LoggingSetupOptions): void {
 
 /**
  * Wire the shared logging manager for a CLUSTER-LESS command (no run log):
- * level-gated diagnostics on the console plus the raw stdout data channel
- * ({@link getStdoutLogger} → {@link StdoutAppender}). Installing explicitly
- * preempts `@wireio/shared`'s lazy default console appender, which would print
- * the data channel formatted as well.
+ * level-gated diagnostics go to STDERR at every level
+ * ({@link StderrConsoleAppender}), and stdout carries ONLY the raw data channel
+ * ({@link getStdoutLogger} → {@link StdoutAppender}), so a caller can capture
+ * stdout whole as the command's deliverable. Installing explicitly preempts
+ * `@wireio/shared`'s lazy default console appender, which would print the data
+ * channel formatted as well.
  *
- * @param consoleLevel - Minimum diagnostic level shown on the console. Default `info`.
+ * @param consoleLevel - Minimum diagnostic level written to stderr. Default `info`.
  */
 export function configureCommandLogging(consoleLevel: LevelKind = Level.info): void {
   getLoggingManager()
     .setRootLevel(consoleLevel)
-    .setAppenders(new LevelConsoleAppender(consoleLevel), new StdoutAppender())
+    .setAppenders(new StderrConsoleAppender(consoleLevel), new StdoutAppender())
 }
