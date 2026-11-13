@@ -12,7 +12,13 @@ import {
 } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
+import {
+  AnvilEthereumTransactionPolicyConfig,
+  BindConfigProvider,
+  ClusterConfigProvider,
+  EthereumClientConfigurationConfig,
+  NodeRole
+} from "@wireio/cluster-tool/config"
 import {
   AWSAccountName,
   EthereumReadBlockTag,
@@ -74,6 +80,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
 }
 
 const artifacts: OperatorDaemonArtifacts = {
+  ethereumClientConfigurationFile: "/cluster/data/ethereum-client.json",
   ethereumAbiFiles: [
     "/cluster/data/eth-abis/OPP.json",
     "/cluster/data/eth-abis/OPPInbound.json"
@@ -235,7 +242,7 @@ describe("OperatorDaemonTool", () => {
       ).toEqual(ethereumRead)
     })
 
-    it("carries the resolved endpoints into the daemon argv (batch)", () => {
+    it("references the shared Ethereum artifact and keeps the resolved Solana endpoint", () => {
       const network = OperatorDaemonTool.networkFromConfig(
           fixtureConfig({
             externalOutposts: externalOutposts(
@@ -251,9 +258,10 @@ describe("OperatorDaemonTool", () => {
           keySourceFor,
           OperatorDaemonTool.NoBatchUnderwriting
         )
-      expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
-        `${OperatorDaemonTool.EthereumClientId},eth-acct.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
+      expect(valuesOf(batchArgs, "--outpost-ethereum-client-config-file")).toEqual([
+        artifacts.ethereumClientConfigurationFile
       ])
+      expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([])
       expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
         `${OperatorDaemonTool.SolanaClientId},sol-acct.batchopcccc,${ExternalSolanaRpcUrl}`
       ])
@@ -287,7 +295,11 @@ describe("OperatorDaemonTool", () => {
           expect.objectContaining({
             operators: [operator],
             node: expect.objectContaining({ role: NodeRole.batch_operator }),
-            extraArgs: expect.arrayContaining(["--batch-operator-account"])
+            extraArgs: expect.arrayContaining([
+              "--batch-operator-account",
+              "--outpost-ethereum-client-config-file",
+              artifacts.ethereumClientConfigurationFile
+            ])
           })
         )
         // A flow-provisioned daemon launches in the BOOTSTRAP form — the
@@ -360,7 +372,7 @@ describe("OperatorDaemonTool", () => {
       expect(providers.length).toBe(3)
       // Provider NAMES are built from the CHAIN account, not the durable handle.
       expect(providers[1]).toMatch(
-        /^eth-acct\.batchopaaaa,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
+        /^eth-default,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
       )
       expect(providers[2]).toMatch(/^sol-acct\.batchopaaaa,solana,solana,/)
     })
@@ -386,9 +398,10 @@ describe("OperatorDaemonTool", () => {
       ])
       // The client id IS the chain code: both daemons look a chain's RPC client
       // up under its `sysio.chains` code, so any other id is invisible to them.
-      expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([
-        `ETHEREUM,eth-${operator.account},${network.ethereumRpcUrl},31337`
+      expect(valuesOf(args, "--outpost-ethereum-client-config-file")).toEqual([
+        artifacts.ethereumClientConfigurationFile
       ])
+      expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
         `SOLANA,sol-${operator.account},${network.solanaRpcUrl}`
       ])
@@ -411,7 +424,7 @@ describe("OperatorDaemonTool", () => {
       ).toEqual([])
     })
 
-    it("renders each set Ethereum read member beside the Ethereum client", () => {
+    it("emits no CLI read options beside the shared JSON client", () => {
       const readArgs = OperatorDaemonTool.batchOperatorArgs(
         operator,
         artifacts,
@@ -426,11 +439,34 @@ describe("OperatorDaemonTool", () => {
         keySourceFor,
         OperatorDaemonTool.NoBatchUnderwriting
       )
-      expect(valuesOf(readArgs, "--outpost-ethereum-read-block-tag")).toEqual([
-        EthereumReadBlockTag.safe
-      ])
-      expect(valuesOf(readArgs, "--outpost-ethereum-read-confirmations")).toEqual(
-        []
+      expect(
+        readArgs.filter(arg => arg.startsWith("--outpost-ethereum-read-"))
+      ).toEqual([])
+    })
+
+    it("keeps each daemon's Ethereum key distinct while sharing the client file", () => {
+      const other = {
+          ...operatorAccount("batchopbbbb", OperatorType.BATCH),
+          ethereum: ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
+        },
+        otherArgs = OperatorDaemonTool.batchOperatorArgs(
+          other,
+          artifacts,
+          network,
+          keySourceFor,
+          OperatorDaemonTool.NoBatchUnderwriting
+        ),
+        ethereumProvider = (argv: string[]) =>
+          valuesOf(argv, "--signature-provider").find(provider =>
+            provider.startsWith(
+              `${OperatorDaemonTool.EthereumSignatureProviderId},`
+            )
+          )
+      expect(ethereumProvider(args)).toBeDefined()
+      expect(ethereumProvider(otherArgs)).toBeDefined()
+      expect(ethereumProvider(args)).not.toBe(ethereumProvider(otherArgs))
+      expect(valuesOf(otherArgs, "--outpost-ethereum-client-config-file")).toEqual(
+        valuesOf(args, "--outpost-ethereum-client-config-file")
       )
     })
 
@@ -520,6 +556,21 @@ describe("OperatorDaemonTool", () => {
         keySourceFor,
         OperatorDaemonTool.underwritingFromConfig(underwritingConfig())
       )
+
+    it("shares one Ethereum client with the optional underwriting role", () => {
+      ;[relayOnly, underwriting].forEach(args => {
+        expect(valuesOf(args, "--outpost-ethereum-client-config-file")).toEqual(
+          [artifacts.ethereumClientConfigurationFile]
+        )
+        expect(
+          valuesOf(args, "--signature-provider").filter(provider =>
+            provider.startsWith(
+              `${OperatorDaemonTool.EthereumSignatureProviderId},`
+            )
+          )
+        ).toHaveLength(1)
+      })
+    })
 
     it("renders no underwriter flag on a relay-only node", () => {
       expect(valuesOf(relayOnly, "--batch-underwriter-account")).toEqual([])
@@ -707,6 +758,14 @@ describe("OperatorDaemonTool", () => {
       )
       const prepared = ctx.outputs.assert(OperatorDaemonArtifactsKey),
         idl = JSON.parse(Fs.readFileSync(prepared.solanaIdlFile, "utf-8"))
+      const client = JSON.parse(
+        Fs.readFileSync(prepared.ethereumClientConfigurationFile, "utf-8")
+      ).clients[0]
+      expect(client.chain_id).toBe(ctx.config.externalOutposts.ethereum.chainId)
+      expect(client.transaction_policy).toBeUndefined()
+      expect(client.connection.rpc_url).toBe(
+        OperatorDaemonTool.networkFromConfig(ctx.config).ethereumRpcUrl
+      )
       expect(prepared.solanaProgramId).toBe(ExternalOutpostProgramId)
       expect(idl.address).toBe(ExternalOutpostProgramId)
       expect(idl.metadata.name).toBe(SolanaOutpostProgramTool.ProgramName)
@@ -764,7 +823,26 @@ describe("OperatorDaemonTool", () => {
         // Real context over the fixture config aimed at this sandbox —
         // `ethereumDeploymentsPath` derives from `dataPath`, matching the
         // fixture layout written above.
-        ctx = fixtureContext({ clusterPath, dataPath, ethereumPath, solanaPath })
+        ctx = fixtureContext({
+          clusterPath,
+          dataPath,
+          ethereumPath,
+          solanaPath,
+          bind: {
+            ...PersistedFixture.bind,
+            anvil: {
+              ...PersistedFixture.bind.anvil,
+              port: await BindConfigProvider.findAvailable(
+                BindConfigProvider.DefaultAnvil
+              )
+            }
+          },
+          ethereumRead: {
+            blockTag: EthereumReadBlockTag.latest,
+            confirmations: 6,
+            maxFinalityLagSec: 600
+          }
+        })
       await OperatorDaemonTool.runArtifactPreparation(
         ctx,
         null,
@@ -772,6 +850,35 @@ describe("OperatorDaemonTool", () => {
       )
 
       const prepared = ctx.outputs.assert(OperatorDaemonArtifactsKey)
+      const readClient = () =>
+        JSON.parse(
+          Fs.readFileSync(prepared.ethereumClientConfigurationFile, "utf-8")
+        )
+      expect(readClient()).toEqual(
+        EthereumClientConfigurationConfig.create(
+          OperatorDaemonTool.EthereumClientId,
+          OperatorDaemonTool.EthereumSignatureProviderId,
+          OperatorDaemonTool.networkFromConfig(ctx.config).ethereumRpcUrl,
+          AnvilProcess.DefaultChainId,
+          AnvilEthereumTransactionPolicyConfig.create(),
+          ctx.config.ethereumRead
+        )
+      )
+      expect(readClient().clients[0].read_confirmation).toEqual({
+        block_tag: "EVM_READ_BLOCK_TAG_LATEST",
+        confirmations: 6,
+        max_finality_lag_sec: 600
+      })
+      // A persisted cluster can be relaunched with stale or missing generated artifacts.
+      Fs.writeFileSync(prepared.ethereumClientConfigurationFile, "stale")
+      await OperatorDaemonTool.runArtifactPreparation(
+        ctx,
+        null,
+        new AbortController().signal
+      )
+      expect(readClient().clients[0].transaction_policy).toEqual(
+        AnvilEthereumTransactionPolicyConfig.create()
+      )
       expect(prepared.solanaProgramId).toBe(programKeypair.publicKey.toBase58())
       expect(Fs.existsSync(prepared.solanaIdlFile)).toBe(true)
       // Written under the liqsol_core filename with the program id as its

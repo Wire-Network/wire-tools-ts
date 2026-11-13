@@ -26,8 +26,9 @@ import { match } from "ts-pattern"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
+import { AnvilEthereumTransactionPolicyConfig } from "../../config/AnvilEthereumTransactionPolicyConfig.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { EthereumReadConfirmationConfigProvider } from "../../config/EthereumReadConfirmationConfigProvider.js"
+import { EthereumClientConfigurationConfig } from "../../config/EthereumClientConfigurationConfig.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
@@ -51,6 +52,11 @@ import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 import { toDialAddress, toURL } from "../../utils/netUtils.js"
 
 export namespace OperatorDaemonTool {
+  /** Process-local signer referenced by the shared Ethereum client artifact. */
+  export const EthereumSignatureProviderId = "eth-default"
+  /** Generated host-only client configuration under the cluster data path. */
+  export const EthereumClientConfigurationFilename = "ethereum-client.json"
+
   // ── plugin sets ────────────────────────────────────────────────────────────
 
   /** The OPP-debugging sink plugin — reports OPP envelope artifacts to the
@@ -146,8 +152,9 @@ export namespace OperatorDaemonTool {
   /**
    * Outpost RPC client ids ARE the chain codes.
    *
-   * Both operator daemons look a chain's RPC client up under that chain's
-   * `sysio.chains` code, so the id passed to `--outpost-{ethereum,solana}-client`
+   * Batch-operator daemons look a chain's RPC client up under its
+   * `sysio.chains` code, so the Ethereum JSON client id and the id passed to
+   * `--outpost-solana-client`
    * must be the codename and nothing else. A client registered under any other
    * id is invisible to them, and a batch operator that cannot reach an active
    * chain shuts down rather than relaying a partial epoch.
@@ -237,7 +244,8 @@ export namespace OperatorDaemonTool {
    * (`{contractName, address, abi}`, from the wire-ethereum hardhat artifacts +
    * `outpost-addrs.json`), write the `liqsol_core` (OPP outpost) IDL to
    * `<dataPath>/solana-idls/` with the SOL program id as its top-level
-   * `address`, and store the typed {@link OperatorDaemonArtifacts}.
+   * `address`, generate the Ethereum client JSON, and store the typed
+   * {@link OperatorDaemonArtifacts}.
    *
    * Local mode reads the addresses the outpost deploy wrote and the program id
    * from the committed program keypair. External-outpost mode reads the
@@ -356,9 +364,32 @@ export namespace OperatorDaemonTool {
       JSON.stringify({ ...idl, address: solanaProgramId }, null, 2)
     )
 
+    const ethereumClientConfigurationFile = Path.join(
+        dataPath,
+        EthereumClientConfigurationFilename
+      ),
+      network = networkFromConfig(ctx.config),
+      transactionPolicy =
+        ctx.config.externalOutposts == null
+          ? AnvilEthereumTransactionPolicyConfig.create()
+          : undefined,
+      ethereumClientConfiguration = EthereumClientConfigurationConfig.create(
+        EthereumClientId,
+        EthereumSignatureProviderId,
+        network.ethereumRpcUrl,
+        network.ethereumChainId,
+        transactionPolicy,
+        network.ethereumRead
+      )
+    Fs.writeFileSync(
+      ethereumClientConfigurationFile,
+      EthereumClientConfigurationConfig.serialize(ethereumClientConfiguration)
+    )
+
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
       ethereumAddresses,
+      ethereumClientConfigurationFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -367,9 +398,10 @@ export namespace OperatorDaemonTool {
     StepExtraRecorder.record({
       client: "harness",
       kind: "artifact",
-      text: "address-embedded ETH ABI files + liqsol_core (OPP outpost) IDL prepared for the operator daemons",
+      text: "address-embedded ETH ABIs + Ethereum client config + liqsol_core IDL prepared for the operator daemons",
       ethereumAbiFiles,
       ethereumAddresses,
+      ethereumClientConfigurationFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -401,7 +433,7 @@ export namespace OperatorDaemonTool {
     network: OperatorDaemonNetwork,
     keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
   ): string[] {
-    const ethereumProvider = `eth-${operator.account}`,
+    const ethereumProvider = EthereumSignatureProviderId,
       solanaProvider = `sol-${operator.account}`
     return [
       ...pair(
@@ -413,15 +445,9 @@ export namespace OperatorDaemonTool {
         )
       ),
       ...pair(
-        "--outpost-ethereum-client",
-        [
-          EthereumClientId,
-          ethereumProvider,
-          network.ethereumRpcUrl,
-          String(network.ethereumChainId)
-        ].join(",")
+        "--outpost-ethereum-client-config-file",
+        artifacts.ethereumClientConfigurationFile
       ),
-      ...EthereumReadConfirmationConfigProvider.toArgs(network.ethereumRead),
       ...artifacts.ethereumAbiFiles.flatMap(file =>
         pair("--ethereum-abi-file", file)
       ),

@@ -64,6 +64,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
 
 /** Fixture {@link OperatorDaemonArtifacts} — shape only, content is unchecked here. */
 const artifactsFixture: OperatorDaemonArtifacts = {
+  ethereumClientConfigurationFile: "/cluster/data/ethereum-client.json",
   ethereumAbiFiles: ["/cluster/data/eth-abis/OPP.json"],
   ethereumAddresses: {
     OPP: "0x1111111111111111111111111111111111111111",
@@ -262,6 +263,18 @@ describe("Steps.processes.nodeop", () => {
   })
 
   describe("batch-operator launch args", () => {
+    it.each([NodeRole.bios, NodeRole.producer, NodeRole.api])(
+      "gives %s nodes no Ethereum signing configuration or artifact dependency",
+      role => {
+        const ctx = fixtureContext(sandbox()),
+          node = NodeConfig.plan(ctx.config).find(planned => planned.role === role)
+        expect(node).toBeDefined()
+        expect(
+          Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, null)
+        ).toEqual([])
+      }
+    )
+
     /** Start the first planned batch-operator node of `ctx`; return the extra args it got. */
     async function startBatchOperator(
       ctx: ReturnType<typeof fixtureContext>
@@ -294,6 +307,7 @@ describe("Steps.processes.nodeop", () => {
       expect(extraArgs).toEqual(OperatorDaemonTool.batchOperatorSyncArgs())
       expect(extraArgs).not.toContain("--plugin")
       expect(extraArgs).not.toContain("--outpost-ethereum-client")
+      expect(extraArgs).not.toContain("--outpost-ethereum-client-config-file")
       expect(extraArgs).not.toContain("--outpost-solana-client")
     })
 
@@ -301,7 +315,9 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext(sandbox())
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
       const extraArgs = await startBatchOperator(ctx)
-      expect(extraArgs).toContain("--outpost-ethereum-client")
+      expect(extraArgs).toContain("--outpost-ethereum-client-config-file")
+      expect(extraArgs).toContain(artifactsFixture.ethereumClientConfigurationFile)
+      expect(extraArgs).not.toContain("--outpost-ethereum-client")
       expect(extraArgs).toContain("--outpost-solana-client")
       expect(extraArgs.slice(0, 2)).toEqual(
         OperatorDaemonTool.batchOperatorSyncArgs()

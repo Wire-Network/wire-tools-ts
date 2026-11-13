@@ -429,6 +429,7 @@ After `create`:
     ├── anvil/                    # anvil state          (local ETH outpost only)
     ├── solana-ledger/            # validator ledger      (local SOL outpost only)
     ├── eth-abis/                 # address-embedded outpost ABIs
+    ├── ethereum-client.json      # shared Ethereum client config for operator daemons
     ├── solana-idls/              # liqsol_core (opp-outpost) IDL
     ├── ethereum-deployments/     # outpost-addrs.json
     └── opp-debugging/            # OPP envelope .data / .metadata pairs
@@ -438,6 +439,49 @@ In external-outpost mode no local `anvil` / `solana-ledger` state is written
 (`cluster-state.json` records them as `null`); `ethereum-deployments/` holds the
 deploy records written from the `--external-outpost-config`, and `eth-abis/` /
 `solana-idls/` are built from source over them.
+
+### Generated Ethereum client configuration
+
+Artifact preparation writes one `data/ethereum-client.json`, and every operator
+daemon passes it through `--outpost-ethereum-client-config-file`. The
+protobuf-JSON document uses `schema_version: 1`, nests the `ETHEREUM` client id
+and process-local `eth-default` signature-provider id under `connection`, and records `chain_id` as
+a number. Signature-provider ids are process-local, so each daemon can register
+its own Ethereum private key as `eth-default` while safely sharing the same
+client configuration file. Daemon argument builders remain pure and reuse the
+artifact on create, run, restart, and flow-provisioned starts.
+
+The cluster's `ethereumRead` settings are written as per-client
+`read_confirmation` fields, with protobuf enum spellings such as
+`EVM_READ_BLOCK_TAG_SAFE`. Unset members remain omitted so nodeop owns their
+defaults. The legacy `--outpost-ethereum-read-*` flags are never combined with
+the JSON client option: nodeop rejects that combination. The same artifact
+serves relay-only batch operators and their optional underwriting role.
+
+Local Anvil clusters embed the following finite `transaction_policy` in every
+generated Ethereum client. The values live in
+`AnvilEthereumTransactionPolicyConfig`; they are not production recommendations.
+
+| Limit | Anvil value |
+|---|---:|
+| Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
+| Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
+| Maximum final gas limit | `6,000,000` |
+| Maximum total native cost | `700,000,000,000,000,000` wei (0.7 ETH) |
+
+Nodeop applies the final 20% estimate buffer before checking the gas cap. At
+the full `6,000,000 × 100 gwei = 0.6 ETH` gas bound, the total-cost cap leaves
+`0.1 ETH` for transaction value. The historical E2E Flow Tests run
+`31645392740` validated these limits for the then-current workloads; the
+preceding emissions run measured a 4,392,032-gas high-water estimate, or
+5,270,438 gas after nodeop's 20% buffer. This is historical sizing evidence;
+current pooled-flow validation is still required before delivery. The standalone
+swap-underwriter `commit` workload has since been retired. External-outpost configuration continues to omit
+the policy, because the reviewed limits for its operator-selected endpoint are
+outside this tool's scope. Bios, API, and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
+
+Production policy selection happens outside `wire-tools-ts`.
 
 ---
 
