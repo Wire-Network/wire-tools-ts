@@ -9,6 +9,7 @@ import {
   type LogRecord
 } from "@wireio/shared"
 import { LogFileAppender } from "./LogFileAppender.js"
+import { StdoutAppender } from "./StdoutAppender.js"
 
 export type { Logger }
 
@@ -23,6 +24,19 @@ export type { Logger }
  */
 export function getLogger(categoryOrFilename: string): Logger {
   return sharedGetLogger(categoryOrFilename)
+}
+
+/**
+ * A logger whose records are written RAW to **stdout** — the clean, pipeable
+ * data channel of a CLI command (a listing, a JSON document). Routed by
+ * {@link StdoutAppender}, which {@link configureCommandLogging} installs;
+ * per-file diagnostics still go through `const log = getLogger(__filename)`.
+ *
+ * @param name - Optional sub-category (`stdout:<name>`); routing is unaffected.
+ * @returns The stdout data logger.
+ */
+export function getStdoutLogger(name?: string): Logger {
+  return sharedGetLogger(StdoutAppender.category(name))
 }
 
 /**
@@ -50,7 +64,9 @@ const moreVerbose = (a: LevelKind, b: LevelKind): LevelKind =>
 /**
  * A console appender that gates on its OWN level. The shared root level carries
  * the union of console + file thresholds, so each appender must re-filter to
- * the level it was configured with.
+ * the level it was configured with. The stdout DATA channel is never formatted
+ * here — {@link StdoutAppender} owns it raw, and printing it formatted too
+ * would double every data line.
  */
 class LevelConsoleAppender extends ConsoleAppender<LogRecord> {
   constructor(private readonly level: LevelKind) {
@@ -58,6 +74,7 @@ class LevelConsoleAppender extends ConsoleAppender<LogRecord> {
   }
 
   override append(record: LogRecord): void {
+    if (StdoutAppender.isStdoutCategory(record.category)) return
     if (LevelThresholds[record.level] >= LevelThresholds[this.level])
       super.append(record)
   }
@@ -82,4 +99,19 @@ export function configureLogging(options: LoggingSetupOptions): void {
         format: options.fileFormat ?? LogFileAppender.Format.jsonl
       })
     )
+}
+
+/**
+ * Wire the shared logging manager for a CLUSTER-LESS command (no run log):
+ * level-gated diagnostics on the console plus the raw stdout data channel
+ * ({@link getStdoutLogger} → {@link StdoutAppender}). Installing explicitly
+ * preempts `@wireio/shared`'s lazy default console appender, which would print
+ * the data channel formatted as well.
+ *
+ * @param consoleLevel - Minimum diagnostic level shown on the console. Default `info`.
+ */
+export function configureCommandLogging(consoleLevel: LevelKind = Level.info): void {
+  getLoggingManager()
+    .setRootLevel(consoleLevel)
+    .setAppenders(new LevelConsoleAppender(consoleLevel), new StdoutAppender())
 }

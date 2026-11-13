@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 import {
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterConfig,
   type CollateralRequirement
@@ -10,6 +11,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
+import { EthereumWallet } from "../clients/ethereum/EthereumWallet.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
@@ -19,6 +21,7 @@ import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
 import { Report } from "../report/Report.js"
+import { EthereumFundingTool } from "../tools/ethereum/EthereumFundingTool.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
 import { ClusterBuild } from "./ClusterBuild.js"
@@ -90,15 +93,14 @@ const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
 const WeiPerEther = 10n ** 18n
 
 /**
- * Wei seeded into each bootstrapped operator's ETH wallet under SSM — the exact
- * ETH analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
+ * Wei each bootstrapped operator's ETH wallet is funded to — the exact ETH
+ * analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
  * on every outbound delivery to the Ethereum outpost, every epoch, for the whole
  * run.
  *
- * Only needed under SSM. Under KEY the operator EM keys derive from
- * `EthereumOutpostBootstrapper.AnvilMnemonic`, whose HD accounts anvil prefunds;
- * under SSM they derive from a GENERATED cluster mnemonic (`KeySteps.ethereumMnemonic`)
- * that anvil has never heard of, so every wallet starts at ZERO.
+ * Needed on every local cluster. Every operator EM key is a fresh random key
+ * anvil has never heard of, so every wallet starts at ZERO; the funding is one
+ * `anvil_setBalance` per operator (`WireOperatorProvisioningTool.planEthereumFunding`).
  *
  * An unfunded fee payer does not fail loudly — the daemon's outbound tx is rejected
  * by the RPC with `-32003 'Out of gas: gas required exceeds allowance: 0'`, the ETH
@@ -351,13 +353,27 @@ export namespace ClusterBuildDefaults {
       {},
       producerSpecs
     )
+    // Batch-operator IDENTITIES are materialized HERE too, for the same reason: pure key work
+    // that must precede the Ethereum outpost deploy, because `OPPInbound.initialize` seats a
+    // provisional roster of the operators' ETH addresses and no address exists ahead of its
+    // random key (`EthereumOutpostSteps.resolveInitialRoster` reads `ctx.keyStore`). Their
+    // accounts, links and registration are chain WRITES that wait for the contracts and
+    // land in the post-deployment group with `identityMaterialized: true`.
+    WireOperatorProvisioningTool.planOperatorIdentityPhase<C>(
+      prerequisites,
+      "OperatorKeys",
+      "Materialize the bootstrapped batch operators' WIRE + ETH + SOL identities",
+      {},
+      batchOperators.map(label => ({ label, type: OperatorType.BATCH }))
+    )
     // SSM mode: publish the node signing keys BEFORE any node consumes them — a
     // node's `--signature-provider ...SSM:` spec fetches its private key from
     // SSM at nodeop startup, so publication must precede the BiosNode AND
     // ProducerNodes starts. Under SSM the bios node is NOT exempt: its genesis
     // keys are generated (or adopted) at config resolution like any other node
     // key and its specs render `SSM:` too — only KEY / KIOD keep the inline
-    // dev-key spec.
+    // dev-key spec. The operator keys publish right behind them, as soon as
+    // they exist: their daemons' `SSM:` specs resolve the same way at startup.
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
       Steps.keys.planSignatureProviderKeyPublications<C>(
         prerequisites,
@@ -366,6 +382,14 @@ export namespace ClusterBuildDefaults {
         {},
         config,
         Steps.keys.SignatureKeyPublishPhase.beforeNodes
+      )
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        prerequisites,
+        "PublishOperatorSignatureProviderKeys",
+        "Publish each operator signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
     ClusterBuildPhase.create<C>(
@@ -942,6 +966,41 @@ export namespace ClusterBuildDefaults {
           "start the run-time anvil (instamine)",
           {}
         ),
+        // The deploy signs as a random, persisted deployer wallet and names a
+        // random panic account — both created here and funded through the
+        // anvil faucet, never drawn from an anvil genesis account.
+        EthereumFundingTool.planCreateWallet<C>(
+          Actor.EthereumOutpost,
+          "create-ethereum-deployer",
+          "generate the outpost deployer wallet",
+          {},
+          EthereumWallet.DeployerWalletName,
+          "ethereum outpost deployer — OutpostManager admin"
+        ),
+        EthereumFundingTool.planSetBalance<C>(
+          Actor.EthereumOutpost,
+          "fund-ethereum-deployer",
+          "fund the deployer for every deploy and admin write",
+          {},
+          EthereumWallet.DeployerWalletName,
+          EthereumFundingTool.DeployerBalanceWei
+        ),
+        EthereumFundingTool.planCreateWallet<C>(
+          Actor.EthereumOutpost,
+          "create-ethereum-panic-account",
+          "generate the emergency-stop panic account",
+          {},
+          EthereumWallet.PanicWalletName,
+          "emergency-stop panic account — pause / unpause"
+        ),
+        EthereumFundingTool.planSetBalance<C>(
+          Actor.EthereumOutpost,
+          "fund-ethereum-panic-account",
+          "fund the panic account for its pause and unpause calls",
+          {},
+          EthereumWallet.PanicWalletName,
+          EthereumFundingTool.PanicBalanceWei
+        ),
         Steps.ethereumOutpost.planDeploy<C>(
           Actor.EthereumOutpost,
           "deploy-ethereum",
@@ -1158,44 +1217,29 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // Bootstrapped batch operators use the shared provisioning mechanism. Fee-payer
-    // funding only — deposit flows provision their own non-bootstrapped ops with
-    // collateral funding on top.
-    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
+    // Bootstrapped batch operators use the shared provisioning mechanism. Their
+    // identities were materialized (and, under SSM, published) in Cluster
+    // Prerequisites' `OperatorKeys`. Fee-payer funding only — deposit flows
+    // provision their own non-bootstrapped ops with collateral funding on top.
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
       "Provision the bootstrapped batch operators",
       {},
       [
-        ...batchOperators.map((label, index) => ({
+        ...batchOperators.map(label => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
+          identityMaterialized: true,
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
-          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
-          // mnemonic and are prefunded, under SSM they come off a generated
-          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
+          // chains — every EM key is random and starts at zero on the run
+          // anvil. See BatchOperatorEthereumFundingWei.
           airdropSolanaLamports: BatchOperatorAirdropLamports,
-          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
+          fundEthereumWei: BatchOperatorEthereumFundingWei
         }))
       ]
     )
-
-    // SSM mode: publish the just-provisioned operator keys BEFORE the operator
-    // daemons start — their wire/ethereum/solana `--signature-provider ...SSM:`
-    // specs fetch the private keys from SSM at nodeop startup.
-    if (config.signatureProvider.type === SignatureProviderType.SSM) {
-      Steps.keys.planSignatureProviderKeyPublications<C>(
-        postContractDeployment,
-        "PublishOperatorSignatureProviderKeys",
-        "Publish each operator signing key to AWS SSM",
-        {},
-        config,
-        Steps.keys.SignatureKeyPublishPhase.afterOperators
-      )
-    }
 
     if (underwritingImport)
       planMockImportAndBacking<C>(
@@ -1204,6 +1248,26 @@ export namespace ClusterBuildDefaults {
         batchOperators,
         backLcoImport
       )
+
+    // A pre-funded launch: the batch operators' keys were pre-created
+    // (`adoptOnly`) and their positions frozen into the launch-data export, so
+    // once their links have swept the import each one holds its credit. The
+    // verify is the Report checkpoint of that pre-funding — composed only when
+    // both conditions hold; an adopt-or-create cluster's fresh operators have
+    // no positions to find.
+    if (
+      lcoImportPlan != null &&
+      config.signatureProvider.batchOperatorKeyPolicy ===
+        SignatureProviderKeyPolicy.adoptOnly
+    ) {
+      Steps.lcoImport.planVerifyBatchOperatorCredits<C>(
+        postContractDeployment,
+        "LcoImportOperatorCredit",
+        "Verify each pre-funded batch operator holds its imported shadow credit",
+        {},
+        batchOperators
+      )
+    }
 
     // API nodes are mesh members that no bootstrap step reads, so they start
     // outside the bootstrap's finality-sensitive window, right before the

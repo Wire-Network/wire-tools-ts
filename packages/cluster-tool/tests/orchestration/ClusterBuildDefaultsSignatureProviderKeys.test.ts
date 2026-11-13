@@ -5,6 +5,7 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import type { ClusterBuildOptions } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
   fixtureResolveEnvironment,
@@ -85,7 +86,7 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
     }
   }
 
-  function ssmOptions() {
+  function ssmOptions(): ClusterBuildOptions {
     return {
       ...baseOptions(),
       signatureProvider: {
@@ -96,7 +97,8 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
       awsClusterNodeConfig: {
         account: AWSAccountName.dev,
         regions: ["us-east-1", "eu-west-1"],
-        ssm: null
+        ssm: null,
+        kms: null
       }
     }
   }
@@ -112,10 +114,13 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
     const names = collectPhaseNames(cluster.children)
     const publishIndex = names.indexOf("PublishNodeSignatureProviderKeys")
-    // Directly after `ProducerIdentities`, which itself follows `WalletAndKeys`: the walker
-    // publishes each producer ACCOUNT's keys too, and reads them off the key store — so it has
-    // to run after they are materialized and before any node fetches them.
-    expect(publishIndex).toBe(names.indexOf("ProducerIdentities") + 1)
+    // Directly after `OperatorKeys`, which follows `ProducerIdentities` and `WalletAndKeys`:
+    // the walker publishes each producer ACCOUNT's keys too, and reads them off the key store
+    // — so it has to run after they are materialized and before any node fetches them.
+    expect(publishIndex).toBe(names.indexOf("OperatorKeys") + 1)
+    expect(names.indexOf("OperatorKeys")).toBe(
+      names.indexOf("ProducerIdentities") + 1
+    )
     expect(names.indexOf("ProducerIdentities")).toBe(
       names.indexOf("WalletAndKeys") + 1
     )
@@ -124,11 +129,18 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
     expect(publishIndex).toBeLessThan(names.indexOf("ProducerNodes"))
   })
 
-  it("publishes operator keys AFTER provisioning and BEFORE the operator daemons start (SSM)", async () => {
+  it("publishes operator keys right behind the node keys — AFTER OperatorKeys materializes them, BEFORE any node, provisioning or daemon (SSM)", async () => {
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
     const names = collectPhaseNames(cluster.children)
     const publishIndex = names.indexOf("PublishOperatorSignatureProviderKeys")
-    expect(publishIndex).toBeGreaterThan(names.indexOf("Create batchops & uws"))
+    // The batch operators' keys exist from `OperatorKeys` on, so their parameters are
+    // written in prerequisites alongside the node keys rather than after provisioning.
+    expect(publishIndex).toBe(
+      names.indexOf("PublishNodeSignatureProviderKeys") + 1
+    )
+    expect(publishIndex).toBeGreaterThan(names.indexOf("OperatorKeys"))
+    expect(publishIndex).toBeLessThan(names.indexOf("BiosNode"))
+    expect(publishIndex).toBeLessThan(names.indexOf("Create batchops & uws"))
     expect(publishIndex).toBeLessThan(names.indexOf("OperatorNodes"))
   })
 })

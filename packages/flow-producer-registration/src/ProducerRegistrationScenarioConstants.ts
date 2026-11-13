@@ -23,8 +23,6 @@ export namespace ProducerRegistrationScenarioConstants {
   /** Contract assertion proving a producer has not reached collateral admission. */
   export const ProducerAdmissionErrorPattern =
     /producer operator is not eligible for admission/
-  /** Anvil-mnemonic HD index for its ETH identity, which backs its Ethereum authex link (past every bootstrap slot). */
-  export const ProducerEthereumHdIndex = 36
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60

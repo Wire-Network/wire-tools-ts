@@ -4,7 +4,7 @@ import Path from "node:path"
 import { Connection, Keypair } from "@solana/web3.js"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
-import { toURL } from "@wireio/cluster-tool/utils"
+import { solanaSignerFromKeypair, toURL } from "@wireio/cluster-tool/utils"
 
 describe("SolanaOutpostProgramTool", () => {
   let solanaPath: string
@@ -97,14 +97,17 @@ describe("SolanaOutpostProgramTool", () => {
         })
       )
 
-      const connection = new Connection(rpcUrl)
-      const program = SolanaOutpostProgramTool.loadProgram(
-        connection,
-        Keypair.generate(),
-        programPath
-      )
+      const connection = new Connection(rpcUrl),
+        wallet = solanaSignerFromKeypair(Keypair.generate()),
+        program = SolanaOutpostProgramTool.loadProgram(
+          connection,
+          wallet,
+          programPath
+        )
       expect(program.programId.toBase58()).toBe(keypair.publicKey.toBase58())
       expect(program.provider.connection).toBe(connection)
+      // The provider's wallet IS the signer handed in — keypair-backed or KMS-backed alike.
+      expect(program.provider.publicKey.toBase58()).toBe(wallet.publicKey.toBase58())
     } finally {
       Fs.rmSync(programPath, { recursive: true, force: true })
     }
@@ -151,7 +154,7 @@ describe("SolanaOutpostProgramTool", () => {
       expect(() =>
         SolanaOutpostProgramTool.loadProgram(
           new Connection(rpcUrl),
-          Keypair.generate(),
+          solanaSignerFromKeypair(Keypair.generate()),
           emptyPath
         )
       ).toThrow(/IDL missing.*build:programs/s)

@@ -5,18 +5,23 @@ import { asOption, Either } from "@3fv/prelude-ts"
 import { isString, Level, NestedError } from "@wireio/shared"
 import {
   AWSClusterNodeConfigSchemaCodec,
+  AWSKMSSignatureProviderOptionsSchema,
   AWSSSMSignatureProviderOptionsSchema,
   BatchOperatorUnderwritingConfigSchema,
   type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
+  ClusterSignatureProviderTypes,
   CollateralRequirementSchema,
   EthereumReadBlockTag,
   LcoImportOptionsSchema,
   NodeopReadMode,
   QueryEngineReadModeSchema,
   SchemaCodec,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type AWSClusterNodeConfig,
+  type AWSKMSSignatureProviderOptions,
+  type AWSKMSSignatureProviderOptionsInput,
   type AWSSSMSignatureProviderOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
@@ -58,12 +63,15 @@ const CliDefault = {
 /** The dedicated `--signature-provider-ssm` flag: inline JSON, or a file path when the value doesn't start with `{`. */
 export const SignatureProviderSSMFlag = "signature-provider-ssm"
 
+/** The dedicated `--signature-provider-kms` flag: the KMS custody settings, inline JSON or a file path — same shape rule as {@link SignatureProviderSSMFlag}. */
+export const SignatureProviderKMSFlag = "signature-provider-kms"
+
 /**
  * The dedicated `--cluster-build-options-file` flag: a JSON document carrying a
  * whole {@link ClusterBuildOptions} — every scalar leaf `buildOptionShape`
  * describes, the flag-less collateral arrays, and the out-of-shape
- * `signatureProvider.ssm`. It does NOT carry `awsClusterNodeConfig` (that has
- * its own {@link AWSClusterNodeConfigFlag}).
+ * `signatureProvider.ssm` / `signatureProvider.kms`. It does NOT carry
+ * `awsClusterNodeConfig` (that has its own {@link AWSClusterNodeConfigFlag}).
  */
 export const ClusterBuildOptionsFileFlag = "cluster-build-options-file"
 
@@ -73,6 +81,11 @@ export const AWSClusterNodeConfigFlag = "aws-cluster-node-config"
 /** Validated codec for the `--signature-provider-ssm` payload. */
 const ssmOptionsCodec = SchemaCodec.create<AWSSSMSignatureProviderOptions>(
   AWSSSMSignatureProviderOptionsSchema
+)
+
+/** Validated codec for the `--signature-provider-kms` payload. */
+const kmsOptionsCodec = SchemaCodec.create<AWSKMSSignatureProviderOptions>(
+  AWSKMSSignatureProviderOptionsSchema
 )
 
 /**
@@ -630,9 +643,14 @@ export function buildOptionShape(
     // ── signature provider (how the cluster's own signing keys are handled) ──
     signatureProvider: {
       type: choicesLeaf(
-        Object.values(SignatureProviderType),
+        ClusterSignatureProviderTypes,
         SignatureProviderType.KEY,
-        "signature provider type: KEY (inline), SSM, or KIOD"
+        "signature provider type: KEY (inline), SSM, or KIOD (KMS custodies an SSM cluster's K1 / EM / ED keys via --signature-provider-kms, never the cluster type)"
+      ),
+      batchOperatorKeyPolicy: choicesLeaf(
+        Object.values(SignatureProviderKeyPolicy),
+        SignatureProviderKeyPolicy.adoptOrCreate,
+        "how the bootstrap obtains the batch operators' signing keys: adoptOrCreate (adopt the custody store's key, else create one) or adoptOnly (fail when a batch operator's key is not pre-created)"
       )
     },
     // ── collateral (empty-by-default → no indexed flags) ──
@@ -687,7 +705,7 @@ function readDeep(
 }
 
 /** The yargs `.option(...)` config for one leaf: type + describe + seeded default + demand. */
-function toYargsOption(
+export function toYargsOption(
   optionLeaf: OptionLeaf,
   defaults: ClusterBuildOptions
 ): YargsOption {
@@ -779,25 +797,46 @@ export function applyClusterBuildOptionsArgs(
       ),
     yargs
   )
-  // These three live OUTSIDE the option shape: each payload is a JSON document
-  // (object / file path), not a scalar leaf. Registering them here keeps
-  // `.strict()` accepting them and `--help` listing them on every command that
-  // shares this surface.
-  return withShape
+  // The four document flags live OUTSIDE the option shape: each payload is a
+  // JSON document (object / file path), not a scalar leaf. Registering them
+  // here keeps `.strict()` accepting them and `--help` listing them on every
+  // command that shares this surface.
+  return applyCustodyDocumentArgs(withShape)
+}
+
+/**
+ * Register the four JSON-document flags every command that resolves a
+ * cluster's key custody takes — `--signature-provider-ssm`,
+ * `--signature-provider-kms`, `--cluster-build-options-file` and
+ * `--aws-cluster-node-config` — with ONE describe each, so `create` and the
+ * cluster-less commands (`fund-batch-operators`) cannot drift on how the
+ * documents are described. Each payload is a JSON document (object / file
+ * path), not a scalar leaf of {@link buildOptionShape}.
+ *
+ * @param yargs - The yargs instance to extend.
+ * @returns The extended yargs instance.
+ */
+export function applyCustodyDocumentArgs(yargs: Argv): Argv {
+  return yargs
     .option(SignatureProviderSSMFlag, {
       type: "string",
       describe:
         "SSM publish settings as inline JSON ({awsSecretIdPattern, version?}) or a file path (required when --signature-provider-type SSM; the regions come from awsClusterNodeConfig)"
     })
+    .option(SignatureProviderKMSFlag, {
+      type: "string",
+      describe:
+        "KMS custody settings for the K1 / EM / ED keys as inline JSON ({awsKeyAliasPattern, awsRegion, keyTypes?, version?}) or a file path (SSM clusters only; keyTypes names the custodied curves, default [\"K1\",\"EM\",\"ED\"] — K1 reaches the batch operators' account keys only, never a producer's block-signing key; [\"EM\",\"ED\"] keeps K1 in SSM for a nodeop without WIRE K1 KMS signing, dropping ED keeps it in SSM for one without Solana KMS signing; the keys are adopted by alias and never leave KMS)"
+    })
     .option(ClusterBuildOptionsFileFlag, {
       type: "string",
       describe:
-        "path to a ClusterBuildOptions JSON document (every option leaf + the collateral arrays + signatureProvider.ssm); explicit flags beat the file, the file beats WIRE_* env"
+        "path to a ClusterBuildOptions JSON document (every option leaf + the collateral arrays + signatureProvider.ssm / signatureProvider.kms); explicit flags beat the file, the file beats WIRE_* env"
     })
     .option(AWSClusterNodeConfigFlag, {
       type: "string",
       describe:
-        "path to an AWSClusterNodeConfig JSON file (the AWS account + every region secrets replicate to, plus its ssm settings)"
+        "path to an AWSClusterNodeConfig JSON file (the AWS account + every region secrets replicate to, plus its ssm and kms settings)"
     })
 }
 
@@ -1043,8 +1082,9 @@ function carryNonFlagOption<K extends NonFlagOptionKey>(
 
 // ── `--cluster-build-options-file` (a whole ClusterBuildOptions document) ─────
 
-/** The out-of-shape member a build-options document MAY carry (validated by its own codec). */
+/** The out-of-shape members a build-options document MAY carry (each validated by its own codec). */
 const SignatureProviderSSMDocumentPath = "signatureProvider.ssm"
+const SignatureProviderKMSDocumentPath = "signatureProvider.kms"
 
 /** The member a build-options document may NOT carry — it has its own flag. */
 const AWSClusterNodeConfigDocumentKey =
@@ -1242,6 +1282,13 @@ function appendDocumentNode(
     }
     return
   }
+  if (dotted === SignatureProviderKMSDocumentPath) {
+    options.signatureProvider = {
+      ...(options.signatureProvider ?? {}),
+      kms: kmsOptionsCodec.deserialize(JSON.stringify(node))
+    }
+    return
+  }
   Assert.ok(
     path.length === 0 || branchPaths.has(dotted),
     `${documentLabel(file)}: unknown option "${dotted}"`
@@ -1402,6 +1449,77 @@ export function mergeSignatureProviderSSM(
     )
   if (ssm != null) {
     options.signatureProvider = { ...(options.signatureProvider ?? {}), ssm }
+  }
+  return options
+}
+
+/**
+ * Parse the dedicated `--signature-provider-kms` flag — inline JSON (leading
+ * `{`) or a file path — into {@link AWSKMSSignatureProviderOptions}, or `null`
+ * when the flag is absent.
+ *
+ * @param argv - The parsed yargs result.
+ * @returns The KMS options, or `null`.
+ */
+export function toAWSKMSSignatureProviderOptions(
+  argv: OptionArgv
+): AWSKMSSignatureProviderOptions {
+  const raw = readArg(argv, SignatureProviderKMSFlag)
+  if (!isString(raw) || raw.trim().length === 0) {
+    return null
+  }
+  const text = raw.trim(),
+    json = text.startsWith("{")
+      ? text
+      : Fs.readFileSync(Path.resolve(text), "utf-8")
+  return kmsOptionsCodec.deserialize(json)
+}
+
+/** Re-validate KMS options arriving from a source other than the flag, through the ONE codec. */
+function assertKMSOptions(
+  kms: AWSKMSSignatureProviderOptionsInput,
+  source: string
+): AWSKMSSignatureProviderOptionsInput {
+  if (kms != null) {
+    Assert.ok(
+      kmsOptionsCodec.check(kms),
+      `${source}: invalid KMS settings (awsKeyAliasPattern and awsRegion are required)`
+    )
+  }
+  return kms
+}
+
+/**
+ * Merge KMS custody settings into `options.signatureProvider` — the KMS twin of
+ * {@link mergeSignatureProviderSSM}, same precedence: the
+ * `--signature-provider-kms` flag > the `--cluster-build-options-file`
+ * document's `signatureProvider.kms` > the `--aws-cluster-node-config` file's
+ * own `kms`. All three are validated by the ONE
+ * {@link AWSKMSSignatureProviderOptionsSchema} codec. A no-op when no source
+ * carries settings.
+ *
+ * @param options - The resolved build options (mutated + returned).
+ * @param argv - The parsed yargs result.
+ * @param fileOptions - The `--cluster-build-options-file` document, when one was loaded.
+ * @returns `options`, with `signatureProvider.kms` filled when supplied.
+ */
+export function mergeSignatureProviderKMS(
+  options: ClusterBuildOptions,
+  argv: OptionArgv,
+  fileOptions: ClusterBuildOptions = {}
+): ClusterBuildOptions {
+  const kms =
+    toAWSKMSSignatureProviderOptions(argv) ??
+    assertKMSOptions(
+      fileOptions?.signatureProvider?.kms,
+      `${SignatureProviderKMSDocumentPath} in --${ClusterBuildOptionsFileFlag}`
+    ) ??
+    assertKMSOptions(
+      options.awsClusterNodeConfig?.kms,
+      `kms in --${AWSClusterNodeConfigFlag}`
+    )
+  if (kms != null) {
+    options.signatureProvider = { ...(options.signatureProvider ?? {}), kms }
   }
   return options
 }

@@ -100,7 +100,7 @@ test(`${lane} measures live fees and allowance without changing Solana funding`,
     Assert.equal(quantity, "0.500000000 LIQETH")
     return String(Constants.Payout - Constants.EthereumRedemption)
   })
-  mock.method(EthereumSyndicationTool, "hdWallet", () => ({ address: holder }))
+  mock.method(EmergencyStopScenario, "donorAddress", () => holder)
   const donorBalance = mock.method(EthereumSyndicationTool, "readLiqEthBalance", async () => snapshot.custody * Constants.EthereumScale)
   const step = build.children.find(value => value.name === lane).steps.find(value => value.name === "measure-ethereum-shortfall")
   await run(step, ctx)

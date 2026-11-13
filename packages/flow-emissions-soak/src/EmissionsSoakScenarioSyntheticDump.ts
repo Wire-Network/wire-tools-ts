@@ -7,19 +7,23 @@
 // conversion logic without ever touching the live API.
 //
 // The bulk generator is deterministic given a seed — useful for failure
-// reproduction. Controlled stakers derive from the shared Anvil mnemonic at
-// fixed HD indexes, so a step runner can re-derive a staker's wallet from its
-// index alone (no private-key material rides step inputs or the report).
+// reproduction. Controlled stakers are RANDOM Ethereum wallets the scenario's
+// pre-bootstrap stage generates through the `KeyGenerator` facade and persists
+// under durable handles, so a step runner reads a staker's wallet back by its
+// handle (no key material rides step inputs or the report).
 
 import { Keypair } from "@solana/web3.js"
-import { ethers } from "ethers"
 import {
-  EthereumOutpostBootstrapper,
+  EthereumFundingTool,
+  KeyGenerator,
+  type EthereumKeyPair,
   type IndexBalanceDump
 } from "@wireio/cluster-tool"
 
 /** ETH-style address length in raw bytes. */
 const EthereumAddressByteLength = 20
+/** The `0x` prefix an EVM address carries in display form, absent from the dump shape. */
+const EthereumAddressPrefixPattern = /^0x/
 /** Exclusive upper bound of a single random byte. */
 const ByteValueRange = 256
 /** Bits drawn per PRNG chunk when assembling a random bigint. */
@@ -118,76 +122,85 @@ function toLetterSuffix(index: number): string {
 
 /**
  * A controlled ETH staker's JSON-safe identity — everything a step input needs
- * to name it. The wallet itself is re-derived on demand from the Anvil
- * mnemonic via {@link controlledStakerWallet}, so no key material is stored.
+ * to name it. The wallet itself is read back on demand by its durable handle
+ * (`EthereumFundingTool.signer`), so no key material is stored here.
  */
 export interface ControlledStakerIdentity {
   /** The WIRE account registered for this staker (`soak.sa`, …). */
   wireAccount: string
   /** Lower-case hex ETH address WITHOUT `0x` prefix (importseed dump shape). */
   addressHex: string
-  /** Anvil-mnemonic HD index the staker's ETH wallet derives from. */
-  ethereumHdIndex: number
+  /** Durable handle of the staker's persisted Ethereum wallet. */
+  walletName: string
+}
+
+/** Options for {@link createControlledStakerIdentities}. */
+export interface ControlledStakerOptions {
+  /** The cluster data directory the wallets persist under. */
+  dataPath: string
+  /** The key-generation tooling (`KeyGenerator.context(buildPath)`). */
+  context: KeyGenerator.Context
+  /** Number of controlled stakers. */
+  count: number
+  /** Prefix for the generated WIRE account names. */
+  wireAccountPrefix: string
+  /** Prefix for the wallet handles (`<prefix>0`, `<prefix>1`, …). */
+  walletNamePrefix: string
 }
 
 /**
- * Derive the ETH wallet at an Anvil-mnemonic HD index — the single source
- * pairing an HD index with its signing wallet (authex-link signing needs no
- * provider connection).
+ * Get-or-create one controlled staker's wallet under its handle: a random pair
+ * from the `KeyGenerator` facade, persisted once; a handle already holding a
+ * wallet is read back verbatim, so a re-run keeps the identity its dump names.
  *
- * @param ethereumHdIndex - The HD index under the shared derivation path.
- * @return The derived HD wallet.
+ * @param options - The roster options.
+ * @param index - The staker's zero-based index.
+ * @return The staker's persisted pair.
  */
-function walletAtHdIndex(ethereumHdIndex: number): ethers.HDNodeWallet {
-  return ethers.HDNodeWallet.fromMnemonic(
-    ethers.Mnemonic.fromPhrase(EthereumOutpostBootstrapper.AnvilMnemonic),
-    `${EthereumOutpostBootstrapper.DerivationPath}${ethereumHdIndex}`
+async function createControlledStakerWallet(
+  options: ControlledStakerOptions,
+  index: number
+): Promise<EthereumKeyPair> {
+  const { dataPath, context, walletNamePrefix } = options
+  return EthereumFundingTool.createWallet(
+    dataPath,
+    `${walletNamePrefix}${index}`,
+    context,
+    `flow-emissions-soak — controlled staker ${index} wallet`
   )
 }
 
 /**
- * Re-derive a controlled staker's ETH wallet from its identity.
+ * Create the controlled-staker identities: one random Ethereum wallet per
+ * staker, persisted under its handle (see {@link createControlledStakerWallet}),
+ * paired with a sysio-name-safe WIRE account.
  *
- * @param identity - The staker identity.
- * @return The derived HD wallet.
- */
-export function controlledStakerWallet(
-  identity: ControlledStakerIdentity
-): ethers.HDNodeWallet {
-  return walletAtHdIndex(identity.ethereumHdIndex)
-}
-
-/**
- * Build the controlled-staker identities: deterministic mnemonic-derived ETH
- * wallets at consecutive HD indexes, paired with sysio-name-safe WIRE accounts.
- *
- * @param count - Number of controlled stakers.
- * @param wireAccountPrefix - Prefix for the generated WIRE account names.
- * @param ethereumHdIndexBase - First HD index (consecutive from here).
+ * @param options - The roster options.
  * @return The identities in index order.
  */
-export function buildControlledStakerIdentities(
-  count: number,
-  wireAccountPrefix: string,
-  ethereumHdIndexBase: number
-): ControlledStakerIdentity[] {
-  return Array.from({ length: count }, (_unused, index) => {
-    const ethereumHdIndex = ethereumHdIndexBase + index
-    return {
-      wireAccount: `${wireAccountPrefix}${toLetterSuffix(index)}`,
-      addressHex: walletAtHdIndex(ethereumHdIndex)
-        .address.toLowerCase()
-        .replace(/^0x/, ""),
-      ethereumHdIndex
-    }
-  })
+export async function createControlledStakerIdentities(
+  options: ControlledStakerOptions
+): Promise<ControlledStakerIdentity[]> {
+  const { count, wireAccountPrefix, walletNamePrefix } = options
+  return Promise.all(
+    Array.from({ length: count }, async (_unused, index) => {
+      const pair = await createControlledStakerWallet(options, index)
+      return {
+        wireAccount: `${wireAccountPrefix}${toLetterSuffix(index)}`,
+        addressHex: pair.address
+          .toLowerCase()
+          .replace(EthereumAddressPrefixPattern, ""),
+        walletName: `${walletNamePrefix}${index}`
+      }
+    })
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Synthetic ETH dump
 // ---------------------------------------------------------------------------
 
-/** Options for {@link buildSyntheticEthereumDump}. */
+/** Options for {@link createSyntheticEthereumDump}. */
 export interface EthereumDumpOptions {
   /** Deterministic PRNG seed. Default: 1 (stable across runs). */
   seed?: number
@@ -220,14 +233,14 @@ export interface EthereumDumpOptions {
 }
 
 /**
- * Build a synthetic ETH indexer dump (purchasers + stakers + overlap +
+ * Create a synthetic ETH indexer dump (purchasers + stakers + overlap +
  * yield-claimed netting rows), with the controlled stakers appended as
  * purchasers so dedup logic never suppresses them.
  *
  * @param options - Row counts, seed, and the controlled-staker roster.
  * @return The indexer-shaped dump.
  */
-export function buildSyntheticEthereumDump(
+export function createSyntheticEthereumDump(
   options: EthereumDumpOptions = {}
 ): IndexBalanceDump {
   const rng = mulberry32(options.seed ?? DefaultEthereumSeed),
@@ -305,7 +318,7 @@ export function buildSyntheticEthereumDump(
 // link/claim path for SVM is owned by a different track).
 // ---------------------------------------------------------------------------
 
-/** Options for {@link buildSyntheticSolanaDump}. */
+/** Options for {@link createSyntheticSolanaDump}. */
 export interface SolanaDumpOptions {
   /** Deterministic PRNG seed for the amounts. Default: 2. */
   seed?: number
@@ -318,13 +331,13 @@ export interface SolanaDumpOptions {
 }
 
 /**
- * Build a synthetic SOL indexer dump. Addresses are throwaway base58 pubkeys
+ * Create a synthetic SOL indexer dump. Addresses are throwaway base58 pubkeys
  * (the keypairs are not retained — bulk-seed only).
  *
  * @param options - Row counts and seed.
  * @return The indexer-shaped dump.
  */
-export function buildSyntheticSolanaDump(
+export function createSyntheticSolanaDump(
   options: SolanaDumpOptions = {}
 ): IndexBalanceDump {
   const rng = mulberry32(options.seed ?? DefaultSolanaSeed),

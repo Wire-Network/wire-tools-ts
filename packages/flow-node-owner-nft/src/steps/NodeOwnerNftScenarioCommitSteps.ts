@@ -22,9 +22,10 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * rides the next outbound OPP envelope to the depot, where
  * `sysio.msgch::dispatch_node_owner_reg` inline-sends the same
  * `nodeownreg` action the scenario's direct-drive phases push
- * by hand. The committer is the run's default anvil wallet: it holds the
- * minted tier token, and its uncompressed secp256k1 key is the claim's
- * depositor key (recorded as the account's `sysio.authex` ETH link).
+ * by hand. The committer is the run's deployer wallet (`ctx.ethereum.wallet`,
+ * the random wallet the bootstrap persisted and funded): it holds the minted
+ * tier token, and its uncompressed secp256k1 key is the claim's depositor key
+ * (recorded as the account's `sysio.authex` ETH link).
  *
  * The commit ESCROWS the committed unit in BAR (claims draw from BAR's
  * canonical WireNodes contract, wired by deployLocal), so the committer
@@ -34,9 +35,8 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
 export namespace NodeOwnerNftScenarioCommitSteps {
   /**
    * Resolve `BAR` from the run's deploy artifacts (`outpost-addrs.json` + the
-   * hardhat artifact), bound to the run's default anvil signer — the
-   * committer. A pure artifact load: used inside the {@link planCommitNode}
-   * runner.
+   * hardhat artifact), bound to the run's deployer wallet — the committer. A
+   * pure artifact load: used inside the {@link planCommitNode} runner.
    *
    * @param ctx - The build context (ethereum path + anvil client).
    * @returns The signer-bound contract surface.
@@ -121,7 +121,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
   /**
    * A single `BAR.commitNode` write — the production claim entry point,
    * emitting the full `NodeOwnerRegistration` attestation via OPP and
-   * escrowing the committed unit in BAR. The committer (the run's anvil
+   * escrowing the committed unit in BAR. The committer (the run's deployer
    * wallet) must already hold ≥ 1 unit of the tier's token (see
    * {@link MintSteps.planMint}) and have approved BAR as an ERC-1155
    * operator (see {@link planApproveEscrow}).

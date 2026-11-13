@@ -5,6 +5,7 @@ import {
   Report,
   BatchOperatorUnderwritingSteps as UnderwritingSteps,
   SolanaLiqSyndicationTool,
+  EthereumFundingTool,
   EthereumSyndicationTool,
   Constants as HarnessConstants,
   WireSyndicationTool,
@@ -206,13 +207,29 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         Constants.EthereumUser,
         HarnessConstants.DEV_K1_PUBLIC_KEY
       ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-ethereum-wallet",
+        "generate the independent Ethereum wallet",
+        SyndicationScenario.WriteOptions,
+        Constants.EthereumWalletName,
+        "plugin underwriting — independent Ethereum syndicator wallet"
+      ),
+      EthereumFundingTool.planSetBalance(
+        Actor.User,
+        "fund-ethereum-wallet",
+        "fund the independent Ethereum wallet for the deposit and its gas",
+        options,
+        Constants.EthereumWalletName,
+        Constants.EthereumWalletBalanceWei
+      ),
       SyndicationUserSteps.planLinkEthereumKey(
         Actor.User,
         "link-ethereum-user",
         "link the independent Ethereum wallet",
         SyndicationScenario.WriteOptions,
         Constants.EthereumUser,
-        Constants.EthereumHdIndex
+        Constants.EthereumWalletName
       ),
       verifyStep(
         Actor.Sysio,
@@ -266,7 +283,7 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         "ethereum-deposit",
         "deposit ETH for liqETH",
         options,
-        Constants.EthereumHdIndex,
+        Constants.EthereumWalletName,
         Constants.EthereumDepositAmount
       ),
       EthereumSyndicationTool.planApproveLiqEth(
@@ -274,7 +291,7 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         "ethereum-approve",
         "approve the syndication pool",
         options,
-        Constants.EthereumHdIndex,
+        Constants.EthereumWalletName,
         Constants.EthereumNativeAmount
       ),
       EthereumSyndicationTool.planSyndicate(
@@ -282,9 +299,8 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         "ethereum-syndicate",
         "syndicate to the holder's linked WIRE account",
         options,
-        Constants.EthereumHdIndex,
-        Constants.EthereumNativeAmount,
-        EthereumSyndicationTool.compressedPubkey(Constants.EthereumHdIndex)
+        Constants.EthereumWalletName,
+        Constants.EthereumNativeAmount
       ),
       UnderwritingSteps.planVerifyRecorded(
         Actor.Sysio,

@@ -233,7 +233,6 @@ export class TerminationScenario extends FlowScenario {
         {
           label: Constants.DoomedOperatorLabel,
           type: OperatorType.BATCH,
-          ethereumHdIndex: Constants.DoomedOperatorEthereumHdIndex,
           isBootstrapped: false
         }
       ]

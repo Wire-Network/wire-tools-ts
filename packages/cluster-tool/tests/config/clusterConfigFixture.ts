@@ -2,6 +2,7 @@ import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig,
   type ClusterConfig
@@ -115,7 +116,12 @@ export const PersistedFixture: ClusterConfig = {
   underwriterCollateral: null,
   initialKey: Constants.DEV_K1_PUBLIC_KEY,
   initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
-  signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  signatureProvider: {
+    type: SignatureProviderType.KEY,
+    ssm: null,
+    kms: null,
+    batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+  },
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,

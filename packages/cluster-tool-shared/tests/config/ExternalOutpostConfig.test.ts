@@ -18,6 +18,12 @@ const OutpostAddresses = {
   OPPInbound: "0x0B1f7FB1c7f01A9cf490a1387E1E100F2bEA6C6d",
   BAR: "0xbAFac13ffd3Aa9aEabaaeb6e4C2cF3dFf3479DC0"
 }
+/** The finalized Ethereum block a document was generated at. */
+const AsOfBlock = 1_234_567
+/** The finalized Solana slot a document was generated at. */
+const AsOfSlot = 345_678_901
+/** Values neither marker admits: negative, fractional, a string. */
+const InvalidMarkers: unknown[] = [-1, 1.5, "1234"]
 
 /** The minimal valid config: chain id, the required addresses, the program id. */
 function minimalConfig(): ExternalOutpostConfig {
@@ -70,6 +76,64 @@ describe("ExternalOutpostConfig", () => {
     expect(decoded.solana.rpcUrl).toBeUndefined()
     expect(decoded.solana.mints).toBeUndefined()
   })
+
+  it("round-trips the as-of markers — the finalized block / slot the document was generated at", () => {
+    const minimal = minimalConfig(),
+      marked: ExternalOutpostConfig = {
+        ethereum: { ...minimal.ethereum, asOfBlock: AsOfBlock },
+        solana: { ...minimal.solana, asOfSlot: AsOfSlot }
+      },
+      decoded = ExternalOutpostConfigSchemaCodec.deserialize(
+        ExternalOutpostConfigSchemaCodec.serialize(marked)
+      )
+    expect(decoded).toEqual(marked)
+    expect(decoded.ethereum.asOfBlock).toBe(AsOfBlock)
+    expect(decoded.solana.asOfSlot).toBe(AsOfSlot)
+  })
+
+  it("leaves both markers optional — a pre-launch document carries none", () => {
+    const decoded = ExternalOutpostConfigSchemaCodec.deserialize(
+      ExternalOutpostConfigSchemaCodec.serialize(minimalConfig())
+    )
+    expect(decoded.ethereum.asOfBlock).toBeUndefined()
+    expect(decoded.solana.asOfSlot).toBeUndefined()
+  })
+
+  it("accepts a marker of 0 — the genesis block / slot", () => {
+    const minimal = minimalConfig()
+    expect(
+      ExternalOutpostConfigSchema.safeParse({
+        ethereum: { ...minimal.ethereum, asOfBlock: 0 },
+        solana: { ...minimal.solana, asOfSlot: 0 }
+      }).success
+    ).toBe(true)
+  })
+
+  it.each(InvalidMarkers)(
+    "rejects an ethereum.asOfBlock that is not a non-negative integer: %s",
+    value => {
+      const minimal = minimalConfig()
+      expect(
+        ExternalOutpostConfigSchema.safeParse({
+          ...minimal,
+          ethereum: { ...minimal.ethereum, asOfBlock: value }
+        }).success
+      ).toBe(false)
+    }
+  )
+
+  it.each(InvalidMarkers)(
+    "rejects a solana.asOfSlot that is not a non-negative integer: %s",
+    value => {
+      const minimal = minimalConfig()
+      expect(
+        ExternalOutpostConfigSchema.safeParse({
+          ...minimal,
+          solana: { ...minimal.solana, asOfSlot: value }
+        }).success
+      ).toBe(false)
+    }
+  )
 
   it("requires the addresses of OPP, OPPInbound and BAR", () => {
     expect(ExternalOutpostConfig.RequiredOutpostContractNames).toEqual([

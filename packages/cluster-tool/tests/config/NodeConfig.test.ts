@@ -2,6 +2,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   NodeopReadMode,
+  SignatureProviderKeyPolicy,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
@@ -467,12 +468,15 @@ describe("NodeConfig", () => {
             ssm: {
               awsRegions: ["us-east-1"],
               awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-            }
+            },
+            kms: null,
+            batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
           },
           awsClusterNodeConfig: {
             account: AWSAccountName.dev,
             regions: ["us-east-1"],
-            ssm: null
+            ssm: null,
+            kms: null
           }
         }),
         bios = NodeConfig.plan(ssmCluster).find(n => n.role === NodeRole.bios)!
