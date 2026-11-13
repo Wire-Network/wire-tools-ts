@@ -9,14 +9,20 @@ const OppAddress = "0x1111111111111111111111111111111111111111"
 const PoolAddress = "0x2222222222222222222222222222222222222222"
 const ChainId = 31_337
 const EthereumPath = "/tmp/wire-ethereum-target-test"
+/** The finalized block a document was generated at. */
+const AsOfBlock = 1_234
 
-/** An external config's Ethereum outpost, with or without an endpoint. */
-function externalEthereum(rpcUrl?: string): ExternalOutpostConfigEthereum {
+/** An external config's Ethereum outpost, with or without an endpoint / as-of block. */
+function externalEthereum(
+  rpcUrl?: string,
+  asOfBlock?: ExternalOutpostConfigEthereum["asOfBlock"]
+): ExternalOutpostConfigEthereum {
   return {
     chainId: ChainId,
     ...(rpcUrl != null ? { rpcUrl } : {}),
     outpostAddresses: { OPP: OppAddress, OPPInbound: OppAddress, BAR: OppAddress },
-    liqEthAddresses: { DepositManager: PoolAddress }
+    liqEthAddresses: { DepositManager: PoolAddress },
+    ...(asOfBlock != null ? { asOfBlock } : {})
   }
 }
 
@@ -42,6 +48,24 @@ describe("EthereumOutpostTarget", () => {
     expect(target.liqEthAddresses.DepositManager).toBe(PoolAddress)
     expect(provider).toBeInstanceOf(ethers.JsonRpcProvider)
     provider.destroy()
+  })
+
+  it("fromExternalOutpost carries the document's asOfBlock, and leaves it absent when the document has none", () => {
+    expect(
+      EthereumOutpostTarget.fromExternalOutpost(
+        externalEthereum(rpcUrl, AsOfBlock),
+        EthereumPath,
+        null
+      ).asOfBlock
+    ).toBe(AsOfBlock)
+    expect(
+      "asOfBlock" in
+        EthereumOutpostTarget.fromExternalOutpost(
+          externalEthereum(rpcUrl),
+          EthereumPath,
+          null
+        )
+    ).toBe(false)
   })
 
   it("leaves liqEthAddresses absent when the outpost has no liqETH deploy", () => {

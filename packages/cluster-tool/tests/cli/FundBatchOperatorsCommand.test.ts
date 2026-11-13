@@ -62,6 +62,10 @@ function createYargsRecorder(): YargsRecorder {
 
 const OppAddress = "0x1111111111111111111111111111111111111111"
 const ChainId = 560_048
+/** The finalized block the document was generated at — the Ethereum marker it carries. */
+const AsOfBlock = 1_234_567
+/** The finalized slot the document was generated at — the Solana marker it carries. */
+const AsOfSlot = 345_678_901
 
 /** The SSM custody settings every happy-path document carries. */
 const SsmSignatureProvider: ClusterSignatureProviderOptions = {
@@ -82,17 +86,19 @@ describe("FundBatchOperatorsCommand", () => {
   let solanaRpcUrl: string
   const programId = Keypair.generate().publicKey.toBase58()
 
-  /** An external outpost config, with or without the endpoints. */
+  /** An external outpost config carrying both as-of markers, with or without the endpoints. */
   function externalConfig(withEndpoints = true): ExternalOutpostConfig {
     return {
       ethereum: {
         chainId: ChainId,
         ...(withEndpoints ? { rpcUrl: ethereumRpcUrl } : {}),
-        outpostAddresses: { OPP: OppAddress, OPPInbound: OppAddress, BAR: OppAddress }
+        outpostAddresses: { OPP: OppAddress, OPPInbound: OppAddress, BAR: OppAddress },
+        asOfBlock: AsOfBlock
       },
       solana: {
         ...(withEndpoints ? { rpcUrl: solanaRpcUrl } : {}),
-        programId
+        programId,
+        asOfSlot: AsOfSlot
       }
     }
   }
@@ -221,14 +227,16 @@ describe("FundBatchOperatorsCommand", () => {
     ).toThrow()
   })
 
-  it("createTargets composes both targets from the config and refuses a missing endpoint", () => {
+  it("createTargets composes both targets from the config — the as-of markers included — and refuses a missing endpoint", () => {
     const targets = createTargets(externalConfig(), "/repos/wire-ethereum", "/repos/wire-solana")
     expect(targets.ethereum.chainId).toBe(ChainId)
     expect(targets.ethereum.ethereumPath).toBe("/repos/wire-ethereum")
     expect(targets.ethereum.outpostAddresses.OPP).toBe(OppAddress)
+    expect(targets.ethereum.asOfBlock).toBe(AsOfBlock)
     expect(targets.solana.programId.toBase58()).toBe(programId)
     expect(targets.solana.solanaPath).toBe("/repos/wire-solana")
     expect(targets.solana.connection.rpcEndpoint).toBe(solanaRpcUrl)
+    expect(targets.solana.asOfSlot).toBe(AsOfSlot)
     expect(() =>
       createTargets(externalConfig(false), "/repos/wire-ethereum", "/repos/wire-solana")
     ).toThrow(/must carry ethereum\.rpcUrl/)

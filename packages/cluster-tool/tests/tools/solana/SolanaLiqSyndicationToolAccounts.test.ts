@@ -706,20 +706,36 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
     /** One `user` transaction the history mock serves. */
     interface UserTransactionFixture {
       signature: string
+      /** The slot it landed in; its index in the (oldest-first) list when absent. */
+      slot?: number
       failed?: boolean
       instructions: MessageCompiledInstruction[]
     }
 
+    /** The marker a document carries — the slot a campaign's `synd`s count from. */
+    const AsOfSlot = 10
+    /** The page size + cap the scan is bounded by. */
+    const { SignatureScanPageSize, SignatureScanMaxPages } = SolanaLiqSyndicationTool
+
     /**
-     * A context whose connection serves `accounts` to `getAccountInfo` and the
-     * user's confirmed history from `transactions` (given oldest first; an
-     * `unavailable` signature has no transaction to serve).
+     * A context whose connection serves `accounts` to `getAccountInfo`, the
+     * RPC's oldest held slot to `getFirstAvailableBlock`, the user's confirmed
+     * history (`transactions`, given oldest first) to `getSignaturesForAddress`
+     * newest first a page at a time — honouring `limit` and `before` as the RPC
+     * does, each page's options recorded in `pages` — and each transaction to
+     * `getTransaction` (an `unavailable` signature has none to serve, so a
+     * signature listed there proves it was never fetched).
      */
     function positionContext(
       accounts: Map<string, Buffer>,
       transactions: UserTransactionFixture[],
-      unavailable: string[] = []
+      unavailable: string[] = [],
+      pages: SignaturesForAddressOptions[] = [],
+      firstAvailableBlock = 0
     ): Parameters<typeof SolanaLiqSyndicationTool.readSyndicatedPosition>[0] {
+      const slotOf = (entry: UserTransactionFixture): number =>
+          entry.slot ?? transactions.indexOf(entry),
+        history = [...transactions].reverse()
       return {
         solana: {
           connection: {
@@ -732,14 +748,20 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
                     executable: false
                   }
                 : null,
+            getFirstAvailableBlock: async () => firstAvailableBlock,
             getSignaturesForAddress: async (
               address: PublicKey,
               options: SignaturesForAddressOptions
             ) => {
               expect(address.toBase58()).toBe(signer.toBase58())
-              expect(options.limit).toBe(SolanaLiqSyndicationTool.UserSignatureScanLimit)
-              return [...transactions].reverse().map(entry => ({
+              expect(options.limit).toBe(SignatureScanPageSize)
+              pages.push(options)
+              const beforeIndex = history.findIndex(entry => entry.signature === options.before)
+              expect(options.before == null || beforeIndex >= 0).toBe(true)
+              const start = options.before == null ? 0 : beforeIndex + 1
+              return history.slice(start, start + options.limit).map(entry => ({
                 signature: entry.signature,
+                slot: slotOf(entry),
                 err: entry.failed ? { InstructionError: [0, "Custom"] } : null
               }))
             },
@@ -749,7 +771,7 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
               return unavailable.includes(signature)
                 ? null
                 : {
-                    slot: transactions.indexOf(entry),
+                    slot: slotOf(entry),
                     transaction: {
                       message: {
                         staticAccountKeys: [signer, basePdas.liqsolCoreProgram, TOKEN_2022_PROGRAM_ID],
@@ -758,6 +780,37 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
                     },
                     meta: { loadedAddresses: { writable: [], readonly: [] }, logMessages: [] }
                   }
+            }
+          }
+        },
+        config: { solanaPath }
+      } as unknown as Parameters<typeof SolanaLiqSyndicationTool.readSyndicatedPosition>[0]
+    }
+
+    /**
+     * A context whose connection serves an ENDLESS history: every page full,
+     * every signature inside the window and failed — so none is ever fetched
+     * and only the page cap can end the scan.
+     */
+    function endlessHistoryContext(): Parameters<
+      typeof SolanaLiqSyndicationTool.readSyndicatedPosition
+    >[0] {
+      let served = 0
+      return {
+        solana: {
+          connection: {
+            getAccountInfo: async () => null,
+            getFirstAvailableBlock: async () => 0,
+            getSignaturesForAddress: async (
+              _address: PublicKey,
+              options: SignaturesForAddressOptions
+            ) => {
+              served += 1
+              return Array.from({ length: options.limit }, (_, index) => ({
+                signature: `page-${served}-${index}`,
+                slot: AsOfSlot + 1,
+                err: { InstructionError: [0, "Custom"] }
+              }))
             }
           }
         },
@@ -776,53 +829,177 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
       }
     }
 
-    it("readSyndicatedPosition names the OutpostAccount the way the camelCased coder keys it", () => {
+    /** `count` failed (never fetched) in-window signatures, oldest first from `firstSlot`. */
+    function failedSignatures(count: number, firstSlot: number): UserTransactionFixture[] {
+      return Array.from({ length: count }, (_, index) => ({
+        signature: `failed-${index}`,
+        slot: firstSlot + index,
+        failed: true,
+        instructions: []
+      }))
+    }
+
+    it("readSyndicatedPosition names the OutpostAccount the way the camelCased coder keys it, and bounds its scan", () => {
       expect(SolanaLiqSyndicationTool.OutpostAccountName).toBe("outpostAccount")
       expect(SolanaLiqSyndicationTool.SyndMethodName).toBe("synd")
+      expect(SignatureScanPageSize).toBe(1_000)
+      expect(SignatureScanMaxPages).toBe(50)
     })
 
-    it("readSyndicatedPosition returns the PreLaunch OutpostAccount stake when one is held", async () => {
+    it("readSyndicatedPosition returns the PreLaunch OutpostAccount stake when one is held, consulting no history", async () => {
+      const pages: SignaturesForAddressOptions[] = []
       await expect(
         SolanaLiqSyndicationTool.readSyndicatedPosition(
           positionContext(
             new Map([[userPdas.outpostAccount.toBase58(), await outpostAccount(signer, 6_000_000_000n)]]),
-            [{ signature: "later", instructions: [syndInstruction(1n)] }]
+            [{ signature: "later", slot: AsOfSlot + 1, instructions: [syndInstruction(1n)] }],
+            [],
+            pages
+          ),
+          signer,
+          AsOfSlot
+        )
+      ).resolves.toBe(6_000_000_000n)
+      expect(pages).toHaveLength(0)
+    })
+
+    it("readSyndicatedPosition sums the user's successful synds to liqsol_core from the marker on when no OutpostAccount stake is held — one page when the history ends inside the window", async () => {
+      const pages: SignaturesForAddressOptions[] = []
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [
+              {
+                signature: "crank",
+                slot: AsOfSlot,
+                instructions: [
+                  {
+                    programIdIndex: 1,
+                    accountKeyIndexes: [0],
+                    data: program.coder.instruction.encode(
+                      SolanaLiqSyndicationTool.ReportLiqYieldMethodName,
+                      {}
+                    )
+                  }
+                ]
+              },
+              { signature: "synd-1", slot: AsOfSlot + 1, instructions: [syndInstruction(4_000_000_000n)] },
+              { signature: "rejected", slot: AsOfSlot + 2, failed: true, instructions: [syndInstruction(9n)] },
+              { signature: "foreign", slot: AsOfSlot + 3, instructions: [syndInstruction(5n, 2)] },
+              { signature: "synd-2", slot: AsOfSlot + 4, instructions: [syndInstruction(2_000_000_000n)] }
+            ],
+            [],
+            pages
+          ),
+          signer,
+          AsOfSlot
+        )
+      ).resolves.toBe(6_000_000_000n)
+      expect(pages).toHaveLength(1)
+      expect(pages[0].before).toBeUndefined()
+    })
+
+    it("readSyndicatedPosition stops at the first signature before the marker and never reads it — a synd before the marker is not this campaign's", async () => {
+      const pages: SignaturesForAddressOptions[] = []
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [
+              { signature: "earlier-campaign", slot: AsOfSlot - 5, instructions: [syndInstruction(1_000n)] },
+              { signature: "just-before", slot: AsOfSlot - 1, instructions: [syndInstruction(10n)] },
+              { signature: "at-marker", slot: AsOfSlot, instructions: [syndInstruction(100n)] },
+              { signature: "after", slot: AsOfSlot + 10, instructions: [syndInstruction(2_000n)] }
+            ],
+            ["earlier-campaign", "just-before"],
+            pages
+          ),
+          signer,
+          AsOfSlot
+        )
+      ).resolves.toBe(2_100n)
+      expect(pages).toHaveLength(1)
+    })
+
+    it("readSyndicatedPosition pages past a full page until the window is covered", async () => {
+      const pages: SignaturesForAddressOptions[] = []
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [
+              { signature: "earlier-campaign", slot: AsOfSlot - 9, instructions: [syndInstruction(5n)] },
+              { signature: "synd", slot: AsOfSlot + 40, instructions: [syndInstruction(7n)] },
+              ...failedSignatures(SignatureScanPageSize, AsOfSlot + 90)
+            ],
+            ["earlier-campaign"],
+            pages
+          ),
+          signer,
+          AsOfSlot
+        )
+      ).resolves.toBe(7n)
+      expect(pages).toHaveLength(2)
+      expect(pages[0].before).toBeUndefined()
+      expect(pages[1].before).toBe("failed-0")
+    })
+
+    it("readSyndicatedPosition refuses a history that runs past the page cap, naming the wallet, the pages and the marker", async () => {
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(endlessHistoryContext(), signer, AsOfSlot)
+      ).rejects.toThrow(
+        new RegExp(
+          `${signer.toBase58()}'s history since slot ${AsOfSlot} runs past ${SignatureScanMaxPages} pages of ${SignatureScanPageSize} signatures`
+        )
+      )
+    })
+
+    it("readSyndicatedPosition refuses an RPC whose history starts after the marker, before reading a signature", async () => {
+      const pages: SignaturesForAddressOptions[] = []
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [{ signature: "synd", slot: AsOfSlot + 1, instructions: [syndInstruction(1n)] }],
+            [],
+            pages,
+            AsOfSlot + 500
+          ),
+          signer,
+          AsOfSlot
+        )
+      ).rejects.toThrow(
+        new RegExp(`history starts at slot ${AsOfSlot + 500}, after the marker slot ${AsOfSlot}`)
+      )
+      expect(pages).toHaveLength(0)
+    })
+
+    it("readSyndicatedPosition does not consult the history without a marker — a PreLaunch read, whose OutpostAccount is the whole record", async () => {
+      const pages: SignaturesForAddressOptions[] = []
+      await expect(
+        SolanaLiqSyndicationTool.readSyndicatedPosition(
+          positionContext(
+            new Map(),
+            [{ signature: "synd", slot: AsOfSlot + 1, instructions: [syndInstruction(1n)] }],
+            [],
+            pages
           ),
           signer
         )
-      ).resolves.toBe(6_000_000_000n)
+      ).resolves.toBe(0n)
+      expect(pages).toHaveLength(0)
     })
 
-    it("readSyndicatedPosition sums the user's successful synds to liqsol_core when no OutpostAccount stake is held", async () => {
+    it("readSyndicatedPosition refuses a marker that is not a slot", async () => {
       await expect(
-        SolanaLiqSyndicationTool.readSyndicatedPosition(
-          positionContext(new Map(), [
-            {
-              signature: "crank",
-              instructions: [
-                {
-                  programIdIndex: 1,
-                  accountKeyIndexes: [0],
-                  data: program.coder.instruction.encode(
-                    SolanaLiqSyndicationTool.ReportLiqYieldMethodName,
-                    {}
-                  )
-                }
-              ]
-            },
-            { signature: "synd-1", instructions: [syndInstruction(4_000_000_000n)] },
-            { signature: "rejected", failed: true, instructions: [syndInstruction(9n)] },
-            { signature: "foreign", instructions: [syndInstruction(5n, 2)] },
-            { signature: "synd-2", instructions: [syndInstruction(2_000_000_000n)] }
-          ]),
-          signer
-        )
-      ).resolves.toBe(6_000_000_000n)
+        SolanaLiqSyndicationTool.readSyndicatedPosition(positionContext(new Map(), []), signer, -1)
+      ).rejects.toThrow(/the marker must be a slot/)
     })
 
     it("readSyndicatedPosition is 0n for a wallet that never syndicated — an absent OutpostAccount is not a failure", async () => {
       await expect(
-        SolanaLiqSyndicationTool.readSyndicatedPosition(positionContext(new Map(), []), signer)
+        SolanaLiqSyndicationTool.readSyndicatedPosition(positionContext(new Map(), []), signer, AsOfSlot)
       ).resolves.toBe(0n)
     })
 
@@ -831,10 +1008,11 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
         SolanaLiqSyndicationTool.readSyndicatedPosition(
           positionContext(
             new Map(),
-            [{ signature: "synd-1", instructions: [syndInstruction(1n)] }],
+            [{ signature: "synd-1", slot: AsOfSlot, instructions: [syndInstruction(1n)] }],
             ["synd-1"]
           ),
-          signer
+          signer,
+          AsOfSlot
         )
       ).rejects.toThrow(/transaction synd-1 .* is unavailable/)
     })

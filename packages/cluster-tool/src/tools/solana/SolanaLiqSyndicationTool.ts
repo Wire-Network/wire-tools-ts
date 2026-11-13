@@ -39,11 +39,13 @@ import Assert from "node:assert"
 
 import { Either, asOption } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
+import { last } from "lodash"
 import { match } from "ts-pattern"
 import {
   type AccountMeta,
   type Commitment,
   ComputeBudgetProgram,
+  type ConfirmedSignatureInfo,
   type Connection,
   MessageAccountKeys,
   PublicKey,
@@ -616,13 +618,20 @@ export namespace SolanaLiqSyndicationTool {
   export const SyndMethodName = "synd"
 
   /**
-   * Most recent confirmed signatures of a user {@link readSyndicatedPosition}
-   * inspects for PostLaunch syndications. A batch operator's outpost key is
-   * pre-created for the launch and signs a handful of transactions before it
-   * is funded, so its whole history fits; a wallet with a longer one is read
-   * from its latest.
+   * Signatures per `getSignaturesForAddress` page of the PostLaunch history
+   * scan ({@link readSyndicatedPosition}) — the RPC's maximum, so a window
+   * takes the fewest requests it can.
    */
-  export const UserSignatureScanLimit = 200
+  export const SignatureScanPageSize = 1_000
+  /**
+   * Pages the PostLaunch history scan reads before REFUSING: a wallet whose
+   * history since the marker runs past `SignatureScanMaxPages ×
+   * SignatureScanPageSize` signatures is never read as "unfunded" — the scan
+   * throws, naming the wallet, the pages read and the marker, so the
+   * document's marker is moved forward instead. Raising it lengthens the
+   * longest scan a run tolerates.
+   */
+  export const SignatureScanMaxPages = 50
 
   /** The `OutpostAccount` field this tool consumes, as the Anchor coder decodes it. */
   interface OutpostAccountRecord {
@@ -645,22 +654,33 @@ export namespace SolanaLiqSyndicationTool {
    *   figure, returned whenever it is positive.
    * - PostLaunch `synd` touches no per-user account: the syndicated liqSOL is
    *   outpost property and the depot is the ledger of record, so the user's
-   *   own confirmed transactions are the outpost's only record of it. The
-   *   last {@link UserSignatureScanLimit} are read and every successful
-   *   `synd` to the deployed `liqsol_core` is summed.
+   *   own confirmed transactions are the outpost's only record of it. With a
+   *   marker, every signature of `user` from `asOfSlot` on is read and every
+   *   successful `synd` to the deployed `liqsol_core` among them is summed —
+   *   a PROVABLE window: the RPC must still hold the ledger back to the
+   *   marker, and the scan ends only once it has seen a signature before the
+   *   marker or the wallet's whole history ({@link readSignaturesSince}).
+   *   Without a marker the history is not consulted: a PreLaunch read, whose
+   *   `OutpostAccount` is the whole record.
    *
    * @param source - The build context, or a target (RPC connection + `solanaPath` + program id).
    * @param user - The syndicating wallet.
+   * @param asOfSlot - The slot this campaign's `synd`s count from — the
+   *   document's `solana.asOfSlot`; absent for a PreLaunch read.
    * @returns The syndicated position, in liqSOL base units.
-   * @throws When a confirmed transaction of `user` is unavailable.
+   * @throws When the RPC's history starts after the marker, the scan runs
+   *   past {@link SignatureScanMaxPages}, or a confirmed transaction of
+   *   `user` is unavailable.
    */
   export async function readSyndicatedPosition<C extends ClusterBuildContext>(
     source: SolanaOutpostSource<C>,
-    user: PublicKey
+    user: PublicKey,
+    asOfSlot?: SolanaOutpostTarget["asOfSlot"]
   ): Promise<bigint> {
     const target = SolanaOutpostTarget.resolve(source),
       staked = await readOutpostAccountStake(target, user)
-    return staked > 0n ? staked : readSyndHistory(target, user)
+    if (staked > 0n || asOfSlot == null) return staked
+    return readSyndHistory(target, user, asOfSlot)
   }
 
   /** `OutpostAccount.staked_liqsol` of `user`; `0n` while the account was never created. */
@@ -684,23 +704,83 @@ export namespace SolanaLiqSyndicationTool {
     return BigInt(stakedLiqsol.toString())
   }
 
-  /** The liqSOL of every successful `synd` among `user`'s latest confirmed transactions, summed. */
+  /**
+   * `user`'s confirmed signatures at or after `asOfSlot`, newest first —
+   * paged from the latest in {@link SignatureScanPageSize}s until a signature
+   * before the marker shows the window fully covered, or a page shorter than
+   * the page size shows the wallet's history ends inside it. Past
+   * {@link SignatureScanMaxPages} the scan REFUSES rather than read a
+   * position it has not proven.
+   *
+   * @param target - The target (RPC connection).
+   * @param user - The wallet.
+   * @param asOfSlot - The marker slot the window starts at.
+   * @param before - The signature the page starts after; the latest when absent.
+   * @param pagesRead - Pages read so far.
+   * @returns The in-window signatures, newest first.
+   * @throws When the scan runs past {@link SignatureScanMaxPages}.
+   */
+  async function readSignaturesSince(
+    target: SolanaOutpostTarget,
+    user: PublicKey,
+    asOfSlot: number,
+    before?: string,
+    pagesRead = 0
+  ): Promise<ConfirmedSignatureInfo[]> {
+    Assert.ok(
+      pagesRead < SignatureScanMaxPages,
+      `SolanaLiqSyndicationTool: ${user.toBase58()}'s history since slot ${asOfSlot} runs past ${pagesRead} pages of ${SignatureScanPageSize} signatures — its syndications since the marker cannot be read in bounds; regenerate the document at a later finalized slot`
+    )
+    const page = await target.connection.getSignaturesForAddress(
+        user,
+        { limit: SignatureScanPageSize, ...(before != null ? { before } : {}) },
+        SolanaClient.ConfirmationStatus.confirmed
+      ),
+      firstBefore = page.findIndex(info => info.slot < asOfSlot),
+      inWindow = firstBefore < 0 ? page : page.slice(0, firstBefore)
+    if (firstBefore >= 0 || page.length < SignatureScanPageSize) return inWindow
+    return [
+      ...inWindow,
+      ...(await readSignaturesSince(
+        target,
+        user,
+        asOfSlot,
+        last(page).signature,
+        pagesRead + 1
+      ))
+    ]
+  }
+
+  /**
+   * The liqSOL of every successful `synd` among `user`'s confirmed
+   * transactions from `asOfSlot` on, summed — after proving the RPC still
+   * holds the ledger back to the marker.
+   */
   async function readSyndHistory(
     target: SolanaOutpostTarget,
-    user: PublicKey
+    user: PublicKey,
+    asOfSlot: number
   ): Promise<bigint> {
+    Assert.ok(
+      Number.isInteger(asOfSlot) && asOfSlot >= 0,
+      `SolanaLiqSyndicationTool: the marker must be a slot (got ${asOfSlot})`
+    )
+    const firstAvailable = await target.connection.getFirstAvailableBlock()
+    Assert.ok(
+      firstAvailable <= asOfSlot,
+      `SolanaLiqSyndicationTool: the RPC's history starts at slot ${firstAvailable}, after the marker slot ${asOfSlot} — ${user.toBase58()}'s syndications since the marker cannot be proven; use an RPC with longer history, or regenerate the document at a later finalized slot`
+    )
     // The program's OWN (camelCased) IDL, as `BorshCoder` builds its instruction coder from it.
     const decoder = new anchor.BorshInstructionCoder(
         loadReadOnlyLiqsolProgram(target).idl
       ),
-      signatures = (
-        await target.connection.getSignaturesForAddress(
-          user,
-          { limit: UserSignatureScanLimit },
-          SolanaClient.ConfirmationStatus.confirmed
-        )
-      ).filter(info => info.err == null),
-      amounts = await mapSeries(signatures, async info => {
+      signatures = (await readSignaturesSince(target, user, asOfSlot)).filter(
+        info => info.err == null
+      )
+    log.debug(
+      `readSyndHistory(${user.toBase58()}): ${signatures.length} successful signature(s) since slot ${asOfSlot} (RPC history from slot ${firstAvailable})`
+    )
+    const amounts = await mapSeries(signatures, async info => {
         const response = await target.connection.getTransaction(
           info.signature,
           {

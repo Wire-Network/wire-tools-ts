@@ -364,7 +364,7 @@ verifies each operator holds its credit (`LcoImportOperatorCredit`).
 wire-cluster-tool fund-batch-operators \
   --cluster-build-options-file cluster-build-options.json \   # batchOperatorCount, enableBatchOperatorUnderwriting, batchOperatorUnderwriting.{fundedOperatorCount,stake,reserve}, signatureProvider
   --aws-cluster-node-config    aws-cluster-node-config.json \  # account, regions, ssm, optional kms
-  --external-outpost-config    external-outpost-config.json \  # the deployed outposts: rpcUrls, addresses, program id, mints
+  --external-outpost-config    external-outpost-config.json \  # the deployed outposts: rpcUrls, addresses, program id, mints, asOf markers
   --ethereum-path <wire-ethereum> --solana-path <wire-solana> \ # the ABI / IDL artifacts (or WIRE_ETH_PATH / WIRE_SOLANA_PATH)
   [--signature-provider-ssm '<json>'|<file>] [--signature-provider-kms '<json>'|<file>] > funding-receipts.json
 ```
@@ -415,6 +415,22 @@ the whole balance — so a resumed leg can neither double the stake nor exceed
 the per-transfer maximum. The native balance each leg requires follows:
 `stake + reserve` while it still deposits, the reserve alone once it does not.
 
+Post-launch, a position is HISTORY, and that history counts from the external
+config's as-of markers — `ethereum.asOfBlock` and `solana.asOfSlot`, the
+FINALIZED block / slot the document was generated at
+(`eth_getBlockByNumber("finalized")` / `getSlot({ commitment: "finalized" })`):
+a syndication from the marker on is this campaign's; one before it is not, and
+does not count as "already funded". The Ethereum `Syndicated` scan runs from
+`asOfBlock` to the latest block in bounded 2,000-block `getLogs` requests (a
+hosted RPC provider answers those where it refuses an open-ended range); the
+Solana scan pages the operator's signatures newest-first, 1,000 a page, until
+it has seen one before `asOfSlot` or the wallet's whole history, and refuses —
+rather than reading an unproven `0` — when the RPC's history starts after the
+marker or the window runs past 50 pages. A post-launch outpost whose document
+carries no marker is refused in the preflight, naming the field; pre-launch
+funding ignores both. A document generated long before its campaign should have
+its markers moved forward — a wide window is a long scan.
+
 stdout carries ONLY the listing, `{ receipts, skips }`: one receipt per landed
 transaction — `{ label, chain, action, transaction, amount }` (`action` one of
 `depositAndStake | deposit | approve | syndicate | solToLiqsol | synd`;
@@ -430,7 +446,8 @@ no Step, no Report; the reads and builds go through the same tool primitives
 the flow Steps use (`EthereumSyndicationTool`, `EthereumPreLaunchStakingTool`,
 `SolanaLiqSyndicationTool`), addressed by the outpost targets the external
 config composes. The external config MUST carry both `rpcUrl`s: a command with
-no cluster has no bind config to fall back to.
+no cluster has no bind config to fall back to — and, for each post-launch
+outpost, its as-of marker.
 
 ---
 

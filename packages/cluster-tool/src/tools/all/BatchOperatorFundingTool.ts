@@ -43,6 +43,15 @@
  * balance a leg requires follows its plan: `stake + reserve` while it still
  * deposits, the reserve alone once it does not.
  *
+ * Post-launch, the positions are HISTORY, and that history counts from the
+ * external outpost document's as-of markers: an operator's `Syndicated`
+ * total on the pool is read from `ethereum.asOfBlock` on, its PostLaunch
+ * `synd`s from `solana.asOfSlot` on — the finalized block / slot the document
+ * was generated at. A position created before the marker is not this
+ * campaign's and does not count as funded. A post-launch outpost whose
+ * document carries no marker is refused in the preflight; a pre-launch one
+ * never needs it (its positions are chain state, not history).
+ *
  * Every precondition of EVERY operator (balances, launch states, per-transfer
  * maxima, the chain id, the positions and the plans) is established before
  * the first transaction, so the common failure class never leaves one
@@ -585,7 +594,11 @@ export namespace BatchOperatorFundingTool {
     )
   }
 
-  /** The post-launch Ethereum surface the writes need: the pool recorded, unpaused, and above the stake. */
+  /**
+   * The post-launch Ethereum surface the writes need: the pool recorded,
+   * unpaused and above the stake, and the document's `ethereum.asOfBlock` —
+   * the marker the operators' `Syndicated` history counts from.
+   */
   async function assertPostLaunchEthereum(
     target: EthereumOutpostTarget,
     native: NativeAllocation
@@ -601,6 +614,13 @@ export namespace BatchOperatorFundingTool {
       "BatchOperatorFundingTool: the post-launch path needs the outpost's liqEthAddresses (DepositManager + LiqEthToken)"
     )
     Assert.ok(
+      target.asOfBlock != null,
+      "BatchOperatorFundingTool: the Ethereum outpost is post-launch and the external outpost config carries no ethereum.asOfBlock — post-launch idempotency counts from the document's asOf marker; add ethereum.asOfBlock (the finalized block the document was generated at)"
+    )
+    log.info(
+      `[fund-batch-operators] Ethereum post-launch positions count from ethereum.asOfBlock ${target.asOfBlock} — the document's marker`
+    )
+    Assert.ok(
       !(await EthereumSyndicationTool.readPaused(target)),
       "BatchOperatorFundingTool: the Ethereum SyndicationPool is paused — syndicate is refused"
     )
@@ -609,6 +629,20 @@ export namespace BatchOperatorFundingTool {
     Assert.ok(
       maxSyndicationPerTransfer >= native.stakeWei,
       `BatchOperatorFundingTool: the Ethereum stake ${native.stakeWei} wei exceeds the pool's maxSyndicationPerTransfer ${maxSyndicationPerTransfer}`
+    )
+  }
+
+  /**
+   * The PostLaunch Solana marker the position reads count from: the
+   * document's `solana.asOfSlot`.
+   */
+  function assertPostLaunchSolana(target: SolanaOutpostTarget): void {
+    Assert.ok(
+      target.asOfSlot != null,
+      `BatchOperatorFundingTool: the Solana outpost is ${WireState.postLaunch} and the external outpost config carries no solana.asOfSlot — post-launch idempotency counts from the document's asOf marker; add solana.asOfSlot (the finalized slot the document was generated at)`
+    )
+    log.info(
+      `[fund-batch-operators] Solana ${WireState.postLaunch} positions count from solana.asOfSlot ${target.asOfSlot} — the document's marker`
     )
   }
 
@@ -650,9 +684,10 @@ export namespace BatchOperatorFundingTool {
 
   /**
    * The liq the operator already holds staked on a post-launch Ethereum
-   * outpost: its `Syndicated` total on the pool, or — while the address book
-   * still records the pre-launch Depositor — the shares it staked pre-launch
-   * and carries past D-Day.
+   * outpost: its `Syndicated` total on the pool from the document's
+   * `asOfBlock` on (the preflight has required the marker), or — while the
+   * address book still records the pre-launch Depositor — the shares it
+   * staked pre-launch and carries past D-Day.
    */
   async function readPostLaunchEthereumPosition(
     target: EthereumOutpostTarget,
@@ -660,7 +695,8 @@ export namespace BatchOperatorFundingTool {
   ): Promise<bigint> {
     const syndicated = await EthereumSyndicationTool.readSyndicatedPosition(
       target,
-      address
+      address,
+      target.asOfBlock
     )
     if (syndicated > 0n) return syndicated
     return EthereumPreLaunchStakingTool.hasStakingContract(
@@ -733,8 +769,10 @@ export namespace BatchOperatorFundingTool {
 
   /**
    * The Solana leg's plan, read from the chain: skipped when the operator
-   * holds a syndicated position ({@link SolanaLiqSyndicationTool.readSyndicatedPosition}),
-   * else `sol_to_liqsol` unless its liqSOL already covers the stake, and `synd`.
+   * holds a syndicated position ({@link SolanaLiqSyndicationTool.readSyndicatedPosition}
+   * — a PreLaunch `OutpostAccount` stake, or PostLaunch `synd`s from the
+   * document's `asOfSlot` on), else `sol_to_liqsol` unless its liqSOL already
+   * covers the stake, and `synd`.
    */
   async function planSolanaLeg(
     operator: FundedOperator,
@@ -745,7 +783,8 @@ export namespace BatchOperatorFundingTool {
       wallet = solanaWallet(operator),
       position = await SolanaLiqSyndicationTool.readSyndicatedPosition(
         target,
-        wallet
+        wallet,
+        target.asOfSlot
       )
     if (position > 0n) return skippedLeg(position)
     const held = await SolanaLiqSyndicationTool.readLiqsolBalanceOf(
@@ -827,10 +866,11 @@ export namespace BatchOperatorFundingTool {
   /**
    * Establish every precondition of the run BEFORE the first write — the
    * chain id behind the Ethereum endpoint, the LIQSOL mint, both launch
-   * states, both per-transfer maxima, and, per operator, its position and
-   * plan on each outpost ({@link LegPlan}) and the balance that plan requires
-   * — so a refusal (the common failure class) never leaves one operator funded
-   * and the next not. Reads only.
+   * states (and, for a post-launch one, the document's as-of marker its
+   * positions count from), both per-transfer maxima, and, per operator, its
+   * position and plan on each outpost ({@link LegPlan}) and the balance that
+   * plan requires — so a refusal (the common failure class) never leaves one
+   * operator funded and the next not. Reads only.
    *
    * @param operators - The adopted identities.
    * @param allocation - The stake + reserve, in depot units.
@@ -856,6 +896,9 @@ export namespace BatchOperatorFundingTool {
       await assertPostLaunchEthereum(targets.ethereum, native)
     }
     const wireState = await resolveWireState(targets.solana)
+    if (wireState === WireState.postLaunch) {
+      assertPostLaunchSolana(targets.solana)
+    }
     await assertSolanaSyndicationMaximum(targets.solana, native)
     const plans = await mapSeries(operators, operator =>
       planOperator(operator, native, ethereumPhase, targets)

@@ -33,6 +33,13 @@ export interface SolanaOutpostTarget {
   readonly programId: PublicKey
   /** The outpost's SPL mints, when a config carries them (an external outpost); absent on a local cluster. */
   readonly mints?: readonly SolanaMintRecord[]
+  /**
+   * The finalized slot the describing document was generated at — the slot a
+   * post-launch `fund-batch-operators` counts this campaign's `synd`s from;
+   * absent when the document carries none (a pre-launch funding needs none)
+   * and on a local cluster.
+   */
+  readonly asOfSlot?: ExternalOutpostConfigSolana["asOfSlot"]
 }
 
 /**
@@ -94,7 +101,7 @@ export namespace SolanaOutpostTarget {
   /**
    * The target an already-deployed outpost's trusted config describes.
    *
-   * @param solana - The config's Solana outpost (program id, mints, RPC endpoint).
+   * @param solana - The config's Solana outpost (program id, mints, RPC endpoint, as-of slot).
    * @param solanaPath - The `wire-solana` repo root (IDL + sibling program ids).
    * @param connection - The connection to the outpost ({@link createConnection}).
    * @returns The target.
@@ -108,7 +115,8 @@ export namespace SolanaOutpostTarget {
       connection,
       solanaPath,
       programId: new PublicKey(solana.programId),
-      ...(solana.mints != null ? { mints: solana.mints } : {})
+      ...(solana.mints != null ? { mints: solana.mints } : {}),
+      ...(solana.asOfSlot != null ? { asOfSlot: solana.asOfSlot } : {})
     }
   }
 

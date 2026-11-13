@@ -785,11 +785,16 @@ describe("EthereumSyndicationTool", () => {
     describe("readSyndicatedPosition", () => {
       /** The 33-byte compressed-key field a `Syndicated` log carries (any bytes encode). */
       const CompressedPubkeyLength = 33
+      /** The marker a document carries — the block a campaign's scan starts at. */
+      const AsOfBlock = 1_000
+      /** The chunk the scan tiles its window in. */
+      const { EventScanChunkBlocks } = EthereumSyndicationTool
 
-      /** A real ABI-encoded `Syndicated` log of the pool for `syndicator`. */
+      /** A real ABI-encoded `Syndicated` log of the pool for `syndicator` at `blockNumber`. */
       function syndicatedLog(
         syndicator: string,
         nativeTaken: bigint,
+        blockNumber: number,
         data?: string
       ): ethers.Log {
         const encoded = poolInterface.encodeEventLog(
@@ -807,7 +812,7 @@ describe("EthereumSyndicationTool", () => {
           data: data ?? encoded.data,
           topics: encoded.topics,
           blockHash: ethers.ZeroHash,
-          blockNumber: 5,
+          blockNumber,
           transactionHash: ethers.ZeroHash,
           transactionIndex: 0,
           index: 0,
@@ -815,34 +820,58 @@ describe("EthereumSyndicationTool", () => {
         } as unknown as ethers.Log
       }
 
-      /** A runner whose provider answers `getLogs` with `logs`, recording each filter. */
+      /**
+       * A provider-shaped runner answering `getBlockNumber` with `latestBlock`
+       * and `getLogs` with the logs of `logs` inside the request's block range
+       * (as a node would), recording each filter.
+       */
       function positionRunner(
         logs: ReadonlyArray<ethers.Log>,
-        filters: ethers.Filter[]
+        filters: ethers.Filter[],
+        latestBlock = AsOfBlock
       ): ethers.ContractRunner {
         const provider = {
+          getBlockNumber: async () => latestBlock,
           getLogs: async (filter: ethers.Filter) => {
             filters.push(filter)
-            return logs.map(
-              log => new ethers.Log(log, provider as unknown as ethers.Provider)
-            )
+            return logs
+              .filter(
+                log =>
+                  log.blockNumber >= Number(filter.fromBlock) &&
+                  log.blockNumber <= Number(filter.toBlock)
+              )
+              .map(
+                log => new ethers.Log(log, provider as unknown as ethers.Provider)
+              )
           }
         }
-        return { provider } as unknown as ethers.ContractRunner
+        // ethers reaches a runner's provider through `.provider`; the fake is its own.
+        return Object.assign(provider, { provider }) as unknown as ethers.ContractRunner
       }
 
-      it("sums nativeTaken over the syndicator's events, filtered by its indexed address from the first block", async () => {
+      /** The `[fromBlock, toBlock]` each recorded filter asked for. */
+      const rangesOf = (filters: ethers.Filter[]): number[][] =>
+        filters.map(filter => [Number(filter.fromBlock), Number(filter.toBlock)])
+
+      it("sums nativeTaken over the syndicator's events from the scan start, filtered by its indexed address, in ONE bounded request when the window fits a chunk", async () => {
         const filters: ethers.Filter[] = [],
-          holder = HolderPair.address
+          holder = HolderPair.address,
+          latest = AsOfBlock + 5
         await expect(
           EthereumSyndicationTool.readSyndicatedPosition(
             context(
               positionRunner(
-                [syndicatedLog(holder, 300n), syndicatedLog(holder, 700n)],
-                filters
+                [
+                  syndicatedLog(holder, 5_000n, AsOfBlock - 1),
+                  syndicatedLog(holder, 300n, AsOfBlock),
+                  syndicatedLog(holder, 700n, latest)
+                ],
+                filters,
+                latest
               )
             ),
-            holder
+            holder,
+            AsOfBlock
           )
         ).resolves.toBe(1_000n)
         expect(filters).toHaveLength(1)
@@ -851,14 +880,76 @@ describe("EthereumSyndicationTool", () => {
             .topicHash,
           ethers.zeroPadValue(holder, 32)
         ])
-        expect(filters[0].fromBlock).toBe(EthereumSyndicationTool.EventScanFromBlock)
+        expect(rangesOf(filters)).toEqual([[AsOfBlock, latest]])
+      })
+
+      it("tiles [fromBlock, latest] in EventScanChunkBlocks chunks — every request bounded, the chunks summed", async () => {
+        const filters: ethers.Filter[] = [],
+          holder = HolderPair.address,
+          latest = AsOfBlock + 2 * EventScanChunkBlocks + 5
+        await expect(
+          EthereumSyndicationTool.readSyndicatedPosition(
+            context(
+              positionRunner(
+                [
+                  syndicatedLog(holder, 1n, AsOfBlock),
+                  syndicatedLog(holder, 2n, AsOfBlock + EventScanChunkBlocks - 1),
+                  syndicatedLog(holder, 4n, AsOfBlock + EventScanChunkBlocks),
+                  syndicatedLog(holder, 8n, latest)
+                ],
+                filters,
+                latest
+              )
+            ),
+            holder,
+            AsOfBlock
+          )
+        ).resolves.toBe(15n)
+        expect(rangesOf(filters)).toEqual([
+          [AsOfBlock, AsOfBlock + EventScanChunkBlocks - 1],
+          [AsOfBlock + EventScanChunkBlocks, AsOfBlock + 2 * EventScanChunkBlocks - 1],
+          [AsOfBlock + 2 * EventScanChunkBlocks, latest]
+        ])
+      })
+
+      it("eventScanRanges tiles a window exactly: one range for a single block, none past the latest", () => {
+        expect(EventScanChunkBlocks).toBe(2_000)
+        expect(EthereumSyndicationTool.eventScanRanges(10, 10)).toEqual([
+          { fromBlock: 10, toBlock: 10 }
+        ])
+        expect(EthereumSyndicationTool.eventScanRanges(10, 9)).toEqual([])
+        expect(
+          EthereumSyndicationTool.eventScanRanges(0, 2 * EventScanChunkBlocks - 1)
+        ).toEqual([
+          { fromBlock: 0, toBlock: EventScanChunkBlocks - 1 },
+          { fromBlock: EventScanChunkBlocks, toBlock: 2 * EventScanChunkBlocks - 1 }
+        ])
+      })
+
+      it("requests nothing when the scan start is past the latest block", async () => {
+        const filters: ethers.Filter[] = []
+        await expect(
+          EthereumSyndicationTool.readSyndicatedPosition(
+            context(
+              positionRunner(
+                [syndicatedLog(HolderPair.address, 1n, AsOfBlock - 1)],
+                filters,
+                AsOfBlock - 1
+              )
+            ),
+            HolderPair.address,
+            AsOfBlock
+          )
+        ).resolves.toBe(0n)
+        expect(filters).toHaveLength(0)
       })
 
       it("is 0n for an address that never syndicated", async () => {
         await expect(
           EthereumSyndicationTool.readSyndicatedPosition(
             context(positionRunner([], [])),
-            HolderPair.address
+            HolderPair.address,
+            AsOfBlock
           )
         ).resolves.toBe(0n)
       })
@@ -867,12 +958,31 @@ describe("EthereumSyndicationTool", () => {
         await expect(
           EthereumSyndicationTool.readSyndicatedPosition(
             context(
-              positionRunner([syndicatedLog(HolderPair.address, 1n, "0x")], [])
+              positionRunner(
+                [syndicatedLog(HolderPair.address, 1n, AsOfBlock, "0x")],
+                []
+              )
             ),
-            HolderPair.address
+            HolderPair.address,
+            AsOfBlock
           )
         ).rejects.toThrow(/an undecoded Syndicated log/)
       })
+
+      it.each([undefined, -1, 1.5])(
+        "refuses a scan start that is not a block number: %s",
+        async fromBlock => {
+          const filters: ethers.Filter[] = []
+          await expect(
+            EthereumSyndicationTool.readSyndicatedPosition(
+              context(positionRunner([], filters)),
+              HolderPair.address,
+              fromBlock
+            )
+          ).rejects.toThrow(/the scan start must be a block number/)
+          expect(filters).toHaveLength(0)
+        }
+      )
     })
 
     it("readPoolConfiguration reads the four configured values", async () => {

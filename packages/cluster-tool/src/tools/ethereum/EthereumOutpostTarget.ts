@@ -31,6 +31,13 @@ export interface EthereumOutpostTarget {
   readonly outpostAddresses: ExternalOutpostConfigEthereum["outpostAddresses"]
   /** The liqEth deploy's address book (`liqeth-addrs.json` content); absent when the outpost has no liqETH. */
   readonly liqEthAddresses?: ExternalOutpostConfigEthereum["liqEthAddresses"]
+  /**
+   * The finalized block the describing document was generated at — the block
+   * a post-launch `fund-batch-operators` counts this campaign's syndications
+   * from; absent when the document carries none (a pre-launch funding needs
+   * none).
+   */
+  readonly asOfBlock?: ExternalOutpostConfigEthereum["asOfBlock"]
 }
 
 /**
@@ -66,7 +73,7 @@ export namespace EthereumOutpostTarget {
   /**
    * The target an already-deployed outpost's trusted config describes.
    *
-   * @param ethereum - The config's Ethereum outpost (chain id, address books, RPC endpoint).
+   * @param ethereum - The config's Ethereum outpost (chain id, address books, RPC endpoint, as-of block).
    * @param ethereumPath - The `wire-ethereum` repo root (artifact tree).
    * @param provider - The provider to the outpost ({@link createProvider}).
    * @returns The target.
@@ -83,7 +90,8 @@ export namespace EthereumOutpostTarget {
       outpostAddresses: ethereum.outpostAddresses,
       ...(ethereum.liqEthAddresses != null
         ? { liqEthAddresses: ethereum.liqEthAddresses }
-        : {})
+        : {}),
+      ...(ethereum.asOfBlock != null ? { asOfBlock: ethereum.asOfBlock } : {})
     }
   }
 

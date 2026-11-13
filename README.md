@@ -619,11 +619,13 @@ values only — the outposts' real-world deployed addresses and public keys:
     "chainId": 560048,
     "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
     "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
-    "liqEthAddresses": { "LiqEthToken": "0x…" }
+    "liqEthAddresses": { "LiqEthToken": "0x…" },
+    "asOfBlock": 1234567
   },
   "solana": {
     "rpcUrl": "https://api.testnet.solana.com",
-    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH",
+    "asOfSlot": 345678901
   }
 }
 ```
@@ -633,6 +635,17 @@ values only — the outposts' real-world deployed addresses and public keys:
   deploy record) and `solana.mints` (`[{ code, mint, decimals }]`) are optional.
 - `rpcUrl` is the endpoint the operator daemons dial. Without it they dial the
   bind config's `anvil` / `solana` address.
+- `ethereum.asOfBlock` / `solana.asOfSlot` are the FINALIZED block / slot the
+  document was generated at (`eth_getBlockByNumber("finalized")` /
+  `getSlot({ commitment: "finalized" })`). `fund-batch-operators` counts this
+  campaign's syndications from them: a position an operator created before
+  the marker is not this campaign's and does not count as "already funded".
+  Its post-launch paths require them (the Ethereum `Syndicated` scan runs
+  from `asOfBlock` in bounded chunks; the Solana history scan reads every
+  signature back to `asOfSlot`, and the RPC must still hold that ledger);
+  pre-launch funding and `create` ignore them. A document generated long
+  before its campaign should have the markers moved forward — a wide window
+  is a long scan.
 - The platform's `docs/ops/cluster-inputs/external-outpost-config.json` is a
   complete example (Hoodi + Solana testnet).
 

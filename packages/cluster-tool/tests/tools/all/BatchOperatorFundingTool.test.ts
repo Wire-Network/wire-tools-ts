@@ -47,6 +47,12 @@ const StakeLamports = 10_000_000_000n
 const ReserveLamports = 100_000_000n
 /** The 33-byte compressed-key field a `Syndicated` log carries (any bytes encode). */
 const CompressedPubkeyLength = 33
+/** The finalized block the external outpost document was generated at — the Ethereum marker. */
+const AsOfBlock = 1_234
+/** The latest block the fake Ethereum provider reports — a few past the marker, so a scan is ONE bounded request. */
+const LatestBlock = AsOfBlock + 10
+/** The finalized slot the external outpost document was generated at — the Solana marker. */
+const AsOfSlot = 56_789
 
 /** The part of a hardhat artifact these cases bind: its ABI. */
 interface AbiArtifact {
@@ -204,10 +210,10 @@ describe("BatchOperatorFundingTool", () => {
   }
 
   /**
-   * A provider answering `getNetwork` / `getBalance` / `getTransactionCount`,
-   * each contract view from `answers`, and `getLogs` from `logs` (filtered by
-   * address + topics, as a node would) — what every Ethereum read and the
-   * nonce seed go through.
+   * A provider answering `getNetwork` / `getBalance` / `getTransactionCount`
+   * / `getBlockNumber`, each contract view from `answers`, and `getLogs` from
+   * `logs` (filtered by address + topics, as a node would) — what every
+   * Ethereum read and the nonce seed go through.
    */
   function fakeProvider(
     balances: Record<string, bigint>,
@@ -219,6 +225,7 @@ describe("BatchOperatorFundingTool", () => {
       getNetwork: async () => ({ chainId: BigInt(chainId) }),
       getBalance: async (address: string) => balances[address.toLowerCase()] ?? 0n,
       getTransactionCount: async () => 0,
+      getBlockNumber: async () => LatestBlock,
       call: async (transaction: ethers.TransactionRequest) => {
         const selector = String(transaction.data).slice(0, 10),
           iface = Object.values(interfaces).find(
@@ -238,7 +245,7 @@ describe("BatchOperatorFundingTool", () => {
     return Object.assign(provider, { provider }) as unknown as ethers.Provider
   }
 
-  /** A real ABI-encoded `Syndicated` log of the pool for `syndicator`. */
+  /** A real ABI-encoded `Syndicated` log of the pool for `syndicator`, inside the scanned window. */
   function syndicatedLog(syndicator: string, nativeTaken: bigint): ethers.LogParams {
     const { data, topics } = interfaces.pool.encodeEventLog(
       EthereumSyndicationTool.PoolEvent.Syndicated,
@@ -249,7 +256,7 @@ describe("BatchOperatorFundingTool", () => {
       data,
       topics,
       blockHash: ethers.ZeroHash,
-      blockNumber: 1,
+      blockNumber: AsOfBlock + 1,
       transactionHash: ethers.ZeroHash,
       transactionIndex: 0,
       index: 0,
@@ -274,23 +281,36 @@ describe("BatchOperatorFundingTool", () => {
     }
   }
 
-  /** A post-launch target: no staking proxy in the book at all. */
+  /** A post-launch target: no staking proxy in the book at all, the document's as-of block carried. */
   function postLaunchTarget(provider: ethers.Provider): EthereumOutpostTarget {
     const { outpostAddresses, ...rest } = preLaunchTarget(provider),
       { [EthereumPreLaunchStakingTool.StakingContractName]: _staking, ...book } =
         outpostAddresses
-    return { ...rest, outpostAddresses: book }
+    return { ...rest, outpostAddresses: book, asOfBlock: AsOfBlock }
   }
 
-  /** A Solana target whose connection answers `getBalance` with `lamports`. */
+  /** A post-launch target whose document carries no as-of block. */
+  function unmarkedPostLaunchTarget(provider: ethers.Provider): EthereumOutpostTarget {
+    const { asOfBlock: _marker, ...unmarked } = postLaunchTarget(provider)
+    return unmarked
+  }
+
+  /** A Solana target whose connection answers `getBalance` with `lamports`, the document's as-of slot carried. */
   function solanaTarget(lamports: bigint): SolanaOutpostTarget {
     return {
       connection: {
         getBalance: async () => Number(lamports)
       } as unknown as Connection,
       solanaPath,
-      programId: Keypair.generate().publicKey
+      programId: Keypair.generate().publicKey,
+      asOfSlot: AsOfSlot
     }
+  }
+
+  /** A Solana target whose document carries no as-of slot. */
+  function unmarkedSolanaTarget(lamports: bigint): SolanaOutpostTarget {
+    const { asOfSlot: _marker, ...unmarked } = solanaTarget(lamports)
+    return unmarked
   }
 
   /** The pre-launch gate answers of a staking proxy, and the operator's shares on it. */
@@ -804,6 +824,97 @@ describe("BatchOperatorFundingTool", () => {
         }
       ])
     })
+
+    it("refuses a post-launch Ethereum outpost whose document carries no ethereum.asOfBlock — before any position read", async () => {
+      const account = await operator("batchop.a"),
+        position = jest.spyOn(EthereumSyndicationTool, "readSyndicatedPosition")
+      stubSolanaReads(WireState.postLaunch)
+      await expect(
+        BatchOperatorFundingTool.assertFundable([account], DefaultAllocation, {
+          ethereum: unmarkedPostLaunchTarget(
+            fakeProvider(
+              { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+              poolAnswers(emptyLiqEth())
+            )
+          ),
+          solana: solanaTarget(20_000_000_000n)
+        })
+      ).rejects.toThrow(
+        /carries no ethereum\.asOfBlock — post-launch idempotency counts from the document's asOf marker; add ethereum\.asOfBlock/
+      )
+      expect(position).not.toHaveBeenCalled()
+      expect(SolanaLiqSyndicationTool.readSyndicatedPosition).not.toHaveBeenCalled()
+    })
+
+    it("refuses a PostLaunch Solana outpost whose document carries no solana.asOfSlot — before any position read", async () => {
+      const account = await operator("batchop.a"),
+        position = jest.spyOn(EthereumSyndicationTool, "readSyndicatedPosition")
+      stubSolanaReads(WireState.postLaunch)
+      await expect(
+        BatchOperatorFundingTool.assertFundable([account], DefaultAllocation, {
+          ethereum: preLaunchTarget(
+            fakeProvider(
+              { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+              stakingAnswers()
+            )
+          ),
+          solana: unmarkedSolanaTarget(20_000_000_000n)
+        })
+      ).rejects.toThrow(
+        /carries no solana\.asOfSlot — post-launch idempotency counts from the document's asOf marker; add solana\.asOfSlot/
+      )
+      expect(position).not.toHaveBeenCalled()
+      expect(SolanaLiqSyndicationTool.readSyndicatedPosition).not.toHaveBeenCalled()
+    })
+
+    it("passes the document's markers to both position reads post-launch", async () => {
+      const account = await operator("batchop.a"),
+        ethereum = postLaunchTarget(
+          fakeProvider(
+            { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+            poolAnswers(emptyLiqEth())
+          )
+        ),
+        solana = solanaTarget(20_000_000_000n),
+        position = jest
+          .spyOn(EthereumSyndicationTool, "readSyndicatedPosition")
+          .mockResolvedValue(0n)
+      stubSolanaReads(WireState.postLaunch)
+      const preflight = await BatchOperatorFundingTool.assertFundable(
+        [account],
+        DefaultAllocation,
+        { ethereum, solana }
+      )
+      expect(preflight.ethereumPhase).toBe(BatchOperatorFundingTool.EthereumLaunchPhase.postLaunch)
+      expect(preflight.wireState).toBe(WireState.postLaunch)
+      expect(position).toHaveBeenCalledWith(ethereum, account.ethereum.address, AsOfBlock)
+      expect(SolanaLiqSyndicationTool.readSyndicatedPosition).toHaveBeenCalledWith(
+        solana,
+        keyPairUtils.solanaPublicKey(account.solana),
+        AsOfSlot
+      )
+    })
+
+    it("pre-launch never requires a marker: unmarked targets plan every write, the Solana read given none", async () => {
+      const account = await operator("batchop.a"),
+        { FundingAction } = BatchOperatorFundingTool,
+        solana = unmarkedSolanaTarget(20_000_000_000n)
+      stubSolanaReads(WireState.preLaunch)
+      const preflight = await BatchOperatorFundingTool.assertFundable([account], DefaultAllocation, {
+        ethereum: preLaunchTarget(
+          fakeProvider({ [account.ethereum.address.toLowerCase()]: 2n * StakeWei }, stakingAnswers())
+        ),
+        solana
+      })
+      expect(preflight.plans[0].ethereum.writes).toEqual([FundingAction.depositAndStake])
+      expect(preflight.plans[0].solana.writes).toEqual([FundingAction.solToLiqsol, FundingAction.synd])
+      const [[readTarget, readWallet, readMarker]] = (
+        SolanaLiqSyndicationTool.readSyndicatedPosition as jest.Mock
+      ).mock.calls
+      expect(readTarget).toBe(solana)
+      expect(readWallet).toEqual(keyPairUtils.solanaPublicKey(account.solana))
+      expect(readMarker).toBeUndefined()
+    })
   })
 
   describe("fund", () => {
@@ -1119,8 +1230,9 @@ describe("BatchOperatorFundingTool", () => {
         { sendTransaction } = fakeSigner(account, provider, [], ledger)
       stubSolanaReads(WireState.postLaunch)
       stubSolanaWrites()
+      // Past D-Day the Ethereum path is post-launch, so the document's marker is required beside the Depositor.
       const outcome = await BatchOperatorFundingTool.fund([account], DefaultAllocation, {
-        ethereum: preLaunchTarget(provider),
+        ethereum: { ...preLaunchTarget(provider), asOfBlock: AsOfBlock },
         solana: solanaTarget(20_000_000_000n)
       })
       expect(outcome.failure).toBeUndefined()
@@ -1164,7 +1276,8 @@ describe("BatchOperatorFundingTool", () => {
       ])
       expect(SolanaLiqSyndicationTool.readSyndicatedPosition).toHaveBeenCalledWith(
         solana,
-        keyPairUtils.solanaPublicKey(account.solana)
+        keyPairUtils.solanaPublicKey(account.solana),
+        AsOfSlot
       )
       expect(submit).not.toHaveBeenCalled()
       expect(solanaSigner).not.toHaveBeenCalled()

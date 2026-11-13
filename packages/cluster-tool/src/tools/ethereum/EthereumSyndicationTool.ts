@@ -35,10 +35,12 @@ import Fs from "node:fs"
 import Path from "node:path"
 
 import { ethers } from "ethers"
+import { range } from "lodash"
 import { SlugName } from "@wireio/sdk-core"
 
 import { EthereumWallet } from "../../clients/ethereum/EthereumWallet.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { getLogger } from "../../logging/Logger.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -47,6 +49,7 @@ import {
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
+import { mapSeries } from "../../utils/asyncUtils.js"
 import {
   loadOutpostContract,
   resolveLatestNonce
@@ -56,6 +59,8 @@ import {
   EthereumOutpostTarget,
   type EthereumOutpostSource
 } from "./EthereumOutpostTarget.js"
+
+const log = getLogger(__filename)
 
 export namespace EthereumSyndicationTool {
   /** `outpost-addrs.json` key + artifact basename of the syndication pool. */
@@ -173,6 +178,22 @@ export namespace EthereumSyndicationTool {
 
   /** The first block an event scan covers — the whole cluster chain. */
   export const EventScanFromBlock = 0
+  /**
+   * Blocks per `getLogs` request of a bounded event scan
+   * ({@link readSyndicatedPosition}): every request names an explicit
+   * `[fromBlock, toBlock]` of at most this many blocks, which a hosted RPC
+   * provider answers where it refuses an open-ended range. Lowering it adds
+   * requests to a scan; raising it runs into the provider's own range cap.
+   */
+  export const EventScanChunkBlocks = 2_000
+
+  /** One `getLogs` request's inclusive block range — a chunk of a bounded event scan. */
+  export interface EventScanRange {
+    /** The first block the request covers. */
+    readonly fromBlock: number
+    /** The last block the request covers (inclusive). */
+    readonly toBlock: number
+  }
 
   /**
    * The liqETH token reads this tool makes. Each takes optional ethers
@@ -1128,36 +1149,75 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * The liqETH `syndicator` has syndicated into the pool, in wei — the sum of
-   * `nativeTaken` over its `Syndicated` events, the pool's only per-account
-   * record (the depot is the ledger of a syndicated position; the pool keeps
-   * no per-holder balance). `0n` for an address that never syndicated. A
-   * READ, scanned from {@link EventScanFromBlock} by the event's indexed
-   * `syndicator` topic.
+   * The inclusive block ranges that tile `[fromBlock, toBlock]` in chunks of
+   * {@link EventScanChunkBlocks}, ascending — none when `fromBlock` is past
+   * `toBlock`. A pure value helper: the ONE chunking the bounded scans and
+   * their tests share.
+   *
+   * @param fromBlock - The first block of the scan.
+   * @param toBlock - The last block of the scan (inclusive).
+   * @returns The chunk ranges.
+   */
+  export function eventScanRanges(
+    fromBlock: number,
+    toBlock: number
+  ): EventScanRange[] {
+    return range(fromBlock, toBlock + 1, EventScanChunkBlocks).map(start => ({
+      fromBlock: start,
+      toBlock: Math.min(start + EventScanChunkBlocks - 1, toBlock)
+    }))
+  }
+
+  /**
+   * The liqETH `syndicator` has syndicated into the pool from `fromBlock` on,
+   * in wei — the sum of `nativeTaken` over its `Syndicated` events, the pool's
+   * only per-account record (the depot is the ledger of a syndicated position;
+   * the pool keeps no per-holder balance). `0n` for an address with no event
+   * in the window. A READ over `[fromBlock, latest]` by the event's indexed
+   * `syndicator` topic: one `getLogs` per {@link EventScanChunkBlocks} chunk
+   * ({@link eventScanRanges}), every request bounded, the chunks summed — so a
+   * hosted provider that refuses an open-ended range answers each.
    *
    * @param source - The build context, or a target.
    * @param syndicator - The address that sent the syndications.
+   * @param fromBlock - The first block the scan covers: a target's `asOfBlock`
+   *   (the document's marker a campaign's syndications count from), or
+   *   {@link EventScanFromBlock} on a local cluster.
    * @returns The syndicated total, in wei.
-   * @throws If a `Syndicated` log cannot be decoded.
+   * @throws If `fromBlock` is not a block number, or a `Syndicated` log cannot be decoded.
    */
   export function readSyndicatedPosition(
     target: EthereumOutpostTarget,
-    syndicator: string
+    syndicator: string,
+    fromBlock: EthereumOutpostTarget["asOfBlock"]
   ): Promise<bigint>
   export function readSyndicatedPosition<C extends ClusterBuildContext>(
     ctx: C,
-    syndicator: string
+    syndicator: string,
+    fromBlock: EthereumOutpostTarget["asOfBlock"]
   ): Promise<bigint>
   export async function readSyndicatedPosition<C extends ClusterBuildContext>(
     source: EthereumOutpostSource<C>,
-    syndicator: string
+    syndicator: string,
+    fromBlock: EthereumOutpostTarget["asOfBlock"]
   ): Promise<bigint> {
-    const pool = loadSyndicationPool(source, providerOf(source)),
-      events = await pool.queryFilter(
-        pool.filters[PoolEvent.Syndicated](syndicator),
-        EventScanFromBlock
-      )
-    return events
+    Assert.ok(
+      Number.isInteger(fromBlock) && fromBlock >= 0,
+      `EthereumSyndicationTool.readSyndicatedPosition: the scan start must be a block number (got ${fromBlock})`
+    )
+    const provider = providerOf(source),
+      pool = loadSyndicationPool(source, provider),
+      filter = pool.filters[PoolEvent.Syndicated](syndicator),
+      latest = await provider.getBlockNumber(),
+      ranges = eventScanRanges(fromBlock, latest)
+    log.debug(
+      `readSyndicatedPosition(${syndicator}): scanning ${PoolEvent.Syndicated} events over blocks ${fromBlock}..${latest} in ${ranges.length} request(s)`
+    )
+    const chunks = await mapSeries(ranges, chunk =>
+      pool.queryFilter(filter, chunk.fromBlock, chunk.toBlock)
+    )
+    return chunks
+      .flat()
       .map(event => {
         Assert.ok(
           event instanceof ethers.EventLog,

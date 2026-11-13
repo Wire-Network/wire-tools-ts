@@ -30,16 +30,21 @@ function stageProgramKeys(solanaPath: string): Map<string, PublicKey> {
   return ids
 }
 
-/** An external config's Solana outpost, with or without an endpoint / mints. */
+/** The finalized slot a document was generated at. */
+const AsOfSlot = 56_789
+
+/** An external config's Solana outpost, with or without an endpoint / mints / as-of slot. */
 function externalSolana(
   programId: PublicKey,
   rpcUrl?: string,
-  mints?: ExternalOutpostConfigSolana["mints"]
+  mints?: ExternalOutpostConfigSolana["mints"],
+  asOfSlot?: ExternalOutpostConfigSolana["asOfSlot"]
 ): ExternalOutpostConfigSolana {
   return {
     programId: programId.toBase58(),
     ...(rpcUrl != null ? { rpcUrl } : {}),
-    ...(mints != null ? { mints } : {})
+    ...(mints != null ? { mints } : {}),
+    ...(asOfSlot != null ? { asOfSlot } : {})
   }
 }
 
@@ -70,6 +75,7 @@ describe("SolanaOutpostTarget", () => {
       )
     ).toBe(true)
     expect("mints" in target).toBe(false)
+    expect("asOfSlot" in target).toBe(false)
   })
 
   it("fromContext refuses an external-outpost cluster, as every runner did before it", () => {
@@ -118,6 +124,26 @@ describe("SolanaOutpostTarget", () => {
     expect(target.mints).toEqual([{ code: 7, mint, decimals: 9 }])
     expect(
       "mints" in
+        SolanaOutpostTarget.fromExternalOutpost(
+          externalSolana(programId, rpcUrl),
+          solanaPath,
+          connection
+        )
+    ).toBe(false)
+  })
+
+  it("fromExternalOutpost carries the document's asOfSlot, and leaves it absent when the document has none", () => {
+    const programId = Keypair.generate().publicKey,
+      connection = SolanaOutpostTarget.createConnection(rpcUrl)
+    expect(
+      SolanaOutpostTarget.fromExternalOutpost(
+        externalSolana(programId, rpcUrl, undefined, AsOfSlot),
+        solanaPath,
+        connection
+      ).asOfSlot
+    ).toBe(AsOfSlot)
+    expect(
+      "asOfSlot" in
         SolanaOutpostTarget.fromExternalOutpost(
           externalSolana(programId, rpcUrl),
           solanaPath,

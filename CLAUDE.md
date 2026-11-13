@@ -456,7 +456,10 @@ caller's options, and `ClusterConfigProvider.resolve` refuses either mock flag t
 **`create` against external outposts never contacts them.** The
 `--external-outpost-config` file is TRUSTED and value-only (`ExternalOutpostConfig`:
 chain id, outpost + liqEth address maps, Solana program id + mints, optional
-`rpcUrl`s — no file references). `ExternalOutpostSteps.planMaterialize` writes the
+`rpcUrl`s, optional `asOfBlock` / `asOfSlot` — the finalized block / slot the
+document was generated at, which `fund-batch-operators`' post-launch paths count
+a campaign's syndications from and require; `create` ignores them — no file
+references). `ExternalOutpostSteps.planMaterialize` writes the
 values into the canonical deploy records, and `OperatorDaemonTool.planArtifactPreparation`
 — the same step local mode runs — builds the ABI / IDL files from the wire-ethereum
 / wire-solana builds over them (the IDL's `address` is the config's `programId`).
