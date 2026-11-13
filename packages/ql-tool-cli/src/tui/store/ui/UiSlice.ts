@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import { SliceName } from "../SliceName.js"
 
@@ -114,41 +114,41 @@ export const UiSlice = createSlice({
   initialState: initialUiState,
   reducers: {
     /** Tab: next area. */
-    focusedNext(state) {
+    focusedNext(state: Draft<UiState>) {
       state.focus = UiState.cycleFocus(state.focus, 1)
     },
     /** Shift+Tab: previous area. */
-    focusedPrevious(state) {
+    focusedPrevious(state: Draft<UiState>) {
       state.focus = UiState.cycleFocus(state.focus, -1)
     },
     /** Focus an area. */
-    focusSet(state, action: PayloadAction<FocusArea>) {
+    focusSet(state: Draft<UiState>, action: PayloadAction<FocusArea>) {
       state.focus = action.payload
     },
     /** Show a results tab. */
-    tabSelected(state, action: PayloadAction<ResultsTab>) {
+    tabSelected(state: Draft<UiState>, action: PayloadAction<ResultsTab>) {
       state.tab = action.payload
     },
     /** Alt+J: grid ↔ JSON. */
-    jsonToggled(state) {
+    jsonToggled(state: Draft<UiState>) {
       state.tab = state.tab === ResultsTab.json ? ResultsTab.grid : ResultsTab.json
     },
     /** Alt+V: grid ↔ record view. */
-    recordViewToggled(state) {
+    recordViewToggled(state: Draft<UiState>) {
       state.tab = state.tab === ResultsTab.record ? ResultsTab.grid : ResultsTab.record
     },
     /** Open a (non-prompt) modal. */
-    modalOpened(state, action: PayloadAction<TuiModal>) {
+    modalOpened(state: Draft<UiState>, action: PayloadAction<TuiModal>) {
       state.modal = action.payload
       state.prompt = null
     },
     /** Open a prompt. */
-    promptOpened(state, action: PayloadAction<PromptRequest>) {
+    promptOpened(state: Draft<UiState>, action: PayloadAction<PromptRequest>) {
       state.modal = TuiModal.prompt
       state.prompt = action.payload
     },
     /** Close any modal. */
-    modalClosed(state) {
+    modalClosed(state: Draft<UiState>) {
       state.modal = TuiModal.none
       state.prompt = null
     },
@@ -158,7 +158,7 @@ export const UiSlice = createSlice({
      * stamps the time.
      */
     message: {
-      reducer(state, action: PayloadAction<TuiMessage>) {
+      reducer(state: Draft<UiState>, action: PayloadAction<TuiMessage>) {
         state.messages = [...state.messages, action.payload].slice(-UiState.MaxMessages)
       },
       prepare(level: MessageLevel, text: string) {

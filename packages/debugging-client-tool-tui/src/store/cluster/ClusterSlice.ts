@@ -1,5 +1,5 @@
 import type { ClusterConfig, ClusterState } from "@wireio/cluster-tool-shared"
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import { SliceName } from "../StoreTypes.js"
 
@@ -32,7 +32,7 @@ export const clusterSlice = createSlice({
   initialState,
   reducers: {
     /** Replace the cluster snapshot — called once at TUI bootstrap. */
-    setCluster: (state, action: PayloadAction<SetClusterPayload>) => {
+    setCluster: (state: Draft<ClusterSliceState>, action: PayloadAction<SetClusterPayload>) => {
       state.path = action.payload.path
       state.config = action.payload.config
       state.state = action.payload.state

@@ -1,4 +1,9 @@
-import { createCursorListSlice, SliceName } from "@wireio/ql-tool-cli/tui/index.js"
+import {
+  createCursorListSlice,
+  type CursorListActions,
+  type CursorListCaseReducers,
+  SliceName
+} from "@wireio/ql-tool-cli/tui/index.js"
 
 describe("createCursorListSlice", () => {
   const slice = createCursorListSlice<string, SliceName.saved>(SliceName.saved)
@@ -11,6 +16,15 @@ describe("createCursorListSlice", () => {
     expect(moved).toEqual({ items: ["a", "b", "c"], cursor: 2 })
     expect(slice.reducer(moved, slice.actions.itemsLoaded(["x"]))).toEqual({ items: ["x"], cursor: 0 })
     expect(slice.reducer(moved, slice.actions.cursorMoved(-9)).cursor).toBe(0)
+  })
+
+  it("declares one case reducer per CursorListActions key", () => {
+    const caseReducers: CursorListCaseReducers<string> = slice.caseReducers,
+      actions: CursorListActions<string> = {
+        itemsLoaded: slice.actions.itemsLoaded(["a"]),
+        cursorMoved: slice.actions.cursorMoved(1)
+      }
+    expect(Object.keys(caseReducers).sort()).toEqual(Object.keys(actions).sort())
   })
 
   it("names the slice", () => {

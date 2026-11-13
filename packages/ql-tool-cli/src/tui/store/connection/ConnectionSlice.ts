@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import type { ConnectionProfile, ConnectionProfilesDocument } from "@wireio/ql-shared"
 
@@ -31,17 +31,17 @@ export const ConnectionSlice = createSlice({
   initialState: initialConnectionState,
   reducers: {
     /** Switch the active profile. */
-    profileSelected(state, action: PayloadAction<ConnectionProfile>) {
+    profileSelected(state: Draft<ConnectionState>, action: PayloadAction<ConnectionProfile>) {
       state.profile = action.payload
     },
     /** `profiles.json` (re)loaded; the cursor is clamped. */
-    profilesLoaded(state, action: PayloadAction<ConnectionProfilesDocument>) {
+    profilesLoaded(state: Draft<ConnectionState>, action: PayloadAction<ConnectionProfilesDocument>) {
       state.profiles = action.payload.profiles
       state.defaultProfile = action.payload.defaultProfile
       state.cursor = clampIndex(state.cursor, action.payload.profiles.length)
     },
     /** Move the Profiles-route cursor by `delta` (clamped). */
-    cursorMoved(state, action: PayloadAction<number>) {
+    cursorMoved(state: Draft<ConnectionState>, action: PayloadAction<number>) {
       state.cursor = moveCursor(state.cursor, action.payload, state.profiles.length)
     }
   }
