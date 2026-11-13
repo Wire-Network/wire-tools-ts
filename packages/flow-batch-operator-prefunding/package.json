@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-batch-operator-prefunding",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "description": "Flow: the pre-funded launch end to end — batch-operator identities pre-created and persisted before the cluster, frozen into the launch-data exports, adopted by the bootstrap (adoptOnly), credited by the import, and underwriting a user's Ethereum syndication from the first epochs",

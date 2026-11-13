@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-liq-kicker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "description": "Flow: sysio.kicker pays LIQETH holders the accrued WIRE gift, by a manual kick and by the batch operators' crank",
