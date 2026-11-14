@@ -102,6 +102,25 @@ describe("Constants", () => {
       expect(Constants.batchOperatorLabel(1)).toBe("batchop.b")
       expect(Constants.batchOperatorLabel(26)).toBe("batchop.a")
     })
+    it("BatchOperatorLabelPrefix is the prefix every generated batch-operator label carries", () => {
+      expect(Constants.BatchOperatorLabelPrefix).toBe("batchop.")
+      Constants.batchOperatorLabels(26).forEach(label =>
+        expect(label.startsWith(Constants.BatchOperatorLabelPrefix)).toBe(true)
+      )
+    })
+    it("isBatchOperatorLabel recognizes exactly the bootstrap batch-operator labels", () => {
+      Constants.batchOperatorLabels(3).forEach(label =>
+        expect(Constants.isBatchOperatorLabel(label)).toBe(true)
+      )
+      expect(Constants.isBatchOperatorLabel(Constants.underwriterLabel(0))).toBe(
+        false
+      )
+      // A node name, a flow's handle, and a dot-less lookalike are not bootstrap batch operators.
+      expect(Constants.isBatchOperatorLabel("node_00")).toBe(false)
+      expect(Constants.isBatchOperatorLabel("depositoraaa")).toBe(false)
+      expect(Constants.isBatchOperatorLabel("batchopaaaa")).toBe(false)
+      expect(Constants.isBatchOperatorLabel("")).toBe(false)
+    })
     it("names underwriters by letter", () => {
       expect(Constants.underwriterLabel(0)).toBe("uwrit.a")
       expect(Constants.underwriterLabel(1)).toBe("uwrit.b")

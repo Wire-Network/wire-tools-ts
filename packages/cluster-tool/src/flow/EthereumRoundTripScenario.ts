@@ -1,9 +1,11 @@
 import Assert from "node:assert"
 
+import { ethers } from "ethers"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 
 import { Constants, ProtocolTiming } from "../Constants.js"
+import { EthereumWallet } from "../clients/ethereum/EthereumWallet.js"
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -16,11 +18,11 @@ import {
 import { verifyStep, pollUntil } from "../orchestration/StepTools.js"
 import { Report } from "../report/Report.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
+import { EthereumFundingTool } from "../tools/ethereum/EthereumFundingTool.js"
 import { EthereumSyndicationTool } from "../tools/ethereum/EthereumSyndicationTool.js"
-import { SwapUserIdentities } from "../tools/all/SwapUserIdentities.js"
 import { WireSyndicationTool } from "../tools/wire/WireSyndicationTool.js"
 import { loadOutpostContract } from "../utils/ethereumUtils.js"
-import { ethereumPrivateKeyFromWallet } from "../utils/keyPairUtils.js"
+import { ethereumPublicKeyFromWallet } from "../utils/keyPairUtils.js"
 import { FlowScenario } from "./FlowScenario.js"
 import { SyndicationScenario } from "./SyndicationScenario.js"
 
@@ -57,12 +59,28 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         EthereumRoundTripScenario.Holder,
         Constants.DEV_K1_PUBLIC_KEY
       ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-holder-wallet",
+        "generate the holder's Ethereum wallet",
+        SyndicationScenario.WriteOptions,
+        EthereumRoundTripScenario.WalletName,
+        "ethereum round trip — holder wallet"
+      ),
+      EthereumFundingTool.planSetBalance(
+        Actor.User,
+        "fund-holder-wallet",
+        "fund the holder's wallet for the deposit and its gas",
+        SyndicationScenario.OutpostOptions,
+        EthereumRoundTripScenario.WalletName,
+        EthereumRoundTripScenario.HolderBalanceWei
+      ),
       EthereumSyndicationTool.planDepositLiqEth(
         Actor.User,
         "deposit-eth",
         "deposit ETH for liqETH",
         SyndicationScenario.OutpostOptions,
-        EthereumRoundTripScenario.HdIndex,
+        EthereumRoundTripScenario.WalletName,
         EthereumRoundTripScenario.Wei
       ),
       verifyStep(
@@ -96,7 +114,7 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         "approve-pool",
         "allow pool custody",
         SyndicationScenario.OutpostOptions,
-        EthereumRoundTripScenario.HdIndex,
+        EthereumRoundTripScenario.WalletName,
         EthereumRoundTripScenario.Wei
       ),
       EthereumSyndicationTool.planSyndicate(
@@ -104,11 +122,8 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         "syndicate-liqeth",
         "custody liqETH and emit real intake",
         SyndicationScenario.OutpostOptions,
-        EthereumRoundTripScenario.HdIndex,
-        EthereumRoundTripScenario.Wei,
-        EthereumSyndicationTool.compressedPubkey(
-          EthereumRoundTripScenario.HdIndex
-        )
+        EthereumRoundTripScenario.WalletName,
+        EthereumRoundTripScenario.Wei
       ),
       verifyStep(
         Actor.Sysio,
@@ -124,8 +139,9 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
                 EthereumRoundTripScenario.Token,
                 SysioSyndItemKind.SYNDICATION,
                 EthereumRoundTripScenario.Amount,
-                EthereumSyndicationTool.compressedPubkey(
-                  EthereumRoundTripScenario.HdIndex
+                EthereumFundingTool.compressedPubkey(
+                  ctx,
+                  EthereumRoundTripScenario.WalletName
                 ).slice(2)
               )
               if (!envelope) return false
@@ -327,8 +343,8 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
 
 /** Constants and exact balance readers for the Ethereum integration journey. */
 export namespace EthereumRoundTripScenario {
-  /** Unused anvil account, distinct from bootstrap actors. */
-  export const HdIndex = SwapUserIdentities.DefaultEthereumHdIndex
+  /** Durable handle of the holder's persisted Ethereum wallet, distinct from every bootstrap actor. */
+  export const WalletName = "ethereum-round-trip-holder"
   /** Destination shared only between isolated scenario clusters. */
   export const Holder = "eth.round"
   /** Registered external chain. */
@@ -341,6 +357,8 @@ export namespace EthereumRoundTripScenario {
   export const WeiPerDepotUnit = 1_000_000_000n
   /** Exact native-token amount acquired and syndicated. */
   export const Wei = Amount * WeiPerDepotUnit
+  /** The holder's funded balance: the deposit plus one ether of gas headroom. */
+  export const HolderBalanceWei = Wei + ethers.WeiPerEther
   /** Full principal redemption action quantity. */
   export const Quantity = "1.000000000 LIQETH"
   /** Held intake's depot epoch. */
@@ -407,7 +425,7 @@ export namespace EthereumRoundTripScenario {
   ): Promise<bigint> {
     return EthereumSyndicationTool.readLiqEthBalance(
       ctx,
-      EthereumSyndicationTool.hdWallet(ctx, HdIndex).address
+      EthereumWallet.loadKeyPair(ctx.config.dataPath, WalletName).address
     )
   }
   /**
@@ -450,12 +468,12 @@ export namespace EthereumRoundTripScenario {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const wallet = EthereumSyndicationTool.hdWallet(ctx, HdIndex)
+    const wallet = EthereumFundingTool.signer(ctx, WalletName)
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.EVM,
       account: Holder,
-      privateKey: ethereumPrivateKeyFromWallet(wallet),
-      ethereumWallet: wallet
+      publicKey: ethereumPublicKeyFromWallet(wallet).toString(),
+      signer: wallet
     })
   }
 }

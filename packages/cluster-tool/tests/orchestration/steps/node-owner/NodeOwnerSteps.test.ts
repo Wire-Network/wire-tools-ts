@@ -1,20 +1,46 @@
-import { KeyType, SysioContracts } from "@wireio/sdk-core"
-import { KeyGenerator, NodeOwnerTier } from "@wireio/cluster-tool"
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { EthereumFundingTool, KeyGenerator, NodeOwnerTier } from "@wireio/cluster-tool"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 
 const { commit: CommitSteps, mint: MintSteps, registration: RegistrationSteps } =
   Steps.nodeOwner
-const { SysioAuthexChainkind } = SysioContracts
 
 /** A K1 key the registration steps carry. */
-const OwnerKey = KeyGenerator.createSeeded(KeyType.K1, "node-owner-steps-test").publicKey
+const OwnerKey = PrivateKey.generate(KeyType.K1).toPublic().toString()
+/** Durable handle of a claim's depositor wallet. */
+const DepositorWalletName = "node-owner-steps-gova"
+/** A second claim's depositor wallet handle. */
+const OtherDepositorWalletName = "node-owner-steps-govb"
+/** What a test depositor wallet is for. */
+const DepositorPurpose = "node-owner steps test — depositor wallet"
 
 describe("Steps.nodeOwner.registration", () => {
   const signal = new AbortController().signal
+  let dataPath: string
 
-  afterEach(() => jest.restoreAllMocks())
+  beforeEach(() => {
+    dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "node-owner-steps-"))
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    Fs.rmSync(dataPath, { recursive: true, force: true })
+  })
+
+  /** Persist a random depositor wallet under `walletName` in the test's data directory. */
+  function createDepositorWallet(walletName: string) {
+    return EthereumFundingTool.createWallet(
+      dataPath,
+      walletName,
+      KeyGenerator.context(),
+      DepositorPurpose
+    )
+  }
 
   it("createNamedUser carries the account, its key and tier", () => {
     const step = RegistrationSteps.planCreateNamedUser(
@@ -57,93 +83,92 @@ describe("Steps.nodeOwner.registration", () => {
     )
   })
 
-  it("runRegisterNodeOwner records a depositor key derived from the HD index", async () => {
-    const ctx = fixtureContext(),
+  it("registerNodeOwner carries the owner, tier, depositor wallet handle and Wire key", () => {
+    const step = RegistrationSteps.planRegisterNodeOwner(
+      Report.Actor.User,
+      "register-gova",
+      "register gova",
+      {},
+      "gova",
+      NodeOwnerTier.T1,
+      DepositorWalletName,
+      OwnerKey
+    )
+    expect(step.input).toEqual({
+      kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
+      ownerAccount: "gova",
+      tier: NodeOwnerTier.T1,
+      walletName: DepositorWalletName,
+      wirePublicKey: OwnerKey
+    })
+    expect(step.runner).toBe(RegistrationSteps.runRegisterNodeOwner)
+  })
+
+  it("loadDepositorIdentity reads the persisted wallet back: its EM key and raw address", async () => {
+    const ctx = fixtureContext({ dataPath }),
+      wallet = await createDepositorWallet(DepositorWalletName),
+      identity = RegistrationSteps.loadDepositorIdentity(ctx, DepositorWalletName)
+    expect(identity).toEqual({
+      publicKey: wallet.publicKey,
+      nativeAddress: wallet.address.slice(2).toLowerCase()
+    })
+    expect(RegistrationSteps.loadDepositorPublicKey(ctx, DepositorWalletName)).toBe(
+      wallet.publicKey
+    )
+    expect(() =>
+      RegistrationSteps.loadDepositorIdentity(ctx, OtherDepositorWalletName)
+    ).toThrow(/not found/)
+  })
+
+  it("runRegisterNodeOwner records the claim's persisted depositor key", async () => {
+    const ctx = fixtureContext({ dataPath }),
       invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined),
-      identity = await RegistrationSteps.newEthereumIdentity(ctx, 60)
+      wallet = await createDepositorWallet(DepositorWalletName),
+      other = await createDepositorWallet(OtherDepositorWalletName)
     await RegistrationSteps.runRegisterNodeOwner(
       ctx,
       {
         kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
         ownerAccount: "gova",
         tier: NodeOwnerTier.T1,
-        ethereumHdIndex: 60,
+        walletName: DepositorWalletName,
         wirePublicKey: OwnerKey
       },
       signal
     )
+    expect(invoke).toHaveBeenCalledTimes(1)
     expect(invoke).toHaveBeenCalledWith(
       "sysio.roa",
       "nodeownreg",
       {
         owner: "gova",
         tier: NodeOwnerTier.T1,
-        eth_pub_key: identity.publicKey,
+        eth_pub_key: wallet.publicKey,
         wire_pub_key: OwnerKey,
-        eth_address: identity.nativeAddress
+        eth_address: wallet.address.slice(2).toLowerCase()
       },
       [{ actor: "sysio.roa", permission: "active" }]
     )
-    // Distinct claims take distinct indices, so distinct depositor keys.
-    expect((await RegistrationSteps.newEthereumIdentity(ctx, 61)).publicKey).not.toBe(
-      identity.publicKey
-    )
+    // Distinct claims carry distinct persisted wallets, so distinct depositor keys.
+    expect(other.publicKey).not.toBe(wallet.publicKey)
   })
 
-  it("authexLink carries the fixture account and the HD index of its existing link", () => {
-    const step = RegistrationSteps.planAuthexLink(
-      Report.Actor.Sysio,
-      "link-gova",
-      "link gova",
-      {},
-      "gova",
-      62
-    )
-    expect(step.input).toEqual({
-      kind: "NodeOwnerRegistrationSteps.AuthexLinkInput",
-      account: "gova",
-      ethereumHdIndex: 62
-    })
-  })
-
-  it("authexLink records ONE sysio.authex::recordlink of the HD-derived EVM identity", async () => {
-    const ctx = fixtureContext(),
-      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined),
-      identity = await RegistrationSteps.newEthereumIdentity(ctx, 62),
-      step = RegistrationSteps.planAuthexLink(
-        Report.Actor.Sysio,
-        "link-gova",
-        "link gova",
-        {},
-        "gova",
-        62
+  it("runRegisterNodeOwner pushes nothing for a wallet no step persisted", async () => {
+    const ctx = fixtureContext({ dataPath }),
+      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined)
+    await expect(
+      RegistrationSteps.runRegisterNodeOwner(
+        ctx,
+        {
+          kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
+          ownerAccount: "gova",
+          tier: NodeOwnerTier.T1,
+          walletName: DepositorWalletName,
+          wirePublicKey: OwnerKey
+        },
+        signal
       )
-    await step.runner(ctx, step.input, signal)
-    expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke.mock.calls[0].slice(0, 3)).toEqual([
-      "sysio.authex",
-      "recordlink",
-      {
-        account: "gova",
-        chain_kind: SysioAuthexChainkind.CHAIN_KIND_EVM,
-        pub_key: identity.publicKey,
-        native_address: identity.nativeAddress
-      }
-    ])
-  })
-
-  it("authexLink records nothing once the step is aborted", async () => {
-    const ctx = fixtureContext(),
-      invoke = jest.spyOn(ctx.wire, "invoke").mockResolvedValue(undefined),
-      step = RegistrationSteps.planAuthexLink(
-        Report.Actor.Sysio,
-        "link-gova",
-        "link gova",
-        {},
-        "gova",
-        62
-      )
-    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    ).rejects.toThrow(/not found/)
     expect(invoke).not.toHaveBeenCalled()
   })
 

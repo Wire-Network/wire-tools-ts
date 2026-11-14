@@ -25,11 +25,13 @@ function planPhases() {
   return build.children
 }
 
+const createKind = "NodeOwnerRegistrationSteps.CreateNamedUserInput",
+  walletKind = "EthereumFundingTool.CreateWalletInput",
+  linkKind = "SyndicationUserSteps.LinkEthereumKeyInput",
+  registerKind = "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
+
 test("only the rejection fixtures create accounts before registration", () => {
   const phases = planPhases(),
-    createKind = "NodeOwnerRegistrationSteps.CreateNamedUserInput",
-    linkKind = "NodeOwnerRegistrationSteps.AuthexLinkInput",
-    registerKind = "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
     fixtures = phases.filter(phase =>
       phase.steps.some(step => step.input?.kind === createKind)
     )
@@ -39,14 +41,44 @@ test("only the rejection fixtures create accounts before registration", () => {
     ["WrongKey", "ExistingAccount"]
   )
   for (const phase of fixtures) {
-    const [create, link, register] = phase.steps
+    const [create, linkedWallet, link, claimWallet, register] = phase.steps
     Assert.deepEqual(
-      [create.input.kind, link.input.kind, register.input.kind],
-      [createKind, linkKind, registerKind]
+      [create, linkedWallet, link, claimWallet, register].map(
+        step => step.input.kind
+      ),
+      [createKind, walletKind, linkKind, walletKind, registerKind]
     )
     Assert.equal(link.input.account, create.input.account)
     Assert.equal(register.input.ownerAccount, create.input.account)
-    Assert.notEqual(link.input.ethereumHdIndex, register.input.ethereumHdIndex)
+    Assert.equal(linkedWallet.input.walletName, link.input.walletName)
+    Assert.equal(claimWallet.input.walletName, register.input.walletName)
+    Assert.notEqual(link.input.walletName, register.input.walletName)
+  }
+})
+
+test("every claim's depositor wallet is persisted in its phase before the claim, under its own handle", () => {
+  const phases = planPhases(),
+    walletNames = phases.flatMap(phase =>
+      phase.steps
+        .filter(step => step.input?.kind === walletKind)
+        .map(step => step.input.walletName)
+    ),
+    claims = phases.flatMap(phase =>
+      phase.steps
+        .map((step, index) => ({ phase, step, earlier: phase.steps.slice(0, index) }))
+        .filter(({ step }) => step.input?.kind === registerKind)
+    )
+  Assert.ok(claims.length > 0)
+  Assert.equal(new Set(walletNames).size, walletNames.length)
+  for (const { phase, step, earlier } of claims) {
+    Assert.ok(
+      earlier.some(
+        previous =>
+          previous.input?.kind === walletKind &&
+          previous.input.walletName === step.input.walletName
+      ),
+      `${phase.name}: ${step.input.ownerAccount} claims with a wallet no earlier step persisted`
+    )
   }
 })
 
@@ -62,23 +94,23 @@ const keyX = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
   }
 
 async function checkRejectionState(readbackEncoding) {
-  const linkedIndices = new Set([
-    Constants.WrongKeyLinkedEthereumHdIndex,
-    Constants.ExistingLinkedEthereumHdIndex,
-    Constants.DuplicateEthereumHdIndex
+  const linkedWalletNames = new Set([
+    Constants.WrongKeyLinkedWalletName,
+    Constants.ExistingLinkedWalletName,
+    Constants.DuplicateWalletName
   ])
   mock.method(
     RegistrationSteps,
-    "newEthereumPublicKey",
-    async (_ctx, index) =>
-      (linkedIndices.has(index) ? originalKey : rejectedKey).compressed
+    "loadDepositorPublicKey",
+    (_ctx, walletName) =>
+      (linkedWalletNames.has(walletName) ? originalKey : rejectedKey).compressed
   )
   const phases = planPhases()
   for (const name of ["WrongKey", "ExistingAccount", "Duplicate"]) {
     const { steps } = phases.find(phase => phase.name === name),
-      [first] = steps,
+      register = steps.find(step => step.input?.kind === registerKind),
       duplicate = name === "Duplicate",
-      account = duplicate ? first.input.ownerAccount : first.input.account,
+      account = register.input.ownerAccount,
       verify = steps.at(-1),
       linked = {
         username: account,

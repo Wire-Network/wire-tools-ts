@@ -3,9 +3,21 @@ import Os from "node:os"
 import Path from "node:path"
 
 import { identity } from "lodash"
-import { Action, Authority, Name, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import {
+  Action,
+  API,
+  APIClient,
+  APIError,
+  Authority,
+  createClassicSigner,
+  KeyType,
+  Name,
+  PrivateKey,
+  PublicKey,
+  SysioContracts
+} from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
-import { Constants } from "@wireio/cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
   ClioRunner,
@@ -1138,6 +1150,630 @@ describe("WireClient", () => {
       expect(schedule.pending).toEqual({ version: 4, producers: ["flowprod"] })
       // No proposed schedule in flight → nothing is invented for it.
       expect(schedule.proposed).toBeUndefined()
+    })
+  })
+
+  // A KMS-custodied WIRE K1 never enters kiod, so a push its account authorizes is built,
+  // signed and sent through sdk-core instead of clio — behind the SAME finality wait and the
+  // same re-push rule. Every key below is generated for the test and discarded.
+  describe("signer-routed pushes (addSigner)", () => {
+    const Operator = "batchop.a",
+      OtherOperator = "batchop.b",
+      TransactionId =
+        "9c1f0e2a4b6d8f1032547698badcfe10112233445566778899aabbccddeeff00",
+      BlockNum = 268,
+      ChainTime = "2026-11-12T00:00:00.000",
+      /** The path `APIClient.pushTransaction` submits at — the roster's first entry. */
+      [PushPath] = WireClient.TransactionSubmissionPaths,
+      /** The two chain-API reads sdk-core makes while BUILDING a transaction, before it submits. */
+      BuildPath = {
+        getInfo: "/v1/chain/get_info",
+        getAbi: "/v1/chain/get_abi"
+      } as const,
+      /** A 32-byte id a fixture needs somewhere — a chain id, a block id. */
+      ZeroId = "0".repeat(64)
+
+    afterEach(() => jest.restoreAllMocks())
+
+    /**
+     * `addSigner`'s parameter type, read off the client: the test build resolves
+     * `@wireio/sdk-core` to its ESM declarations while `src/` resolves the CJS ones — two
+     * copies of `SignerProvider` whose `PublicKey` carries private members — so a signer
+     * minted here is bridged to the client's copy through `unknown`, the way the other
+     * suites bridge a signer double.
+     */
+    type RegisteredSigner = Parameters<WireClient["addSigner"]>[1]
+
+    /** A throwaway K1 signer: generated here, never persisted, never printed. */
+    function newSigner(): RegisteredSigner {
+      return createClassicSigner(
+        PrivateKey.generate(KeyType.K1)
+      ) as unknown as RegisteredSigner
+    }
+
+    /** `sysio::claimpay` for `account` — the shape of a push an operator signs itself. */
+    function claimPay(
+      account: string
+    ): SysioContracts.SysioSystemClaimpayAction {
+      return { account_name: account }
+    }
+
+    /** sdk-core's `push_transaction` answer — the id is what `withFinality` follows. */
+    function pushResponse(): API.v1.PushTransactionResponse {
+      return {
+        transaction_id: TransactionId,
+        processed: {
+          id: TransactionId,
+          block_num: BlockNum,
+          block_time: ChainTime,
+          receipt: { status: "executed", cpu_usage_us: 1, net_usage_words: 1 },
+          elapsed: 1,
+          net_usage: 8,
+          scheduled: false,
+          action_traces: [],
+          account_ram_delta: null
+        }
+      }
+    }
+
+    /** `withFinality` sees the transaction land in `BlockNum`, which is already irreversible. */
+    function irreversibleAtBlock(client: WireClient) {
+      const wait = jest
+        .spyOn(client, "waitForTransactionInBlock")
+        .mockResolvedValue(BlockNum)
+      jest.spyOn(client, "getInfo").mockResolvedValue({
+        server_version: "0",
+        chain_id: ZeroId,
+        head_block_num: BlockNum,
+        last_irreversible_block_num: BlockNum,
+        head_block_time: ChainTime,
+        head_block_id: ZeroId,
+        head_block_producer: "sysio"
+      })
+      jest.spyOn(client, "getBlock").mockResolvedValue({
+        block_num: BlockNum,
+        id: ZeroId,
+        transactions: [{ status: "executed", trx: { id: TransactionId } }]
+      })
+      return wait
+    }
+
+    /** sdk-core's wrapping of the node refusing a call at `path` with a reply carrying no error body. */
+    function buildFailure(path: string): NestedError {
+      return new NestedError(`HTTP 503 at ${path}`, {
+        cause: new APIError(path, { status: 503, headers: {}, text: "" })
+      })
+    }
+
+    /** sdk-core's wrapping of the node answering `path` (the submission by default) with chain code `code`. */
+    function nodeRejection(
+      code: number,
+      reason: string,
+      path: string = PushPath
+    ): NestedError {
+      const json = {
+        code: 500,
+        message: "Internal Service Error",
+        error: {
+          code,
+          name: "sysio_assert_message_exception",
+          what: "assertion failure",
+          details: [
+            {
+              message: `assertion failure with message: ${reason}`,
+              file: "wasm_interface.cpp",
+              line_number: 1,
+              method: "sysio_assert"
+            }
+          ]
+        }
+      }
+      return new NestedError(reason, {
+        cause: new APIError(path, {
+          status: 500,
+          headers: {},
+          json,
+          text: JSON.stringify(json)
+        })
+      })
+    }
+
+    /** sdk-core's wrapping of a fetch that failed with Node system error `code`. */
+    function transportFailure(code: string): NestedError {
+      return new NestedError("pushTransaction failed", {
+        cause: new TypeError("fetch failed", {
+          cause: Object.assign(new Error(`connect ${code}`), { code })
+        })
+      })
+    }
+
+    it("sends a push whose actor is registered through its own sdk-core client, never clio", async () => {
+      const client = new WireClient(config),
+        signer = newSigner(),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        authorization = WireClient.activeAuthorization(Operator)
+      client.addSigner(Operator, signer)
+      await expect(
+        client.invoke("sysio", "claimpay", claimPay(Operator), authorization, {
+          skipWait: true
+        })
+      ).resolves.toBe(response)
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(push).toHaveBeenCalledWith({
+        account: "sysio",
+        name: "claimpay",
+        authorization,
+        data: claimPay(Operator)
+      })
+      // The registration's OWN client pushed, carrying exactly this signer — never `client.api`.
+      const [pusher] = push.mock.contexts as APIClient[]
+      expect(pusher).not.toBe(client.api)
+      expect(pusher.signer).toBe(signer)
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("routes invokeViaFile the same way, writing no transaction file", async () => {
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        writeFile = jest.spyOn(Fs.promises, "writeFile"),
+        authorization = WireClient.activeAuthorization(Operator)
+      client.addSigner(Operator, newSigner())
+      await expect(
+        client.invokeViaFile(
+          "sysio",
+          "claimpay",
+          claimPay(Operator),
+          authorization,
+          { skipWait: true }
+        )
+      ).resolves.toBe(response)
+      expect(push).toHaveBeenCalledWith({
+        account: "sysio",
+        name: "claimpay",
+        authorization,
+        data: claimPay(Operator)
+      })
+      expect(writeFile).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("leaves a push whose actor has no signer on the clio + kiod path", async () => {
+      const client = new WireClient(config),
+        push = jest.spyOn(APIClient.prototype, "pushTransaction"),
+        run = jest
+          .spyOn(ClioRunner.prototype, "run")
+          .mockResolvedValue({ transaction_id: TransactionId } as never)
+      client.addSigner(Operator, newSigner())
+      await client.invoke(
+        "sysio",
+        "claimpay",
+        claimPay(OtherOperator),
+        WireClient.activeAuthorization(OtherOperator),
+        { skipWait: true }
+      )
+      expect(run).toHaveBeenCalledTimes(1)
+      expect(run.mock.calls[0][0]).toEqual(
+        expect.arrayContaining([
+          "push",
+          "action",
+          "-p",
+          `${OtherOperator}@active`
+        ])
+      )
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      [
+        "a second actor",
+        [
+          { actor: Operator, permission: "active" },
+          { actor: "sysio", permission: "active" }
+        ]
+      ],
+      [
+        "a second permission of the same account",
+        [
+          { actor: Operator, permission: "active" },
+          { actor: Operator, permission: "owner" }
+        ]
+      ]
+    ])(
+      "refuses a push carrying %s once its actor is registered, sending nothing",
+      async (_case, authorization) => {
+        const client = new WireClient(config),
+          push = jest.spyOn(APIClient.prototype, "pushTransaction"),
+          run = jest.spyOn(ClioRunner.prototype, "run")
+        client.addSigner(Operator, newSigner())
+        await expect(
+          client.invoke(
+            "sysio",
+            "claimpay",
+            claimPay(Operator),
+            authorization,
+            { skipWait: true }
+          )
+        ).rejects.toThrow(/exactly one signature/)
+        expect(push).not.toHaveBeenCalled()
+        expect(run).not.toHaveBeenCalled()
+      }
+    )
+
+    it("sends a multi-action transaction through the one registered account's signer", async () => {
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        authorization = WireClient.activeAuthorization(Operator),
+        claim = client
+          .getSysioContract(SysioContracts.SysioContractName.system)
+          .actions.claimpay.prepare(claimPay(Operator), { authorization })
+      irreversibleAtBlock(client)
+      client.addSigner(Operator, newSigner())
+      await expect(client.invokeTransaction(claim, claim)).resolves.toBe(
+        response
+      )
+      expect(push).toHaveBeenCalledWith([
+        {
+          account: "sysio",
+          name: "claimpay",
+          authorization,
+          data: claimPay(Operator)
+        },
+        {
+          account: "sysio",
+          name: "claimpay",
+          authorization,
+          data: claimPay(Operator)
+        }
+      ])
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("hands an encoded action to the registered signer as it is, beside a typed one", async () => {
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        authorization = WireClient.activeAuthorization(Operator),
+        claim = client
+          .getSysioContract(SysioContracts.SysioContractName.system)
+          .actions.claimpay.prepare(claimPay(Operator), { authorization }),
+        // Typed as the client's own `Action` — see the "encoded actions" suite.
+        encoded: Parameters<typeof WireClient.toEncodedActionJson>[0] = Action.from({
+          account: "sysio.councl",
+          name: "syncnodes",
+          authorization: [{ actor: Operator, permission: WireClient.ActivePermission }],
+          data: Name.from(Operator).value.byteArray
+        }) as never
+      irreversibleAtBlock(client)
+      client.addSigner(Operator, newSigner())
+      await expect(client.invokeTransaction(encoded, claim)).resolves.toBe(
+        response
+      )
+      expect(push).toHaveBeenCalledTimes(1)
+      const [[pushed]] = push.mock.calls as unknown as [[unknown[]]]
+      expect(pushed[0]).toBe(encoded)
+      expect(pushed[1]).toEqual({
+        account: "sysio",
+        name: "claimpay",
+        authorization,
+        data: claimPay(Operator)
+      })
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("refuses a multi-action transaction that mixes a registered actor with another", async () => {
+      const client = new WireClient(config),
+        push = jest.spyOn(APIClient.prototype, "pushTransaction"),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        system = client.getSysioContract(
+          SysioContracts.SysioContractName.system
+        ),
+        signed = system.actions.claimpay.prepare(claimPay(Operator), {
+          authorization: WireClient.activeAuthorization(Operator)
+        }),
+        // The invoker's default authorization: the contract account, signed by kiod.
+        unsigned = system.actions.claimpay.prepare(claimPay(OtherOperator))
+      client.addSigner(Operator, newSigner())
+      await expect(client.invokeTransaction(signed, unsigned)).rejects.toThrow(
+        /exactly one signature/
+      )
+      expect(push).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("waits for the signer push's transaction to be irreversible, exactly as for a clio push", async () => {
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        wait = irreversibleAtBlock(client)
+      client.addSigner(Operator, newSigner())
+      await expect(
+        client.invoke(
+          "sysio",
+          "claimpay",
+          claimPay(Operator),
+          WireClient.activeAuthorization(Operator)
+        )
+      ).resolves.toBe(response)
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(wait).toHaveBeenCalledWith(TransactionId, expect.any(Number))
+    })
+
+    it("re-sends a signer push the node rejected, up to PushMaxAttempts, without entering finality", async () => {
+      const client = new WireClient(config),
+        reason = "Tier level must be between 1 and 3",
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockRejectedValue(nodeRejection(3050003, reason)),
+        wait = jest.spyOn(client, "waitForTransactionInBlock")
+      client.addSigner(Operator, newSigner())
+      await expect(
+        client.invoke(
+          "sysio",
+          "claimpay",
+          claimPay(Operator),
+          WireClient.activeAuthorization(Operator)
+        )
+      ).rejects.toThrow(reason)
+      expect(push).toHaveBeenCalledTimes(WireClient.PushMaxAttempts)
+      expect(wait).not.toHaveBeenCalled()
+    })
+
+    it("re-sends a signer push whose build failed before anything was sent, then follows the second push", async () => {
+      // `get_info` (TAPOS) refused on the first attempt: nothing was submitted, so the
+      // retry is safe; the second attempt submits and its id is what finality follows.
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockRejectedValueOnce(buildFailure(BuildPath.getInfo))
+          .mockResolvedValueOnce(response),
+        wait = irreversibleAtBlock(client)
+      client.addSigner(Operator, newSigner())
+      await expect(
+        client.invoke(
+          "sysio",
+          "claimpay",
+          claimPay(Operator),
+          WireClient.activeAuthorization(Operator)
+        )
+      ).resolves.toBe(response)
+      expect(push).toHaveBeenCalledTimes(2)
+      expect(wait).toHaveBeenCalledTimes(1)
+      expect(wait).toHaveBeenCalledWith(TransactionId, expect.any(Number))
+    })
+
+    it.each([ClioRunner.DuplicateTransactionCode, 3200000])(
+      "never re-sends a signer push the node answered with the ambiguous code %s",
+      async code => {
+        const client = new WireClient(config),
+          push = jest
+            .spyOn(APIClient.prototype, "pushTransaction")
+            .mockRejectedValue(nodeRejection(code, "ambiguous"))
+        client.addSigner(Operator, newSigner())
+        await expect(
+          client.invoke(
+            "sysio",
+            "claimpay",
+            claimPay(Operator),
+            WireClient.activeAuthorization(Operator)
+          )
+        ).rejects.toThrow(/not re-sent/)
+        expect(push).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it("replaces the registration when an account's signer is added again", async () => {
+      const client = new WireClient(config),
+        first = newSigner(),
+        second = newSigner(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(pushResponse())
+      client.addSigner(Operator, first)
+      client.addSigner(Operator, second)
+      await client.invoke(
+        "sysio",
+        "claimpay",
+        claimPay(Operator),
+        WireClient.activeAuthorization(Operator),
+        { skipWait: true }
+      )
+      const [pusher] = push.mock.contexts as APIClient[]
+      expect(pusher.signer).toBe(second)
+      expect(pusher.signer).not.toBe(first)
+    })
+
+    it.each([
+      ["an empty account", "", newSigner()],
+      [
+        "a signer without its public key",
+        Operator,
+        { pubKey: null, sign: async () => new Uint8Array() }
+      ]
+    ])("refuses to register %s", (_case, account, signer) => {
+      expect(() => new WireClient(config).addSigner(account, signer)).toThrow()
+    })
+
+    it("relies on sdk-core pinning the expiration this client pins on clio — the re-push proof's premise", () => {
+      // `classifyUnresolved` proves a push can never apply once head time passes
+      // pushedAt + TransactionExpirationSec; that is only true of a signer push because
+      // sdk-core's default transaction header expires in the same 120 s.
+      const info = API.v1.GetInfoResponse.from({
+        server_version: "0",
+        chain_id: ZeroId,
+        head_block_num: BlockNum,
+        last_irreversible_block_num: BlockNum,
+        last_irreversible_block_id: ZeroId,
+        head_block_id: ZeroId,
+        head_block_time: ChainTime,
+        head_block_producer: "sysio",
+        virtual_block_cpu_limit: 1,
+        virtual_block_net_limit: 1,
+        block_cpu_limit: 1,
+        block_net_limit: 1
+      })
+      expect(info.getTransactionHeader().expiration.toMilliseconds()).toBe(
+        WireClient.chainTimeMs(ChainTime) +
+          WireClient.TransactionExpirationSec * ProtocolTiming.MsPerSecond
+      )
+    })
+
+    describe("isSignerPushProvenUnapplied", () => {
+      it.each([
+        [
+          "the node's rejection",
+          true,
+          nodeRejection(3050003, "assertion failure")
+        ],
+        [
+          "a rejection at the chain family's lower bound",
+          true,
+          nodeRejection(ClioRunner.ChainErrorCodeMinimum, "chain exception")
+        ],
+        [
+          "tx_duplicate — the node already holds it",
+          false,
+          nodeRejection(
+            ClioRunner.DuplicateTransactionCode,
+            "duplicate transaction"
+          )
+        ],
+        [
+          "an http_exception-family code",
+          false,
+          nodeRejection(3200000, "http exception")
+        ],
+        [
+          "a code outside the chain family",
+          false,
+          nodeRejection(
+            ClioRunner.ChainErrorCodeMaximum + 1,
+            "not a chain code"
+          )
+        ],
+        [
+          "a rejection at the roster's send_transaction2 path",
+          true,
+          nodeRejection(
+            3050003,
+            "assertion failure",
+            WireClient.TransactionSubmissionPaths[2]
+          )
+        ],
+        [
+          "get_info refused while building the transaction",
+          true,
+          buildFailure(BuildPath.getInfo)
+        ],
+        [
+          "get_abi refused while building the transaction, with no chain code",
+          true,
+          nodeRejection(0, "unknown key", BuildPath.getAbi)
+        ],
+        [
+          "a submission answered with code 0",
+          false,
+          nodeRejection(0, "unknown key", PushPath)
+        ],
+        [
+          "a submission answered 5xx without an error body",
+          false,
+          buildFailure(PushPath)
+        ],
+        [
+          "a refused connection",
+          true,
+          transportFailure(WireClient.ConnectionFailureCode.ECONNREFUSED)
+        ],
+        [
+          "an unresolvable host",
+          true,
+          transportFailure(WireClient.ConnectionFailureCode.ENOTFOUND)
+        ],
+        [
+          "clio's refused-connection wording",
+          true,
+          new NestedError("pushTransaction failed", {
+            cause: new Error("Connection refused")
+          })
+        ],
+        ["a reset mid-reply", false, transportFailure("ECONNRESET")],
+        [
+          "the provider's request timeout",
+          false,
+          new NestedError("pushTransaction failed", {
+            cause: new Error("FetchProvider request timed out after 60000 ms")
+          })
+        ],
+        [
+          "a signing failure",
+          false,
+          new NestedError("transaction signing failed", {
+            cause: new Error("the KMS request was throttled")
+          })
+        ],
+        ["an unrelated error", false, new Error("boom")],
+        ["a non-error", false, "boom"]
+      ])("%s: proven unapplied is %p", (_case, expected, error) => {
+        expect(WireClient.isSignerPushProvenUnapplied(error)).toBe(expected)
+      })
+
+      it("survives a cause chain that loops", () => {
+        const looped = new Error("loop")
+        looped.cause = looped
+        expect(WireClient.isSignerPushProvenUnapplied(looped)).toBe(false)
+      })
+    })
+
+    describe("TransactionSubmissionPaths", () => {
+      it("names exactly the chain-API paths that submit a transaction", () => {
+        // sdk-core's `ChainAPI` posts a signed transaction at these three and nowhere else;
+        // every other path an `APIError` names was a BUILD read (`get_abi`, `get_info`).
+        expect(WireClient.TransactionSubmissionPaths).toEqual([
+          "/v1/chain/push_transaction",
+          "/v1/chain/send_transaction",
+          "/v1/chain/send_transaction2"
+        ])
+        expect(WireClient.TransactionSubmissionPaths).not.toContain(
+          BuildPath.getInfo
+        )
+        expect(WireClient.TransactionSubmissionPaths).not.toContain(
+          BuildPath.getAbi
+        )
+      })
+    })
+
+    describe("isProvenUnapplied", () => {
+      it("accepts clio's evidence and a signer push's alike, and nothing else", () => {
+        const clioRejection = Object.assign(
+          new Error("Command failed: clio\nError 3050003: assertion failure"),
+          { stderr: "Error 3050003: assertion failure" }
+        )
+        expect(WireClient.isProvenUnapplied(clioRejection)).toBe(true)
+        expect(
+          WireClient.isProvenUnapplied(
+            nodeRejection(3050003, "assertion failure")
+          )
+        ).toBe(true)
+        expect(WireClient.isProvenUnapplied(new Error("boom"))).toBe(false)
+      })
     })
   })
 })

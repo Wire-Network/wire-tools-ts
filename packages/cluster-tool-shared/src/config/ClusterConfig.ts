@@ -260,8 +260,9 @@ export const ClusterConfigSchema = z.object({
   initialFinalizerKey: z.string().nullable(),
   /**
    * Cluster signature-provider config (how the cluster's own signing keys are
-   * handled). Schema-defaulted to `{ type: KEY, ssm: null }` so pre-existing
-   * configs stay loadable.
+   * handled). Schema-defaulted to
+   * `{ type: KEY, ssm: null, kms: null, batchOperatorKeyPolicy: adoptOrCreate }`
+   * so pre-existing configs stay loadable.
    */
   signatureProvider: ClusterSignatureProviderConfigSchema,
   /**

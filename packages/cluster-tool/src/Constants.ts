@@ -1,8 +1,13 @@
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { Option } from "@3fv/prelude-ts"
+import { Hash, KeyType, PrivateKey, SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range } from "lodash"
 
-import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
-import { KeyGenerator } from "./clients/wire/KeyGenerator.js"
+import {
+  EthereumNativeTokenCodename,
+  NativeTokenDepotPrecision,
+  SolanaNativeTokenCodename,
+  type QueryEngineLimitKey
+} from "@wireio/cluster-tool-shared"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
@@ -16,6 +21,23 @@ export namespace Constants {
   export const DepotPrecisionCap = 9
   export const WireChainCode = Number(SlugName.from("WIRE"))
   export const WireTokenCode = WireChainCode
+  /** Seed for the deterministic dev K1 key pair (matches the genesis bios key). */
+  const DefaultK1KeyPairSeed = "nathan"
+
+  /** The deterministic development K1 key pair (genesis bios key). */
+  export const DefaultK1KeyPair = Option.try(() => {
+    const privKeyDigest = Hash.sha256().update(DefaultK1KeyPairSeed).digest(),
+      privateKey = PrivateKey.regenerate(KeyType.K1, privKeyDigest),
+      publicKey = privateKey.toPublic()
+    return {
+      privateKey,
+      publicKey,
+      privateKeyWIF: privateKey.toWif(),
+      publicKeyWIF: publicKey.toLegacyString()
+    }
+  }).getOrThrow(`Failed to create default key pair: ${DefaultK1KeyPairSeed}`)
+
+  export type DefaultK1KeyPairType = typeof DefaultK1KeyPair
 
   /**
    * The Solana liq token's codename (`LIQSOL`): the shadow symbol code, the `sysio.tokens`
@@ -24,18 +46,40 @@ export namespace Constants {
    */
   export const LIQSOL_CODENAME = "LIQSOL"
 
-  /** Default sysio development private key (WIF format) — the genesis bios key. */
-  export const DEV_K1_PRIVATE_KEY = KeyGenerator.BiosK1Key.privateKey
-  /** Default sysio development public key (SYS prefix) — the genesis bios key. */
-  export const DEV_K1_PUBLIC_KEY = KeyGenerator.BiosK1Key.publicKey
+  /** Default sysio development private key (WIF format). */
+  export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
+  /** Default sysio development public key (SYS prefix). */
+  export const DEV_K1_PUBLIC_KEY = DefaultK1KeyPair.publicKeyWIF
 
-  /** Default sysio development BLS private key — the genesis finalizer key. */
-  export const DEV_BLS_PRIVATE_KEY = KeyGenerator.BiosBLSKey.privateKey
+  /** Seed for the deterministic dev BLS key pair. */
+  const DefaultBLSKeyPairSeed = "wire"
+
+  /** The deterministic development BLS key pair (genesis finalizer key). */
+  export const DefaultBLSKeyPair = Option.try(() => {
+    const privKeyDigest = Hash.sha256().update(DefaultBLSKeyPairSeed).digest(),
+      privateKey = PrivateKey.regenerate(KeyType.BLS, privKeyDigest),
+      publicKey = privateKey.toPublic()
+    return {
+      privateKey,
+      publicKey,
+      proofOfPossession: privateKey.proofOfPossessionSignature,
+      privateKeyStr: privateKey.toString(),
+      publicKeyStr: publicKey.toString(),
+      proofOfPossessionStr: privateKey.proofOfPossessionString
+    }
+  }).getOrThrow(
+    `Failed to create default BLS key pair: ${DefaultBLSKeyPairSeed}`
+  )
+
+  export type DefaultBLSKeyPairType = typeof DefaultBLSKeyPair
+
+  /** Default sysio development BLS private key. */
+  export const DEV_BLS_PRIVATE_KEY = DefaultBLSKeyPair.privateKeyStr
   /** Default sysio development BLS public key. */
-  export const DEV_BLS_PUBLIC_KEY = KeyGenerator.BiosBLSKey.publicKey
+  export const DEV_BLS_PUBLIC_KEY = DefaultBLSKeyPair.publicKeyStr
   /** Default sysio development BLS proof of possession. */
   export const DEV_BLS_PROOF_OF_POSSESSION =
-    KeyGenerator.BiosBLSKey.proofOfPossession
+    DefaultBLSKeyPair.proofOfPossessionStr
 
   /**
    * Format a nodeop signature-provider config value:
@@ -212,6 +256,51 @@ export namespace Constants {
     const pair = SHADOW_LIQ_TOKEN_PAIRS.find(([chain]) => chain === chainCode)
     if (pair == null) {
       throw new Error(`Constants: chain ${chainCode} has no shadow liq token`)
+    }
+    return pair[1]
+  }
+
+  /**
+   * The depot codename of the Ethereum outpost's native asset (`sysio.tokens`
+   * code `ETH`) — an ALIAS of the shared declaration the persisted config
+   * schemas default from, kept under the harness's codename spelling.
+   */
+  export const ETH_TOKEN_CODENAME = EthereumNativeTokenCodename
+  /** The depot codename of the Solana outpost's native asset (`sysio.tokens` code `SOL`); see {@link ETH_TOKEN_CODENAME}. */
+  export const SOL_TOKEN_CODENAME = SolanaNativeTokenCodename
+  /**
+   * The depot precision every native outpost token is registered at — the
+   * frame a native stake / reserve `TokenAmount` is in (an alias of the shared
+   * `NativeTokenDepotPrecision`).
+   */
+  export const NATIVE_TOKEN_PRECISION = NativeTokenDepotPrecision
+
+  /**
+   * Each outpost chain paired with its NATIVE asset's codename —
+   * `[chainCodename, tokenCodename]`, in {@link SHADOW_LIQ_TOKEN_PAIRS} order.
+   * The registry's native token rows, the chain-token bindings and a pre-funded
+   * launch's per-outpost stake all derive from it.
+   */
+  export const NATIVE_TOKEN_PAIRS = [
+    [ETHEREUM_CHAIN_CODENAME, ETH_TOKEN_CODENAME],
+    [SOLANA_CHAIN_CODENAME, SOL_TOKEN_CODENAME]
+  ] as const
+
+  /** An outpost chain's codename — derived from {@link NATIVE_TOKEN_PAIRS}, never re-spelled. */
+  export type OutpostChainCodename = (typeof NATIVE_TOKEN_PAIRS)[number][0]
+
+  /**
+   * The native asset codename of an outpost chain — its {@link NATIVE_TOKEN_PAIRS}
+   * entry's token.
+   *
+   * @param chainCode - The depot chain code (`SOLANA`).
+   * @returns The native token codename (`SOL`).
+   * @throws When the chain has no native asset pair.
+   */
+  export function nativeTokenCode(chainCode: string): string {
+    const pair = NATIVE_TOKEN_PAIRS.find(([chain]) => chain === chainCode)
+    if (pair == null) {
+      throw new Error(`Constants: chain ${chainCode} has no native asset`)
     }
     return pair[1]
   }
@@ -482,6 +571,13 @@ export namespace Constants {
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
+   * The prefix every bootstrap batch-operator label carries — the one
+   * discriminator the batch-operator key policy
+   * (`signatureProvider.batchOperatorKeyPolicy`) selects its identities by.
+   */
+  export const BatchOperatorLabelPrefix = "batchop."
+
+  /**
    * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
    * The label is the operator's `ClusterKeyStore` key, its SSM secret-id
    * `{account}` segment, and the WIRE account name `sysio` creates for it
@@ -491,7 +587,17 @@ export namespace Constants {
    * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
    */
   export function batchOperatorLabel(index: number): string {
-    return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+    return `${BatchOperatorLabelPrefix}${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+  }
+
+  /**
+   * Whether `label` names a bootstrap batch operator ({@link batchOperatorLabel}).
+   *
+   * @param label - A durable harness label.
+   * @returns `true` for `batchop.<letter>` labels.
+   */
+  export function isBatchOperatorLabel(label: string): boolean {
+    return label.startsWith(BatchOperatorLabelPrefix)
   }
 
   /**
@@ -513,37 +619,6 @@ export namespace Constants {
    */
   export function underwriterLabel(index: number): string {
     return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
-  }
-
-  /**
-   * HD account index the operators' EM (Ethereum) keys derive from. Index 0 is
-   * reserved for the deploy owner (`EthereumOutpostBootstrapper.DeployerAccountIndex`),
-   * so operators start at 1: batch operators occupy `1..batchOperatorCount`,
-   * underwriters continue immediately after.
-   *
-   * These are the ONE authority for the mapping. The Ethereum outpost's genesis
-   * batch-operator roster is derived from the SAME (mnemonic, index) pair the
-   * operator's own key is later generated from, at a point in the bootstrap
-   * where the operator accounts do not exist yet — so a second spelling of the
-   * rule would silently authorize the wrong addresses.
-   */
-  export function batchOperatorEthereumHdIndex(index: number): number {
-    return index + 1
-  }
-
-  /**
-   * HD account index for an underwriter's EM key — continues past the batch
-   * operators. See {@link batchOperatorEthereumHdIndex}.
-   *
-   * @param batchOperatorCount - Size of the batch-operator roster.
-   * @param index - Zero-based underwriter index.
-   * @returns The HD account index.
-   */
-  export function underwriterEthereumHdIndex(
-    batchOperatorCount: number,
-    index: number
-  ): number {
-    return batchOperatorCount + index + 1
   }
 
   /**

@@ -37,7 +37,9 @@ held envelope. Each write is a Report Step and state assertions are verify Steps
   pending record. Each stored redemption is paid after recovery in
   native wei (depot units times 1,000,000,000), and a second call refuses. Before
   each unpause, a pending-payment call must refuse with `EnforcedPause`, preserving
-  the complete record and holder balance. Each custody lane pre-funds a donor
+  the complete record and holder balance. The donor and permissionless cranker is a
+  random per-cluster Ethereum wallet, created and funded (`anvil_setBalance`) by
+  the Ethereum setup phase. Each custody lane pre-funds the donor
   before measuring the final fixture: deposits charge fees and can rebase the
   pool and recipient. The donor's actual minted balance must cover the complete
   repair. Donation is a separate Step, followed by a full-backing check before

@@ -6,6 +6,7 @@
   "include": [],
   "references": [
     { "path": "../cluster-tool/tsconfig.json" },
+    { "path": "../cluster-tool-shared/tsconfig.json" },
     { "path": "./tsconfig.src.json" }
   ]
 }

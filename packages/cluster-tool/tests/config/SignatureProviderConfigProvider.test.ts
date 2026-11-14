@@ -162,4 +162,30 @@ describe("SignatureProviderConfigProvider.resolve", () => {
       expect(resolution.providerType).toBe(SignatureProviderType.KIOD)
     })
   })
+
+  describe("KMS", () => {
+    it("resolves material-less — the key never leaves KMS — carrying its region + key id, touching no SSM", async () => {
+      const em = ethereumKeyPairFromWallet(ethers.Wallet.createRandom()),
+        resolution = await SignatureProviderConfigProvider.resolve<
+          SignatureProviderType.KMS,
+          KeyType.EM
+        >({
+          providerType: SignatureProviderType.KMS,
+          type: KeyType.EM,
+          publicKey: em.publicKey,
+          awsKmsRegion: "us-east-1",
+          awsKmsKeyId: "alias/wire/dev/batchop-a/EM"
+        })
+      expect(resolution).not.toHaveProperty("keyPair")
+      expect(resolution).not.toHaveProperty("privateKey")
+      expect(resolution).toEqual({
+        providerType: SignatureProviderType.KMS,
+        type: KeyType.EM,
+        publicKey: em.publicKey,
+        awsKmsRegion: "us-east-1",
+        awsKmsKeyId: "alias/wire/dev/batchop-a/EM"
+      })
+      expect(mockSend).not.toHaveBeenCalled()
+    })
+  })
 })

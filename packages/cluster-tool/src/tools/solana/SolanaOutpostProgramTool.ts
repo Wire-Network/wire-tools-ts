@@ -22,6 +22,7 @@ import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
+import type { AnchorWallet } from "../../types/SolanaSigner.js"
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -217,28 +218,57 @@ export namespace SolanaOutpostProgramTool {
   }
 
   /**
+   * The IDL a `Program` is built from: the generated file as-is, or — when the
+   * DEPLOYED program lives at another id than the build declares (an external
+   * outpost, whose `programId` the trusted config carries) — the same IDL with
+   * `address` overlaid, exactly as the operator daemons' artifact preparation
+   * overlays it. `anchor.Program` reads its program id OFF the IDL, so an
+   * un-overlaid IDL would build every instruction against the build's id.
+   *
+   * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
+   * @param program - The program's crate name.
+   * @param programId - The deployed program id to overlay, or nothing for the file's own.
+   * @returns The IDL to build from.
+   */
+  function readIdlAt(
+    solanaPath: string,
+    program: AnchorProgram,
+    programId: PublicKey
+  ): anchor.Idl {
+    const idl = readIdl(solanaPath, program)
+    return programId == null ? idl : { ...idl, address: programId.toBase58() }
+  }
+
+  /**
    * Build the OPP outpost Anchor `Program` (hosted in `liqsol_core`) bound to
-   * `keypair` as its provider wallet — THE one `Program` construction for this
-   * program. A pure value helper (IDL read + provider wiring, no chain call),
-   * so it is called freely inside step runners and bootstrapper methods.
+   * `wallet` as its provider wallet — THE one `Program` construction for this
+   * program. The wallet is Anchor's own contract, so a keypair-backed signer
+   * (`keyPairUtils.solanaSignerFromKeypair`) and a KMS-backed one
+   * (`keyPairUtils.solanaSigner`) bind alike. A pure value helper (IDL read +
+   * provider wiring, no chain call), so it is called freely inside step
+   * runners and bootstrapper methods.
    *
    * @param connection - The Solana RPC connection the provider transacts over.
-   * @param keypair - The signer the provider's wallet wraps.
+   * @param wallet - The provider wallet — the signer every write is paid and signed by.
    * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
-   * @returns The Anchor program bound to `connection` + `keypair`.
+   * @param programId - The DEPLOYED program id when it differs from the IDL's
+   *   `address` (an external outpost); omit for a local build.
+   * @returns The Anchor program bound to `connection` + `wallet`.
    * @throws If the generated IDL is missing (see {@link readIdl}).
    */
   export function loadProgram(
     connection: Connection,
-    keypair: Keypair,
-    solanaPath: string
+    wallet: AnchorWallet,
+    solanaPath: string,
+    programId?: PublicKey
   ): anchor.Program<anchor.Idl> {
-    const provider = new anchor.AnchorProvider(
-      connection,
-      new anchor.Wallet(keypair),
-      { commitment: SolanaClient.DefaultCommitment }
+    const provider = new anchor.AnchorProvider(connection, wallet, {
+      commitment: SolanaClient.DefaultCommitment
+    })
+    return new anchor.Program(
+      readIdlAt(solanaPath, ProgramName, programId),
+      provider
     )
-    return new anchor.Program(readIdl(solanaPath), provider)
   }
 
   /**
@@ -258,15 +288,20 @@ export namespace SolanaOutpostProgramTool {
    * @param connection - The Solana RPC connection reads are issued over.
    * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
    * @param program - The program's crate name.
+   * @param programId - The DEPLOYED program id when it differs from the IDL's
+   *   `address` (an external outpost); omit for a local build.
    * @returns The Anchor program bound to `connection`, with no wallet.
    * @throws If the generated IDL is missing (see {@link readIdl}).
    */
   export function loadReadOnlyProgram(
     connection: Connection,
     solanaPath: string,
-    program: AnchorProgram = ProgramName
+    program: AnchorProgram = ProgramName,
+    programId?: PublicKey
   ): anchor.Program<anchor.Idl> {
-    return new anchor.Program(readIdl(solanaPath, program), { connection })
+    return new anchor.Program(readIdlAt(solanaPath, program, programId), {
+      connection
+    })
   }
 
   /**

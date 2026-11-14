@@ -52,7 +52,7 @@ export function toSeedConversionSummary(
 /** The controlled-staker roster every claimer/verify step reads. */
 export const ClaimantIdentitiesKey = outputKey<ControlledStakerIdentity[]>(
   "emissions-soak:claimant-identities",
-  "Controlled-staker identities (WIRE account, ETH address, HD index)"
+  "Controlled-staker identities (WIRE account, ETH address, wallet handle)"
 )
 
 /** The ETH-side importseed conversion (batches + stats). */

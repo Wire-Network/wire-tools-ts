@@ -1,8 +1,8 @@
 import { identity } from "lodash"
-import { API, KeyType, PublicKey } from "@wireio/sdk-core"
+import { API, KeyType, PrivateKey, PublicKey } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
-import { Constants, KeyGenerator } from "@wireio/cluster-tool"
+import { Constants } from "@wireio/cluster-tool"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireAuthorityAuditTool } from "@wireio/cluster-tool/tools/wire"
 import { AccountObjectFixture } from "../../fixtures/AccountObjectFixture.js"
@@ -15,8 +15,10 @@ const { account, permission, link } = AccountObjectFixture
 const BootstrapKey = Constants.DEV_K1_PUBLIC_KEY
 /** The same key as the chain reports it. */
 const BootstrapKeyOnChain = PublicKey.from(BootstrapKey).toString()
+/** A random K1 public key: an account's own key, none of them the bootstrap key. */
+const randomPublicKey = (): string => PrivateKey.generate(KeyType.K1).toPublic().toString()
 /** A producer's own key. */
-const ProducerKey = KeyGenerator.createSeeded(KeyType.K1, "audit-test/producer").publicKey
+const ProducerKey = randomPublicKey()
 /** The tier-1 roster: the flow-controlled owners alone, as the bootstrap registers none. */
 const Roster = ["gova", "govb", "govc"]
 /** A hypothetical tier-1 owner whose account holds the bootstrap key. */
@@ -86,13 +88,13 @@ function preHandoffChain(): Map<string, API.v1.AccountObject> {
     ...Roster.map(
       (owner): [string, API.v1.AccountObject] => [
         owner,
-        keyed(owner, KeyGenerator.createSeeded(KeyType.K1, owner).publicKey)
+        keyed(owner, randomPublicKey())
       ]
     ),
     ...Council.map(
       (member): [string, API.v1.AccountObject] => [
         member,
-        keyed(member, KeyGenerator.createSeeded(KeyType.K1, member).publicKey)
+        keyed(member, randomPublicKey())
       ]
     )
   ])

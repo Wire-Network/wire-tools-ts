@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-lco-import",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "description": "Flow: the bootstrap imports each outpost's frozen launch export; stakers link and hold their LIQ, purchasers claim their WIRE, and the LCO pool trades",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.56",
     "@wireio/sdk-core": "^1.0.110"
   },

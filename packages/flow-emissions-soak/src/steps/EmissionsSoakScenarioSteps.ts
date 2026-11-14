@@ -1,11 +1,8 @@
 import Assert from "node:assert"
 import { getLogger } from "@wireio/shared"
-import { ChainKind } from "@wireio/opp-typescript-models"
 import {
-  AuthExLinkTool,
   ClusterBuildContext,
   ClusterBuildStep,
-  ethereumPrivateKeyFromWallet,
   provisionWireUser,
   Report,
   Steps,
@@ -20,17 +17,16 @@ import {
   SolanaSeedConversionKey,
   type SeedConversionSummary
 } from "../EmissionsSoakScenarioOutputs.js"
-import {
-  controlledStakerWallet,
-  type ControlledStakerIdentity
-} from "../EmissionsSoakScenarioSyntheticDump.js"
+import type { ControlledStakerIdentity } from "../EmissionsSoakScenarioSyntheticDump.js"
 
 const log = getLogger(__filename)
 
 /**
  * Flow-local step factories for the emissions soak: dclaim seeding (one
- * importseed batch from the published conversion), claimer provisioning (account + authex link with
- * its inline sweep), and the kiod wallet unlock the old suite performed before each write burst.
+ * importseed batch from the published conversion), claimer provisioning (the account; the
+ * authex link with its inline sweep is the harness's `SyndicationUserSteps.planLinkEthereumKey`,
+ * by the staker's persisted wallet handle), and the kiod wallet unlock the old suite performed
+ * before each write burst.
  */
 export namespace EmissionsSoakScenarioSteps {
   // ── unlock the kiod wallet (client-side session state, idempotent) ────────
@@ -234,53 +230,5 @@ export namespace EmissionsSoakScenarioSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await provisionWireUser(ctx.wire, input.wireAccount)
-  }
-
-  // ── authex-link a claimer's ETH wallet ─────────────────────────────────────
-
-  /** Input for {@link planAuthexLink} — the staker identity (wallet re-derived from the HD index). */
-  export interface AuthexLinkInput extends StepInput {
-    readonly kind: "EmissionsSoakScenarioSteps.AuthexLinkInput"
-    readonly identity: ControlledStakerIdentity
-  }
-
-  /**
-   * `sysio.authex::createlink` — link the staker's ETH wallet to its WIRE
-   * account. The EM key identifies which ETH wallet "owns" the account; the
-   * account still signs with the dev K1 key.
-   */
-  export function planAuthexLink<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    identity: ControlledStakerIdentity
-  ): ClusterBuildStep<C, AuthexLinkInput> {
-    return ClusterBuildStep.create<C, AuthexLinkInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "EmissionsSoakScenarioSteps.AuthexLinkInput", identity },
-      runAuthexLink
-    )
-  }
-
-  /** Named runner — re-derive the wallet, push the authex link. */
-  export async function runAuthexLink<C extends ClusterBuildContext>(
-    ctx: C,
-    input: AuthexLinkInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const wallet = controlledStakerWallet(input.identity)
-    await AuthExLinkTool.createLink(ctx.wire, {
-      chainKind: ChainKind.EVM,
-      account: input.identity.wireAccount,
-      privateKey: ethereumPrivateKeyFromWallet(wallet),
-      ethereumWallet: wallet
-    })
   }
 }

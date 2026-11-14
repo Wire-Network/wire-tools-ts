@@ -6,11 +6,18 @@ import {
   RedactedKeyMarker
 } from "@wireio/cluster-tool-shared"
 
-/** anvil account #0's PUBLISHED private key — a real 0x + 64-hex secret. */
-const AnvilAccountZeroPrivateKey =
+/**
+ * A widely PUBLISHED 0x + 64-hex secret (a local dev chain's genesis account).
+ * The harness mints no key from it; it is here because a secret of exactly this
+ * shape must never ship in an artifact, published or not.
+ */
+const PublishedHexPrivateKey =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-/** anvil's PUBLISHED 12-word BIP-39 mnemonic. */
-const AnvilMnemonic =
+/**
+ * A widely PUBLISHED 12-word BIP-39 phrase. The harness derives nothing from a
+ * mnemonic; the scanner still has to catch one wherever it appears.
+ */
+const PublishedMnemonic =
   "test test test test test test test test test test test junk"
 
 /** The pattern names, so a test names what it expects rather than an index. */
@@ -49,7 +56,7 @@ describe("KeyMaterialPatterns", () => {
 
     it("a 0x-prefixed 32-byte hex secret — EM's chain-native form", () => {
       expect(
-        findKeyMaterial(`{"key":"${AnvilAccountZeroPrivateKey}"}`)
+        findKeyMaterial(`{"key":"${PublishedHexPrivateKey}"}`)
       ).not.toHaveLength(0)
     })
 
@@ -66,9 +73,9 @@ describe("KeyMaterialPatterns", () => {
     })
 
     it("a BIP-39 mnemonic phrase (12 and 24 words)", () => {
-      expect(findKeyMaterial(AnvilMnemonic)).not.toHaveLength(0)
+      expect(findKeyMaterial(PublishedMnemonic)).not.toHaveLength(0)
       expect(
-        findKeyMaterial(`${AnvilMnemonic} ${AnvilMnemonic}`)
+        findKeyMaterial(`${PublishedMnemonic} ${PublishedMnemonic}`)
       ).not.toHaveLength(0)
     })
   })
@@ -123,7 +130,7 @@ describe("KeyMaterialPatterns", () => {
   })
 
   it("names the signature it matched, so a scanner can quote it", () => {
-    const matched = findKeyMaterial(AnvilAccountZeroPrivateKey)
+    const matched = findKeyMaterial(PublishedHexPrivateKey)
     expect(matched.map(entry => entry.name)).toContain(
       "0x-prefixed 32-byte hex private key"
     )

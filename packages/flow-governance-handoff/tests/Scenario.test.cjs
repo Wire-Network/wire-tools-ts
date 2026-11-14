@@ -1,14 +1,18 @@
 const Assert = require("node:assert/strict")
-const { test, afterEach, mock } = require("node:test")
-const { KeyType } = require("@wireio/sdk-core")
+const Fs = require("node:fs")
+const Os = require("node:os")
+const Path = require("node:path")
+const { test, after, afterEach, mock } = require("node:test")
+const { PublicKey } = require("@wireio/sdk-core")
 const {
   ClusterBuild,
+  ClusterConfigProvider,
   Constants: HarnessConstants,
-  KeyGenerator,
   NodeOwnerTier,
   OutputStore,
   Steps,
-  supermajorityThreshold
+  supermajorityThreshold,
+  WireWallet
 } = require("@wireio/cluster-tool")
 const Scenario = require("../lib/GovernanceHandoffScenario.js")
 const {
@@ -16,6 +20,26 @@ const {
 } = require("../lib/GovernanceHandoffScenarioConstants.js")
 
 afterEach(() => mock.restoreAll())
+
+/** Every cluster path a test prepared a scenario under. */
+const clusterPaths = []
+after(() => clusterPaths.forEach(path => Fs.rmSync(path, { recursive: true, force: true })))
+
+/** A scenario whose pre-bootstrap stage persisted its identities' keys under a fresh cluster path. */
+async function preparedScenario(clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "governance-handoff-"))) {
+  clusterPaths.push(clusterPath)
+  const scenario = new Scenario.GovernanceHandoffScenario()
+  await scenario.prepare({ clusterPath })
+  return { scenario, clusterPath }
+}
+
+/** The steps of a prepared scenario's plan, phase by phase. */
+async function plannedPhases() {
+  const { scenario } = await preparedScenario(),
+    build = ClusterBuild.forContext({ outputs: new OutputStore() })
+  scenario.plan(build)
+  return { scenario, phases: build.children }
+}
 
 /** A context whose outputs are a live map and whose WIRE reads are stubbed per test. */
 function contextWith(wire = {}) {
@@ -69,37 +93,71 @@ test("the flow's counts give 2 of 2, then 3 of 3, then 3 of 4: the late owner le
   Assert.deepEqual([...Constants.NodeOwners], [...Constants.InitialNodeOwners, Constants.LateNodeOwner])
 })
 
-test("every flow identity has its own seeded key, none of them the bootstrap key", () => {
-  const keys = [...Constants.NodeOwners, ...Constants.CouncilMembers].map(Scenario.flowPublicKey)
+test("prepare persists a random key per flow identity, none of them the bootstrap key, and a re-run keeps them", async () => {
+  const { scenario, clusterPath } = await preparedScenario(),
+    dataPath = ClusterConfigProvider.dataPath(clusterPath),
+    keys = Constants.Identities.map(account => scenario.identityPublicKey(account))
   Assert.equal(new Set(keys).size, keys.length)
   keys.forEach(key =>
-    Assert.notEqual(key, KeyGenerator.createSeeded(KeyType.K1, KeyGenerator.BiosK1KeySeed).publicKey)
+    Assert.notEqual(key, PublicKey.from(HarnessConstants.DEV_K1_PUBLIC_KEY).toString())
   )
-  Assert.equal(
-    Scenario.flowPublicKey("gova"),
-    KeyGenerator.createSeeded(KeyType.K1, Constants.keySeed("gova")).publicKey
+  Constants.Identities.forEach(account =>
+    Assert.equal(
+      WireWallet.loadKeyPair(dataPath, Constants.identityHandle(account)).publicKey,
+      scenario.identityPublicKey(account)
+    )
+  )
+  const { scenario: rerun } = await preparedScenario(clusterPath)
+  Constants.Identities.forEach(account =>
+    Assert.equal(rerun.identityPublicKey(account), scenario.identityPublicKey(account))
   )
 })
 
-test("an initial owner is one nodeownreg claim under its own key, then a read-back", () => {
-  const steps = Scenario.planInitialOwner("gova", Constants.FirstDepositorEthereumHdIndex)
+test("the plan refuses to compose before prepare persisted the identities' keys", () => {
+  const build = ClusterBuild.forContext({ outputs: new OutputStore() })
+  Assert.throws(
+    () => new Scenario.GovernanceHandoffScenario().plan(build),
+    /prepare\(\) must persist .* key before plan\(\)/
+  )
+})
+
+test("an initial owner persists its depositor wallet, makes one nodeownreg claim under its own key, then a read-back", () => {
+  const steps = Scenario.planInitialOwner("gova", "PUB_K1_gova")
   Assert.deepEqual(
     steps.map(step => step.name),
-    ["register-gova", "registered-gova"]
+    ["create-gova-wallet", "register-gova", "registered-gova"]
   )
   Assert.deepEqual(steps[0].input, {
+    kind: "EthereumFundingTool.CreateWalletInput",
+    walletName: Constants.identityHandle("gova"),
+    purpose: "governance handoff — gova's depositor wallet"
+  })
+  Assert.deepEqual(steps[1].input, {
     kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
     ownerAccount: "gova",
     tier: NodeOwnerTier.T1,
-    ethereumHdIndex: Constants.FirstDepositorEthereumHdIndex,
-    wirePublicKey: Scenario.flowPublicKey("gova")
+    walletName: Constants.identityHandle("gova"),
+    wirePublicKey: "PUB_K1_gova"
   })
 })
 
-test("the plan creates no owner account before its claim: only the stand-in council is created", () => {
-  const build = ClusterBuild.forContext({ outputs: new OutputStore() })
-  new Scenario.GovernanceHandoffScenario().plan(build)
-  const steps = build.children.flatMap(phase => phase.steps),
+test("every flow identity's persisted key is imported into the wallet before anything signs with it", async () => {
+  const { scenario, phases } = await plannedPhases(),
+    flowKeys = phases.find(phase => phase.name === "FlowKeys")
+  Assert.equal(phases.indexOf(flowKeys), phases.findIndex(phase => phase.name === "CouncilAccounts") - 1)
+  Assert.deepEqual(
+    flowKeys.steps.map(step => step.input),
+    Constants.Identities.map(account => ({
+      kind: "KeySteps.ImportPersistedKeyInput",
+      keyName: Constants.identityHandle(account),
+      publicKey: scenario.identityPublicKey(account)
+    }))
+  )
+})
+
+test("the plan creates no owner account before its claim: only the stand-in council is created", async () => {
+  const { scenario, phases } = await plannedPhases(),
+    steps = phases.flatMap(phase => phase.steps),
     kinds = new Set(steps.map(step => step.input?.kind)),
     claims = steps.filter(
       step => step.input?.kind === "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
@@ -111,16 +169,33 @@ test("the plan creates no owner account before its claim: only the stand-in coun
     [...Constants.InitialNodeOwners]
   )
   Assert.deepEqual(
-    claims.map(step => step.input.ethereumHdIndex),
-    Constants.InitialNodeOwners.map((_, index) => Constants.FirstDepositorEthereumHdIndex + index)
+    claims.map(step => step.input.walletName),
+    Constants.InitialNodeOwners.map(Constants.identityHandle)
   )
   Assert.deepEqual(
-    created.map(step => step.input.account),
-    [...Constants.CouncilMembers]
+    claims.map(step => step.input.wirePublicKey),
+    Constants.InitialNodeOwners.map(owner => scenario.identityPublicKey(owner))
+  )
+  claims.forEach(claim => {
+    const index = steps.indexOf(claim)
+    Assert.ok(
+      steps
+        .slice(0, index)
+        .some(
+          step =>
+            step.input?.kind === "EthereumFundingTool.CreateWalletInput" &&
+            step.input.walletName === claim.input.walletName
+        ),
+      `${claim.input.ownerAccount} claims with a wallet no earlier step persisted`
+    )
+  })
+  Assert.deepEqual(
+    created.map(step => [step.input.account, step.input.publicKey]),
+    Constants.CouncilMembers.map(member => [member, scenario.identityPublicKey(member)])
   )
   const commit = steps.find(step => step.input?.kind === "NodeOwnerCommitSteps.CommitNodeInput")
   Assert.equal(commit.input.wireAccountName, Constants.LateNodeOwner)
-  Assert.equal(commit.input.wirePublicKey, Scenario.flowPublicKey(Constants.LateNodeOwner))
+  Assert.equal(commit.input.wirePublicKey, scenario.identityPublicKey(Constants.LateNodeOwner))
 })
 
 test("a probe transfer is a typed sysio.token::transfer of one WIRE from sysio, declared by sysio@active", () => {

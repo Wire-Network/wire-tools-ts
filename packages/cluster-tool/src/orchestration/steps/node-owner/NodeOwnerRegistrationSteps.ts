@@ -1,5 +1,4 @@
-import { KeyType, SysioContracts } from "@wireio/sdk-core"
-import { KeyGenerator } from "../../../clients/wire/KeyGenerator.js"
+import { EthereumWallet } from "../../../clients/ethereum/EthereumWallet.js"
 import { Report } from "../../../report/Report.js"
 import {
   NodeOwnerTier,
@@ -13,50 +12,63 @@ import {
   type ClusterBuildStepOptions
 } from "../../ClusterBuildStep.js"
 import type { StepInput } from "../../StepRunner.js"
-import { KeySteps } from "../KeySteps.js"
-
-const { SysioAuthexChainkind, SysioContractName } = SysioContracts
 
 /**
  * Registration writes for fresh claims and pre-existing-account rejection fixtures.
  * Each write is its own Step; nodeownreg owns atomic creation, registration and linkage.
  * Claim rejections commit an audit row and are checked by the following verify step.
  *
+ * A claim's depositor EM key is a RANDOM wallet persisted under the claim's
+ * durable handle by `EthereumFundingTool.planCreateWallet`, one Step before
+ * the claim; the registration runner and the hard-abort probes read it back
+ * by that handle ({@link loadDepositorIdentity}). A rejection fixture's
+ * pre-existing Ethereum link is another persisted wallet, linked by the
+ * fixture account's own `sysio.authex::createlink`
+ * (`SyndicationUserSteps.planLinkEthereumKey`) before the claim.
+ *
  * Before a governance handoff `sysio.roa@active` is the bootstrap `sysio` key,
  * so these writes stand in for the depot's dispatch; after one, an owner claims
  * through the OPP path ({@link NodeOwnerCommitSteps}).
  */
 export namespace NodeOwnerRegistrationSteps {
-  /**
-   * A new depositor `PUB_EM_*` public key, derived from the run's Ethereum
-   * mnemonic (`KeySteps.keyGeneratorContext`) at `ethereumHdIndex` —
-   * deterministic, and distinct per claim when each claim carries its own
-   * index. A pure value helper: used inside the {@link planRegisterNodeOwner}
-   * runner and the scenario's hard-abort probes.
-   *
-   * @param ctx - The build context (the run's key-generation material).
-   * @param ethereumHdIndex - HD account index for the EM derivation.
-   * @returns The derived `PUB_EM_*` public key.
-   */
-  export async function newEthereumPublicKey<C extends ClusterBuildContext>(
-    ctx: C,
-    ethereumHdIndex: number
-  ): Promise<string> {
-    return (await newEthereumIdentity(ctx, ethereumHdIndex)).publicKey
-  }
+  /** Length of the `0x` prefix an EVM address carries in display form. */
+  const EvmHexPrefixLength = 2
 
-  /** Deterministic depositor EM identity, including the raw address required by nodeownreg. */
-  export async function newEthereumIdentity<C extends ClusterBuildContext>(
+  /**
+   * A claim's depositor identity — the `PUB_EM_*` public key and the raw
+   * address `nodeownreg` takes — read back from the wallet persisted under
+   * `walletName`. A pure value helper: used inside the
+   * {@link planRegisterNodeOwner} runner and the scenario's hard-abort probes.
+   *
+   * @param ctx - The build context (supplies the cluster data directory).
+   * @param walletName - Durable handle of the claim's depositor wallet.
+   * @returns The depositor identity.
+   * @throws If no wallet is persisted under `walletName`.
+   */
+  export function loadDepositorIdentity<C extends ClusterBuildContext>(
     ctx: C,
-    ethereumHdIndex: number
-  ): Promise<EthereumIdentity> {
-    const pair = await KeyGenerator.create(KeyType.EM, KeySteps.keyGeneratorContext(ctx), {
-      ethereumHdIndex
-    })
+    walletName: string
+  ): EthereumIdentity {
+    const pair = EthereumWallet.loadKeyPair(ctx.config.dataPath, walletName)
     return {
       publicKey: pair.publicKey,
-      nativeAddress: pair.address.slice(2).toLowerCase()
+      nativeAddress: pair.address.slice(EvmHexPrefixLength).toLowerCase()
     }
+  }
+
+  /**
+   * A claim's depositor `PUB_EM_*` public key, read back from the wallet
+   * persisted under `walletName` (see {@link loadDepositorIdentity}).
+   *
+   * @param ctx - The build context (supplies the cluster data directory).
+   * @param walletName - Durable handle of the claim's depositor wallet.
+   * @returns The depositor's `PUB_EM_*` public key.
+   */
+  export function loadDepositorPublicKey<C extends ClusterBuildContext>(
+    ctx: C,
+    walletName: string
+  ): string {
+    return loadDepositorIdentity(ctx, walletName).publicKey
   }
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
@@ -123,65 +135,6 @@ export namespace NodeOwnerRegistrationSteps {
     )
   }
 
-  /** Input for the privileged pre-existing Ethereum link fixture. */
-  interface AuthexLinkInput extends StepInput {
-    readonly kind: "NodeOwnerRegistrationSteps.AuthexLinkInput"
-    readonly account: string
-    readonly ethereumHdIndex: number
-  }
-
-  /**
-   * Record a fixture account's Ethereum identity before testing a rejected claim.
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Per-step tuning.
-   * @param account - Existing fixture account.
-   * @param ethereumHdIndex - HD index for the fixture link, distinct from the claim's.
-   * @returns The link fixture step.
-   */
-  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    account: string,
-    ethereumHdIndex: number
-  ): ClusterBuildStep<C, AuthexLinkInput> {
-    return ClusterBuildStep.create<C, AuthexLinkInput>(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "NodeOwnerRegistrationSteps.AuthexLinkInput",
-        account,
-        ethereumHdIndex
-      },
-      runAuthexLink
-    )
-  }
-
-  async function runAuthexLink<C extends ClusterBuildContext>(
-    ctx: C,
-    input: AuthexLinkInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const { publicKey, nativeAddress } = await newEthereumIdentity(
-      ctx,
-      input.ethereumHdIndex
-    )
-    await ctx.wire
-      .getSysioContract(SysioContractName.authex)
-      .actions.recordlink.invoke({
-        account: input.account,
-        chain_kind: SysioAuthexChainkind.CHAIN_KIND_EVM,
-        pub_key: publicKey,
-        native_address: nativeAddress
-      })
-  }
-
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
   export interface RegisterNodeOwnerInput extends StepInput {
     readonly kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
@@ -189,8 +142,8 @@ export namespace NodeOwnerRegistrationSteps {
     readonly ownerAccount: string
     /** The claimed tier (1-3 for valid claims). */
     readonly tier: NodeOwnerTier
-    /** HD index deriving the claim's new depositor EM key. */
-    readonly ethereumHdIndex: number
+    /** Durable handle of the persisted wallet whose EM key is the claim's depositor key. */
+    readonly walletName: string
     /** The owner/active Wire key for the new account. */
     readonly wirePublicKey: string
   }
@@ -203,8 +156,8 @@ export namespace NodeOwnerRegistrationSteps {
    * following verify step asserting the audit outcome. The depot/system
    * invariants (tier out of [1,3], non-EM eth key, malformed ETH address
    * length) hard-abort. The scenario probes tier and key type; focused C++
-   * coverage exercises address length because this factory derives a valid
-   * Ethereum address.
+   * coverage exercises address length because the persisted wallet always
+   * yields a valid Ethereum address.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -212,7 +165,7 @@ export namespace NodeOwnerRegistrationSteps {
    * @param options - Per-step tuning.
    * @param ownerAccount - The Wire account the claim registers.
    * @param tier - The claimed tier.
-   * @param ethereumHdIndex - HD index deriving the claim's new depositor EM key.
+   * @param walletName - Durable handle of the claim's persisted depositor wallet.
    * @param wirePublicKey - The claimed owner/active Wire key.
    * @returns The definition step.
    */
@@ -225,7 +178,7 @@ export namespace NodeOwnerRegistrationSteps {
     options: ClusterBuildStepOptions,
     ownerAccount: string,
     tier: NodeOwnerTier,
-    ethereumHdIndex: number,
+    walletName: string,
     wirePublicKey: string
   ): ClusterBuildStep<C, RegisterNodeOwnerInput> {
     return ClusterBuildStep.create<C, RegisterNodeOwnerInput>(
@@ -237,30 +190,27 @@ export namespace NodeOwnerRegistrationSteps {
         kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
         ownerAccount,
         tier,
-        ethereumHdIndex,
+        walletName,
         wirePublicKey
       },
       runRegisterNodeOwner
     )
   }
 
-  /** Named runner — derive the claim's new EM key, then ONE `sysio.roa::nodeownreg` write. */
+  /** Named runner — read the claim's depositor wallet back by handle, then ONE `sysio.roa::nodeownreg` write. */
   export async function runRegisterNodeOwner<C extends ClusterBuildContext>(
     ctx: C,
     input: RegisterNodeOwnerInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumIdentity = await newEthereumIdentity(
-      ctx,
-      input.ethereumHdIndex
-    )
+    const depositor = loadDepositorIdentity(ctx, input.walletName)
     await pushNodeOwnerReg(
       ctx.wire,
       input.ownerAccount,
       input.tier,
-      ethereumIdentity.nativeAddress,
-      ethereumIdentity.publicKey,
+      depositor.nativeAddress,
+      depositor.publicKey,
       input.wirePublicKey
     )
   }

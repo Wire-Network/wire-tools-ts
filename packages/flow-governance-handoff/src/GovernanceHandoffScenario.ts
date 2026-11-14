@@ -2,7 +2,6 @@ import Assert from "node:assert"
 import {
   ABI,
   Action,
-  KeyType,
   PrivateKey,
   SignedTransaction,
   SysioContracts,
@@ -10,7 +9,9 @@ import {
 } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  ClusterConfigProvider,
   Constants as HarnessConstants,
+  EthereumFundingTool,
   FlowScenario,
   getLogger,
   KeyGenerator,
@@ -27,6 +28,7 @@ import {
   WireClient,
   WireNodeOwnerTool,
   WireSysioContractTool,
+  WireWallet,
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
@@ -83,16 +85,6 @@ export function activeLevels(
   accounts: ReadonlyArray<string>
 ): SysioContracts.SysioMsigPermissionLevelType[] {
   return accounts.map(actor => ({ actor, permission: WireClient.ActivePermission }))
-}
-
-/**
- * The public key of a flow identity: its seeded development K1 key.
- *
- * @param account - The identity's account.
- * @returns The key its account is created and registered with.
- */
-export function flowPublicKey(account: string): string {
-  return KeyGenerator.createSeeded(KeyType.K1, Constants.keySeed(account)).publicKey
 }
 
 /**
@@ -673,22 +665,34 @@ export function verifyProbePaid(recipient: string): ReturnType<typeof verifyStep
 }
 
 /**
- * The steps that register one initial tier-1 owner through
- * `sysio.roa::nodeownreg`, the claim the depot dispatches, which creates the
- * owner's account under its own key; then read the registration back.
+ * The steps that register one initial tier-1 owner: persist its random
+ * depositor wallet under its handle, claim through `sysio.roa::nodeownreg`,
+ * the claim the depot dispatches, which creates the owner's account under its
+ * own key; then read the registration back.
  *
  * @param owner - The owner.
- * @param ethereumHdIndex - The anvil HD index of the owner's depositor EM key.
+ * @param wirePublicKey - The owner's WIRE key, persisted before the cluster
+ *   ({@link GovernanceHandoffScenario.prepare}).
  * @returns The steps.
  */
 export function planInitialOwner(
   owner: string,
-  ethereumHdIndex: number
+  wirePublicKey: string
 ): Array<
+  | ReturnType<typeof EthereumFundingTool.planCreateWallet>
   | ReturnType<typeof RegistrationSteps.planRegisterNodeOwner>
   | ReturnType<typeof verifyStep>
 > {
+  const walletName = Constants.identityHandle(owner)
   return [
+    EthereumFundingTool.planCreateWallet(
+      Actor.User,
+      `create-${owner}-wallet`,
+      `generate ${owner}'s depositor wallet`,
+      StepOptions,
+      walletName,
+      `governance handoff — ${owner}'s depositor wallet`
+    ),
     RegistrationSteps.planRegisterNodeOwner(
       Actor.User,
       `register-${owner}`,
@@ -696,8 +700,8 @@ export function planInitialOwner(
       StepOptions,
       owner,
       NodeOwnerTier.T1,
-      ethereumHdIndex,
-      flowPublicKey(owner)
+      walletName,
+      wirePublicKey
     ),
     verifyStep(
       Actor.Sysio,
@@ -718,9 +722,10 @@ export function planInitialOwner(
  *
  * 1. **GovernanceAuthorityAccounts** — the bootstrap created `sysio.nodes` and
  *    `sysio.cncl` (owner `sysio@active`, unsatisfiable `active`, member RAM).
- * 2. **NodeOwners** / **NodeOwnerAuthority** — two tier-1 owners register
- *    under keys the flow controls; `syncnodes` makes `sysio.nodes@active` the
- *    on-chain roster (2 of 2).
+ * 2. **FlowKeys** … **NodeOwnerAuthority** — the random WIRE keys
+ *    {@link GovernanceHandoffScenario.prepare} persisted before the cluster go
+ *    into the wallet; two tier-1 owners register under them; `syncnodes` makes
+ *    `sysio.nodes@active` the on-chain roster (2 of 2).
  * 3. **PreHandoffAudit** — every permission of every system account is
  *    governance or a documented exception.
  * 4. **HandoffNodeOwner** / **Handoff** — a third owner registers after that
@@ -758,6 +763,58 @@ export class GovernanceHandoffScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
+  /** Each flow identity's WIRE public key, by account: persisted by {@link prepare}, composed by {@link plan}. */
+  private readonly identityKeys = new Map<string, string>()
+
+  /**
+   * The pre-bootstrap stage: get-or-create every flow identity's random WIRE
+   * key under its handle ({@link Constants.identityHandle}) in the cluster data
+   * directory, so the plan can create and register each account under its own
+   * key, and a re-run keeps the identities.
+   *
+   * @param options - The resolved build options.
+   * @returns The options, unchanged — the keys ride the scenario instance.
+   */
+  async prepare(options: ClusterBuildOptions): Promise<ClusterBuildOptions> {
+    const { clusterPath, buildPath } = options
+    Assert.ok(
+      clusterPath != null,
+      "flow-governance-handoff: clusterPath must be resolved before the identity keys are persisted"
+    )
+    const dataPath = ClusterConfigProvider.dataPath(clusterPath),
+      keyContext = KeyGenerator.context(buildPath),
+      keys = await Promise.all(
+        Constants.Identities.map(account =>
+          WireWallet.createKey(
+            dataPath,
+            Constants.identityHandle(account),
+            keyContext,
+            `governance handoff — ${account}'s account key (K1)`
+          )
+        )
+      )
+    Constants.Identities.forEach((account, index) =>
+      this.identityKeys.set(account, keys[index].publicKey)
+    )
+    return options
+  }
+
+  /**
+   * The WIRE public key {@link prepare} persisted for a flow identity.
+   *
+   * @param account - The identity's account.
+   * @returns Its public key.
+   * @throws When `prepare` has not created it.
+   */
+  identityPublicKey(account: string): string {
+    const publicKey = this.identityKeys.get(account)
+    Assert.ok(
+      publicKey != null,
+      `flow-governance-handoff: prepare() must persist ${account}'s key before plan()`
+    )
+    return publicKey
+  }
+
   plan(cluster: ClusterBuild): void {
     const ownerAccounts: ReadonlyArray<string> = Constants.NodeOwners,
       councilThreshold = supermajorityThreshold(Constants.CouncilMembers.length),
@@ -785,15 +842,16 @@ export class GovernanceHandoffScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "FlowKeys",
-      "Import the seeded key of every owner and stand-in council member the flow controls"
+      "Import the persisted key of every owner and stand-in council member the flow controls"
     ).push(
-      ...[...Constants.NodeOwners, ...Constants.CouncilMembers].map(account =>
-        Steps.keys.planImportSeededKey(
+      ...Constants.Identities.map(account =>
+        Steps.keys.planImportPersistedKey(
           Actor.User,
           `import-key-${account}`,
           `import ${account}'s key into the wallet`,
           StepOptions,
-          Constants.keySeed(account)
+          Constants.identityHandle(account),
+          this.identityPublicKey(account)
         )
       )
     )
@@ -809,7 +867,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
           `create ${member} under its own key`,
           StepOptions,
           member,
-          flowPublicKey(member)
+          this.identityPublicKey(member)
         )
       )
     )
@@ -818,8 +876,8 @@ export class GovernanceHandoffScenario extends FlowScenario {
       "NodeOwners",
       "Register the first tier-1 owners through sysio.roa::nodeownreg, the claim the depot dispatches"
     ).push(
-      ...Constants.PreSyncNodeOwners.flatMap((owner, index) =>
-        planInitialOwner(owner, Constants.FirstDepositorEthereumHdIndex + index)
+      ...Constants.PreSyncNodeOwners.flatMap(owner =>
+        planInitialOwner(owner, this.identityPublicKey(owner))
       )
     )
     ClusterBuildPhase.create(
@@ -866,7 +924,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
     ).push(
       ...planInitialOwner(
         Constants.HandoffNodeOwner,
-        Constants.FirstDepositorEthereumHdIndex + Constants.PreSyncNodeOwners.length
+        this.identityPublicKey(Constants.HandoffNodeOwner)
       ),
       verifyStep(
         Actor.Sysio,
@@ -988,7 +1046,7 @@ export class GovernanceHandoffScenario extends FlowScenario {
         StepOptions,
         NodeOwnerTier.T1,
         Constants.LateNodeOwner,
-        flowPublicKey(Constants.LateNodeOwner)
+        this.identityPublicKey(Constants.LateNodeOwner)
       ),
       verifyStep(
         Actor.Sysio,

@@ -5,6 +5,7 @@ import Path from "node:path"
 import {
   AWSAccountName,
   ClusterFiles,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   ProcessSignalName,
   type ClusterConfig
@@ -286,12 +287,15 @@ describe("ClusterManager.destroy", () => {
           ssm: {
             awsRegions: SSMRegions,
             awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-          }
+          },
+          kms: null,
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
         },
         awsClusterNodeConfig: {
           account: AWSAccountName.test,
           regions: SSMRegions,
-          ssm: null
+          ssm: null,
+          kms: null
         },
         ...overrides
       })

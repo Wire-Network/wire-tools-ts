@@ -32,9 +32,10 @@ export namespace NodeOwnerMintSteps {
 
   /**
    * Resolve `MockWireNodes` from the run's deploy artifacts
-   * (`outpost-addrs.json` + the hardhat artifact), bound to the run's default
-   * anvil signer — the minter. A pure artifact load: used inside the
-   * {@link planMint} runner and the scenario's snapshot / supply verify steps.
+   * (`outpost-addrs.json` + the hardhat artifact), bound to the run's deployer
+   * wallet (`ctx.ethereum.wallet`) — the minter. A pure artifact load: used
+   * inside the {@link planMint} runner and the scenario's snapshot / supply
+   * verify steps.
    *
    * @param ctx - The build context (ethereum path + anvil client).
    * @returns The signer-bound contract surface.
