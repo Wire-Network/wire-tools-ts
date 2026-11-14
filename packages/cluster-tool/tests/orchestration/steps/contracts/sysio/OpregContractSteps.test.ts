@@ -7,9 +7,6 @@ import { fixtureOperatorRow } from "./opregOperatorRowFixture.js"
 describe("Steps.contracts.sysio.opreg", () => {
   it("setconfig carries the opreg::setconfig data", () => {
     const data: SysioContracts.SysioOpregSetconfigAction = {
-      max_available_producers: 21,
-      max_available_batch_ops: 63,
-      max_available_underwriters: 21,
       terminate_prune_delay_ms: 600_000,
       terminate_max_consecutive_misses: 5,
       terminate_max_pct_misses_24h: 5,
@@ -28,7 +25,7 @@ describe("Steps.contracts.sysio.opreg", () => {
     expect(step.actor).toBe(Report.Actor.Sysio)
     expect(step.input.kind).toBe("OpregContractSteps.SetconfigInput")
     expect(step.input.data).toBe(data)
-    expect(step.input.data.max_available_batch_ops).toBe(63)
+    expect(step.input.data.terminate_window_ms).toBe(86_400_000)
     expect(typeof step.runner).toBe("function")
   })
 

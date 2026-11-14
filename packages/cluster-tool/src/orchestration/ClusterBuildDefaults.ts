@@ -1778,9 +1778,6 @@ export namespace ClusterBuildDefaults {
       config_timestamp_ms: 0
     })
     return {
-      max_available_producers: 21,
-      max_available_batch_ops: 63,
-      max_available_underwriters: 21,
       terminate_prune_delay_ms: 600_000,
       terminate_max_consecutive_misses:
         config.terminateMaxConsecutiveMisses ??
