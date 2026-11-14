@@ -6,8 +6,10 @@ import { ContractSteps } from "./ContractSteps.js"
 import { DebuggingServerBundleSteps } from "./DebuggingServerBundleSteps.js"
 import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
+import { GovernanceSteps } from "./GovernanceSteps.js"
 import { MockShadowBackingSteps } from "./MockShadowBackingSteps.js"
 import { KeySteps } from "./KeySteps.js"
+import { NodeOwnerSteps } from "./node-owner/index.js"
 import { LcoImportSteps } from "./LcoImportSteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
@@ -49,6 +51,10 @@ export namespace Steps {
   /** The `create-external-config` five-stage clone/rebind/emit pipeline. */
   export import externalClusterConfig = ExternalClusterConfigSteps
   export import keys = KeySteps
+  /** Handing the root `sysio` account to a governance authority (`sysio.nodes` / `sysio.cncl`). */
+  export import governance = GovernanceSteps
+  /** Node-owner registration: the NFT mint, the OPP claim, and the depot's `sysio.roa::nodeownreg`. */
+  export import nodeOwner = NodeOwnerSteps
   /** Per-node archive steps for the `package` command. */
   export import clusterPackage = ClusterPackageSteps
   export import operator = OperatorSteps

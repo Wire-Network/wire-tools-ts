@@ -19,7 +19,6 @@ import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
 import { solanaKeyPairFromKeypair } from "../../utils/keyPairUtils.js"
 import { EthereumFundingTool } from "../ethereum/EthereumFundingTool.js"
 import { SolanaFundingTool } from "../solana/SolanaFundingTool.js"
-import type { WireKeyPair } from "../../types/KeyPair.js"
 
 const log = getLogger(__filename)
 
@@ -140,7 +139,12 @@ export namespace BatchOperatorKeyTool {
   ): Promise<OperatorAccount[]> {
     assertBatchOperatorLabels(labels)
     return mapSeries(labels, async label => {
-      await createPersistedWireKey(dataPath, label, keyContext)
+      await WireWallet.createKey(
+        dataPath,
+        label,
+        keyContext,
+        `batch operator ${label} — WIRE account key (K1)`
+      )
       await EthereumFundingTool.createWallet(
         dataPath,
         label,
@@ -182,27 +186,6 @@ export namespace BatchOperatorKeyTool {
         `BatchOperatorKeyTool: "${label}" is not a bootstrap batch-operator label (${Constants.BatchOperatorLabelPrefix}<letter>)`
       )
     )
-  }
-
-  /**
-   * Get-or-create a batch operator's persisted WIRE account key: a random K1
-   * from the `KeyGenerator` facade, persisted once under the label
-   * (`WireWallet.saveKey`); a handle already holding one is read back.
-   */
-  async function createPersistedWireKey(
-    dataPath: string,
-    label: string,
-    keyContext: KeyGenerator.Context
-  ): Promise<WireKeyPair> {
-    return WireWallet.hasKey(dataPath, label)
-      ? WireWallet.loadKeyPair(dataPath, label)
-      : WireWallet.saveKey(
-          dataPath,
-          label,
-          await KeyGenerator.create(KeyType.K1, keyContext, {
-            purpose: `batch operator ${label} — WIRE account key (K1)`
-          })
-        )
   }
 
   /** One batch operator's identity, every curve read back from its persisted handle. */

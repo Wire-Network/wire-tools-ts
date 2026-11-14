@@ -240,7 +240,7 @@ export async function pushNewNamedUser(
  * Drive `sysio.roa::nodeownreg` directly, as the depot inline-sends it. The account must not
  * already exist. The action creates it and RECORDS the depositor's ETH
  * key (it is not verified against a pre-existing link), so claim-payload problems soft-fail into a
- * `nodeownerreg` audit row (read with `readNodeOwnerReg`) rather than throwing. Depot/system
+ * `nodeownerreg` audit row (read with `WireNodeOwnerTool.readNodeOwnerReg`) rather than throwing. Depot/system
  * invariants -- tier out of [1,3], a non-EM eth key, or an address not exactly 20 bytes -- hard-abort,
  * which this surfaces as a throw.
  *
@@ -284,26 +284,4 @@ export async function pushNodeOwnerReg(
     }
     throw err
   }
-}
-
-/** Read the nodeownerreg audit row for `owner` (scope = network_gen = 0), or absent. */
-export async function readNodeOwnerReg(
-  wire: WireClient,
-  owner: string
-): Promise<SysioContracts.SysioRoaNodeownerregType> {
-  const { rows } = await wire
-    .getSysioContract(SysioContracts.SysioContractName.roa)
-    .tables.nodeownerreg.query({ scope: "0" })
-  return rows.find(row => row.owner === owner)
-}
-
-/** Read the nodeowners registration row for `owner` (scope = network_gen = 0), or absent. */
-export async function readNodeOwner(
-  wire: WireClient,
-  owner: string
-): Promise<SysioContracts.SysioRoaNodeownersType> {
-  const { rows } = await wire
-    .getSysioContract(SysioContracts.SysioContractName.roa)
-    .tables.nodeowners.query({ scope: "0" })
-  return rows.find(row => row.owner === owner)
 }

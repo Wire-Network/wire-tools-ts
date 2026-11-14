@@ -24,6 +24,7 @@ import { Report } from "../report/Report.js"
 import { EthereumFundingTool } from "../tools/ethereum/EthereumFundingTool.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
+import { WireSysioContractTool } from "../tools/wire/WireSysioContractTool.js"
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
@@ -548,7 +549,10 @@ export namespace ClusterBuildDefaults {
       "Create remaining sysio.* accounts"
     ).push(
       ...Constants.SYSTEM_ACCOUNTS.filter(
-        account => account !== "sysio.roa" && account !== "sysio.acct"
+        account =>
+          account !== "sysio.roa" &&
+          account !== "sysio.acct" &&
+          !Constants.isGovernanceAuthorityAccount(account)
       ).map(account =>
         Steps.account.planCreateSystem<C>(
           Actor.Sysio,
@@ -558,6 +562,33 @@ export namespace ClusterBuildDefaults {
           account
         )
       )
+    )
+    // The two accounts `sysio` can later be handed to. `sysio.councl` writes their `active`
+    // (`syncnodes`; an election's last seat), so each starts unsatisfiable and gets the RAM a
+    // full authority of members adds — a creation step and a RAM step per account.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GovernanceAuthorities",
+      "Create sysio.nodes + sysio.cncl with an unsatisfiable active and room for 21 members"
+    ).push(
+      ...Constants.GOVERNANCE_AUTHORITY_ACCOUNTS.flatMap(account => [
+        Steps.account.planCreateSystem<C>(
+          Actor.Sysio,
+          `create-${account}`,
+          `create ${account} (owner sysio@active, active ${Constants.NULL_ACCOUNT}@active)`,
+          {},
+          account,
+          WireSysioContractTool.sysioNullActiveAuthority()
+        ),
+        Steps.account.planRamGrant<C>(
+          Actor.Sysio,
+          `fund-${account}-authority-ram`,
+          `raise ${account}'s RAM limit by ${Constants.GOVERNANCE_AUTHORITY_RAM_BYTES} bytes for its members`,
+          {},
+          account,
+          Constants.GOVERNANCE_AUTHORITY_RAM_BYTES
+        )
+      ])
     )
     ClusterBuildPhase.create<C>(
       prerequisites,

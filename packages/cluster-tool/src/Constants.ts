@@ -1,5 +1,5 @@
 import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+import { Hash, KeyType, PrivateKey, SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range } from "lodash"
 
 import {
@@ -113,6 +113,50 @@ export namespace Constants {
     )
   }
 
+  /**
+   * The governance authority `sysio.councl::syncnodes` writes: its `active` is a
+   * supermajority of the `sysio.roa` tier-1 node owners. `sysio` can be handed to it.
+   */
+  export const NODE_OWNERS_AUTHORITY = "sysio.nodes"
+  /**
+   * The governance authority `sysio.councl` writes when an election seats its last
+   * member: its `active` is a supermajority of the seated council.
+   */
+  export const COUNCIL_AUTHORITY = "sysio.cncl"
+  /**
+   * The accounts `sysio` can be delegated to. The bootstrap creates each with an
+   * `owner` of `sysio@active` and an `active` nobody can satisfy until the contract
+   * first writes it.
+   */
+  export const GOVERNANCE_AUTHORITY_ACCOUNTS = [
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY
+  ] as const
+
+  /** One of {@link GOVERNANCE_AUTHORITY_ACCOUNTS}. */
+  export type GovernanceAuthorityAccount =
+    (typeof GOVERNANCE_AUTHORITY_ACCOUNTS)[number]
+
+  /**
+   * Whether `account` is one of the {@link GOVERNANCE_AUTHORITY_ACCOUNTS}.
+   *
+   * @param account - The account name.
+   * @returns True for `sysio.nodes` and `sysio.cncl`.
+   */
+  export function isGovernanceAuthorityAccount(
+    account: string
+  ): account is GovernanceAuthorityAccount {
+    return GOVERNANCE_AUTHORITY_ACCOUNTS.some(authority => authority === account)
+  }
+
+  /** The root account: every system account is governed by its `active`, and a handoff repoints it. */
+  export const SYSIO_ACCOUNT =
+    SysioContracts.SysioContractAccount[SysioContracts.SysioContractName.system]
+  /** The genesis account nobody can authorize; an authority delegating to it is unsatisfiable. */
+  export const NULL_ACCOUNT = "sysio.null"
+  /** The genesis account whose permissions the chain keeps equal to the producer schedule. */
+  export const PRODUCERS_ACCOUNT = "sysio.prods"
+
   /** System accounts created during bootstrap. */
   export const SYSTEM_ACCOUNTS = [
     "sysio.noop",
@@ -138,6 +182,8 @@ export namespace Constants {
     "sysio.bond",
     "sysio.synd",
     "sysio.councl",
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY,
     "sysio.kicker",
     "sysio.gov",
     "sysio.ops",
@@ -302,6 +348,12 @@ export namespace Constants {
    * default; governance changes it through `setparams`.
    */
   export const NOTIFY_CPU_STIPEND = 100
+  /**
+   * The genesis `max_authority_depth`: how many delegations deep the chain follows
+   * when it checks whether an authority is satisfied. A delegation past it counts as
+   * unsatisfied, so raising it lets deeper delegation chains carry weight.
+   */
+  export const MAX_AUTHORITY_DEPTH = 10
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
   /**
@@ -635,6 +687,23 @@ export namespace Constants {
 
   /** The node owners tier 1 admits at most (wire-sysio `emissions.hpp` `T1_MAX_NODE_OWNERS`). */
   export const T1_MAX_NODE_OWNERS = 21
+  /**
+   * RAM one member entry of a governance authority bills: a `permission_level_weight`
+   * rounded up to the chain's 16-byte billing alignment.
+   */
+  export const GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES = 32
+  /** Entries of the placeholder `active` a governance authority is created with: `sysio.null@active`. */
+  export const GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES = 1
+  /**
+   * RAM added to each governance authority's limit at bootstrap (640 bytes): a full
+   * authority of {@link T1_MAX_NODE_OWNERS} members (the council's 21 seats, the tier-1
+   * cap) less the placeholder entry the account was created with. Without it
+   * `sysio.councl` cannot write the authority, so `syncnodes` fails and the last seat
+   * of an election cannot be tabulated.
+   */
+  export const GOVERNANCE_AUTHORITY_RAM_BYTES =
+    (T1_MAX_NODE_OWNERS - GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES) *
+    GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES
   /** The node owners tier 2 admits at most (`T2_MAX_NODE_OWNERS`). */
   export const T2_MAX_NODE_OWNERS = 84
   /** The node owners tier 3 admits at most (`T3_MAX_NODE_OWNERS`). */

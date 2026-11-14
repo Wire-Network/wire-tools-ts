@@ -2,11 +2,13 @@ import { AndonContractSteps } from "./AndonContractSteps.js"
 import { BiosContractSteps } from "./BiosContractSteps.js"
 import { BondContractSteps } from "./BondContractSteps.js"
 import { ChainsContractSteps } from "./ChainsContractSteps.js"
+import { CounclContractSteps } from "./CounclContractSteps.js"
 import { DclaimContractSteps } from "./DclaimContractSteps.js"
 import { EpochContractSteps } from "./EpochContractSteps.js"
 import { KickerContractSteps } from "./KickerContractSteps.js"
 import { LiqContractSteps } from "./LiqContractSteps.js"
 import { MsgchContractSteps } from "./MsgchContractSteps.js"
+import { MsigContractSteps } from "./MsigContractSteps.js"
 import { OpregContractSteps } from "./OpregContractSteps.js"
 import { RoaContractSteps } from "./RoaContractSteps.js"
 import { SwapContractSteps } from "./SwapContractSteps.js"
@@ -26,11 +28,13 @@ export namespace SysioContractSteps {
   export import bios = BiosContractSteps
   export import bond = BondContractSteps
   export import chains = ChainsContractSteps
+  export import councl = CounclContractSteps
   export import dclaim = DclaimContractSteps
   export import epoch = EpochContractSteps
   export import kicker = KickerContractSteps
   export import liq = LiqContractSteps
   export import msgch = MsgchContractSteps
+  export import msig = MsigContractSteps
   export import opreg = OpregContractSteps
   export import roa = RoaContractSteps
   export import swap = SwapContractSteps

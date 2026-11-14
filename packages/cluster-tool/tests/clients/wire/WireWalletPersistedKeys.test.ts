@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import { WireWallet } from "@wireio/cluster-tool/clients/wire"
+import { KeyGenerator, WireWallet } from "@wireio/cluster-tool/clients/wire"
 import type { WireKeyPair } from "@wireio/cluster-tool/types"
 
 /** A random K1 pair — what `KeyGenerator.create(KeyType.K1, …)` mints. */
@@ -16,8 +16,12 @@ const randomKeyPair = (): WireKeyPair => {
 }
 /** A pre-created batch operator's handle. */
 const OperatorKeyName = "batchop.a"
+/** A second pre-created batch operator's handle. */
+const SecondOperatorKeyName = "batchop.b"
 /** A handle no test persists. */
 const AbsentKeyName = "absent"
+/** What a key `createKey` generates is for. */
+const KeyPurpose = "batch operator batchop.a — WIRE account key (K1)"
 /** The permission bits a `stat` mode carries. */
 const FileModeMask = 0o777
 
@@ -87,5 +91,35 @@ describe("WireWallet persisted WIRE keys", () => {
     expect(() => WireWallet.loadKeyPair(dataPath, OperatorKeyName)).toThrow(
       /public key does not match its secret/
     )
+  })
+
+  it("createKey generates a random K1 key once and persists it under the handle", async () => {
+    const created = await WireWallet.createKey(
+      dataPath,
+      OperatorKeyName,
+      KeyGenerator.context(),
+      KeyPurpose
+    )
+    expect(created.type).toBe(KeyType.K1)
+    expect(created.publicKey).toMatch(/^PUB_K1_/)
+    expect(PrivateKey.from(created.privateKey).toPublic().toString()).toBe(
+      created.publicKey
+    )
+    expect(WireWallet.loadKeyPair(dataPath, OperatorKeyName)).toEqual(created)
+    const other = await WireWallet.createKey(
+      dataPath,
+      SecondOperatorKeyName,
+      KeyGenerator.context(),
+      KeyPurpose
+    )
+    expect(other.publicKey).not.toBe(created.publicKey)
+  })
+
+  it("createKey reads an already-persisted key back instead of replacing it", async () => {
+    const persisted = WireWallet.saveKey(dataPath, OperatorKeyName, randomKeyPair())
+    await expect(
+      WireWallet.createKey(dataPath, OperatorKeyName, KeyGenerator.context(), KeyPurpose)
+    ).resolves.toEqual(persisted)
+    expect(WireWallet.loadKeyPair(dataPath, OperatorKeyName)).toEqual(persisted)
   })
 })

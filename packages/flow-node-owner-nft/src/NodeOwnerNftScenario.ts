@@ -15,22 +15,24 @@ import {
   NodeOwnerTier,
   pollUntil,
   ProtocolTiming,
-  readNodeOwner,
-  readNodeOwnerReg,
   Report,
+  Steps,
   SyndicationUserSteps,
   verifyStep,
+  WireNodeOwnerTool,
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
-import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwnerNftScenarioCommitSteps.js"
-import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./steps/NodeOwnerNftScenarioMintSteps.js"
-import { NodeOwnerNftScenarioRegistrationSteps as RegistrationSteps } from "./steps/NodeOwnerNftScenarioRegistrationSteps.js"
 
 const { SysioAuthexChainkind, SysioContractName } = SysioContracts
 const { Actor } = Report
+const {
+  commit: CommitSteps,
+  mint: MintSteps,
+  registration: RegistrationSteps
+} = Steps.nodeOwner
 
 /** The owner's `nodeownerreg` audit row must be REJECTED with `reason` (reads). */
 async function assertRejectedAudit(
@@ -38,7 +40,7 @@ async function assertRejectedAudit(
   account: string,
   reason: NodeOwnerRejectReason
 ): Promise<void> {
-  const audit = await readNodeOwnerReg(ctx.wire, account)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, account)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Rejected,
@@ -58,7 +60,7 @@ async function assertRejectedWithoutRow(
   reason: NodeOwnerRejectReason
 ): Promise<void> {
   Assert.ok(
-    (await readNodeOwner(ctx.wire, account)) == null,
+    (await WireNodeOwnerTool.readNodeOwner(ctx.wire, account)) == null,
     `nodeowners row must be absent for ${account}`
   )
   await assertRejectedAudit(ctx, account, reason)
@@ -134,7 +136,7 @@ async function verifyExistingAccountRejected(
 
 async function verifyDuplicateRejected(ctx: ClusterBuildContext): Promise<void> {
   const account = Constants.DuplicateAccount,
-    registration = await readNodeOwner(ctx.wire, account)
+    registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, account)
   await assertRejectedAudit(ctx, account, NodeOwnerRejectReason.Duplicate)
   Assert.strictEqual(
     Number(registration?.tier),
@@ -183,7 +185,7 @@ async function assertNodeOwnerRegistrationAborts(
 async function verifyHappyPathConfirmed(
   ctx: ClusterBuildContext
 ): Promise<void> {
-  const registration = await readNodeOwner(ctx.wire, Constants.HappyPathAccount)
+  const registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.HappyPathAccount)
   Assert.ok(
     registration != null,
     `missing nodeowners row for ${Constants.HappyPathAccount}`
@@ -193,7 +195,7 @@ async function verifyHappyPathConfirmed(
     NodeOwnerTier.T1,
     "registered tier must be T1"
   )
-  const audit = await readNodeOwnerReg(ctx.wire, Constants.HappyPathAccount)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, Constants.HappyPathAccount)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Confirmed,
@@ -214,17 +216,17 @@ async function verifyCommitPathConfirmed(
   await pollUntil(
     `nodeowners row for ${Constants.CommitPathAccount} via OPP`,
     async () =>
-      (await readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
+      (await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
     Constants.CommitPathDeadlineMs,
     Constants.CommitPathPollIntervalMs
   )
-  const registration = await readNodeOwner(ctx.wire, Constants.CommitPathAccount)
+  const registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)
   Assert.strictEqual(
     Number(registration.tier),
     NodeOwnerTier.T1,
     "commit-path registered tier must be T1"
   )
-  const audit = await readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Confirmed,

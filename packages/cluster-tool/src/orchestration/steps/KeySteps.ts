@@ -26,6 +26,7 @@ import {
 } from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { WireWallet } from "../../clients/wire/WireWallet.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { KMSClientProvider } from "../../config/KMSClientProvider.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
@@ -120,6 +121,65 @@ export namespace KeySteps {
       })
     )
     ctx.keyStore.pushNodes(...nodes)
+  }
+
+  /** Input for {@link planImportPersistedKey}. */
+  export interface ImportPersistedKeyInput extends StepInput {
+    readonly kind: "KeySteps.ImportPersistedKeyInput"
+    /** The key's durable handle ({@link WireWallet.createKey}). */
+    readonly keyName: string
+    /** The key's public half: the Report's record, and what the persisted key must match. */
+    readonly publicKey: string
+  }
+
+  /**
+   * Import a persisted WIRE key ({@link WireWallet.createKey}) into the kiod
+   * wallet, so the account it controls can sign — a flow's identity whose key
+   * its pre-bootstrap stage created, so its plan already carries the public
+   * half. The runner refuses a persisted key whose public half is not
+   * `publicKey`.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param keyName - The key's durable handle.
+   * @param publicKey - The key's public half.
+   * @returns The definition step.
+   */
+  export function planImportPersistedKey<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    keyName: string,
+    publicKey: string
+  ): ClusterBuildStep<C, ImportPersistedKeyInput> {
+    return ClusterBuildStep.create<C, ImportPersistedKeyInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "KeySteps.ImportPersistedKeyInput", keyName, publicKey },
+      runImportPersistedKey
+    )
+  }
+
+  /** Named runner — read the key back by handle, then ONE wallet import of its private half. */
+  export async function runImportPersistedKey<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ImportPersistedKeyInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const keyPair = WireWallet.loadKeyPair(ctx.config.dataPath, input.keyName)
+    Assert.strictEqual(
+      keyPair.publicKey,
+      input.publicKey,
+      `KeySteps: the WIRE key persisted as "${input.keyName}" is not the planned ${input.publicKey}`
+    )
+    const wallet = await ctx.wire.wallet.getOrCreate()
+    await wallet.addPrivateKey(keyPair.privateKey)
   }
 
   /**

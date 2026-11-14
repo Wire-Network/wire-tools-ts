@@ -1,4 +1,6 @@
 export * from "./WireSysioContractTool.js"
+export * from "./WireAuthorityAuditTool.js"
+export * from "./WireNodeOwnerTool.js"
 export * from "./WireUserTool.js"
 export * from "./WireOperatorProvisioningTool.js"
 export * from "./OperatorDaemonTool.js"
