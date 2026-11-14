@@ -343,6 +343,12 @@ export namespace Constants {
   /** Maximum transaction CPU usage (microseconds). */
   export const MAX_TRANSACTION_CPU_USAGE = 150_000
   /**
+   * Genesis `target_block_net_usage_pct` and `target_block_cpu_usage_pct`, in hundredths of a
+   * percent (10 = 0.1%). Above the target the chain shrinks every account's NET or CPU limit
+   * toward its share of the block maximum; one shared value prices NET the same way as CPU.
+   */
+  export const TARGET_BLOCK_USAGE_PCT = 10
+  /**
    * Genesis `notify_cpu_stipend` (microseconds): the CPU of a notified contract
    * that whoever pays for the notifying action covers. Matches wire-sysio's
    * default; governance changes it through `setparams`.

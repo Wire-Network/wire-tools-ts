@@ -887,6 +887,19 @@ describe("NodeConfig", () => {
       expect(genesis.initial_finalizer_key).toBeUndefined()
     })
 
+    it("targets NET and CPU block usage at the same 0.1%", () => {
+      const { initial_configuration: configuration } = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
+      expect(configuration.target_block_net_usage_pct).toBe(
+        Constants.TARGET_BLOCK_USAGE_PCT
+      )
+      expect(configuration.target_block_cpu_usage_pct).toBe(
+        configuration.target_block_net_usage_pct
+      )
+      expect(Constants.TARGET_BLOCK_USAGE_PCT).toBe(10)
+    })
+
     it("does not emit the removed net usage parameters", () => {
       const genesis = JSON.parse(
         ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
