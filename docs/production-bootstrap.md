@@ -266,9 +266,6 @@ before the operator `createlink` calls in Stage 12.
 
 | Field | Value | Notes |
 |---|---|---|
-| `max_available_producers` | `21` | |
-| `max_available_batch_ops` | `63` | |
-| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
 | `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
 | `terminate_max_consecutive_misses` | `5` | |
 | `terminate_max_pct_misses_24h` | `5` | |
