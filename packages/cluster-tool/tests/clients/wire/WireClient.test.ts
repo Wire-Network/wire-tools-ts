@@ -2,13 +2,18 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 
+import { identity } from "lodash"
 import {
+  Action,
   API,
   APIClient,
   APIError,
+  Authority,
   createClassicSigner,
   KeyType,
+  Name,
   PrivateKey,
+  PublicKey,
   SysioContracts
 } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
@@ -23,6 +28,7 @@ import { toURL } from "@wireio/cluster-tool/utils"
 import { enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 
 import { TransactionRejection } from "../../fixtures/clio/transactionRejection.js"
+import { NewAccountTraceFixture } from "../../fixtures/NewAccountTraceFixture.js"
 
 describe("WireClient", () => {
   let config: WireClientConfig
@@ -717,6 +723,74 @@ describe("WireClient", () => {
     })
   })
 
+  describe("decodeTraceActionData", () => {
+    const { Abi } = NewAccountTraceFixture
+
+    /** An ABI reader answering with the `newaccount` ABI. */
+    function abiReader() {
+      return { getAbi: jest.fn().mockResolvedValue(Abi) }
+    }
+
+    /** `trace` read as `sysio::newaccount` through `abis`. */
+    function decode(
+      abis: ReturnType<typeof abiReader>,
+      trace: WireClient.TraceAction
+    ): Promise<SysioContracts.SysioSystemNewaccountAction> {
+      return WireClient.decodeTraceActionData(
+        abis,
+        SysioContracts.SysioContractName.system,
+        NewAccountTraceFixture.Action,
+        trace
+      )
+    }
+
+    it("returns the node's decoded params without reading the ABI", async () => {
+      const abis = abiReader()
+      await expect(decode(abis, NewAccountTraceFixture.decoded("alice"))).resolves.toEqual(
+        NewAccountTraceFixture.data("alice")
+      )
+      expect(abis.getAbi).not.toHaveBeenCalled()
+    })
+
+    it("decodes the encoded data with the contract's ABI when the node did not decode it", async () => {
+      const abis = abiReader()
+      await expect(decode(abis, NewAccountTraceFixture.raw("alice"))).resolves.toEqual(
+        NewAccountTraceFixture.data("alice")
+      )
+      expect(abis.getAbi).toHaveBeenCalledTimes(1)
+      expect(String(abis.getAbi.mock.calls[0][0])).toBe("sysio")
+    })
+
+    it("fails, keeping the cause, when the data does not decode", async () => {
+      const trace = NewAccountTraceFixture.raw("alice"),
+        failure = await decode(abiReader(), { ...trace, data: trace.data.slice(0, -2) }).then(
+          () => null,
+          identity<NestedError>
+        )
+      expect(failure).toBeInstanceOf(NestedError)
+      expect(failure.message).toMatch(
+        /^a trace of sysio::newaccount carries no decoded params, and its data does not decode with the sysio ABI/
+      )
+      expect(failure.context).toEqual({ data: trace.data.slice(0, -2) })
+      expect(failure.causes).toHaveLength(1)
+    })
+
+    it("fails when the ABI does not declare the action", async () => {
+      const abis = { getAbi: jest.fn().mockResolvedValue({ ...Abi, actions: [] }) }
+      await expect(decode(abis, NewAccountTraceFixture.raw("alice"))).rejects.toThrow(
+        /does not decode with the sysio ABI/
+      )
+    })
+
+    it("refuses a trace of another action, reading no ABI", async () => {
+      const abis = abiReader()
+      await expect(
+        decode(abis, { ...NewAccountTraceFixture.raw("alice"), name: "updateauth" })
+      ).rejects.toThrow("a trace of sysio::updateauth is not sysio::newaccount")
+      expect(abis.getAbi).not.toHaveBeenCalled()
+    })
+  })
+
   describe("getTransactionId", () => {
     it("extracts from an object", () => {
       expect(WireClient.getTransactionId({ transaction_id: "abc" })).toBe("abc")
@@ -893,6 +967,49 @@ describe("WireClient", () => {
     })
   })
 
+  describe("toAuthorityType", () => {
+    /**
+     * A decoded authority. The test's sdk-core types resolve to the ESM declarations and the
+     * client's to the CJS ones, so the instance crosses into the client as the client's own
+     * `Authority`; at run time both are the one CJS module.
+     */
+    function decoded(
+      authority: Parameters<typeof Authority.from>[0]
+    ): Parameters<typeof WireClient.toAuthorityType>[0] {
+      return Authority.from(authority) as never
+    }
+
+    it("spells a decoded authority as the generated type: plain numbers, string names and keys", () => {
+      const key = PublicKey.from(Constants.DEV_K1_PUBLIC_KEY),
+        authority = decoded({
+          threshold: 2,
+          keys: [{ key, weight: 1 }],
+          accounts: [
+            { permission: { actor: "sysio.nodes", permission: "active" }, weight: 1 }
+          ]
+        })
+      expect(WireClient.toAuthorityType(authority)).toEqual({
+        threshold: 2,
+        keys: [{ key: key.toString(), weight: 1 }],
+        accounts: [
+          { permission: { actor: "sysio.nodes", permission: "active" }, weight: 1 }
+        ]
+      })
+    })
+
+    it("keeps an authority with neither keys nor accounts empty", () => {
+      expect(WireClient.toAuthorityType(decoded({ threshold: 1 }))).toEqual({
+        threshold: 1,
+        keys: [],
+        accounts: []
+      })
+    })
+  })
+
+  it("spells the root permission's parent empty", () => {
+    expect(WireClient.OwnerParent).toBe("")
+  })
+
   describe("getRamQuota", () => {
     it("reads get_account's ram_quota for the named account as a number", async () => {
       const client = new WireClient(config),
@@ -952,6 +1069,61 @@ describe("WireClient", () => {
         /positive byte count/
       )
       expect(setacctram).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("encoded actions", () => {
+    /**
+     * An already-encoded `sysio.councl::syncnodes` (its data is the caller's name). The test
+     * build types sdk-core from its ESM declarations and the source from its CJS ones, so the
+     * instance crosses into the client as the client's own `Action`; at run time both are the
+     * one CJS module.
+     */
+    function encodedSyncnodes(): Parameters<typeof WireClient.toEncodedActionJson>[0] {
+      return Action.from({
+        account: "sysio.councl",
+        name: "syncnodes",
+        authorization: [{ actor: "sysio", permission: "active" }],
+        data: Name.from("sysio").value.byteArray
+      }) as never
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("spells an encoded action as clio's push form with hex data", () => {
+      const action = encodedSyncnodes()
+      expect(WireClient.toEncodedActionJson(action)).toEqual({
+        account: "sysio.councl",
+        name: "syncnodes",
+        authorization: [{ actor: "sysio", permission: "active" }],
+        data: action.data.hexString
+      })
+    })
+
+    it("pushes encoded and typed actions as ONE transaction, in order", async () => {
+      const client = new WireClient(config),
+        send = jest.spyOn(client["runner"], "run").mockResolvedValue({
+          transaction_id: WireClient.NoTransactionSentTransactionId
+        } as never),
+        typed = client
+          .getSysioContract(SysioContracts.SysioContractName.system)
+          .actions.updateauth.prepare(
+            {
+              account: "sysio",
+              permission: "active",
+              parent: "owner",
+              auth: { threshold: 1, keys: [], accounts: [] }
+            },
+            { authorization: WireClient.activeAuthorization("sysio") }
+          ),
+        action = encodedSyncnodes()
+      await client.invokeTransaction(action, typed)
+      expect(send).toHaveBeenCalledTimes(1)
+      const [args] = send.mock.calls[0] as [string[]],
+        { actions } = JSON.parse(args[args.indexOf("-j") + 1])
+      expect(actions).toHaveLength(2)
+      expect(actions[0]).toEqual(WireClient.toEncodedActionJson(action))
+      expect(actions[1]).toMatchObject({ account: "sysio", name: "updateauth" })
     })
   })
 
@@ -1265,6 +1437,41 @@ describe("WireClient", () => {
           data: claimPay(Operator)
         }
       ])
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("hands an encoded action to the registered signer as it is, beside a typed one", async () => {
+      const client = new WireClient(config),
+        response = pushResponse(),
+        push = jest
+          .spyOn(APIClient.prototype, "pushTransaction")
+          .mockResolvedValue(response),
+        run = jest.spyOn(ClioRunner.prototype, "run"),
+        authorization = WireClient.activeAuthorization(Operator),
+        claim = client
+          .getSysioContract(SysioContracts.SysioContractName.system)
+          .actions.claimpay.prepare(claimPay(Operator), { authorization }),
+        // Typed as the client's own `Action` — see the "encoded actions" suite.
+        encoded: Parameters<typeof WireClient.toEncodedActionJson>[0] = Action.from({
+          account: "sysio.councl",
+          name: "syncnodes",
+          authorization: [{ actor: Operator, permission: WireClient.ActivePermission }],
+          data: Name.from(Operator).value.byteArray
+        }) as never
+      irreversibleAtBlock(client)
+      client.addSigner(Operator, newSigner())
+      await expect(client.invokeTransaction(encoded, claim)).resolves.toBe(
+        response
+      )
+      expect(push).toHaveBeenCalledTimes(1)
+      const [[pushed]] = push.mock.calls as unknown as [[unknown[]]]
+      expect(pushed[0]).toBe(encoded)
+      expect(pushed[1]).toEqual({
+        account: "sysio",
+        name: "claimpay",
+        authorization,
+        data: claimPay(Operator)
+      })
       expect(run).not.toHaveBeenCalled()
     })
 

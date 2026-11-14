@@ -1,19 +1,21 @@
 import Assert from "node:assert"
+import { Report } from "../../../report/Report.js"
 import {
-  ClusterBuildContext,
-  ClusterBuildStep,
-  OperatorDaemonArtifactsKey,
-  NodeOwnerTier,
-  Report,
   approveNodeEscrow,
   commitNode,
   loadBar,
-  wireKeyFromPublicKey,
-  type BarContract,
-  type ClusterBuildStepOptions,
-  type StepInput
-} from "@wireio/cluster-tool"
-import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenarioMintSteps.js"
+  NodeOwnerTier,
+  type BarContract
+} from "../../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { wireKeyFromPublicKey } from "../../../utils/keyPairUtils.js"
+import { ClusterBuildContext } from "../../ClusterBuildContext.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../../ClusterBuildStep.js"
+import { OperatorDaemonArtifactsKey } from "../../outputs/OperatorDaemonArtifacts.js"
+import type { StepInput } from "../../StepRunner.js"
+import { NodeOwnerMintSteps as MintSteps } from "./NodeOwnerMintSteps.js"
 
 /**
  * Step factory + companions for the PRODUCTION node-owner claim path —
@@ -21,7 +23,7 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * queues the full `NodeOwnerRegistration` NODE_OWNER_REG attestation, which
  * rides the next outbound OPP envelope to the depot, where
  * `sysio.msgch::dispatch_node_owner_reg` inline-sends the same
- * `nodeownreg` action the scenario's direct-drive phases push
+ * `nodeownreg` action {@link NodeOwnerRegistrationSteps} push
  * by hand. The committer is the run's deployer wallet (`ctx.ethereum.wallet`,
  * the random wallet the bootstrap persisted and funded): it holds the minted
  * tier token, and its uncompressed secp256k1 key is the claim's depositor key
@@ -32,7 +34,7 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * must first approve BAR as an ERC-1155 operator — the
  * {@link planApproveEscrow} write, one step before the commit.
  */
-export namespace NodeOwnerNftScenarioCommitSteps {
+export namespace NodeOwnerCommitSteps {
   /**
    * Resolve `BAR` from the run's deploy artifacts (`outpost-addrs.json` + the
    * hardhat artifact), bound to the run's deployer wallet — the committer. A
@@ -53,7 +55,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
 
   /** Input for {@link planApproveEscrow} — one `setApprovalForAll` write. */
   export interface ApproveEscrowInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioCommitSteps.ApproveEscrowInput"
+    readonly kind: "NodeOwnerCommitSteps.ApproveEscrowInput"
   }
 
   /**
@@ -80,7 +82,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
       name,
       description,
       options,
-      { kind: "NodeOwnerNftScenarioCommitSteps.ApproveEscrowInput" },
+      { kind: "NodeOwnerCommitSteps.ApproveEscrowInput" },
       runApproveEscrow
     )
   }
@@ -109,7 +111,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
 
   /** Input for {@link planCommitNode} — one `BAR.commitNode` write. */
   export interface CommitNodeInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioCommitSteps.CommitNodeInput"
+    readonly kind: "NodeOwnerCommitSteps.CommitNodeInput"
     /** The claimed tier — WireNodes token ids ARE the tiers, so also the ERC-1155 id committed. */
     readonly tier: NodeOwnerTier
     /** The Wire account the claim registers (created in-flow by the depot when absent). */
@@ -152,7 +154,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
       description,
       options,
       {
-        kind: "NodeOwnerNftScenarioCommitSteps.CommitNodeInput",
+        kind: "NodeOwnerCommitSteps.CommitNodeInput",
         tier,
         wireAccountName,
         wirePublicKey

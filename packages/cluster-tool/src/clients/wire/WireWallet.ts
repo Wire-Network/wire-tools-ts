@@ -11,6 +11,7 @@ import { keyPairFromPrivate } from "../../utils/keyPairUtils.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClioRunner, type ClioError } from "./clio/ClioRunner.js"
+import { KeyGenerator } from "./KeyGenerator.js"
 
 const log = getLogger("WireWallet")
 
@@ -221,6 +222,34 @@ export namespace WireWallet {
       flag: "wx"
     })
     return loadKeyPair(dataPath, name)
+  }
+
+  /**
+   * Get-or-create a persisted WIRE key under its handle: a random K1 pair from
+   * the `KeyGenerator` facade, persisted once ({@link saveKey}); a handle
+   * already holding a key is read back verbatim, so a re-run keeps the
+   * identity. The ONE get-or-create every persisted WIRE key site uses — the
+   * K1 counterpart of `EthereumFundingTool.createWallet`.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle.
+   * @param keyContext - The key-generation tooling.
+   * @param purpose - What the key is for (lands in the keygen record).
+   * @returns The persisted pair.
+   */
+  export async function createKey(
+    dataPath: string,
+    name: string,
+    keyContext: KeyGenerator.Context,
+    purpose: string
+  ): Promise<WireKeyPair> {
+    return hasKey(dataPath, name)
+      ? loadKeyPair(dataPath, name)
+      : saveKey(
+          dataPath,
+          name,
+          await KeyGenerator.create(KeyType.K1, keyContext, { purpose })
+        )
   }
 
   /**

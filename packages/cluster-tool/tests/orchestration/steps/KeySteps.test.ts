@@ -17,14 +17,14 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { NodeopProcess } from "@wireio/cluster-tool/cluster/processes"
-import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { KeyGenerator, WireWallet } from "@wireio/cluster-tool/clients/wire"
 import {
   ClusterConfigProvider,
   NodeConfig,
   NodeRole
 } from "@wireio/cluster-tool/config"
 import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
-import { Steps } from "@wireio/cluster-tool/orchestration"
+import { Steps, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import type { WireFinalizerKeyPair } from "@wireio/cluster-tool/types/KeyPair"
@@ -2524,5 +2524,93 @@ describe("Steps.keys", () => {
         context
       )
     })
+  })
+})
+
+describe("Steps.keys.importPersistedKey", () => {
+  /** A flow identity's durable key handle. */
+  const KeyName = "governance-handoff-gova"
+  /** What the persisted key is for. */
+  const Purpose = "governance handoff — gova's account key (K1)"
+  let dataPath: string
+
+  beforeEach(() => {
+    dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "key-steps-import-"))
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    Fs.rmSync(dataPath, { recursive: true, force: true })
+  })
+
+  /** A real context over `dataPath` whose kiod wallet records each import. */
+  function importContext(addPrivateKey: jest.Mock): ClusterBuildContext {
+    const ctx = fixtureContext({ dataPath })
+    jest
+      .spyOn(ctx.wire.wallet, "getOrCreate")
+      .mockResolvedValue({ addPrivateKey } as never)
+    return ctx
+  }
+
+  it("records the key's handle and public half", () => {
+    const step = Steps.keys.planImportPersistedKey(
+      Report.Actor.User,
+      "import-key-gova",
+      "import gova's key",
+      {},
+      KeyName,
+      "PUB_K1_planned"
+    )
+    expect(step.input).toEqual({
+      kind: "KeySteps.ImportPersistedKeyInput",
+      keyName: KeyName,
+      publicKey: "PUB_K1_planned"
+    })
+    expect(step.runner).toBe(Steps.keys.runImportPersistedKey)
+  })
+
+  it("imports the persisted key's private half into the wallet once, and nothing when aborted", async () => {
+    const persisted = await WireWallet.createKey(
+        dataPath,
+        KeyName,
+        KeyGenerator.context(),
+        Purpose
+      ),
+      addPrivateKey = jest.fn().mockResolvedValue(undefined),
+      ctx = importContext(addPrivateKey),
+      input = {
+        kind: "KeySteps.ImportPersistedKeyInput" as const,
+        keyName: KeyName,
+        publicKey: persisted.publicKey
+      }
+    await Steps.keys.runImportPersistedKey(ctx, input, new AbortController().signal)
+    expect(addPrivateKey).toHaveBeenCalledTimes(1)
+    expect(addPrivateKey).toHaveBeenCalledWith(persisted.privateKey)
+    await expect(
+      Steps.keys.runImportPersistedKey(ctx, input, AbortSignal.abort())
+    ).rejects.toThrow()
+    expect(addPrivateKey).toHaveBeenCalledTimes(1)
+  })
+
+  it("refuses a persisted key that is not the planned one, and a handle nothing persisted", async () => {
+    await WireWallet.createKey(dataPath, KeyName, KeyGenerator.context(), Purpose)
+    const addPrivateKey = jest.fn().mockResolvedValue(undefined),
+      ctx = importContext(addPrivateKey),
+      other = PrivateKey.generate(KeyType.K1).toPublic().toString()
+    await expect(
+      Steps.keys.runImportPersistedKey(
+        ctx,
+        { kind: "KeySteps.ImportPersistedKeyInput", keyName: KeyName, publicKey: other },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/is not the planned/)
+    await expect(
+      Steps.keys.runImportPersistedKey(
+        ctx,
+        { kind: "KeySteps.ImportPersistedKeyInput", keyName: "absent", publicKey: other },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/not found/)
+    expect(addPrivateKey).not.toHaveBeenCalled()
   })
 })

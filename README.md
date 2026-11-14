@@ -141,6 +141,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
 | `flow-batch-operator-prefunding` | `@wireio/test-flow-batch-operator-prefunding` | The pre-funded launch: batch-operator keys pre-created and persisted before the cluster, frozen into the launch-data exports, adopted by the bootstrap (`adoptOnly`), credited by the import, and bonding a user's Ethereum syndication from the first epochs |
+| `flow-governance-handoff` | `@wireio/test-flow-governance-handoff` | Tier-1 node owners take `sysio` through `sysio.nodes`, govern it by msig, absorb a late owner, then hand it to a stand-in council; authority audits before and after |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
@@ -166,9 +167,10 @@ and outbound queue entries are intermediate checks.
 | `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
 | `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
 
-The other six enabled flows (`flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
-`flow-operator-collateral-deposit`, `flow-producer-registration`) exercise their own paths. Imported
+The other seven enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-governance-handoff`,
+`flow-node-owner-nft`, `flow-operator-collateral-deposit`, `flow-producer-registration`)
+exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 

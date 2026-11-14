@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
+import { asOption, Either } from "@3fv/prelude-ts"
 import { flatten, negate, uniq } from "lodash"
 import { isMatching, match, P } from "ts-pattern"
 import {
@@ -13,12 +13,16 @@ import {
   NestedError
 } from "@wireio/shared"
 import {
+  type AbiProvider,
+  Action,
   API,
   APIClient,
   type AnyAction,
   Asset,
+  type Authority,
   Name,
   type PermissionLevelType,
+  Serializer,
   type SignerProvider,
   SysioContracts
 } from "@wireio/sdk-core"
@@ -349,16 +353,28 @@ export class WireClient {
   }
 
   /**
-   * Multi-action tx; variadic + flatten. Waits by default. When any action's actor has a
-   * registered signer ({@link addSigner}), every action must be authorized by that one
-   * account and the whole list is signed and sent through sdk-core instead of clio.
+   * Multi-action tx; variadic + flatten. Waits by default. A typed payload's
+   * data is encoded by clio against the deployed ABI; an sdk-core
+   * {@link Action} rides already encoded, for an action whose data the
+   * generated payload types cannot carry (`sysio.msig::propose`'s whole
+   * proposed transaction). When any action's actor has a registered signer
+   * ({@link addSigner}), every action must be authorized by that one account
+   * and the whole list is signed and sent through sdk-core instead of clio,
+   * an encoded {@link Action} as it is.
    */
   async invokeTransaction(
     ...payloads: Array<
-      WireClient.ActionPayload<any, any> | WireClient.ActionPayload<any, any>[]
+      | WireClient.ActionPayload<any, any>
+      | WireClient.ActionPayload<any, any>[]
+      | Action
     >
   ): Promise<API.v1.SendTransactionResponse> {
-    const actions = flatten(payloads),
+    const flattened = flatten(payloads),
+      actions = flattened.map(payload =>
+        payload instanceof Action
+          ? WireClient.toEncodedActionJson(payload)
+          : payload
+      ),
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
       signerClient = this.resolveSignerClient(
         label,
@@ -380,12 +396,16 @@ export class WireClient {
           ? () =>
               this.pushSigned(
                 signerClient,
-                actions.map(({ account, name, authorization, data }) => ({
-                  account,
-                  name,
-                  authorization: [...authorization],
-                  data
-                }))
+                flattened.map(payload =>
+                  payload instanceof Action
+                    ? payload
+                    : {
+                        account: payload.account,
+                        name: payload.name,
+                        authorization: [...payload.authorization],
+                        data: payload.data
+                      }
+                )
               )
           : sendViaClio
     return this.withFinality(label, send)
@@ -513,10 +533,11 @@ export class WireClient {
    * so the grant is the account's current limit plus `ramBytes`.
    *
    * Bootstrap uses this for `sysio.andon`, whose native permissions and action
-   * links outgrow its code + abi allowance. OPP bond rows use the privileged
-   * request issuer's system-pool payer, so batch operators need no separate
-   * bond-row grant. Other accounts' RAM needs depend on the rows they create
-   * and the payer selected for those rows.
+   * links outgrow its code + abi allowance, and for the governance authorities
+   * `sysio.nodes` and `sysio.cncl`, whose `active` `sysio.councl` rewrites. OPP
+   * bond rows use the privileged request issuer's system-pool payer, so batch
+   * operators need no separate bond-row grant. Other accounts' RAM needs depend
+   * on the rows they create and the payer selected for those rows.
    *
    * @param account - The account whose RAM limit is raised.
    * @param ramBytes - Bytes added to the account's current RAM limit.
@@ -1367,6 +1388,16 @@ export namespace WireClient {
     readonly authorization: ReadonlyArray<PermissionLevelType>
     readonly data: ActionData<Name, Action>
   }
+  /**
+   * Any typed {@link ActionPayload} of any generated system contract — the element
+   * of a transaction that mixes contracts, each payload still checked against its
+   * own contract's action names and data.
+   */
+  export type AnyActionPayload = {
+    [Name in SysioContractName]: {
+      [Action in ActionName<Name>]: ActionPayload<Name, Action>
+    }[ActionName<Name>]
+  }[SysioContractName]
   export interface ActionInvoker<
     Name extends SysioContractName,
     Action extends ActionName<Name>
@@ -1535,6 +1566,16 @@ export namespace WireClient {
 
   /** The permission an account signs its own actions with. */
   export const ActivePermission = "active"
+  /** The root permission of every account; it can change any of the account's permissions. */
+  export const OwnerPermission = "owner"
+  /**
+   * The virtual permission a contract's own code holds: an authority that lists
+   * `<contract>@sysio.code` lets that contract's inline actions act for it. No key
+   * satisfies it.
+   */
+  export const CodePermission = "sysio.code"
+  /** The parent `owner` carries, spelled empty: `owner` is every account's root permission. */
+  export const OwnerParent = ""
 
   /**
    * `<account>@active` — the authorization for an action the ACCOUNT itself signs: a
@@ -1720,6 +1761,134 @@ export namespace WireClient {
     upperBound?: string | null
   }
 
+  /**
+   * An already-encoded action as `clio push transaction` takes it: `data` is
+   * the action's hex bytes, so clio needs no ABI to push it.
+   */
+  export interface EncodedActionJson {
+    /** The contract account. */
+    readonly account: string
+    /** The action name. */
+    readonly name: string
+    /** The declared authorizations, in order. */
+    readonly authorization: PermissionLevelType[]
+    /** The encoded action data, as hex. */
+    readonly data: string
+  }
+
+  /**
+   * The {@link EncodedActionJson} form of an sdk-core {@link Action}.
+   *
+   * @param action - The encoded action.
+   * @returns Its push form, every name spelled as a string.
+   */
+  export function toEncodedActionJson(action: Action): EncodedActionJson {
+    return {
+      account: String(action.account),
+      name: String(action.name),
+      authorization: action.authorization.map(level => ({
+        actor: String(level.actor),
+        permission: String(level.permission)
+      })),
+      data: action.data.hexString
+    }
+  }
+
+  /**
+   * The generated {@link SysioContracts.SysioSystemAuthorityType} form of an
+   * sdk-core {@link Authority} — what `get_account` decodes a permission's
+   * `required_auth` into — with every number plain and every name and key a
+   * string (keys in sdk-core's `PUB_` spelling).
+   *
+   * @param authority - The decoded authority.
+   * @returns Its threshold, keys and accounts as the generated type spells them.
+   */
+  export function toAuthorityType(
+    authority: Authority
+  ): SysioContracts.SysioSystemAuthorityType {
+    return {
+      threshold: Number(authority.threshold),
+      keys: authority.keys.map(({ key, weight }) => ({
+        key: String(key),
+        weight: Number(weight)
+      })),
+      accounts: authority.accounts.map(({ permission, weight }) => ({
+        permission: {
+          actor: String(permission.actor),
+          permission: String(permission.permission)
+        },
+        weight: Number(weight)
+      }))
+    }
+  }
+
+  /**
+   * A traced action's data as its generated type. The trace API decodes `data`
+   * into `params` with the ABI the contract held when the action ran, and omits
+   * `params` when it holds no such ABI or cannot decode with it; such an action's
+   * `data` is decoded here with the contract's ABI as `abis` reads it, the ABI the
+   * generated type describes.
+   *
+   * @param abis - Reads the contract's ABI, only for an action without `params`;
+   *   the caller picks the cache lifetime (an sdk-core `ABICache` per scan).
+   * @param contract - The contract the action belongs to.
+   * @param action - The action.
+   * @param trace - A traced `action` of `contract`.
+   * @returns The action's data.
+   * @throws When `trace` is another action; the ABI read's own error when it
+   *   fails; NestedError when `trace` carries no `params` and its `data` does
+   *   not decode as `action`.
+   */
+  export async function decodeTraceActionData<
+    Name extends SysioContractName,
+    Action extends ActionName<Name>
+  >(
+    abis: AbiProvider,
+    contract: Name,
+    action: Action,
+    trace: TraceAction
+  ): Promise<ActionData<Name, Action>> {
+    const { account } = SysioContractDefinitions[contract]
+    Assert.ok(
+      trace.account === account && trace.name === action,
+      `a trace of ${trace.account}::${trace.name} is not ${account}::${action}`
+    )
+    return asOption(trace.params).match({
+      // Untyped trace JSON, typed here once: the node decoded it as this action.
+      Some: async params => params as ActionData<Name, Action>,
+      None: () => decodeTraceData<ActionData<Name, Action>>(abis, account, trace)
+    })
+  }
+
+  /**
+   * `trace`'s encoded `data` decoded with `account`'s ABI, as the plain object
+   * its generated type describes.
+   */
+  async function decodeTraceData<Data>(
+    abis: AbiProvider,
+    account: string,
+    trace: TraceAction
+  ): Promise<Data> {
+    const abi = await abis.getAbi(Name.from(account))
+    return Either.try(() =>
+      Serializer.objectify(
+        Action.from({
+          account,
+          name: trace.name,
+          authorization: [],
+          data: trace.data
+        }).decodeData(abi)
+      )
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          `a trace of ${account}::${trace.name} carries no decoded params, and its data does not decode with the ${account} ABI`,
+          { cause: error, context: { data: trace.data } }
+        )
+      })
+      .getOrThrow()
+  }
+
   // ── Response shapes ──
   export interface GetInfoResponse {
     server_version: string
@@ -1775,10 +1944,19 @@ export namespace WireClient {
   }
   /** One executed action in a trace-API response, inline actions and notifications included. */
   export interface TraceAction {
+    /** The account whose code ran the action: `account` itself, or a notified one. */
     receiver: string
+    /** The contract the action belongs to. */
     account: string
+    /** The action. */
     name: string
-    /** The action data, decoded with the ABI in effect when it ran; each action has its own type. */
+    /** The encoded action data, as hex; the trace API always serves it. */
+    data: string
+    /**
+     * The action data, decoded with the ABI in effect when it ran; each action has
+     * its own type. Absent when the node holds no such ABI or cannot decode with it
+     * — read it through {@link decodeTraceActionData}.
+     */
     params?: unknown
   }
   /** One transaction in a traced block; failed transactions are never traced. */

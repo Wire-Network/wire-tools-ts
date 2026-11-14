@@ -7,16 +7,15 @@ const {
   NodeOwnerRegStatus,
   NodeOwnerRejectReason,
   NodeOwnerTier,
-  OutputStore
+  OutputStore,
+  Steps
 } = require("@wireio/cluster-tool")
 
 const { NodeOwnerNftScenario } = require("../lib/NodeOwnerNftScenario.js")
 const {
   NodeOwnerNftScenarioConstants: Constants
 } = require("../lib/NodeOwnerNftScenarioConstants.js")
-const {
-  NodeOwnerNftScenarioRegistrationSteps: RegistrationSteps
-} = require("../lib/steps/NodeOwnerNftScenarioRegistrationSteps.js")
+const { registration: RegistrationSteps } = Steps.nodeOwner
 
 afterEach(() => mock.restoreAll())
 
@@ -26,10 +25,10 @@ function planPhases() {
   return build.children
 }
 
-const createKind = "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput",
+const createKind = "NodeOwnerRegistrationSteps.CreateNamedUserInput",
   walletKind = "EthereumFundingTool.CreateWalletInput",
   linkKind = "SyndicationUserSteps.LinkEthereumKeyInput",
-  registerKind = "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput"
+  registerKind = "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
 
 test("only the rejection fixtures create accounts before registration", () => {
   const phases = planPhases(),
@@ -131,8 +130,9 @@ async function checkRejectionState(readbackEncoding) {
       const contracts = {
         [SysioContracts.SysioContractName.roa]: {
           tables: {
-            nodeowners: { query: async () => ({ rows: owners }) },
-            nodeownerreg: { query: async () => ({ rows: [audit] }) }
+            roastate: { query: async () => ({ rows: [{ network_gen: 0 }] }) },
+            nodeowners: { queryAll: async () => owners },
+            nodeownerreg: { queryAll: async () => [audit] }
           }
         },
         [SysioContracts.SysioContractName.authex]: {

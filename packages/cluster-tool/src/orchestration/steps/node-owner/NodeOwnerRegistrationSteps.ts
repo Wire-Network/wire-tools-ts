@@ -1,15 +1,17 @@
+import { EthereumWallet } from "../../../clients/ethereum/EthereumWallet.js"
+import { Report } from "../../../report/Report.js"
 import {
-  ClusterBuildContext,
-  ClusterBuildStep,
-  EthereumWallet,
   NodeOwnerTier,
   pushNewNamedUser,
-  pushNodeOwnerReg,
-  Report,
-  type ClusterBuildStepOptions,
-  type EthereumIdentity,
-  type StepInput
-} from "@wireio/cluster-tool"
+  pushNodeOwnerReg
+} from "../../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import type { EthereumIdentity } from "../../../types/KeyPair.js"
+import { ClusterBuildContext } from "../../ClusterBuildContext.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../../ClusterBuildStep.js"
+import type { StepInput } from "../../StepRunner.js"
 
 /**
  * Registration writes for fresh claims and pre-existing-account rejection fixtures.
@@ -23,8 +25,12 @@ import {
  * pre-existing Ethereum link is another persisted wallet, linked by the
  * fixture account's own `sysio.authex::createlink`
  * (`SyndicationUserSteps.planLinkEthereumKey`) before the claim.
+ *
+ * Before a governance handoff `sysio.roa@active` is the bootstrap `sysio` key,
+ * so these writes stand in for the depot's dispatch; after one, an owner claims
+ * through the OPP path ({@link NodeOwnerCommitSteps}).
  */
-export namespace NodeOwnerNftScenarioRegistrationSteps {
+export namespace NodeOwnerRegistrationSteps {
   /** Length of the `0x` prefix an EVM address carries in display form. */
   const EvmHexPrefixLength = 2
 
@@ -67,7 +73,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
   export interface CreateNamedUserInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput"
+    readonly kind: "NodeOwnerRegistrationSteps.CreateNamedUserInput"
     /** The vanity account to create (tier-1 names are a 2-6 char prefix). */
     readonly account: string
     /** The holder's Wire owner/active public key (`PUB_K1_*`). */
@@ -105,7 +111,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       description,
       options,
       {
-        kind: "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput",
+        kind: "NodeOwnerRegistrationSteps.CreateNamedUserInput",
         account,
         wirePublicKey,
         tier
@@ -131,7 +137,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
 
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
   export interface RegisterNodeOwnerInput extends StepInput {
-    readonly kind: "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput"
+    readonly kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput"
     /** The Wire account the claim registers. */
     readonly ownerAccount: string
     /** The claimed tier (1-3 for valid claims). */
@@ -181,7 +187,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       description,
       options,
       {
-        kind: "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput",
+        kind: "NodeOwnerRegistrationSteps.RegisterNodeOwnerInput",
         ownerAccount,
         tier,
         walletName,
