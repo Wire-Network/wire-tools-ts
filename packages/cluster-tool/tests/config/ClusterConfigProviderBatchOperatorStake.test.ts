@@ -1,6 +1,9 @@
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
-import { BatchOperatorUnderwritingConfig } from "@wireio/cluster-tool-shared"
+import {
+  BatchOperatorUnderwritingConfig,
+  type BatchOperatorUnderwritingOptions
+} from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { fixtureConfig } from "./clusterConfigFixture.js"
@@ -118,6 +121,45 @@ describe("ClusterConfigProvider.resolveBatchOperatorUnderwriting — stake + res
     ])
     expect(reloaded.batchOperatorUnderwriting.reserve).toEqual(
       BatchOperatorUnderwritingConfig.DefaultReserve
+    )
+  })
+})
+
+describe("ClusterConfigProvider.resolveBatchOperatorUnderwriting — gasDriftMarginBps", () => {
+  /** The underwriting configuration `underwriting` resolves to, the role on, three operators. */
+  const resolve = (underwriting: BatchOperatorUnderwritingOptions) =>
+    ClusterConfigProvider.resolveBatchOperatorUnderwriting(
+      { ...Enabled, batchOperatorUnderwriting: underwriting },
+      3
+    )
+
+  it("carries a set margin through, zero included, and leaves an unset one to the schema default", () => {
+    expect(resolve({ gasDriftMarginBps: 1_000 }).gasDriftMarginBps).toBe(1_000)
+    expect(resolve({ gasDriftMarginBps: 0 }).gasDriftMarginBps).toBe(0)
+    // Unset: absent in memory, filled on every parse of the persisted shape.
+    expect("gasDriftMarginBps" in resolve({})).toBe(false)
+  })
+
+  it("refuses a negative or fractional margin", () => {
+    expect(() => resolve({ gasDriftMarginBps: -1 })).toThrow(
+      /batchOperatorUnderwriting\.gasDriftMarginBps -1 must be a non-negative integer/
+    )
+    expect(() => resolve({ gasDriftMarginBps: 2.5 })).toThrow(
+      /batchOperatorUnderwriting\.gasDriftMarginBps 2\.5 must be a non-negative integer/
+    )
+  })
+
+  it("persists a set margin through cluster-config.json and fills an unset one with the default on reload", () => {
+    const reload = (underwriting: BatchOperatorUnderwritingOptions) =>
+      ClusterConfigProvider.deserialize(
+        ClusterConfigProvider.serialize({
+          ...fixtureConfig(),
+          batchOperatorUnderwriting: { ...resolve(underwriting) }
+        })
+      ).batchOperatorUnderwriting
+    expect(reload({ gasDriftMarginBps: 1_000 }).gasDriftMarginBps).toBe(1_000)
+    expect(reload({}).gasDriftMarginBps).toBe(
+      BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
     )
   })
 })

@@ -318,12 +318,14 @@ export default tseslint.config(
     // The sanctioned raw-stream homes (per-file-logger-and-std-streams.md):
     // the routing/file appenders + each package's logger.ts — plus the tests
     // that stub or assert ON those streams by design (the appender's own
-    // test, the TUI jest.setup that silences ink's stream writes).
+    // test, the command-logging test that asserts which stream each channel
+    // reaches, the TUI jest.setup that silences ink's stream writes).
     files: [
       "**/logging/*Appender.ts",
       "**/logger.ts",
       "**/logging/logger.ts",
       "**/tests/logging/*Appender.test.ts",
+      "packages/cluster-tool/tests/logging/Logger.test.ts",
       "**/tests/jest.setup.ts"
     ],
     rules: { "no-restricted-properties": "off" }

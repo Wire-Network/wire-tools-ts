@@ -250,15 +250,18 @@ export namespace ClusterConfigProvider {
    * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps — and
    * the pre-funded launch's native `stake` / `reserve` lists validated when the caller sets
    * them (each names every outpost native token exactly once; a stake is positive, a reserve
-   * non-negative). An unset list is carried unset: the persisted schema defaults it
-   * (`BatchOperatorUnderwritingConfig.DefaultStake` / `DefaultReserve`), and a
-   * cluster-less consumer (`fund-batch-operators`) destructures the same defaults.
+   * non-negative), as is its Ethereum `gasDriftMarginBps` (a non-negative integer). An unset
+   * member is carried unset: the persisted schema defaults it
+   * (`BatchOperatorUnderwritingConfig.DefaultStake` / `DefaultReserve` /
+   * `DefaultGasDriftMarginBps`), and a cluster-less consumer (`fund-batch-operators`)
+   * destructures the same defaults.
    *
    * @param options - The caller's options.
    * @param batchOperatorCount - The resolved batch-operator roster size.
    * @return The configuration, or `null` for relay-only operators.
    * @throws If underwriting options are set with the role off, more operators are funded
-   *   than exist, `maxExposure` is empty, or a native `stake` / `reserve` list is malformed.
+   *   than exist, `maxExposure` is empty, a native `stake` / `reserve` list is malformed, or
+   *   `gasDriftMarginBps` is not a non-negative integer.
    */
   export function resolveBatchOperatorUnderwriting(
     options: ClusterBuildOptions,
@@ -288,14 +291,21 @@ export namespace ClusterConfigProvider {
       "ClusterConfigProvider: batchOperatorUnderwriting.maxExposure must name at least one cap"
     )
     const stake = options.batchOperatorUnderwriting?.stake,
-      reserve = options.batchOperatorUnderwriting?.reserve
+      reserve = options.batchOperatorUnderwriting?.reserve,
+      gasDriftMarginBps = options.batchOperatorUnderwriting?.gasDriftMarginBps
     assertNativeTokenAmounts("stake", stake, true)
     assertNativeTokenAmounts("reserve", reserve, false)
+    Assert.ok(
+      gasDriftMarginBps == null ||
+        (Number.isInteger(gasDriftMarginBps) && gasDriftMarginBps >= 0),
+      `ClusterConfigProvider: batchOperatorUnderwriting.gasDriftMarginBps ${gasDriftMarginBps} must be a non-negative integer of basis points`
+    )
     return {
       fundedOperatorCount,
       maxExposure,
       ...(stake != null ? { stake } : {}),
-      ...(reserve != null ? { reserve } : {})
+      ...(reserve != null ? { reserve } : {}),
+      ...(gasDriftMarginBps != null ? { gasDriftMarginBps } : {})
     }
   }
 

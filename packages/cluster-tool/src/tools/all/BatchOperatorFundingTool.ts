@@ -20,6 +20,11 @@
  *   operator's ED keypair, in the account form of the outpost's launch state
  *   ({@link SolanaLiqSyndicationTool.syndAccounts}).
  *
+ * Every Ethereum write is estimated first and sent with its `gasLimit` set to
+ * the estimate plus the allocation's `gasDriftMarginBps`, rounded up
+ * ({@link addGasMargin}): state can move between the estimate and inclusion,
+ * and a bare estimate can leave a nested call short of gas.
+ *
  * Decision rules, read ON CHAIN before any write ({@link assertFundable}):
  * Ethereum is pre-launch while the address book records the staking proxy
  * and its `dDay()` is false; `dDay()` true, or no staking proxy at all, is
@@ -104,6 +109,7 @@ import { EthereumSyndicationTool } from "../ethereum/EthereumSyndicationTool.js"
 import { WireState } from "../solana/SolanaAnchorEnumTool.js"
 import { SolanaLiqSyndicationTool } from "../solana/SolanaLiqSyndicationTool.js"
 import type { SolanaOutpostTarget } from "../solana/SolanaOutpostTarget.js"
+import { WireSyndicationTool } from "../wire/WireSyndicationTool.js"
 
 const log = getLogger(__filename)
 
@@ -180,13 +186,19 @@ export namespace BatchOperatorFundingTool {
 
   /**
    * What each operator stakes and must keep, per outpost native token, in
-   * DEPOT units — the resolved `batchOperatorUnderwriting.stake` / `.reserve`.
+   * DEPOT units, and the gas headroom of its Ethereum writes — the resolved
+   * `batchOperatorUnderwriting.stake` / `.reserve` / `.gasDriftMarginBps`.
    */
   export interface Allocation {
     /** The native amount staked on each outpost (one entry per native token). */
     readonly stake: readonly TokenAmount[]
     /** The native amount kept on each outpost for gas / fees (one entry per native token). */
     readonly reserve: readonly TokenAmount[]
+    /**
+     * The headroom every Ethereum write adds on top of its gas estimate, in basis
+     * points ({@link addGasMargin}) — a non-negative integer.
+     */
+    readonly gasDriftMarginBps: number
   }
 
   /** The two outposts a launch funds its operators on. */
@@ -299,6 +311,8 @@ export namespace BatchOperatorFundingTool {
   export interface FundingPreflight {
     /** The allocation in chain-native units. */
     readonly native: NativeAllocation
+    /** The allocation's Ethereum gas headroom, in basis points ({@link Allocation.gasDriftMarginBps}). */
+    readonly gasDriftMarginBps: number
     /** Which Ethereum staking surface is live. */
     readonly ethereumPhase: EthereumLaunchPhase
     /** The Solana outpost's launch state (`preLaunch` or `postLaunch`). */
@@ -323,6 +337,8 @@ export namespace BatchOperatorFundingTool {
     /** The operator's EM key, connected to the outpost. */
     readonly signer: ethers.Signer
     readonly native: NativeAllocation
+    /** The headroom each write adds on top of its gas estimate, in basis points. */
+    readonly gasDriftMarginBps: number
     readonly target: EthereumOutpostTarget
   }
 
@@ -481,6 +497,23 @@ export namespace BatchOperatorFundingTool {
     return plan.writes.some(action => NativeDepositActions.has(action))
       ? stake + reserve
       : reserve
+  }
+
+  /**
+   * A gas estimate with `gasDriftMarginBps` of headroom on top, rounded UP:
+   * `ceil(estimate × (10_000 + bps) / 10_000)` — wire-ethereum's funding crank
+   * arithmetic, so a margin of 0 is exactly the estimate.
+   *
+   * @param estimate - The gas estimate.
+   * @param gasDriftMarginBps - The headroom, in basis points (a non-negative integer).
+   * @returns The gas limit to send with.
+   */
+  export function addGasMargin(estimate: bigint, gasDriftMarginBps: number): bigint {
+    const denominator = WireSyndicationTool.BasisPoints
+    return (
+      (estimate * (denominator + BigInt(gasDriftMarginBps)) + denominator - 1n) /
+      denominator
+    )
   }
 
   /** The Solana wallet of an operator's ED pair, read off its stored public key (no secret). */
@@ -865,15 +898,16 @@ export namespace BatchOperatorFundingTool {
 
   /**
    * Establish every precondition of the run BEFORE the first write — the
-   * chain id behind the Ethereum endpoint, the LIQSOL mint, both launch
-   * states (and, for a post-launch one, the document's as-of marker its
-   * positions count from), both per-transfer maxima, and, per operator, its
-   * position and plan on each outpost ({@link LegPlan}) and the balance that
-   * plan requires — so a refusal (the common failure class) never leaves one
-   * operator funded and the next not. Reads only.
+   * allocation's gas margin, the chain id behind the Ethereum endpoint, the
+   * LIQSOL mint, both launch states (and, for a post-launch one, the
+   * document's as-of marker its positions count from), both per-transfer
+   * maxima, and, per operator, its position and plan on each outpost
+   * ({@link LegPlan}) and the balance that plan requires — so a refusal (the
+   * common failure class) never leaves one operator funded and the next not.
+   * Reads only.
    *
    * @param operators - The adopted identities.
-   * @param allocation - The stake + reserve, in depot units.
+   * @param allocation - The stake + reserve, in depot units, and the Ethereum gas margin.
    * @param targets - The two outposts.
    * @returns What the writes run against.
    * @throws On the first unmet precondition, naming it.
@@ -884,10 +918,15 @@ export namespace BatchOperatorFundingTool {
     targets: Targets
   ): Promise<FundingPreflight> {
     Assert.ok(operators.length > 0, "BatchOperatorFundingTool: no operator to fund")
-    const native = nativeAllocation(allocation)
+    const native = nativeAllocation(allocation),
+      { gasDriftMarginBps } = allocation
     Assert.ok(
       native.stakeWei > 0n && native.stakeLamports > 0n,
       "BatchOperatorFundingTool: every stake must be positive"
+    )
+    Assert.ok(
+      Number.isInteger(gasDriftMarginBps) && gasDriftMarginBps >= 0,
+      `BatchOperatorFundingTool: gasDriftMarginBps ${gasDriftMarginBps} must be a non-negative integer of basis points`
     )
     await EthereumOutpostTarget.assertChainId(targets.ethereum)
     assertLiqsolMint(targets.solana)
@@ -903,30 +942,39 @@ export namespace BatchOperatorFundingTool {
     const plans = await mapSeries(operators, operator =>
       planOperator(operator, native, ethereumPhase, targets)
     )
-    return { native, ethereumPhase, wireState, plans }
+    return { native, gasDriftMarginBps, ethereumPhase, wireState, plans }
   }
 
   // ── writes ────────────────────────────────────────────────────────────────
 
   /**
-   * Send `request` from `signer` with an explicitly drawn nonce and wait for it
-   * to mine — the ONE Ethereum submission path of this tool. A failed send
-   * drops the signer's cached nonce so the next draw re-seeds from the chain.
+   * Send `request` from the context's signer with an explicitly drawn nonce and
+   * wait for it to mine — the ONE Ethereum submission path of this tool. The
+   * call is estimated first and sent with its `gasLimit` set to the estimate
+   * plus the context's `gasDriftMarginBps` ({@link addGasMargin}). A failed
+   * estimate or send drops the signer's cached nonce so the next draw re-seeds
+   * from the chain.
    *
-   * @param signer - The connected signer.
+   * @param context - The operator's write context (signer + gas margin).
    * @param request - The call to send.
-   * @param label - What is being sent, for the failure message.
+   * @param label - What is being sent, for the log and failure messages.
    * @returns The mined transaction's hash.
-   * @throws If the transaction reverts.
+   * @throws If the estimate fails or the transaction reverts.
    */
   async function sendEthereum(
-    signer: ethers.Signer,
+    context: EthereumWriteContext,
     request: ethers.TransactionRequest,
     label: string
   ): Promise<string> {
-    const nonce = await resolveLatestNonce(signer)
+    const { signer, gasDriftMarginBps } = context,
+      nonce = await resolveLatestNonce(signer)
     try {
-      const response = await signer.sendTransaction({ ...request, nonce }),
+      const estimate = await signer.estimateGas({ ...request, nonce }),
+        gasLimit = addGasMargin(estimate, gasDriftMarginBps)
+      log.debug(
+        `${label}: gas estimate ${estimate}, gasLimit ${gasLimit} (+${gasDriftMarginBps} bps)`
+      )
+      const response = await signer.sendTransaction({ ...request, nonce, gasLimit }),
         receipt = await response.wait(Confirmations)
       Assert.ok(
         receipt?.status === 1,
@@ -981,7 +1029,7 @@ export namespace BatchOperatorFundingTool {
         signer
       ),
       hash = await sendEthereum(
-        signer,
+        context,
         EthereumPreLaunchStakingTool.depositAndStakeRequest(
           staking,
           native.stakeWei
@@ -1004,7 +1052,7 @@ export namespace BatchOperatorFundingTool {
     const { operator, signer, native, target } = context,
       depositManager = EthereumSyndicationTool.loadDepositManager(target, signer),
       hash = await sendEthereum(
-        signer,
+        context,
         EthereumSyndicationTool.depositLiqEthRequest(
           depositManager,
           native.stakeWei
@@ -1031,7 +1079,7 @@ export namespace BatchOperatorFundingTool {
         signer
       ).getAddress(),
       hash = await sendEthereum(
-        signer,
+        context,
         EthereumSyndicationTool.approveLiqEthRequest(
           liqEth,
           poolAddress,
@@ -1066,7 +1114,7 @@ export namespace BatchOperatorFundingTool {
       `BatchOperatorFundingTool: ${label} holds ${held} liqETH wei — below the stake ${native.stakeWei} wei to syndicate`
     )
     const hash = await sendEthereum(
-      signer,
+      context,
       EthereumSyndicationTool.syndicateRequest(
         EthereumSyndicationTool.loadSyndicationPool(target, signer),
         native.stakeWei,
@@ -1211,6 +1259,7 @@ export namespace BatchOperatorFundingTool {
       operator,
       signer: await ethereumSigner(operator.ethereum, target.provider),
       native: preflight.native,
+      gasDriftMarginBps: preflight.gasDriftMarginBps,
       target
     }
     await eachSeries(plan.writes, async action => {
@@ -1309,7 +1358,7 @@ export namespace BatchOperatorFundingTool {
    * returned either way.
    *
    * @param operators - The adopted identities ({@link adoptOperators}).
-   * @param allocation - The stake + reserve, in depot units.
+   * @param allocation - The stake + reserve, in depot units, and the Ethereum gas margin.
    * @param targets - The two outposts.
    * @returns Every landed receipt and skipped leg, plus the failure that stopped the run if one did.
    * @throws If a precondition is unmet — before any write.
