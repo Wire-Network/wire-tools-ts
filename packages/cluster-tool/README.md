@@ -362,7 +362,7 @@ verifies each operator holds its credit (`LcoImportOperatorCredit`).
 
 ```bash
 wire-cluster-tool fund-batch-operators \
-  --cluster-build-options-file cluster-build-options.json \   # batchOperatorCount, enableBatchOperatorUnderwriting, batchOperatorUnderwriting.{fundedOperatorCount,stake,reserve}, signatureProvider
+  --cluster-build-options-file cluster-build-options.json \   # batchOperatorCount, enableBatchOperatorUnderwriting, batchOperatorUnderwriting.{fundedOperatorCount,stake,reserve,gasDriftMarginBps}, signatureProvider
   --aws-cluster-node-config    aws-cluster-node-config.json \  # account, regions, ssm, optional kms
   --external-outpost-config    external-outpost-config.json \  # the deployed outposts: rpcUrls, addresses, program id, mints, asOf markers
   --ethereum-path <wire-ethereum> --solana-path <wire-solana> \ # the ABI / IDL artifacts (or WIRE_ETH_PATH / WIRE_SOLANA_PATH)
@@ -395,6 +395,12 @@ created), reads its position and its native balance on each outpost, and stakes
   (`PreLaunch`: the per-user `outpost_account` + pretoken history;
   `PostLaunch`: the outbound buffer + config). `Launching` (the frozen snapshot
   window) and `Refund` are refused, as are a frozen or paused surface.
+
+Every Ethereum write is estimated first and sent with a gas limit of the estimate
+plus `batchOperatorUnderwriting.gasDriftMarginBps` basis points, rounded up
+(`ceil(estimate × (10_000 + bps) / 10_000)`; default 2500, i.e. +25%,
+wire-ethereum's funding crank default), because state can move between the
+estimate and inclusion, and a bare estimate can leave a nested call short of gas.
 
 Every precondition of every operator — the chain id behind the Ethereum
 endpoint, the LIQSOL mint, both launch states, both per-transfer syndication

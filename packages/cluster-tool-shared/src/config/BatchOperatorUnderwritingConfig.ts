@@ -12,8 +12,9 @@ import {
  * Companion constants of {@link BatchOperatorUnderwritingConfigSchema}: the
  * native amounts a pre-funded launch stakes and keeps per batch operator on
  * each outpost (`wire-cluster-tool fund-batch-operators`), in DEPOT units
- * (`NativeTokenDepotPrecision`, 9 decimals) of the outpost native token codes.
- * The schema defaults `stake` / `reserve` from these, so a persisted config
+ * (`NativeTokenDepotPrecision`, 9 decimals) of the outpost native token codes,
+ * and the gas headroom its Ethereum funding writes add. The schema defaults
+ * `stake` / `reserve` / `gasDriftMarginBps` from these, so a persisted config
  * (or a build-options document) that omits them loads with these values.
  */
 export namespace BatchOperatorUnderwritingConfig {
@@ -25,6 +26,12 @@ export namespace BatchOperatorUnderwritingConfig {
   export const DefaultReserveEthereumUnits = 50_000_000n
   /** Default Solana fee + rent reserve each operator must keep beside its stake — 0.1 SOL, in depot units. */
   export const DefaultReserveSolanaUnits = 100_000_000n
+  /**
+   * Default gas headroom of every Ethereum funding write, in basis points — 2500 = +25%,
+   * wire-ethereum's funding crank default. Changing it changes every funding
+   * transaction's gas limit (`gasLimit = ceil(estimate × (10_000 + bps) / 10_000)`).
+   */
+  export const DefaultGasDriftMarginBps = 2_500
 
   /**
    * A native `TokenAmount` — `units` of the depot token `codename` (packed as
@@ -114,6 +121,20 @@ export const BatchOperatorUnderwritingConfigSchema = z.object({
   reserve: z
     .array(TokenAmountCodec)
     .default(BatchOperatorUnderwritingConfig.defaultReserve)
+    .optional(),
+  /**
+   * The headroom added on top of each funding Ethereum transaction's gas estimate
+   * (`fund-batch-operators`), in basis points: `gasLimit = ceil(estimate × (10_000 + bps)
+   * / 10_000)`. State can move between the estimate and inclusion, and a bare estimate can
+   * leave a nested call short of gas, which reverts the outer call. A non-negative integer;
+   * schema-defaulted from {@link BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps}
+   * (2500 = +25%, wire-ethereum's funding crank default), same optionality rule as `stake`.
+   */
+  gasDriftMarginBps: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps)
     .optional()
 })
 
@@ -125,8 +146,9 @@ export type BatchOperatorUnderwritingConfig = z.infer<
 /**
  * Caller options: every member optional; `ClusterConfigProvider.resolveBatchOperatorUnderwriting`
  * defaults `fundedOperatorCount` to every bootstrap batch operator and `maxExposure` to
- * `10.000000000 LIQSOL` and `10.000000000 LIQETH`; `stake` / `reserve` default from the
- * schema ({@link BatchOperatorUnderwritingConfig.DefaultStake} / `DefaultReserve`).
+ * `10.000000000 LIQSOL` and `10.000000000 LIQETH`; `stake` / `reserve` / `gasDriftMarginBps`
+ * default from the schema ({@link BatchOperatorUnderwritingConfig.DefaultStake} /
+ * `DefaultReserve` / `DefaultGasDriftMarginBps`).
  */
 export type BatchOperatorUnderwritingOptions =
   Partial<BatchOperatorUnderwritingConfig>

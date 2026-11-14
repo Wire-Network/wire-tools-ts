@@ -40,7 +40,7 @@ const stdout = getStdoutLogger()
 /**
  * The option-shape leaves this command shares with `create`, by path: the
  * batch-operator roster size, the underwriting role flag (whose
- * `batchOperatorUnderwriting` document member carries the stake + reserve),
+ * `batchOperatorUnderwriting` document member carries the stake, reserve and gas margin),
  * the two outpost repo roots (the ABI / IDL artifacts), the external outpost
  * config path and the provider type. Registered from the SAME
  * `buildOptionShape` entries `create` registers (same flag spelling, describe
@@ -96,7 +96,8 @@ function applyFundBatchOperatorsArgs(
  * failure prints what landed, logs the failure and exits `1`.
  *
  * It reads the SAME inputs `create` will — the build-options document (its
- * `batchOperatorUnderwriting.stake` / `.reserve` are the amounts), the AWS
+ * `batchOperatorUnderwriting.stake` / `.reserve` are the amounts, its
+ * `.gasDriftMarginBps` the Ethereum writes' gas headroom), the AWS
  * cluster-node config and the `--signature-provider-*` overrides — plus the
  * external outpost config (the deployed outposts' RPC endpoints, addresses,
  * program id and mints) and the two outpost repo roots (the ABI / IDL
@@ -235,7 +236,7 @@ function assertPathOption(value: string, flag: string): string {
  * pre-funded stake IS their underwriting inventory; a document that does not
  * enable the underwriting role has nothing to fund.
  *
- * @param options - The build options (roster, custody settings, amounts, paths, external config).
+ * @param options - The build options (roster, custody settings, amounts, gas margin, paths, external config).
  * @returns Every landed receipt, plus the failure that stopped the run if one did.
  * @throws On an unmet precondition — before any transaction is sent.
  */
@@ -263,7 +264,8 @@ export async function runFundBatchOperators(
   const {
       fundedOperatorCount,
       stake = BatchOperatorUnderwritingConfig.defaultStake(),
-      reserve = BatchOperatorUnderwritingConfig.defaultReserve()
+      reserve = BatchOperatorUnderwritingConfig.defaultReserve(),
+      gasDriftMarginBps = BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
     } = underwriting,
     labels = Constants.batchOperatorLabels(batchOperatorCount).slice(
       0,
@@ -284,5 +286,9 @@ export async function runFundBatchOperators(
       // No wire-sysio build is needed: nothing is generated under adopt-only.
       KeyGenerator.context()
     )
-  return BatchOperatorFundingTool.fund(operators, { stake, reserve }, targets)
+  return BatchOperatorFundingTool.fund(
+    operators,
+    { stake, reserve, gasDriftMarginBps },
+    targets
+  )
 }

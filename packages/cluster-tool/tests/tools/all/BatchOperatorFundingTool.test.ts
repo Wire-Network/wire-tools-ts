@@ -30,6 +30,7 @@ import {
   WireState,
   type SolanaOutpostTarget
 } from "@wireio/cluster-tool/tools/solana"
+import { resolveLatestNonce } from "@wireio/cluster-tool/utils"
 import * as keyPairUtils from "@wireio/cluster-tool/utils/keyPairUtils"
 
 const DepositorAddress = "0x1111111111111111111111111111111111111111"
@@ -53,6 +54,17 @@ const AsOfBlock = 1_234
 const LatestBlock = AsOfBlock + 10
 /** The finalized slot the external outpost document was generated at — the Solana marker. */
 const AsOfSlot = 56_789
+/**
+ * The gas every fake Ethereum write estimates at — chosen so each margin the
+ * cases apply lands between two integers, proving the limit rounds UP.
+ */
+const GasEstimate = 836_079n
+/** ceil(GasEstimate × 1.25) — the default 2500 bps margin, 1,045,098.75 rounded up. */
+const DefaultMarginGasLimit = 1_045_099n
+/** ceil(GasEstimate × 1.1) — a 1000 bps margin, 919,686.9 rounded up. */
+const TenPercentMarginGasLimit = 919_687n
+/** A 1000 bps (+10%) gas margin. */
+const TenPercentMarginBps = 1_000
 
 /** The part of a hardhat artifact these cases bind: its ABI. */
 interface AbiArtifact {
@@ -94,6 +106,7 @@ interface FakeSolanaTransaction {
 /** The fake signer a case inspects. */
 interface FakeSigner {
   sendTransaction: jest.Mock
+  estimateGas: jest.Mock
 }
 
 /** A hardhat-shaped artifact from a committed fixture. */
@@ -126,10 +139,11 @@ function stageArtifact(
 const native = (codename: string, amount: bigint): TokenAmount =>
   TokenAmount.create({ tokenCode: BigInt(SlugName.from(codename)), amount })
 
-/** 1 ETH + 10 SOL staked, 0.05 ETH + 0.1 SOL kept — the defaults, spelled as an allocation. */
+/** 1 ETH + 10 SOL staked, 0.05 ETH + 0.1 SOL kept, +25% gas headroom — the defaults, spelled as an allocation. */
 const DefaultAllocation: BatchOperatorFundingTool.Allocation = {
   stake: BatchOperatorUnderwritingConfig.DefaultStake,
-  reserve: BatchOperatorUnderwritingConfig.DefaultReserve
+  reserve: BatchOperatorUnderwritingConfig.DefaultReserve,
+  gasDriftMarginBps: BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
 }
 
 /** A fresh, empty liqETH ledger. */
@@ -388,8 +402,9 @@ describe("BatchOperatorFundingTool", () => {
   }
 
   /**
-   * A signer double over the fake chain: send `n` mines with `statuses[n]`
-   * (`1` when unlisted), hashed in order, and a mined write moves `ledger`.
+   * A signer double over the fake chain: every write estimates at
+   * {@link GasEstimate}, send `n` mines with `statuses[n]` (`1` when unlisted),
+   * hashed in order, and a mined write moves `ledger`.
    */
   function fakeSigner(
     account: BatchOperatorFundingTool.FundedOperator,
@@ -404,13 +419,15 @@ describe("BatchOperatorFundingTool", () => {
         if (status === 1) applyEthereumWrite(ledger, request)
         return { wait: async () => ({ status, hash: `0xethereum-${ordinal}` }) }
       }),
+      estimateGas = jest.fn(async (_request: ethers.TransactionRequest) => GasEstimate),
       signer = {
         provider,
         getAddress: async () => account.ethereum.address,
+        estimateGas,
         sendTransaction
       } as unknown as ethers.Signer
     jest.spyOn(keyPairUtils, "ethereumSigner").mockResolvedValue(signer)
-    return { sendTransaction }
+    return { sendTransaction, estimateGas }
   }
 
   beforeAll(() => {
@@ -532,6 +549,19 @@ describe("BatchOperatorFundingTool", () => {
       expect(requiredNative({ position: 5n, writes: [] }, StakeLamports, ReserveLamports)).toBe(
         ReserveLamports
       )
+    })
+
+    it("addGasMargin adds the basis points on top of the estimate, rounding UP", () => {
+      const { addGasMargin } = BatchOperatorFundingTool
+      expect(
+        addGasMargin(GasEstimate, BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps)
+      ).toBe(DefaultMarginGasLimit)
+      expect(addGasMargin(GasEstimate, TenPercentMarginBps)).toBe(TenPercentMarginGasLimit)
+      // A zero margin is exactly the estimate; an exact product is not rounded past.
+      expect(addGasMargin(GasEstimate, 0)).toBe(GasEstimate)
+      expect(addGasMargin(800_000n, 2_500)).toBe(1_000_000n)
+      // The smallest fraction still rounds up: ceil(1 × 1.25) = 2.
+      expect(addGasMargin(1n, 2_500)).toBe(2n)
     })
 
     it("toListingJson renders the receipts and the skips, bigint amounts as decimal strings", () => {
@@ -802,6 +832,27 @@ describe("BatchOperatorFundingTool", () => {
           solana: solanaTarget(0n)
         })
       ).rejects.toThrow(/no operator to fund/)
+    })
+
+    it("refuses a negative or fractional gas margin before any chain read", async () => {
+      const account = await operator("batchop.a"),
+        provider = fakeProvider({}, stakingAnswers()),
+        getNetwork = jest.spyOn(provider, "getNetwork")
+      await expect(
+        BatchOperatorFundingTool.assertFundable(
+          [account],
+          { ...DefaultAllocation, gasDriftMarginBps: -1 },
+          { ethereum: preLaunchTarget(provider), solana: solanaTarget(0n) }
+        )
+      ).rejects.toThrow(/gasDriftMarginBps -1 must be a non-negative integer of basis points/)
+      await expect(
+        BatchOperatorFundingTool.assertFundable(
+          [account],
+          { ...DefaultAllocation, gasDriftMarginBps: 2.5 },
+          { ethereum: preLaunchTarget(provider), solana: solanaTarget(0n) }
+        )
+      ).rejects.toThrow(/gasDriftMarginBps 2\.5 must be a non-negative integer of basis points/)
+      expect(getNetwork).not.toHaveBeenCalled()
     })
 
     it("plans both legs from the chain — every write while nothing is staked or held", async () => {
@@ -1106,6 +1157,7 @@ describe("BatchOperatorFundingTool", () => {
       const signer = {
         provider,
         getAddress: async () => `0x${"ab".repeat(20)}`,
+        estimateGas: async () => GasEstimate,
         sendTransaction: async () => ({ wait: async () => ({ status: 1, hash: `0xethereum-${(sent += 1)}` }) })
       } as unknown as ethers.Signer
       jest.spyOn(keyPairUtils, "ethereumSigner").mockResolvedValue(signer)
@@ -1150,6 +1202,98 @@ describe("BatchOperatorFundingTool", () => {
       expect(outcome.failure.chain).toBe(Constants.ETHEREUM_CHAIN_CODENAME)
       expect(outcome.failure.error.message).toMatch(/depositAndStake: reverted \(status=0\)/)
       expect(submit).not.toHaveBeenCalled()
+    })
+
+    it("estimates every Ethereum write first, then sends it with gasLimit = ceil(estimate × 1.25) — the default margin", async () => {
+      const account = await operator("batchop.b"),
+        ledger = emptyLiqEth(),
+        provider = fakeProvider(
+          { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+          poolAnswers(ledger)
+        ),
+        { sendTransaction, estimateGas } = fakeSigner(account, provider, [], ledger)
+      stubSolanaReads(WireState.postLaunch)
+      stubSolanaWrites()
+      const outcome = await BatchOperatorFundingTool.fund([account], DefaultAllocation, {
+        ethereum: postLaunchTarget(provider),
+        solana: solanaTarget(20_000_000_000n)
+      })
+      expect(outcome.failure).toBeUndefined()
+      const sent: ethers.TransactionRequest[] = sendTransaction.mock.calls.map(
+          ([request]) => request
+        ),
+        estimated: ethers.TransactionRequest[] = estimateGas.mock.calls.map(
+          ([request]) => request
+        )
+      expect(sent.map(request => String(request.to))).toEqual([
+        DepositManagerAddress,
+        LiqEthAddress,
+        PoolAddress
+      ])
+      // Each write is estimated as exactly the call it sends, nonce included, before any gas limit …
+      expect(estimated).toEqual(sent.map(({ gasLimit: _gasLimit, ...request }) => request))
+      expect(sent.map(request => request.nonce)).toEqual([0, 1, 2])
+      // … then sent with the estimate plus 25%, rounded up.
+      sent.forEach(request => expect(request.gasLimit).toBe(DefaultMarginGasLimit))
+      estimateGas.mock.invocationCallOrder.forEach((order, index) =>
+        expect(order).toBeLessThan(sendTransaction.mock.invocationCallOrder[index])
+      )
+    })
+
+    it("honours the configured gas margin: 0 sends exactly the estimate, 1000 bps the estimate × 1.1 rounded up", async () => {
+      /** The gas limit of the one pre-launch Ethereum write `fund` sends under `gasDriftMarginBps`. */
+      const sentGasLimit = async (
+        gasDriftMarginBps: BatchOperatorFundingTool.Allocation["gasDriftMarginBps"]
+      ): Promise<ethers.TransactionRequest["gasLimit"]> => {
+        const account = await operator("batchop.a"),
+          provider = fakeProvider(
+            { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+            stakingAnswers()
+          ),
+          { sendTransaction } = fakeSigner(account, provider)
+        stubSolanaReads(WireState.preLaunch)
+        stubSolanaWrites()
+        const outcome = await BatchOperatorFundingTool.fund(
+          [account],
+          { ...DefaultAllocation, gasDriftMarginBps },
+          { ethereum: preLaunchTarget(provider), solana: solanaTarget(20_000_000_000n) }
+        )
+        expect(outcome.failure).toBeUndefined()
+        expect(sendTransaction).toHaveBeenCalledTimes(1)
+        const [[request]] = sendTransaction.mock.calls
+        jest.restoreAllMocks()
+        return request.gasLimit
+      }
+      await expect(sentGasLimit(0)).resolves.toBe(GasEstimate)
+      await expect(sentGasLimit(TenPercentMarginBps)).resolves.toBe(TenPercentMarginGasLimit)
+    })
+
+    it("a failed estimate is the leg's failure: nothing is sent, and the nonce it drew is released", async () => {
+      const account = await operator("batchop.a"),
+        provider = fakeProvider(
+          { [account.ethereum.address.toLowerCase()]: 2n * StakeWei },
+          stakingAnswers()
+        ),
+        { sendTransaction, estimateGas } = fakeSigner(account, provider)
+      estimateGas.mockRejectedValueOnce(new Error("estimateGas: execution reverted"))
+      stubSolanaReads(WireState.preLaunch)
+      const submit = stubSolanaWrites(),
+        outcome = await BatchOperatorFundingTool.fund([account], DefaultAllocation, {
+          ethereum: preLaunchTarget(provider),
+          solana: solanaTarget(20_000_000_000n)
+        })
+      expect(outcome.failure).toEqual({
+        label: "batchop.a",
+        chain: Constants.ETHEREUM_CHAIN_CODENAME,
+        error: expect.objectContaining({ message: "estimateGas: execution reverted" })
+      })
+      expect(outcome.receipts).toEqual([])
+      expect(sendTransaction).not.toHaveBeenCalled()
+      expect(submit).not.toHaveBeenCalled()
+      // The drawn nonce was never consumed: the next draw re-seeds from the chain's count (0).
+      await expect(
+        resolveLatestNonce(await keyPairUtils.ethereumSigner(account.ethereum, provider))
+      ).resolves.toBe(0)
     })
 
     it("skips an operator already holding Depositor shares (pre-launch): no Ethereum write, the reserve alone required", async () => {
