@@ -628,13 +628,13 @@ infrastructure, before the first epoch.
 ## Chain & node configuration (genesis + nodeop)
 Not on-chain actions, but the remaining config the tooling sets so the picture is complete.
 
-### `genesis.json` — `initial_configuration` (CPU limits are wire-sysio's own defaults, 200k/150k)
+### `genesis.json` — `initial_configuration` (CPU limits are wire-sysio's own defaults, 200k/150k; NET and CPU share the 0.1% usage target)
 | Field | Value | Field | Value |
 |---|---|---|---|
 | `initial_key` | `DEV_K1_PUBLIC_KEY` | `min_transaction_cpu_usage` | `100` |
 | `initial_finalizer_key` | `DEV_BLS_PUBLIC_KEY` | `max_transaction_lifetime` | `3600` |
 | `max_block_net_usage` | `1048576` | `max_transaction_delay` | `3888000` |
-| `target_block_net_usage_pct` | `10000` | `max_inline_action_size` | `524287` |
+| `target_block_net_usage_pct` | `10` | `max_inline_action_size` | `524287` |
 | `max_transaction_net_usage` | `524288` | `max_inline_action_depth` | `10` |
 | `net_usage_leeway` | `500` | `max_authority_depth` | `10` |
 | `target_block_cpu_usage_pct` | `10` | `max_block_cpu_usage` | `200000` |
