@@ -1,6 +1,13 @@
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 
 describe("Constants", () => {
+  describe("BasisPoints", () => {
+    it("is 10_000 basis points per whole — 1 bps = 1/10_000 — as a bigint", () => {
+      expect(Constants.BasisPoints).toBe(10_000n)
+      // 25 bps of 10_000 base units is exactly 25.
+      expect((10_000n * 25n) / Constants.BasisPoints).toBe(25n)
+    })
+  })
   describe("LIQSOL_CODENAME", () => {
     it("is the codename the syndication scenario trades", () => {
       expect(Constants.LIQSOL_CODENAME).toBe("LIQSOL")

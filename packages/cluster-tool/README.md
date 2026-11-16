@@ -399,8 +399,10 @@ created), reads its position and its native balance on each outpost, and stakes
 Every Ethereum write is estimated first and sent with a gas limit of the estimate
 plus `batchOperatorUnderwriting.gasDriftMarginBps` basis points, rounded up
 (`ceil(estimate × (10_000 + bps) / 10_000)`; default 2500, i.e. +25%,
-wire-ethereum's funding crank default), because state can move between the
-estimate and inclusion, and a bare estimate can leave a nested call short of gas.
+wire-ethereum's funding crank default). `eth_estimateGas` finds a gas limit at
+which the whole call, nested calls included, succeeds against the state it ran
+on, so the margin covers that state or the block context changing between
+estimation and inclusion.
 
 Every precondition of every operator — the chain id behind the Ethereum
 endpoint, the LIQSOL mint, both launch states, both per-transfer syndication

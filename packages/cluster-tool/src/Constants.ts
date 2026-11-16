@@ -17,6 +17,12 @@ import {
  * `config/BindConfigProvider.ts`, which owns binding.
  */
 export namespace Constants {
+  /**
+   * Basis points per whole: 1 bps = 1/10_000, so `bps` basis points of `x` is
+   * `x × bps / BasisPoints`. A unit definition, not a tunable — every
+   * basis-point computation divides by it.
+   */
+  export const BasisPoints = 10_000n
   /** Depot asset frame shared by native collateral and syndication. */
   export const DepotPrecisionCap = 9
   export const WireChainCode = Number(SlugName.from("WIRE"))

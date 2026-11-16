@@ -286,9 +286,7 @@ export async function runFundBatchOperators(
       // No wire-sysio build is needed: nothing is generated under adopt-only.
       KeyGenerator.context()
     )
-  return BatchOperatorFundingTool.fund(
-    operators,
-    { stake, reserve, gasDriftMarginBps },
-    targets
-  )
+  return BatchOperatorFundingTool.fund(operators, { stake, reserve }, targets, {
+    gasDriftMarginBps
+  })
 }

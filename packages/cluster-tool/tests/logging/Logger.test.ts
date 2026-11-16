@@ -39,11 +39,13 @@ describe("Logger", () => {
       consoleError: jest.SpyInstance
 
     beforeEach(() => {
-      // Each channel is observed here at ITS appender's `append`; the streams
-      // those appenders reach are asserted under "configureCommandLogging —
-      // the stream each channel reaches" below. `console.error`, the binding
-      // every command diagnostic is written through, is additionally silenced
-      // so the diagnostic text never reaches jest's console wrapper.
+      // Each channel is observed here at ITS appender's `append`; the console
+      // binding each diagnostic reaches is asserted under
+      // "configureCommandLogging — the stream each channel reaches" below, and
+      // the raw stream write itself is the stdout appender's own contract
+      // (StdoutAppender.test.ts). `console.error`, the binding every command
+      // diagnostic is written through, is additionally silenced so the
+      // diagnostic text never reaches jest's console wrapper.
       stdoutAppend = jest
         .spyOn(StdoutAppender.prototype, "append")
         .mockImplementation(() => undefined)
@@ -121,19 +123,23 @@ describe("Logger", () => {
   })
 
   describe("configureCommandLogging — the stream each channel reaches", () => {
-    let stdoutWrite: jest.SpyInstance,
+    let stdoutAppend: jest.SpyInstance,
       consoleError: jest.SpyInstance,
       consoleInfo: jest.SpyInstance,
       consoleLog: jest.SpyInstance,
       consoleDebug: jest.SpyInstance
 
     beforeEach(() => {
-      // Observed at the STREAM, not at an appender: a caller capturing the
-      // command's stdout (`create-batch-operator-keys > listing.json`) gets
-      // every raw `process.stdout.write` plus every line written through a
-      // console binding Node routes to stdout (`info` / `log` / `debug`).
-      // Each spy is silenced so nothing reaches jest's own output.
-      stdoutWrite = jest.spyOn(process.stdout, "write").mockReturnValue(true)
+      // Node routes `console.info` / `log` / `debug` to stdout and
+      // `console.error` to stderr, so a diagnostic written through
+      // `console.error` and none of the other three never lands in a caller's
+      // stdout capture (`create-batch-operator-keys > listing.json`). The data
+      // channel is observed at the stdout appender's `append`, whose raw stream
+      // write is its own contract (StdoutAppender.test.ts). Each spy is
+      // silenced so nothing reaches jest's own output.
+      stdoutAppend = jest
+        .spyOn(StdoutAppender.prototype, "append")
+        .mockImplementation(() => undefined)
       consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined)
       consoleInfo = jest.spyOn(console, "info").mockImplementation(() => undefined)
       consoleLog = jest.spyOn(console, "log").mockImplementation(() => undefined)
@@ -142,17 +148,16 @@ describe("Logger", () => {
 
     afterEach(() => {
       getLoggingManager().setAppenders([])
-      ;[stdoutWrite, consoleError, consoleInfo, consoleLog, consoleDebug].forEach(spy =>
+      ;[stdoutAppend, consoleError, consoleInfo, consoleLog, consoleDebug].forEach(spy =>
         spy.mockRestore()
       )
     })
 
-    /** Nothing reached stdout: no stdout-bound console binding, no raw stream write. */
+    /** Nothing reached stdout: no console binding Node routes to stdout was called. */
     function expectNothingOnStdout(): void {
       expect(consoleInfo).not.toHaveBeenCalled()
       expect(consoleLog).not.toHaveBeenCalled()
       expect(consoleDebug).not.toHaveBeenCalled()
-      expect(stdoutWrite).not.toHaveBeenCalled()
     }
 
     it("writes an info diagnostic from a per-file logger to stderr (console.error), never to stdout", () => {
@@ -175,11 +180,14 @@ describe("Logger", () => {
       expectNothingOnStdout()
     })
 
-    it("writes a stdout data line raw to process.stdout, never to stderr", () => {
+    it("hands a stdout data line to the stdout appender, never to stderr", () => {
       configureCommandLogging()
       getStdoutLogger().info('{"listing":true}')
-      expect(stdoutWrite).toHaveBeenCalledTimes(1)
-      expect(stdoutWrite).toHaveBeenCalledWith('{"listing":true}\n')
+      expect(stdoutAppend).toHaveBeenCalledTimes(1)
+      expect(stdoutAppend.mock.calls[0][0]).toMatchObject({
+        category: StdoutAppender.Category,
+        message: '{"listing":true}'
+      })
       expect(consoleError).not.toHaveBeenCalled()
     })
 

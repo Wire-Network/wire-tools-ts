@@ -303,11 +303,11 @@ describe("FundBatchOperatorsCommand", () => {
       expect(settings.signatureProvider.type).toBe(SignatureProviderType.SSM)
       expect(settings.awsClusterNodeConfig.account).toBe(AWSAccountName.dev)
       expect(labels).toEqual(["batchop.a", "batchop.b"])
-      const [funded, allocation, targets] = fund.mock.calls[0]
+      const [funded, allocation, targets, tuning] = fund.mock.calls[0]
       expect(funded).toBe(operators)
       expect(allocation.stake).toBe(stake)
       expect(allocation.reserve).toEqual(BatchOperatorUnderwritingConfig.DefaultReserve)
-      expect(allocation.gasDriftMarginBps).toBe(1_000)
+      expect(tuning).toEqual({ gasDriftMarginBps: 1_000 })
       expect(targets.ethereum.chainId).toBe(ChainId)
       expect(targets.solana.programId.toBase58()).toBe(programId)
     })
@@ -318,14 +318,14 @@ describe("FundBatchOperatorsCommand", () => {
         .spyOn(BatchOperatorFundingTool, "fund")
         .mockResolvedValue({ receipts: [], skips: [] })
       await runFundBatchOperators(fundableOptions())
-      const [, allocation] = fund.mock.calls[0],
+      const [, allocation, , tuning] = fund.mock.calls[0],
         [, labels] = (BatchOperatorFundingTool.adoptOperators as jest.Mock).mock.calls[0]
       expect(labels).toEqual(["batchop.a", "batchop.b", "batchop.c"])
       expect(allocation.stake).toEqual(BatchOperatorUnderwritingConfig.DefaultStake)
       expect(allocation.reserve).toEqual(BatchOperatorUnderwritingConfig.DefaultReserve)
-      expect(allocation.gasDriftMarginBps).toBe(
-        BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
-      )
+      expect(tuning).toEqual({
+        gasDriftMarginBps: BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
+      })
     })
   })
 

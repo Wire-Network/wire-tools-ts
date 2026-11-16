@@ -125,8 +125,9 @@ export const BatchOperatorUnderwritingConfigSchema = z.object({
   /**
    * The headroom added on top of each funding Ethereum transaction's gas estimate
    * (`fund-batch-operators`), in basis points: `gasLimit = ceil(estimate × (10_000 + bps)
-   * / 10_000)`. State can move between the estimate and inclusion, and a bare estimate can
-   * leave a nested call short of gas, which reverts the outer call. A non-negative integer;
+   * / 10_000)`. `eth_estimateGas` finds a gas limit at which the whole call, nested calls
+   * included, succeeds against the state it ran on, so the margin covers that state or the
+   * block context changing between estimation and inclusion. A non-negative integer;
    * schema-defaulted from {@link BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps}
    * (2500 = +25%, wire-ethereum's funding crank default), same optionality rule as `stake`.
    */

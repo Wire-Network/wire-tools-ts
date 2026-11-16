@@ -319,7 +319,7 @@ export namespace WireSyndicationTool {
   }
 
   /** Basis-point denominator used by the depot's integer fee calculation. */
-  export const BasisPoints = 10_000n
+  export import BasisPoints = Constants.BasisPoints
 
   /**
    * Calculate floor(amount * feeBps / 10000) plus a flat base-unit charge.
