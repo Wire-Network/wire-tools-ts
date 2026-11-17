@@ -20,7 +20,8 @@ defaults*. They split into two kinds:
 - `account::action` — the contract account the action lives on. NOTE: `bios` and `system` both deploy to the
   **`sysio`** account itself (no separate `sysio.bios`/`sysio.system` account); `system` replaces `bios`.
 - Auth in `[brackets]` — the `-p` authorization.
-- **raw** = `sysio::setcode` + `sysio::setabi` (the `sysio`-account contracts `bios`/`system`, plus `sysio.roa`).
+- **raw** = `sysio::setcode` + `sysio::setabi` (the `sysio`-account contracts `bios`/`system`, plus the bootstrap
+  deploy of `sysio.roa`; `activateroa` pins `sysio.roa`'s RAM limit to its usage, so a later redeploy is **sys**).
 - **sys** = `sysio.roa::setsyscode({account, vmtype:0, vmversion:0, code:<wasm hex>})` (inline
   `setcode`+`setpriv`+`giftram`) + `sysio.roa::setsysabi({account, abi:<packed abi_def hex>})` (inline
   `setabi`+`giftram`). Privileged + RAM gifted from the `sysio` pool; requires ROA active; cannot target
@@ -31,17 +32,20 @@ defaults*. They split into two kinds:
 
 ## RAM model — no unlimited accounts
 Every account's RAM is **finite** and **gifted from the `sysio` pool** as a conserving transfer (never minted):
-- **`activateroa`** partitions the total RAM into node-owner reserves + `sysio.roa` allocation (`leftover/2`) +
-  the `sysio` pool + the `sysio.acct` seed, and sets finite limits on `sysio`, `sysio.roa`, `sysio.acct`. Total
-  RAM = `total_sys.amount * bytes_per_unit` — the asset's **smallest units**, NOT the display value. The tier
-  reserves are *fractions* of supply (per node: T1 4%, T2 0.15%, T3 0.003%; × the tier caps 21 / 84 / 1000 ⇒
-  **99.6% of supply**), so only **0.4%** is left for everything else, at any scale. With the cluster defaults
-  (`75496.0000 SYS` ⇒ amount `754,960,000`, `bytes_per_unit = 104`) total RAM ≈ `754,960,000 * 104` ≈
-  **78.5 GB**: ~66 GB reserved across 21 T1 owners (~3.1 GB each), ~9.9 GB T2, ~2.4 GB T3, and a ~314 MB
-  leftover split into `sysio.roa` ≈ 157 MB + the `sysio` bootstrap pool ≈ 157 MB (+ a 1144-byte `sysio.acct`
-  seed). So `total_sys` sets the **absolute** RAM budget — the split is ratiometric, but the bytes are real:
-  the leftover pool must clear the bootstrap's fixed RAM costs (every contract's code/abi + each account's
-  `newaccount_ram = 1144 B`), which is why the supply is tuned to this value, not arbitrary.
+- **`activateroa`** partitions the total RAM into node-owner reserves + the `sysio` pool + the `sysio.acct` seed,
+  and sets finite limits on `sysio`, `sysio.roa`, `sysio.acct`. `sysio.roa` gets **no pool**: its limit is pinned
+  to the RAM it already uses (its code, ABI and account rows), since its rows bill the issuing node owner or
+  `sysio`. Total RAM = `total_sys.amount * bytes_per_unit` — the asset's **smallest units**, NOT the display
+  value. The tier reserves are *fractions* of supply (per node: T1 4%, T2 0.15%, T3 0.003%; × the tier caps
+  21 / 84 / 1000 ⇒ **99.6% of supply**), so only **0.4%** is left for everything else, at any scale. With the
+  cluster defaults (`75496.0000 SYS` ⇒ amount `754,960,000`, `bytes_per_unit = 104`) total RAM ≈
+  `754,960,000 * 104` ≈ **78.5 GB**: ~66 GB reserved across 21 T1 slots (~3.1 GB each, a tenth of which is carved
+  into the `sysio` pool up front, leaving each T1 owner ~2.83 GB), ~9.9 GB T2, ~2.4 GB T3, and a ~314 MB leftover.
+  The `sysio` pool is the whole leftover plus the T1 carve (~6.6 GB), less `sysio.roa`'s pinned usage and the
+  1144-byte `sysio.acct` seed: ≈ 6.9 GB. So `total_sys` sets the **absolute** RAM budget — the split is
+  ratiometric, but the bytes are real: the `sysio` pool must clear the bootstrap's fixed RAM costs (every
+  contract's code/abi + each account's `newaccount_ram = 1144 B`), which is why the supply is tuned to this value,
+  not arbitrary.
 - **Account creation** (`system::native::newaccount`): `set_resource_limits(new, 0,0,0)` then
   `transfer_ram(sysio, new, newaccount_ram)` — the new account gets a finite limit funded from the pool. This
   requires `system` deployed AND ROA active, so all non-essential accounts are created **after** Stage 4.
@@ -53,10 +57,23 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
   model). `setsyscode`'s `giftram` covers only code/abi, so a self-billed row would overflow the contract's
   exact limit; routing rows to the pool keeps each contract account finite at code/abi size. `bios`/`system`
   code lives on `sysio` and likewise consumes the pool directly.
+- **`sysio.roa` rows** — a node owner pays for each policy row it issues: `addpolicy` bills the **issuer** 204
+  bytes, and an issuer without that much spare RAM cannot issue the policy. `expandpolicy`, `extendpolicy` and a
+  partial `reducepolicy` keep that payer; the `reducepolicy` that erases the row refunds it. A fresh T1 owner's
+  personal policy (from registration) leaves ~8.3 KB spare, about 40 rows; for more it adds RAM to that policy
+  with `expandpolicy` (one policy per issuer per owner). A T2 or T3 owner holds only its 1144-byte account gift
+  (200 bytes spare), so it funds itself first with a self-issued
+  `addpolicy(owner=self, issuer=self, ram_weight>=0.0001 SYS)`, which succeeds in one action because the RAM it
+  grants is counted before the chain's end-of-transaction RAM check; each further row costs another 204 bytes,
+  which 0.0002 SYS more on that policy covers at `bytes_per_unit = 104`, added with `expandpolicy`.
+  `newuser` / `raiseacctlim` bill their
+  `sponsors` / `sponsorcount` rows to the sponsoring T1 owner. Every other `sysio.roa` row — `roastate`,
+  `acctlimcfg`, `nodeowners`, `nodeownerreg` — bills `sysio`.
 - **Only transiently unlimited** during bring-up: `sysio` (genesis), `sysio.roa`, `sysio.acct` — all set
   finite by `activateroa`. No account is permanently unlimited.
 - Invariant: `sysio` pool remaining + `sysio.acct` bucket == initial pool; grand total across {node-owner
-  reserves + roa allocation + `sysio` pool + every gifted account/contract} == `total_sys * bytes_per_unit`.
+  reserves + `sysio.roa`'s pinned usage + `sysio` pool + every gifted account/contract} ==
+  `total_sys * bytes_per_unit`.
 
 ## Governance & privilege
 - **All `sysio.*` accounts: owner = active = `sysio@active`** (the governance authorities' `active`, below,
@@ -209,7 +226,8 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 6. deploy `sysio.roa` → `sysio.roa` — **raw** — `[sysio@active]`.
 7. `sysio::setpriv("sysio.roa", 1)` — `[sysio@active]`.
 8. `sysio.roa::activateroa({total_sys:"75496.0000 SYS", bytes_per_unit:104})` — `[sysio.roa@active]` — **RAM
-   POOL ESTABLISHED**; sets finite limits on `sysio`, `sysio.roa` (`leftover/2`), `sysio.acct` (seed). The
+   POOL ESTABLISHED**; sets finite limits on `sysio` (the pool), `sysio.roa` (pinned to its usage, no pool),
+   `sysio.acct` (seed). The
    bootstrap registers no node owner and never uses `forcereg` — node owners enter ONLY via the real
    `nodeownreg` flow, after launch.
 
