@@ -1,6 +1,7 @@
 import { AnvilEthereumTransactionPolicyConfig } from "@wireio/cluster-tool/config"
 
-const RemoteEpochInGasEstimate = 4_392_032n,
+/** ETH-259's emission budget, leaving room for the generic client's buffer. */
+const EmissionGasBudget = 13_500_000n,
   NodeopGasEstimateBufferNumerator = 6n,
   NodeopGasEstimateBufferDenominator = 5n
 
@@ -9,8 +10,8 @@ describe("AnvilEthereumTransactionPolicyConfig", () => {
     expect(AnvilEthereumTransactionPolicyConfig.create()).toEqual({
       max_priority_fee_per_gas_wei: "2000000000",
       max_fee_per_gas_wei: "100000000000",
-      max_gas_limit: "6000000",
-      max_total_native_cost_wei: "700000000000000000"
+      max_gas_limit: "16777216",
+      max_total_native_cost_wei: "1700000000000000000"
     })
   })
 
@@ -24,10 +25,11 @@ describe("AnvilEthereumTransactionPolicyConfig", () => {
     )
   })
 
-  it("covers the buffered remote epochIn gas high-water mark", () => {
+  it("leaves 20% headroom above the bounded emission budget", () => {
     const bufferedGasLimit =
-      (RemoteEpochInGasEstimate * NodeopGasEstimateBufferNumerator) /
+      (EmissionGasBudget * NodeopGasEstimateBufferNumerator) /
       NodeopGasEstimateBufferDenominator
+    expect(bufferedGasLimit).toBe(16_200_000n)
     expect(
       BigInt(AnvilEthereumTransactionPolicyConfig.MaximumGasLimit)
     ).toBeGreaterThanOrEqual(bufferedGasLimit)

@@ -260,7 +260,9 @@ describe("Steps.processes.nodeop", () => {
       "gives %s nodes no Ethereum signing configuration or artifact dependency",
       role => {
         const ctx = fixtureContext(sandbox()),
-          node = NodeConfig.plan(ctx.config).find(planned => planned.role === role)
+          node = NodeConfig.plan(ctx.config).find(
+            planned => planned.role === role
+          )
         expect(node).toBeDefined()
         expect(
           Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, null)
@@ -309,7 +311,9 @@ describe("Steps.processes.nodeop", () => {
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
       const extraArgs = await startBatchOperator(ctx)
       expect(extraArgs).toContain("--outpost-ethereum-client-config-file")
-      expect(extraArgs).toContain(artifactsFixture.ethereumClientConfigurationFile)
+      expect(extraArgs).toContain(
+        artifactsFixture.ethereumClientConfigurationFile
+      )
       expect(extraArgs).not.toContain("--outpost-ethereum-client")
       expect(extraArgs).toContain("--outpost-solana-client")
       expect(extraArgs.slice(0, 2)).toEqual(

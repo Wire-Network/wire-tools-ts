@@ -938,9 +938,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         OperatorDaemonTool.EthereumClientConfigurationFilename
       ),
       client = JSON.parse(Fs.readFileSync(clientFile, "utf-8")).clients[0]
-    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
-      `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
-    ])
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual(
+      [
+        `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
+      ]
+    )
     expect(client.connection.rpc_url).toBe(externalEthereumRpcUrl)
     expect(client.chain_id).toBe(AnvilProcess.DefaultChainId)
     expect(client.transaction_policy).toBeDefined()
@@ -1235,9 +1237,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         OperatorDaemonTool.EthereumClientConfigurationFilename
       ),
       client = JSON.parse(Fs.readFileSync(clientFile, "utf-8")).clients[0]
-    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
-      `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
-    ])
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual(
+      [
+        `"$CLUSTER_DIR"'/data/${OperatorDaemonTool.EthereumClientConfigurationFilename}'`
+      ]
+    )
     expect(client.connection.rpc_url).toBe(ExternalEthereumRpcUrl)
     expect(client.chain_id).toBe(ExternalChainId)
     expect(client.transaction_policy).toBeUndefined()

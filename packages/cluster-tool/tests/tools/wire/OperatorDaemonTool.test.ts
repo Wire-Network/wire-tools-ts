@@ -253,9 +253,9 @@ describe("OperatorDaemonTool", () => {
           keySourceFor,
           OperatorDaemonTool.NoBatchUnderwriting
         )
-      expect(valuesOf(batchArgs, "--outpost-ethereum-client-config-file")).toEqual([
-        artifacts.ethereumClientConfigurationFile
-      ])
+      expect(
+        valuesOf(batchArgs, "--outpost-ethereum-client-config-file")
+      ).toEqual([artifacts.ethereumClientConfigurationFile])
       expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([])
       expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
         `${OperatorDaemonTool.SolanaClientId},sol-acct.batchopcccc,${ExternalSolanaRpcUrl}`
@@ -460,9 +460,9 @@ describe("OperatorDaemonTool", () => {
       expect(ethereumProvider(args)).toBeDefined()
       expect(ethereumProvider(otherArgs)).toBeDefined()
       expect(ethereumProvider(args)).not.toBe(ethereumProvider(otherArgs))
-      expect(valuesOf(otherArgs, "--outpost-ethereum-client-config-file")).toEqual(
-        valuesOf(args, "--outpost-ethereum-client-config-file")
-      )
+      expect(
+        valuesOf(otherArgs, "--outpost-ethereum-client-config-file")
+      ).toEqual(valuesOf(args, "--outpost-ethereum-client-config-file"))
     })
 
     it("declares the client ids as the chain codes", () => {

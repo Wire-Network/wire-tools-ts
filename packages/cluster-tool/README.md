@@ -603,17 +603,21 @@ generated Ethereum client. The values live in
 |---|---:|
 | Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
 | Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
-| Maximum final gas limit | `6,000,000` |
-| Maximum total native cost | `700,000,000,000,000,000` wei (0.7 ETH) |
+| Maximum final gas limit | `16,777,216` |
+| Maximum total native cost | `1,700,000,000,000,000,000` wei (1.7 ETH) |
 
 Nodeop applies the final 20% estimate buffer before checking the gas cap. At
-the full `6,000,000 × 100 gwei = 0.6 ETH` gas bound, the total-cost cap leaves
-`0.1 ETH` for transaction value. The historical E2E Flow Tests run
-`31645392740` validated these limits for the then-current workloads; the
-preceding emissions run measured a 4,392,032-gas high-water estimate, or
-5,270,438 gas after nodeop's 20% buffer. This is historical sizing evidence;
-current pooled-flow validation is still required before delivery. The standalone
-swap-underwriter `commit` workload has since been retired. External-outpost configuration continues to omit
+the full `16,777,216 × 100 gwei = 1.6777216 ETH` gas bound, the total-cost cap
+leaves `0.0222784 ETH` for transaction value. The final gas cap matches EIP-7825.
+[Ethereum PR #305](https://github.com/Wire-Network/wire-ethereum/pull/305) bounds
+outbound construction to 16 messages and 32 KiB, with a 13,500,000-gas continuation
+budget for emission alone: the generic client's buffer yields 16,200,000 gas.
+The production `epochIn` relay supplies an explicit final gas budget instead;
+its capped retry can use the full 16,777,216 for inbound dispatch. Six million gas cannot carry some
+accepted inbound dispatches or near-cap outbound batches. Coordinated validation
+must use both branches and verify finalization and retained replies, rather than
+receipt success alone. The standalone swap-underwriter `commit` workload has
+since been retired. External-outpost configuration continues to omit
 the policy, because the reviewed limits for its operator-selected endpoint are
 outside this tool's scope. Bios, API, and producer-only nodes receive neither an
 Ethereum signing client nor an orphaned client-config option.
