@@ -283,7 +283,6 @@ export class ProducerRegistrationScenario extends FlowScenario {
           type: OperatorType.PRODUCER,
           // No `producerNodeIndex` — that is what routes this through the collateral-backed
           // path (its own keys and account, authex links, regoperator) instead of the genesis one.
-          ethereumHdIndex: Constants.ProducerEthereumHdIndex,
           isBootstrapped: false
         }
       ]

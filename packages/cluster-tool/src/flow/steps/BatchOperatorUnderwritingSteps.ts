@@ -3,6 +3,7 @@ import Assert from "node:assert"
 import type { BatchOperatorUnderwritingConfig } from "@wireio/cluster-tool-shared"
 import { AttestationType } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { ethers } from "ethers"
 import { Constants, ProtocolTiming } from "../../Constants.js"
 import {
   ClusterBuildStep,
@@ -21,6 +22,10 @@ import {
 import { Steps, SyndicationUserSteps } from "../../orchestration/steps/index.js"
 import { Report } from "../../report/Report.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
+import {
+  EthereumFundingTool,
+  EthereumSyndicationTool
+} from "../../tools/ethereum/index.js"
 import { SolanaLiqSyndicationTool } from "../../tools/solana/index.js"
 import {
   OperatorDaemonTool,
@@ -1429,6 +1434,143 @@ export namespace BatchOperatorUnderwritingSteps {
         "operators-active",
         "every batch operator is still ACTIVE: underwriting did not disturb the relay",
         {}
+      )
+    )
+  }
+
+  // ── The Ethereum stimulus: a user's liqETH syndication the operators underwrite ──
+
+  /**
+   * A user whose Ethereum syndication the operators underwrite: its WIRE destination
+   * account, the durable handle of its persisted Ethereum wallet (a random per-cluster
+   * wallet, distinct from every operator and bootstrap actor) and the amount it syndicates.
+   */
+  export interface EthereumSyndicator {
+    /** The WIRE account the syndication is delivered to, once its wallet is linked. */
+    readonly account: string
+    /** Durable handle of the user's persisted Ethereum wallet. */
+    readonly walletName: string
+    /** The syndicated amount, in depot (LIQETH) subunits. */
+    readonly amount: bigint
+  }
+
+  /** Acquire this many times the syndicated liqETH, so a share price above one cannot leave the wallet short. */
+  export const EthereumDepositHeadroomFactor = 2n
+  /** One ether of gas headroom (liqETH's 18 decimals are ETH's own) for the deposit, the approval and the syndication. */
+  export const EthereumGasHeadroomWei = ethers.WeiPerEther
+
+  /**
+   * A depot LIQETH amount in native liqETH precision — the amount the wallet syndicates.
+   *
+   * @param amount - The amount in depot subunits.
+   * @return The amount in wei.
+   */
+  export function ethereumNativeAmount(amount: bigint): bigint {
+    return amount * Steps.mockShadowBacking.EthereumWeiPerDepotUnit
+  }
+
+  /**
+   * The ETH the syndicator deposits for liqETH: {@link EthereumDepositHeadroomFactor} times
+   * what it syndicates.
+   *
+   * @param amount - The syndicated amount in depot subunits.
+   * @return The deposit in wei.
+   */
+  export function ethereumDepositWei(amount: bigint): bigint {
+    return ethereumNativeAmount(amount) * EthereumDepositHeadroomFactor
+  }
+
+  /**
+   * The syndicator wallet's funded balance (one `anvil_setBalance`): the whole deposit plus
+   * its gas headroom. Below the deposit, the deposit Step is the first failure.
+   *
+   * @param amount - The syndicated amount in depot subunits.
+   * @return The balance in wei.
+   */
+  export function ethereumWalletBalanceWei(amount: bigint): bigint {
+    return ethereumDepositWei(amount) + EthereumGasHeadroomWei
+  }
+
+  /**
+   * Phase: an independent Ethereum user syndicates liqETH to its linked WIRE account —
+   * the stimulus whose request the operators' underwriter role then bonds. One write per
+   * Step: the WIRE account, the persisted wallet, its funding, the wallet's `createlink`,
+   * the ETH deposit for liqETH, the pool allowance and the syndication itself. The flow
+   * follows it with the typed waits ({@link planVerifyRecorded}, {@link planVerifyBonded},
+   * {@link planVerifyApprovedAndClaimed}).
+   *
+   * @param parent - The build root or an enclosing group.
+   * @param name - The phase name.
+   * @param description - The phase description.
+   * @param syndicator - The user, its wallet and its amount.
+   * @return The self-registered phase.
+   */
+  export function planEthereumSyndication<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    syndicator: EthereumSyndicator
+  ): ClusterBuildPhase<C> {
+    const { account, walletName, amount } = syndicator,
+      nativeAmount = ethereumNativeAmount(amount)
+    return ClusterBuildPhase.create<C>(parent, name, description).push(
+      Steps.account.planCreateKeyed<C>(
+        Report.Actor.User,
+        "create-ethereum-user",
+        "create the independent Ethereum recipient",
+        SyndicationScenario.WriteOptions,
+        account,
+        Constants.DEV_K1_PUBLIC_KEY
+      ),
+      EthereumFundingTool.planCreateWallet<C>(
+        Report.Actor.User,
+        "create-ethereum-wallet",
+        "generate the independent Ethereum wallet",
+        SyndicationScenario.WriteOptions,
+        walletName,
+        `${account} — independent Ethereum syndicator wallet`
+      ),
+      EthereumFundingTool.planSetBalance<C>(
+        Report.Actor.User,
+        "fund-ethereum-wallet",
+        "fund the independent Ethereum wallet for the deposit and its gas",
+        SyndicationScenario.OutpostOptions,
+        walletName,
+        ethereumWalletBalanceWei(amount)
+      ),
+      SyndicationUserSteps.planLinkEthereumKey<C>(
+        Report.Actor.User,
+        "link-ethereum-user",
+        "link the independent Ethereum wallet",
+        SyndicationScenario.WriteOptions,
+        account,
+        walletName
+      ),
+      EthereumSyndicationTool.planDepositLiqEth<C>(
+        Report.Actor.User,
+        "ethereum-deposit",
+        "deposit ETH for liqETH",
+        SyndicationScenario.OutpostOptions,
+        walletName,
+        ethereumDepositWei(amount)
+      ),
+      EthereumSyndicationTool.planApproveLiqEth<C>(
+        Report.Actor.User,
+        "ethereum-approve",
+        "approve the syndication pool",
+        SyndicationScenario.OutpostOptions,
+        walletName,
+        nativeAmount
+      ),
+      EthereumSyndicationTool.planSyndicate<C>(
+        Report.Actor.User,
+        "ethereum-syndicate",
+        "syndicate to the holder's linked WIRE account",
+        SyndicationScenario.OutpostOptions,
+        walletName,
+        nativeAmount
       )
     )
   }

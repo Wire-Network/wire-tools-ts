@@ -143,6 +143,21 @@ export namespace LcoImportSteps {
     readonly sealsSyndication: boolean
   }
 
+  /** Input for {@link planVerifyBatchOperatorCredit}. */
+  export interface VerifyBatchOperatorCreditInput extends StepInput {
+    readonly kind: "LcoImportSteps.VerifyBatchOperatorCreditInput"
+    /** The batch operator's durable handle. */
+    readonly label: string
+  }
+
+  /** One imported shadow balance a batch operator holds — the verify's `extra` row. */
+  export interface BatchOperatorCredit {
+    /** The imported shadow's depot token code (`LIQETH` / `LIQSOL`). */
+    readonly tokenCode: string
+    /** The balance in depot subunits. */
+    readonly balance: bigint
+  }
+
   /**
    * ONE PhaseGroup holding the whole import: the plan and its record, one Phase per
    * exported chain (its position batches, claim batches and pool), and the funding, the
@@ -972,6 +987,107 @@ export namespace LcoImportSteps {
       pools: WireLcoImportTool.chainPlans(plan).map(
         chainPlan => chainPlan.pool.pairSymbol
       )
+    })
+  }
+
+  /**
+   * ONE Phase verifying that every PRE-FUNDED batch operator holds the credit
+   * the import carried for it — one Step per operator, self-registered on
+   * `parent`. Composed after operator provisioning on a launch whose batch
+   * operators were pre-created (`batchOperatorKeyPolicy: adoptOnly`) and
+   * pre-funded on the outposts before the exports were frozen: the import
+   * parks each position under the operator's outpost key, and the operator's
+   * authex link sweeps it into its own shadow balance.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every Step.
+   * @param labels - The pre-funded batch operators' durable handles.
+   * @returns The self-registered phase.
+   */
+  export function planVerifyBatchOperatorCredits<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    labels: readonly string[]
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(
+      parent,
+      name,
+      description,
+      labels.map(label =>
+        planVerifyBatchOperatorCredit<C>(
+          Actor.BatchOperator,
+          `verify-${label}-lco-credit`,
+          `${label} holds the imported shadow credit its pre-launch positions carried`,
+          options,
+          label
+        )
+      )
+    )
+  }
+
+  /** Verify ONE pre-funded batch operator's imported shadow credit — the Report checkpoint of its pre-funding. */
+  export function planVerifyBatchOperatorCredit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string
+  ): ClusterBuildStep<C, VerifyBatchOperatorCreditInput> {
+    return ClusterBuildStep.create<C, VerifyBatchOperatorCreditInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "LcoImportSteps.VerifyBatchOperatorCreditInput", label },
+      runVerifyBatchOperatorCredit
+    )
+  }
+
+  /**
+   * Named runner — for every chain the published plan imported, the operator's
+   * `sysio.liq` balance in that chain's shadow is positive: its pre-launch
+   * position was imported under its outpost key and its link swept it. A zero
+   * balance names the chain, so the failure points at the missing position or
+   * the link that did not sweep, not at a later underwriting step that merely
+   * finds nothing to bond with.
+   */
+  export async function runVerifyBatchOperatorCredit<C extends ClusterBuildContext>(
+    ctx: C,
+    input: VerifyBatchOperatorCreditInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const operator = ctx.keyStore.assertOperator(input.label),
+      plan = ctx.outputs.assert(LcoImportPlanKey),
+      credits: BatchOperatorCredit[] = []
+    await eachSeries(WireLcoImportTool.chainPlans(plan), async chainPlan => {
+      const { tokenCode, chainCode } = chainPlan.pool,
+        balance = await WireSyndicationTool.readLiqBalance(
+          ctx,
+          operator.account,
+          tokenCode
+        )
+      Assert.ok(
+        balance > 0n,
+        `LcoImportSteps: batch operator ${input.label} (${operator.account}) holds no ${tokenCode} after the ${chainCode} import — its pre-launch position was not in the export, or its ${chainCode} authex link did not sweep it`
+      )
+      credits.push({ tokenCode, balance })
+    })
+    StepExtraRecorder.note(`${input.label} holds its imported credit`, {
+      label: input.label,
+      account: operator.account,
+      credits: credits.map(credit => ({
+        tokenCode: credit.tokenCode,
+        balance: credit.balance.toString()
+      }))
     })
   }
 

@@ -58,8 +58,10 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
         {
           label: BatchRosterReplacementScenario.Label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: BatchRosterReplacementScenario.ReplacementHdIndex,
           isBootstrapped: false,
+          // Fee-payer funding for the daemon's deliveries on BOTH outposts: every key is
+          // random and starts at zero, and an unfunded Ethereum fee payer never delivers.
+          fundEthereumWei: WireOperatorProvisioningTool.DefaultEthereumFundWei,
           airdropSolanaLamports:
             WireOperatorProvisioningTool.DefaultSolanaAirdropLamports
         }
@@ -230,8 +232,6 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
 export namespace BatchRosterReplacementScenario {
   /** Nonbootstrap operator's durable key-store identity. */
   export const Label = "replacement"
-  /** Funded anvil account distinct from user and bootstrap accounts. */
-  export const ReplacementHdIndex = 33
   /** One WIRE meets the installed admission minimum. */
   export const Collateral = 1_000_000_000n
   /** Ethereum next inbound epoch once both registries consumed replacement. */

@@ -16,12 +16,6 @@ export namespace TerminationScenarioConstants {
    * bootstrap's `batchop.[a-i]` roster without colliding.
    */
   export const DoomedOperatorLabel = "newop"
-  /**
-   * Anvil-mnemonic HD index for the operator's ETH identity, which backs its
-   * Ethereum authex link — past every bootstrap operator slot (batchops +
-   * underwriters).
-   */
-  export const DoomedOperatorEthereumHdIndex = 35
 
   /** Registered outpost chain codes whose inbound cursors must keep advancing. */
   export const EthereumChainCode = SlugName.from(

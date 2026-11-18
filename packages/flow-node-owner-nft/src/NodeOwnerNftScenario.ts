@@ -7,6 +7,7 @@ import {
 } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  EthereumFundingTool,
   FlowScenario,
   matchesProtoEnum,
   NodeOwnerRegStatus,
@@ -14,21 +15,24 @@ import {
   NodeOwnerTier,
   pollUntil,
   ProtocolTiming,
-  readNodeOwner,
-  readNodeOwnerReg,
   Report,
+  Steps,
+  SyndicationUserSteps,
   verifyStep,
+  WireNodeOwnerTool,
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
-import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwnerNftScenarioCommitSteps.js"
-import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./steps/NodeOwnerNftScenarioMintSteps.js"
-import { NodeOwnerNftScenarioRegistrationSteps as RegistrationSteps } from "./steps/NodeOwnerNftScenarioRegistrationSteps.js"
 
 const { SysioAuthexChainkind, SysioContractName } = SysioContracts
 const { Actor } = Report
+const {
+  commit: CommitSteps,
+  mint: MintSteps,
+  registration: RegistrationSteps
+} = Steps.nodeOwner
 
 /** The owner's `nodeownerreg` audit row must be REJECTED with `reason` (reads). */
 async function assertRejectedAudit(
@@ -36,7 +40,7 @@ async function assertRejectedAudit(
   account: string,
   reason: NodeOwnerRejectReason
 ): Promise<void> {
-  const audit = await readNodeOwnerReg(ctx.wire, account)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, account)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Rejected,
@@ -56,7 +60,7 @@ async function assertRejectedWithoutRow(
   reason: NodeOwnerRejectReason
 ): Promise<void> {
   Assert.ok(
-    (await readNodeOwner(ctx.wire, account)) == null,
+    (await WireNodeOwnerTool.readNodeOwner(ctx.wire, account)) == null,
     `nodeowners row must be absent for ${account}`
   )
   await assertRejectedAudit(ctx, account, reason)
@@ -77,16 +81,16 @@ function compressedEthereumKey(value: string): string {
 async function assertPreservedEthereumLink(
   ctx: ClusterBuildContext,
   account: string,
-  linkedHdIndex: number,
-  rejectedHdIndex: number
+  linkedWalletName: string,
+  rejectedWalletName: string
 ): Promise<void> {
-  const linkedKey = await RegistrationSteps.newEthereumPublicKey(
+  const linkedKey = RegistrationSteps.loadDepositorPublicKey(
       ctx,
-      linkedHdIndex
+      linkedWalletName
     ),
-    rejectedKey = await RegistrationSteps.newEthereumPublicKey(
+    rejectedKey = RegistrationSteps.loadDepositorPublicKey(
       ctx,
-      rejectedHdIndex
+      rejectedWalletName
     ),
     links = await ctx.wire
       .getSysioContract(SysioContractName.authex)
@@ -118,16 +122,21 @@ async function assertPreservedEthereumLink(
 async function verifyExistingAccountRejected(
   ctx: ClusterBuildContext,
   account: string,
-  linkedHdIndex: number,
-  rejectedHdIndex: number
+  linkedWalletName: string,
+  rejectedWalletName: string
 ): Promise<void> {
   await assertRejectedWithoutRow(ctx, account, NodeOwnerRejectReason.AccountExists)
-  await assertPreservedEthereumLink(ctx, account, linkedHdIndex, rejectedHdIndex)
+  await assertPreservedEthereumLink(
+    ctx,
+    account,
+    linkedWalletName,
+    rejectedWalletName
+  )
 }
 
 async function verifyDuplicateRejected(ctx: ClusterBuildContext): Promise<void> {
   const account = Constants.DuplicateAccount,
-    registration = await readNodeOwner(ctx.wire, account)
+    registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, account)
   await assertRejectedAudit(ctx, account, NodeOwnerRejectReason.Duplicate)
   Assert.strictEqual(
     Number(registration?.tier),
@@ -137,8 +146,8 @@ async function verifyDuplicateRejected(ctx: ClusterBuildContext): Promise<void> 
   await assertPreservedEthereumLink(
     ctx,
     account,
-    Constants.DuplicateEthereumHdIndex,
-    Constants.DuplicateReplayEthereumHdIndex
+    Constants.DuplicateWalletName,
+    Constants.DuplicateReplayWalletName
   )
 }
 
@@ -147,7 +156,8 @@ async function verifyDuplicateRejected(ctx: ClusterBuildContext): Promise<void> 
  * transaction (no state change), so the typed action invoke is asserted to
  * reject with the chain's abort message. The claim's Wire key is always the dev
  * key (accepted claims create the account under it); the eth key is the probe's
- * variable (a new EM key for the tier probes, a K1 key for the non-EM probe).
+ * variable (the probe's persisted depositor wallet's EM key for the tier
+ * probes, a K1 key for the non-EM probe).
  */
 async function assertNodeOwnerRegistrationAborts(
   ctx: ClusterBuildContext,
@@ -175,7 +185,7 @@ async function assertNodeOwnerRegistrationAborts(
 async function verifyHappyPathConfirmed(
   ctx: ClusterBuildContext
 ): Promise<void> {
-  const registration = await readNodeOwner(ctx.wire, Constants.HappyPathAccount)
+  const registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.HappyPathAccount)
   Assert.ok(
     registration != null,
     `missing nodeowners row for ${Constants.HappyPathAccount}`
@@ -185,7 +195,7 @@ async function verifyHappyPathConfirmed(
     NodeOwnerTier.T1,
     "registered tier must be T1"
   )
-  const audit = await readNodeOwnerReg(ctx.wire, Constants.HappyPathAccount)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, Constants.HappyPathAccount)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Confirmed,
@@ -206,17 +216,17 @@ async function verifyCommitPathConfirmed(
   await pollUntil(
     `nodeowners row for ${Constants.CommitPathAccount} via OPP`,
     async () =>
-      (await readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
+      (await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
     Constants.CommitPathDeadlineMs,
     Constants.CommitPathPollIntervalMs
   )
-  const registration = await readNodeOwner(ctx.wire, Constants.CommitPathAccount)
+  const registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)
   Assert.strictEqual(
     Number(registration.tier),
     NodeOwnerTier.T1,
     "commit-path registered tier must be T1"
   )
-  const audit = await readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
+  const audit = await WireNodeOwnerTool.readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
   Assert.strictEqual(
     Number(audit?.status),
     NodeOwnerRegStatus.Confirmed,
@@ -301,6 +311,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "HappyPath",
       "Create + register a tier-1 owner → nodeowners row + CONFIRMED audit"
     ).push(
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-happy-owner-wallet",
+        `generate ${Constants.HappyPathAccount}'s depositor wallet`,
+        stepOptions,
+        Constants.HappyPathWalletName,
+        "node-owner NFT — happy-path depositor wallet"
+      ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-happy-owner",
@@ -308,7 +326,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.HappyPathAccount,
         NodeOwnerTier.T1,
-        Constants.HappyPathEthereumHdIndex,
+        Constants.HappyPathWalletName,
         Constants.DEV_K1_PUBLIC_KEY
       ),
       verifyStep(
@@ -335,13 +353,29 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
-      RegistrationSteps.planAuthexLink(
-        Actor.Sysio,
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-wrong-key-linked-wallet",
+        `generate the wallet ${Constants.WrongKeyAccount} links before the claim`,
+        stepOptions,
+        Constants.WrongKeyLinkedWalletName,
+        "node-owner NFT — wrong-key fixture's existing Ethereum link wallet"
+      ),
+      SyndicationUserSteps.planLinkEthereumKey(
+        Actor.User,
         "link-wrong-key-owner",
         `record ${Constants.WrongKeyAccount}'s existing Ethereum link`,
         stepOptions,
         Constants.WrongKeyAccount,
-        Constants.WrongKeyLinkedEthereumHdIndex
+        Constants.WrongKeyLinkedWalletName
+      ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-wrong-key-owner-wallet",
+        `generate ${Constants.WrongKeyAccount}'s depositor wallet`,
+        stepOptions,
+        Constants.WrongKeyWalletName,
+        "node-owner NFT — wrong-key depositor wallet"
       ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
@@ -350,7 +384,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.WrongKeyAccount,
         NodeOwnerTier.T1,
-        Constants.WrongKeyEthereumHdIndex,
+        Constants.WrongKeyWalletName,
         Constants.OtherWireKey
       ),
       verifyStep(
@@ -361,8 +395,8 @@ export class NodeOwnerNftScenario extends FlowScenario {
           verifyExistingAccountRejected(
             ctx,
             Constants.WrongKeyAccount,
-            Constants.WrongKeyLinkedEthereumHdIndex,
-            Constants.WrongKeyEthereumHdIndex
+            Constants.WrongKeyLinkedWalletName,
+            Constants.WrongKeyWalletName
           ),
         stepOptions
       )
@@ -374,6 +408,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "NameInvalid",
       "Tier-1 name over the 2-6 char prefix budget → REJECTED/NAME_INVALID"
     ).push(
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-name-invalid-owner-wallet",
+        `generate the ${Constants.NameInvalidAccount} claim's depositor wallet`,
+        stepOptions,
+        Constants.NameInvalidWalletName,
+        "node-owner NFT — name-invalid depositor wallet"
+      ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-name-invalid-owner",
@@ -381,7 +423,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.NameInvalidAccount,
         NodeOwnerTier.T1,
-        Constants.NameInvalidEthereumHdIndex,
+        Constants.NameInvalidWalletName,
         Constants.DEV_K1_PUBLIC_KEY
       ),
       verifyStep(
@@ -413,13 +455,29 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
-      RegistrationSteps.planAuthexLink(
-        Actor.Sysio,
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-existing-linked-wallet",
+        `generate the wallet ${Constants.ExistingAccount} links before the claim`,
+        stepOptions,
+        Constants.ExistingLinkedWalletName,
+        "node-owner NFT — existing-account fixture's existing Ethereum link wallet"
+      ),
+      SyndicationUserSteps.planLinkEthereumKey(
+        Actor.User,
         "link-existing-owner",
         `record ${Constants.ExistingAccount}'s existing Ethereum link`,
         stepOptions,
         Constants.ExistingAccount,
-        Constants.ExistingLinkedEthereumHdIndex
+        Constants.ExistingLinkedWalletName
+      ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-existing-owner-wallet",
+        `generate the ${Constants.ExistingAccount} claim's depositor wallet`,
+        stepOptions,
+        Constants.ExistingWalletName,
+        "node-owner NFT — existing-account depositor wallet"
       ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
@@ -428,7 +486,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.ExistingAccount,
         NodeOwnerTier.T1,
-        Constants.ExistingEthereumHdIndex,
+        Constants.ExistingWalletName,
         Constants.DEV_K1_PUBLIC_KEY
       ),
       verifyStep(
@@ -439,8 +497,8 @@ export class NodeOwnerNftScenario extends FlowScenario {
           verifyExistingAccountRejected(
             ctx,
             Constants.ExistingAccount,
-            Constants.ExistingLinkedEthereumHdIndex,
-            Constants.ExistingEthereumHdIndex
+            Constants.ExistingLinkedWalletName,
+            Constants.ExistingWalletName
           ),
         stepOptions
       )
@@ -452,6 +510,14 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "Duplicate",
       "A second registration for the same owner → REJECTED/DUPLICATE"
     ).push(
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-duplicate-owner-wallet",
+        `generate ${Constants.DuplicateAccount}'s first depositor wallet`,
+        stepOptions,
+        Constants.DuplicateWalletName,
+        "node-owner NFT — duplicate owner's first depositor wallet"
+      ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-duplicate-first",
@@ -459,8 +525,16 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.DuplicateAccount,
         NodeOwnerTier.T1,
-        Constants.DuplicateEthereumHdIndex,
+        Constants.DuplicateWalletName,
         Constants.DEV_K1_PUBLIC_KEY
+      ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-duplicate-replay-wallet",
+        `generate ${Constants.DuplicateAccount}'s replay depositor wallet`,
+        stepOptions,
+        Constants.DuplicateReplayWalletName,
+        "node-owner NFT — duplicate owner's replay depositor wallet"
       ),
       RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
@@ -469,7 +543,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         Constants.DuplicateAccount,
         Constants.DuplicateReplayTier,
-        Constants.DuplicateReplayEthereumHdIndex,
+        Constants.DuplicateReplayWalletName,
         Constants.DEV_K1_PUBLIC_KEY
       ),
       verifyStep(
@@ -487,35 +561,51 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "HardAborts",
       "Tier out of [1,3] and a non-EM eth key REVERT the registration tx"
     ).push(
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-tier-below-minimum-wallet",
+        `generate the tier ${Constants.TierBelowMinimum} probe's depositor wallet`,
+        stepOptions,
+        Constants.TierBelowMinimumWalletName,
+        "node-owner NFT — tier-below-minimum probe depositor wallet"
+      ),
       verifyStep(
         Actor.Sysio,
         "hard-abort-tier-below-minimum",
         `tier ${Constants.TierBelowMinimum} registration reverts`,
-        async ctx =>
+        ctx =>
           assertNodeOwnerRegistrationAborts(
             ctx,
             Constants.InvalidTierAccount,
             Constants.TierBelowMinimum,
-            await RegistrationSteps.newEthereumPublicKey(
+            RegistrationSteps.loadDepositorPublicKey(
               ctx,
-              Constants.TierBelowMinimumEthereumHdIndex
+              Constants.TierBelowMinimumWalletName
             ),
             Constants.InvalidTierAbortPattern
           ),
         stepOptions
       ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-tier-above-maximum-wallet",
+        `generate the tier ${Constants.TierAboveMaximum} probe's depositor wallet`,
+        stepOptions,
+        Constants.TierAboveMaximumWalletName,
+        "node-owner NFT — tier-above-maximum probe depositor wallet"
+      ),
       verifyStep(
         Actor.Sysio,
         "hard-abort-tier-above-maximum",
         `tier ${Constants.TierAboveMaximum} registration reverts`,
-        async ctx =>
+        ctx =>
           assertNodeOwnerRegistrationAborts(
             ctx,
             Constants.InvalidTierAccount,
             Constants.TierAboveMaximum,
-            await RegistrationSteps.newEthereumPublicKey(
+            RegistrationSteps.loadDepositorPublicKey(
               ctx,
-              Constants.TierAboveMaximumEthereumHdIndex
+              Constants.TierAboveMaximumWalletName
             ),
             Constants.InvalidTierAbortPattern
           ),

@@ -4,14 +4,13 @@ import Os from "node:os"
 import Path from "node:path"
 import { promisify } from "node:util"
 import { ethers } from "ethers"
-import { defaults, range } from "lodash"
+import { defaults } from "lodash"
 import Assert from "node:assert"
 import { EvmAddressPattern } from "@wireio/cluster-tool-shared"
 import { ChainKind } from "@wireio/opp-typescript-models"
-import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
-import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import type { EthereumKeyPair } from "../../types/KeyPair.js"
 import {
   LongFileLockOptions,
   mkdirs,
@@ -19,18 +18,10 @@ import {
 } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 import { loadOutpostContract } from "../../utils/ethereumUtils.js"
+import { ethereumPrivateKeyHex } from "../../utils/keyPairUtils.js"
 
 const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
-
-/** One deterministic anvil account, annotated with its bootstrap usage. */
-export interface EthereumAccount {
-  address: string
-  privateKey: string
-  publicKey: string
-  usedInBootstrap: boolean
-  usedFor: string
-}
 
 /**
  * A batch-operator roster for `OPPInbound` — what `initialize` installs at
@@ -59,8 +50,6 @@ export interface EthereumOutpostInitialRoster {
 export interface EthereumOutpostBootstrapperOptions {
   /** Path to the `wire-ethereum` repo root. */
   ethereumPath: string
-  /** Cluster data path for the annotated accounts file. */
-  anvilDataPath: string
   /** RPC URL of the already-running run anvil to deploy against. */
   rpcUrl: string
   /**
@@ -78,11 +67,17 @@ export interface EthereumOutpostBootstrapperOptions {
    */
   initialRoster: EthereumOutpostInitialRoster
   /**
-   * Number of deterministic accounts to generate — MUST match the run anvil's
-   * `--accounts` (default: {@link AnvilProcess.AccountCount}) so every generated
-   * account maps to a pre-funded anvil account.
+   * The DEPLOYER: `deployLocal.ts`'s `owner`, the `OutpostManager` admin after
+   * handoff and the ONE signer allowed through `manager.execute`. The persisted
+   * `EthereumWallet.DeployerWalletName` wallet, funded before the deploy.
    */
-  accountCount?: number
+  deployer: EthereumKeyPair
+  /**
+   * The emergency-stop PANIC account the deploy config names (`panicAccount`)
+   * and every `DeployScript` grants the `panic` role: `pause()` / `unpause()`
+   * and nothing else. The persisted `EthereumWallet.PanicWalletName` wallet.
+   */
+  panicAccount: EthereumKeyPair
   /** Prebooked fixture principal in depot units; zero for a cluster without imported shadow. */
   mockSyndicatedPrincipal?: bigint
 }
@@ -91,11 +86,10 @@ export interface EthereumOutpostBootstrapperOptions {
 export interface EthereumOutpostBootstrapperConfig extends Required<EthereumOutpostBootstrapperOptions> {}
 
 /**
- * Bootstrap the Ethereum (anvil) outpost for the test cluster: generate
- * deterministic accounts from anvil's default mnemonic, deploy the
+ * Bootstrap the Ethereum (anvil) outpost for the test cluster: deploy the
  * `wire-ethereum` contracts via Hardhat AGAINST the already-running run anvil,
- * and write an annotated
- * accounts file.
+ * as the random, persisted deployer wallet the Ethereum outpost phase created
+ * and funded first.
  *
  * The run anvil is started separately (`Steps.processes.anvil.start`) and owned
  * by the process manager for the whole cluster lifecycle — this bootstrapper
@@ -104,18 +98,21 @@ export interface EthereumOutpostBootstrapperConfig extends Required<EthereumOutp
  */
 export class EthereumOutpostBootstrapper {
   private readonly config: EthereumOutpostBootstrapperConfig
-  private accounts: EthereumAccount[] = []
 
   constructor(options: EthereumOutpostBootstrapperOptions) {
     Assert.ok(
       options.ethereumPath,
       "EthereumOutpostBootstrapper: ethereumPath is required"
     )
-    Assert.ok(
-      options.anvilDataPath,
-      "EthereumOutpostBootstrapper: anvilDataPath is required"
-    )
     Assert.ok(options.rpcUrl, "EthereumOutpostBootstrapper: rpcUrl is required")
+    Assert.ok(
+      options.deployer?.privateKey,
+      "EthereumOutpostBootstrapper: the deployer wallet (with its private key) is required"
+    )
+    Assert.ok(
+      options.panicAccount?.address,
+      "EthereumOutpostBootstrapper: the panic account wallet is required"
+    )
     Assert.ok(
       options.deploymentsPath,
       "EthereumOutpostBootstrapper: deploymentsPath is required"
@@ -138,62 +135,39 @@ export class EthereumOutpostBootstrapper {
   }
 
   /**
-   * Run the full Ethereum-outpost bootstrap: generate accounts → deploy
-   * contracts against the running anvil → write the
-   * annotated accounts file. The anvil is neither started nor stopped here —
-   * it is the process-manager-owned run anvil for the whole cluster lifecycle.
+   * Run the Ethereum-outpost bootstrap: deploy the contracts against the
+   * running anvil as the deployer. The anvil is neither started nor stopped
+   * here — it is the process-manager-owned run anvil for the whole cluster
+   * lifecycle.
    */
-  async bootstrap(): Promise<EthereumAccount[]> {
-    const { ethereumPath, anvilDataPath, rpcUrl, accountCount } = this.config
+  async bootstrap(): Promise<void> {
+    const { ethereumPath, rpcUrl, deployer, panicAccount } = this.config
 
     log.info(
-      `[ethereum] generating ${accountCount} accounts, deploying against ${rpcUrl}`
+      `[ethereum] deploying against ${rpcUrl} as ${deployer.address} (panic account ${panicAccount.address})`
     )
-    this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
-
     await this.deployContracts(ethereumPath, rpcUrl)
-
-    const accountsFile = Path.join(
-      mkdirs(anvilDataPath),
-      EthereumOutpostBootstrapper.AccountsFile
-    )
-    Fs.writeFileSync(accountsFile, JSON.stringify(this.accounts, null, 2))
-    log.info(
-      `[ethereum] wrote ${this.accounts.length} accounts to ${accountsFile}`
-    )
-
-    return this.accounts
-  }
-
-  /** Mark an account as used during bootstrap (for the annotated accounts file). */
-  private markAccountUsed(index: number, usedFor: string): void {
-    const account = this.accounts[index]
-    if (account != null) {
-      account.usedInBootstrap = true
-      account.usedFor = usedFor
-    }
   }
 
   /**
    * Deploy the `wire-ethereum` contracts by invoking Hardhat's `deployLocal.ts`.
-   * Writes deploy configs (pointing at the running anvil, deployer = account 0)
-   * into THIS cluster's `deploymentsPath` — `deployLocal.ts` reads/writes the
-   * same dir via `WIRE_ETH_DEPLOYMENTS_PATH` — clearing any stale address files
-   * first so a previous anvil's addresses can't be picked up by mistake. The
-   * hardhat invocation itself is serialized host-wide: parallel runs share the
-   * repo's compile cache/artifacts, and concurrent compiles corrupt them.
+   * Writes deploy configs (pointing at the running anvil, signed by the
+   * deployer) into THIS cluster's `deploymentsPath` — `deployLocal.ts`
+   * reads/writes the same dir via `WIRE_ETH_DEPLOYMENTS_PATH` — clearing any
+   * stale address files first so a previous anvil's addresses can't be picked
+   * up by mistake. The hardhat invocation itself is serialized host-wide:
+   * parallel runs share the repo's compile cache/artifacts, and concurrent
+   * compiles corrupt them.
    */
   private async deployContracts(
     ethereumPath: string,
     rpcUrl: string
   ): Promise<void> {
     log.info(`[ethereum] deploying contracts from ${ethereumPath}`)
-    const deployerPrivateKey =
-      this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey
-    this.markAccountUsed(
-      EthereumOutpostBootstrapper.DeployerAccountIndex,
-      "Contract deployer (LiqEth + Outpost)"
-    )
+    // hardhat reads the deployer's raw material: the deployer is a LOCAL
+    // persisted wallet, never a KMS-custodied key.
+    const deployerPrivateKey = ethereumPrivateKeyHex(this.config.deployer),
+      panicAccount = this.config.panicAccount.address
 
     const localDir = this.config.deploymentsPath
     mkdirs(localDir)
@@ -202,17 +176,6 @@ export class EthereumOutpostBootstrapper {
       if (Fs.existsSync(file)) Fs.unlinkSync(file)
     })
 
-    Assert.ok(
-      this.accounts.length > EthereumOutpostBootstrapper.PanicAccountIndex,
-      `EthereumOutpostBootstrapper: ${this.accounts.length} generated accounts leave no HD index ` +
-        `${EthereumOutpostBootstrapper.PanicAccountIndex} for the panic account`
-    )
-    const panicAccount =
-      this.accounts[EthereumOutpostBootstrapper.PanicAccountIndex].address
-    this.markAccountUsed(
-      EthereumOutpostBootstrapper.PanicAccountIndex,
-      "Emergency-stop panic account (panic role: pause / unpause)"
-    )
     const { initialRoster } = this.config,
       liqEthConfig = EthereumOutpostBootstrapper.liqEthDeployConfig(
         rpcUrl,
@@ -328,10 +291,10 @@ export class EthereumOutpostBootstrapper {
    * transient: the depot's first `BATCH_OPERATOR_GROUPS` attestation replaces
    * it under consensus.
    *
-   * Routed through `OutpostManager.execute` as the deployer (anvil HD index 0,
-   * the manager's post-handoff admin), exactly like `deployLocal.ts` wires the
-   * other `restricted` setters. Every window slot is installed, so slot `k`
-   * serves epoch `1 + k` as a delivered window would.
+   * Routed through `OutpostManager.execute` as the deployer (the manager's
+   * post-handoff admin), exactly like `deployLocal.ts` wires the other
+   * `restricted` setters. Every window slot is installed, so slot `k` serves
+   * epoch `1 + k` as a delivered window would.
    *
    * @param seed - the depot's window as EVM addresses + the slot serving epoch 1.
    */
@@ -356,9 +319,7 @@ export class EthereumOutpostBootstrapper {
       // The deployer is `deployLocal.ts`'s `owner`: the OutpostManager admin
       // after handoff, and the ONE signer allowed through `manager.execute`.
       deployer = new ethers.Wallet(
-        EthereumOutpostBootstrapper.generateAccounts(
-          EthereumOutpostBootstrapper.DeployerAccountIndex + 1
-        )[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey,
+        ethereumPrivateKeyHex(this.config.deployer),
         provider
       ),
       manager =
@@ -547,23 +508,6 @@ export namespace EthereumOutpostBootstrapper {
     }
   }
 
-  /** Annotated accounts filename written under the anvil data path. */
-  export const AccountsFile = "accounts.json"
-  /** Anvil's default deterministic mnemonic. */
-  export const AnvilMnemonic =
-    "test test test test test test test test test test test junk"
-  /** BIP-44 derivation path prefix anvil uses for its accounts. */
-  export const DerivationPath = "m/44'/60'/0'/0/"
-  /** HD index of the deployer account. */
-  export const DeployerAccountIndex = 0
-  /**
-   * HD index of the emergency-stop panic account the deploy config names
-   * (`panicAccount`), which the deploy grants the `panic` role: `pause()` /
-   * `unpause()` on the pausable contracts and nothing else. The LAST
-   * prefunded anvil account, clear of the operators (from 1), the swap users
-   * (32 up) and every flow-owned index (35–47).
-   */
-  export const PanicAccountIndex = AnvilProcess.AccountCount - 1
   /**
    * `SyndicationPool.maxSyndicationPerTransfer` the deploy sets, in wei — a
    * decimal string, as `deployOutpost.ts` reads it. 1,000 liqETH: the deploy
@@ -602,7 +546,7 @@ export namespace EthereumOutpostBootstrapper {
    * liqETH contracts' pause role follows this key, not the outpost's.
    *
    * @param rpcUrl - The run anvil's endpoint.
-   * @param deployerPrivateKey - The deployer (anvil HD index 0) key.
+   * @param deployerPrivateKey - The deployer's `0x` private key.
    * @param deploymentsPath - This cluster's deploy-artifact dir.
    * @param panicAccount - The panic account's address.
    * @returns The config object written as `liqeth.json`.
@@ -636,7 +580,7 @@ export namespace EthereumOutpostBootstrapper {
    * absent-key defaults.
    *
    * @param rpcUrl - The run anvil's endpoint.
-   * @param deployerPrivateKey - The deployer (anvil HD index 0) key.
+   * @param deployerPrivateKey - The deployer's `0x` private key.
    * @param deploymentsPath - This cluster's deploy-artifact dir.
    * @param panicAccount - The panic account's address.
    * @param initialRoster - The WNE-41 roster `OPPInbound.initialize` seats.
@@ -670,48 +614,6 @@ export namespace EthereumOutpostBootstrapper {
     }
   }
 
-  /**
-   * Assert every operator's EM HD index — batch operators from
-   * {@link Constants.batchOperatorEthereumHdIndex}, underwriters from
-   * {@link Constants.underwriterEthereumHdIndex} — sits below
-   * {@link PanicAccountIndex}, so no operator key is the panic account.
-   *
-   * @param batchOperatorCount - The cluster's batch-operator count.
-   * @param underwriterCount - The cluster's underwriter count.
-   * @throws If the highest operator index reaches the panic account's.
-   */
-  export function assertOperatorsClearOfPanicAccount(
-    batchOperatorCount: number,
-    underwriterCount: number
-  ): void {
-    const highest = Math.max(
-      Constants.batchOperatorEthereumHdIndex(batchOperatorCount - 1),
-      Constants.underwriterEthereumHdIndex(
-        batchOperatorCount,
-        underwriterCount - 1
-      )
-    )
-    Assert.ok(
-      highest < PanicAccountIndex,
-      `EthereumOutpostBootstrapper: ${batchOperatorCount} batch operators and ${underwriterCount} ` +
-        `underwriters reach HD index ${highest}, which is not below the panic account's ` +
-        `${PanicAccountIndex}`
-    )
-  }
-
-  /**
-   * The anvil HD wallet at `hdIndex` — the account anvil prefunds under its
-   * default mnemonic. A pure value helper.
-   *
-   * @param hdIndex - The HD account index.
-   * @returns The wallet (unconnected).
-   */
-  export function anvilWallet(hdIndex: number): ethers.HDNodeWallet {
-    return ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-      `${DerivationPath}${hdIndex}`
-    )
-  }
   /** Deploy-artifact files cleared before every deploy (stale-address guard). */
   export const StaleDeployArtifactFiles = [
     LiqEthAddressesFile,
@@ -736,29 +638,10 @@ export namespace EthereumOutpostBootstrapper {
   /** Chars of Hardhat stdout logged after a run. */
   export const HardhatStdoutTailChars = 500
 
-  /** Resolve the default (overridable) options. `accountCount` tracks the run
-   *  anvil's `--accounts` so every generated account is pre-funded. */
+  /** Resolve the default (overridable) options. */
   export function createDefaultOptions(): Partial<EthereumOutpostBootstrapperOptions> {
     return {
-      accountCount: AnvilProcess.AccountCount,
       mockSyndicatedPrincipal: 0n
     }
-  }
-
-  /**
-   * Generate `count` deterministic accounts from anvil's default mnemonic —
-   * they match exactly what anvil generates internally.
-   */
-  export function generateAccounts(count: number): EthereumAccount[] {
-    return range(count).map(index => {
-      const wallet = anvilWallet(index)
-      return {
-        address: wallet.address,
-        privateKey: wallet.privateKey,
-        publicKey: wallet.publicKey,
-        usedInBootstrap: false,
-        usedFor: ""
-      }
-    })
   }
 }

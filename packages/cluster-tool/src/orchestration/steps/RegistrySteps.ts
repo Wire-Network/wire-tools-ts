@@ -174,8 +174,6 @@ export namespace RegistrySteps {
 
   /** Durable bonder identity; flows resolve its ED/EM keys from readMockSyndicationBonder. */
   export const MockSyndicationBonderLabel = "mock-syndication-bonder"
-  /** Beyond all funded anvil/operator slots; the import needs no outpost transaction. */
-  export const MockSyndicationBonderEthereumHdIndex = AnvilProcess.AccountCount
   /** One hundred tokens per imported position, in the depot's nine-decimal frame. */
   export const MockSyndicationImportAmount = 100_000_000_000
 
@@ -503,7 +501,6 @@ export namespace RegistrySteps {
   export interface MockSyndicationBonderInput extends StepInput {
     readonly kind: "RegistrySteps.MockSyndicationBonderInput"
     readonly label: string
-    readonly ethereumHdIndex: number
   }
 
   /** Create the local key material as a Report-visible Step. */
@@ -522,8 +519,7 @@ export namespace RegistrySteps {
       options,
       {
         kind: "RegistrySteps.MockSyndicationBonderInput",
-        label: MockSyndicationBonderLabel,
-        ethereumHdIndex: MockSyndicationBonderEthereumHdIndex
+        label: MockSyndicationBonderLabel
       },
       runMockSyndicationBonder
     )
@@ -541,11 +537,6 @@ export namespace RegistrySteps {
       MockSyndicationBonderLabel,
       "unexpected mock bonder label"
     )
-    Assert.strictEqual(
-      input.ethereumHdIndex,
-      MockSyndicationBonderEthereumHdIndex,
-      "unexpected mock bonder HD index"
-    )
     Assert.ok(
       !ctx.outputs.get(MockSyndicationBonderKey),
       "mock syndication bonder already exists"
@@ -555,8 +546,7 @@ export namespace RegistrySteps {
         purpose: input.label
       }),
       ethereum = await KeyGenerator.create(KeyType.EM, keyContext, {
-        purpose: input.label,
-        ethereumHdIndex: input.ethereumHdIndex
+        purpose: input.label
       })
     Fs.mkdirSync(ctx.config.dataPath, { recursive: true })
     Fs.writeFileSync(
@@ -1147,7 +1137,7 @@ export namespace RegistrySteps {
     // ── tokens ──
     const tokenRegistrations: SysioContracts.SysioTokensRegtokenAction[] = [
       nativeToken("WIRE", "Wire", "WIRE chain native asset"),
-      nativeToken("ETH", "Ether", "Ethereum native asset"),
+      nativeToken(Constants.ETH_TOKEN_CODENAME, "Ether", "Ethereum native asset"),
       liqToken(
         "LIQETH",
         "Liquid ETH",
@@ -1166,7 +1156,7 @@ export namespace RegistrySteps {
         "USDT stablecoin on Ethereum",
         evmAddress(ethereumAddresses.MockUsdt)
       ),
-      nativeToken("SOL", "Sol", "Solana native asset"),
+      nativeToken(Constants.SOL_TOKEN_CODENAME, "Sol", "Solana native asset"),
       liqToken(
         Constants.LIQSOL_CODENAME,
         "Liquid SOL",
@@ -1193,7 +1183,12 @@ export namespace RegistrySteps {
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
-      chainToken(Constants.ETHEREUM_CHAIN_CODENAME, "ETH", "", true),
+      chainToken(
+        Constants.ETHEREUM_CHAIN_CODENAME,
+        Constants.ETH_TOKEN_CODENAME,
+        "",
+        true
+      ),
       chainToken(
         Constants.ETHEREUM_CHAIN_CODENAME,
         "LIQETH",
@@ -1212,7 +1207,12 @@ export namespace RegistrySteps {
         nullableStrip(ethereumAddresses.MockUsdt, strip0x),
         false
       ),
-      chainToken(Constants.SOLANA_CHAIN_CODENAME, "SOL", "", true),
+      chainToken(
+        Constants.SOLANA_CHAIN_CODENAME,
+        Constants.SOL_TOKEN_CODENAME,
+        "",
+        true
+      ),
       chainToken(
         Constants.SOLANA_CHAIN_CODENAME,
         Constants.LIQSOL_CODENAME,

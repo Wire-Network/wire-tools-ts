@@ -5,8 +5,10 @@ import { Constants, NodeOwnerTier, ProtocolTiming } from "@wireio/cluster-tool"
  * tier bounds, and the hard-abort patterns carry over from the
  * previously-validated jest flow (tests/NodeOwnerNFT.test.ts, 2026-06): every
  * registration outcome keeps its original owner account so the `nodeownerreg`
- * audit reads stay per-owner, and every claim derives a distinct depositor EM
- * key from its own anvil-mnemonic HD index.
+ * audit reads stay per-owner, and every claim carries its own RANDOM depositor
+ * EM key — a wallet `EthereumFundingTool.planCreateWallet` generates and
+ * persists under the claim's durable handle, read back by handle wherever the
+ * flow needs the depositor key again.
  */
 export namespace NodeOwnerNftScenarioConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
@@ -58,26 +60,26 @@ export namespace NodeOwnerNftScenarioConstants {
   /** Depot abort message for a non-EM eth key. */
   export const NonEmKeyAbortPattern = /EM \(secp256k1\) public key/
 
-  /** Anvil-mnemonic HD index for the happy-path claim's depositor EM key (past every bootstrap slot). */
-  export const HappyPathEthereumHdIndex = 40
-  /** HD index for the wrong-key claim's depositor EM key. */
-  export const WrongKeyEthereumHdIndex = 41
-  /** HD index for the name-invalid claim's depositor EM key. */
-  export const NameInvalidEthereumHdIndex = 42
-  /** HD index for the existing-account claim's depositor EM key. */
-  export const ExistingEthereumHdIndex = 43
-  /** HD index for the duplicate owner's FIRST (confirmed) claim. */
-  export const DuplicateEthereumHdIndex = 44
-  /** HD index for the duplicate owner's REPLAY claim (a new key, like the original flow). */
-  export const DuplicateReplayEthereumHdIndex = 45
-  /** HD index for the tier-below-minimum hard-abort probe's EM key. */
-  export const TierBelowMinimumEthereumHdIndex = 46
-  /** HD index for the tier-above-maximum hard-abort probe's EM key. */
-  export const TierAboveMaximumEthereumHdIndex = 47
-  /** HD index for the existing link on the wrong-key fixture. */
-  export const WrongKeyLinkedEthereumHdIndex = 48
-  /** HD index for the existing link on the matching-key fixture. */
-  export const ExistingLinkedEthereumHdIndex = 49
+  /** Durable handle of the happy-path claim's depositor wallet. */
+  export const HappyPathWalletName = "node-owner-happy-path"
+  /** Durable handle of the wrong-key claim's depositor wallet. */
+  export const WrongKeyWalletName = "node-owner-wrong-key"
+  /** Durable handle of the name-invalid claim's depositor wallet. */
+  export const NameInvalidWalletName = "node-owner-name-invalid"
+  /** Durable handle of the existing-account claim's depositor wallet. */
+  export const ExistingWalletName = "node-owner-existing"
+  /** Durable handle of the duplicate owner's FIRST (confirmed) claim's depositor wallet. */
+  export const DuplicateWalletName = "node-owner-duplicate"
+  /** Durable handle of the duplicate owner's REPLAY claim's depositor wallet (a new key, like the original flow). */
+  export const DuplicateReplayWalletName = "node-owner-duplicate-replay"
+  /** Durable handle of the tier-below-minimum hard-abort probe's depositor wallet. */
+  export const TierBelowMinimumWalletName = "node-owner-tier-below-minimum"
+  /** Durable handle of the tier-above-maximum hard-abort probe's depositor wallet. */
+  export const TierAboveMaximumWalletName = "node-owner-tier-above-maximum"
+  /** Durable handle of the wallet linked to the wrong-key fixture before its claim (distinct from the claim's). */
+  export const WrongKeyLinkedWalletName = "node-owner-wrong-key-linked"
+  /** Durable handle of the wallet linked to the matching-key fixture before its claim (distinct from the claim's). */
+  export const ExistingLinkedWalletName = "node-owner-existing-linked"
 
   /** ERC-1155 units minted from MockWireNodes (the contract charges `1 ether` per unit). */
   export const MintAmount = 1

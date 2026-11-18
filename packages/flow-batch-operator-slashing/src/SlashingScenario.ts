@@ -242,10 +242,9 @@ export class SlashingScenario extends FlowScenario {
       "ProvisionDisputeOperators",
       "Provision the 3 SBP-less non-bootstrapped dispute batch operators",
       {},
-      Constants.DisputeOperators.map((label, index) => ({
+      Constants.DisputeOperators.map(label => ({
         label,
         type: OperatorType.BATCH,
-        ethereumHdIndex: Constants.DisputeOperatorEthereumHdBase + index,
         isBootstrapped: false
       }))
     )

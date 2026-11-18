@@ -311,11 +311,54 @@ wire-cluster-tool create-api-node \                    # standalone (non-cluster
   --output-path <dir> --http-server-address <addr:port> \
   [--p2p-peer-address <addr:port>]... [--genesis-json <file>] \
   [--query-engine-read-mode <head|irreversible>] [--query-engine-<limit> <n>]...
+wire-cluster-tool create-batch-operator-keys \         # pre-create the batch operators' keys in SSM / KMS (cluster-less)
+  --cluster-build-options-file <options.json> --aws-cluster-node-config <node-config.json> \
+  [--signature-provider-kms '<json>'|<file>] > batch-operator-keys.json   # public listing on stdout
+wire-cluster-tool fund-batch-operators \               # stake the pre-created operators on both deployed outposts (cluster-less)
+  --cluster-build-options-file <options.json> --aws-cluster-node-config <node-config.json> \
+  --external-outpost-config <outposts.json> --ethereum-path <wire-ethereum> --solana-path <wire-solana> \
+  > funding-receipts.json                                # receipt listing on stdout; exit 0 iff every operator funded
 ```
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
-secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
+secret-id pattern), `--signature-provider-kms '<inline-json>'|<file>` (SSM
+clusters only: `{awsKeyAliasPattern, awsRegion, keyTypes?}` — the keys of the
+curves `keyTypes` names (default `["K1","EM","ED"]`; `["EM","ED"]` keeps the K1
+in SSM for a nodeop without wire-sysio #768's K1 KMS signing, `["EM"]` keeps the
+ED keys there too for one without Ed25519 KMS signing, which also needs
+aws-sdk-cpp ≥ 1.11.686) are created inside AWS KMS under the rendered alias for
+EVERY identity the bootstrap provisions through
+`KeySteps.adoptOrCreateSignatureProviderKey` — the Ethereum EM and Solana ED
+outpost keys of batch operators, underwriters and collateral-backed producers
+alike, and the WIRE account K1 of the batch operators only —
+`ECC_SECG_P256K1` for K1 and EM, `ECC_NIST_EDWARDS25519` for ED, every one a
+multi-Region PRIMARY
+(`MultiRegion: true`, `mrk-` key id), so a later `ReplicateKey` into another
+region — a separate step the harness never performs — keeps the public key and
+the identities keyed by it, while a single-Region key can never be converted
+and adopting one warns — and never leave it; K1 custody is for
+the batch operators' account keys only, producer and node K1 keys stay in SSM
+because `producer_plugin` needs its block-signing key locally; the pattern must
+carry `{account}` and `{keyType}`; the daemon spec renders
+`KMS:<region>:<alias>` (the K1's as `wire-<pub>,wire,wire,<pub>,KMS:<region>:<alias>`)
+and loads `signature_provider_kms_plugin`, which signs a WIRE K1 with
+`ECDSA_SHA_256` as `MessageType=DIGEST` over the 32-byte signing digest, low-S
+normalised, the recovery id found against the pinned key; the harness signs
+the operator's own depot writes (`sysio.authex::createlink`) through sdk-core
+with the KMS `SignerProvider` of `keyPairUtils.wireSigner` registered via
+`WireClient.addSigner` (kiod never holds the key; IAM already grants `kms:Sign`
+on `key/*`), and through `keyPairUtils.ethereumSigner`'s /
+`keyPairUtils.solanaSigner`'s KMS arm (`KMSClientProvider.createSigner` is the
+harness's own ethers `AbstractSigner` over the cached per-region KMS client —
+every KMS signer is in-house, so every `Sign` gets the same adaptive retry;
+`SolanaSigner` is the one Solana signer shape — the authex link proof and
+`fund-batch-operators`' Solana staking go through it), and `cluster-keys.json`
+persists the key reference
+`{awsKmsKeyId, awsKmsRegion}` in place of a secret), `--signature-provider-batch-operator-key-policy
+<adoptOrCreate|adoptOnly>` (default `adoptOrCreate`; `adoptOnly` fails the
+bootstrap when a batch operator's key was not pre-created — the policy of a
+pre-funded launch), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — see "`create` against external
 outposts" below),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
@@ -413,7 +456,10 @@ caller's options, and `ClusterConfigProvider.resolve` refuses either mock flag t
 **`create` against external outposts never contacts them.** The
 `--external-outpost-config` file is TRUSTED and value-only (`ExternalOutpostConfig`:
 chain id, outpost + liqEth address maps, Solana program id + mints, optional
-`rpcUrl`s — no file references). `ExternalOutpostSteps.planMaterialize` writes the
+`rpcUrl`s, optional `asOfBlock` / `asOfSlot` — the finalized block / slot the
+document was generated at, which `fund-batch-operators`' post-launch paths count
+a campaign's syndications from and require; `create` ignores them — no file
+references). `ExternalOutpostSteps.planMaterialize` writes the
 values into the canonical deploy records, and `OperatorDaemonTool.planArtifactPreparation`
 — the same step local mode runs — builds the ABI / IDL files from the wire-ethereum
 / wire-solana builds over them (the IDL's `address` is the config's `programId`).
@@ -453,7 +499,35 @@ verify and the custody backing run after operator provisioning rather than in th
 prerequisites group. The flag-less `batchOperatorUnderwriting` default tunes it:
 `fundedOperatorCount` (the first N operators get the credit; the rest run the role
 unfunded) and `maxExposure` (the caps, `TokenAmount[]`); both default to every operator
-funded, with caps of 10 LIQSOL and 10 LIQETH.
+funded, with caps of 10 LIQSOL and 10 LIQETH. Its `stake` / `reserve` members
+(`TokenAmount[]`, one per outpost native token `ETH` / `SOL`, depot units at 9 decimals;
+schema-defaulted to 1 ETH + 10 SOL staked and 0.05 ETH + 0.1 SOL kept) are what
+`fund-batch-operators` stakes for each funded operator on the deployed outposts
+(`Depositor.depositAndStake` pre-launch / the `SyndicationPool` path post-launch on
+Ethereum; `sol_to_liqsol` + `synd` on Solana, refusing `Launching`) and the gas / fee
+balance it requires each operator to keep beside the stake.
+
+**Flow authoring — pre-funded batch operators.** A flow that proves a PRE-FUNDED launch
+(`flow-batch-operator-prefunding`) does before the cluster what a real launch does before
+`create`: its `prepare` pre-creates the bootstrap batch operators' identities under KEY
+custody with `BatchOperatorKeyTool.createPersisted` (each curve persisted by the operator's
+label handle in the cluster data directory — `WireWallet.saveKey` for the K1,
+`EthereumFundingTool.createWallet` for the EM, `SolanaFundingTool.createKeypair` for the ED;
+a re-run reads them back), freezes both outposts' launch-data exports from committed
+TEMPLATES with each operator's positions keyed by those outpost keys
+(`WireLcoExportTool.writeExports` — the same template rewrite `flow-lco-import` uses for its
+holders), and returns the options with `ethereumBootstrapJsonFile` /
+`solanaBootstrapJsonFile` set and `signatureProvider.batchOperatorKeyPolicy: adoptOnly`.
+Its `createContext` seeds `BatchOperatorKeyTool.loadPersisted` into `ctx.keyStore`, which is
+what `WireOperatorProvisioningTool.runIdentityMaterialization` adopts whole in `OperatorKeys`
+(the KEY-custody twin of adopting an SSM parameter or a KMS alias); the bootstrap then parks
+each operator's positions under its keys, the operators' own authex links sweep them, and
+`LcoImportOperatorCredit` verifies the credit. The flow's own phases
+(`BatchOperatorPrefundingSteps`) verify per operator that the adopted keys are the persisted
+ones, that both links exist and that it holds LIQETH and LIQSOL, then drive a user's
+Ethereum syndication (`BatchOperatorUnderwritingSteps.planEthereumSyndication`) and wait for
+a pre-funded operator's bond, approval and claim. The mock syndication import stays OFF: the
+launch-data import is the operators' only credit, so the proof is the pre-funding's.
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
@@ -476,8 +550,9 @@ bootstrap-gated — and restores the row. Sweeping parked shadow and desyndicati
 are `sysio.synd`'s actions (`Steps.contracts.sysio.synd.planSweep` /
 `planDesyndicate`); `WireSyndicationTool` reads the depot's syndication state and
 bonds an envelope's request (`planBondEnvelope`, `planApproveAndClaim`). On the
-outposts, the Ethereum deploy config names the panic account
-(`EthereumOutpostBootstrapper.PanicAccountIndex`), `maxSyndicationPerTransfer` and
+outposts, the Ethereum deploy config names the panic account (the persisted
+random wallet `EthereumWallet.PanicWalletName`, created and funded by the
+`EthereumOutpost` phase's `EthereumFundingTool` steps), `maxSyndicationPerTransfer` and
 `yieldDeadband` (`verify-syndication-pool` reads them back), and the Solana surface
 runs `set-max-syndication --fresh` and `set_panic` to the harness panic keypair
 (`SolanaFundingTool.PanicKeypairName`). The outpost writes a flow drives —

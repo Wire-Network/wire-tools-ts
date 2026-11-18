@@ -1,3 +1,5 @@
+import { WireOperatorProvisioningTool } from "@wireio/cluster-tool"
+
 /**
  * Constants for the collateral-lifecycle flow. The operator bonds WIRE on the depot
  * through `sysio.opreg::deposit`, withdraws half of it, and pulls the matured withdrawal
@@ -10,11 +12,13 @@ export namespace CollateralLifecycleScenarioConstants {
   /** The flow's NON-bootstrapped batch operator's durable harness `label` handle, which is also its on-chain `account`. */
   export const DepositorLabel = "depositor"
   /**
-   * Anvil-mnemonic HD index for the depositor's ETH identity (past every bootstrap slot). The
-   * identity backs its Ethereum authex link and pays its daemon's Ethereum delivery gas from
-   * anvil's prefunded range.
+   * Wei the depositor's random ETH wallet is funded to (one `anvil_setBalance`): its daemon
+   * pays the gas on every Ethereum delivery once the schedule picks it up, and an unfunded fee
+   * payer never delivers. The harness's flow-operator default; changing it changes how many
+   * deliveries the daemon can pay for.
    */
-  export const DepositorEthereumHdIndex = 35
+  export const DepositorFundEthereumWei =
+    WireOperatorProvisioningTool.DefaultEthereumFundWei
   /**
    * Lamports airdropped to the depositor's SOL keypair: its daemon pays the fee on every
    * Solana `epoch_in` delivery once the schedule picks it up. Changing it changes how many
