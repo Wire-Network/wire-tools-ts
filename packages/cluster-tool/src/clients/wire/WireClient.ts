@@ -2,9 +2,9 @@ import Assert from "node:assert"
 import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
-import { flatten, negate } from "lodash"
-import { match } from "ts-pattern"
+import { asOption, Either } from "@3fv/prelude-ts"
+import { flatten, negate, uniq } from "lodash"
+import { isMatching, match, P } from "ts-pattern"
 import {
   getLogger,
   isNumber,
@@ -13,11 +13,17 @@ import {
   NestedError
 } from "@wireio/shared"
 import {
+  type AbiProvider,
+  Action,
   API,
   APIClient,
+  type AnyAction,
   Asset,
+  type Authority,
   Name,
   type PermissionLevelType,
+  Serializer,
+  type SignerProvider,
   SysioContracts
 } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
@@ -83,6 +89,8 @@ export class WireClient {
   readonly api: APIClient
   readonly wallet: WireWallet
   private readonly runner: ClioRunner
+  /** sdk-core clients keyed by the account whose `active` key each signs with — see {@link addSigner}. */
+  private readonly signerClients = new Map<string, APIClient>()
 
   constructor(readonly config: WireClientConfig) {
     this.runner = new ClioRunner(config)
@@ -92,6 +100,111 @@ export class WireClient {
     this.api = new APIClient({
       provider: new RecordingFetchProvider(config.nodeopUrl)
     })
+  }
+
+  // ── Signers (keys kiod never holds) ──────────────────────────────────────
+
+  /**
+   * Register the signer of `account`'s `active` key when kiod cannot hold the key (a
+   * KMS-custodied WIRE K1): every push whose authorization actor is `account` is then built,
+   * signed and sent through sdk-core (`APIClient.pushTransaction`) with the SAME finality wait
+   * as a clio push — {@link withFinality}: irreversibility by default, a re-send only of a push
+   * proven unapplied ({@link WireClient.isProvenUnapplied}).
+   *
+   * Each registration owns its OWN `APIClient` (over the recording provider, so its RPCs land
+   * in the Report like every other SDK call): sdk-core keeps the signer as mutable client state
+   * (`setSigner`), so one shared client would let concurrent pushes by different accounts sign
+   * with each other's keys. Registering an account again replaces its client.
+   *
+   * The name parallels {@link WireWallet.addPrivateKey}: that imports a key for kiod to sign
+   * with; this registers a signer for a key kiod never sees.
+   *
+   * @param account - The account whose `active` authority the signer's key satisfies.
+   * @param signer - sdk-core signer for that key — `createClassicSigner` over local material,
+   *   or the KMS arm of `keyPairUtils.wireSigner` for a KMS alias; only its public key is read.
+   */
+  addSigner(account: string, signer: SignerProvider): void {
+    Assert.ok(isNotEmpty(account), "addSigner: an account name is required")
+    Assert.ok(
+      signer?.pubKey != null,
+      `addSigner(${account}): a signer carrying its public key is required`
+    )
+    this.signerClients.set(
+      account,
+      new APIClient({
+        provider: new RecordingFetchProvider(this.config.nodeopUrl),
+        signer
+      })
+    )
+    log.info(
+      `WireClient: pushes authorized by ${account} sign with ${signer.pubKey} through sdk-core`
+    )
+  }
+
+  /**
+   * The sdk-core client registered for the actor every one of `authorizations` names — one
+   * authorization list per action of the push — or `null` when no actor is registered, in
+   * which case the push goes through clio and kiod as always.
+   *
+   * A signer-routed push carries exactly ONE signature, so once any actor is registered every
+   * action must be authorized by that account, and by it alone: a second actor — registered
+   * or not — needs a signature nothing here can produce, and a second permission of the same
+   * account is not what the registered key was declared for. Such a push is refused before
+   * anything is built or sent.
+   *
+   * @param label - The push's label, for the refusal.
+   * @param authorizations - Each action's authorization, in action order.
+   * @returns The registered client, or `null` for the clio path.
+   */
+  private resolveSignerClient(
+    label: string,
+    authorizations: ReadonlyArray<ReadonlyArray<PermissionLevelType>>
+  ): APIClient {
+    const actors = authorizations.flatMap(authorization =>
+        authorization.map(level => String(level.actor))
+      ),
+      registered = uniq(actors.filter(actor => this.signerClients.has(actor)))
+    if (registered.length === 0) return null
+    const [account] = registered
+    Assert.ok(
+      authorizations.every(
+        authorization =>
+          authorization.length === 1 &&
+          String(authorization[0].actor) === account
+      ),
+      `${label}: a signer-routed push carries exactly one signature, so every action must be authorized by ${account} alone — got ${authorizations
+        .map(authorization =>
+          authorization
+            .map(level => `${level.actor}@${level.permission}`)
+            .join(" + ")
+        )
+        .join(", ")}`
+    )
+    return this.signerClients.get(account)
+  }
+
+  /**
+   * Build, sign and send `action` through a registered client — the signer-routed twin of
+   * clio's `push action` / `push transaction`. sdk-core fetches each contract's ABI, takes
+   * TAPOS at LIB with the SAME 120 s expiration this client pins on clio (its
+   * `getTransactionHeader()` default equals {@link WireClient.TransactionExpirationSec}),
+   * which is what keeps {@link classifyUnresolved}'s proof of impossibility valid for a signer
+   * push; signs the digest through the registered `SignerProvider`; posts `push_transaction`.
+   *
+   * The answer is sdk-core's `PushTransactionResponse` — structurally the
+   * `SendTransactionResponse` clio's `-j` output is typed as, minus the optional `except` a
+   * failed trace carries (sdk-core throws on those instead) — so it is assignable without a
+   * cast; this method is the ONE place that assignability is relied on.
+   *
+   * @param client - The client {@link addSigner} registered for the push's actor.
+   * @param action - The action, or the whole action list of a multi-action transaction.
+   * @returns The node's push response.
+   */
+  private pushSigned(
+    client: APIClient,
+    action: AnyAction | AnyAction[]
+  ): Promise<API.v1.SendTransactionResponse> {
+    return client.pushTransaction(action)
   }
 
   // ── Typed contract client (metadata-backed) ──────────────────────────────
@@ -185,7 +298,11 @@ export class WireClient {
 
   // ── Actions / transactions ───────────────────────────────────────────────
 
-  /** Single typed action; waits for finality by default (`skipWait` to fire-and-forget). */
+  /**
+   * Single typed action; waits for finality by default (`skipWait` to fire-and-forget). Signed
+   * by kiod through clio — or, when the authorization's actor has a registered signer
+   * ({@link addSigner}), through sdk-core — with the same finality wait either way.
+   */
   async invoke<Action extends object>(
     account: string,
     action: string,
@@ -196,7 +313,9 @@ export class WireClient {
     const [{ actor, permission }] = authorization,
       auth = `${actor}@${permission}`,
       label = `${account}::${action}`,
-      send = () =>
+      pushed: AnyAction = { account, name: action, authorization, data },
+      signerClient = this.resolveSignerClient(label, [authorization]),
+      sendViaClio = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
           [
             "push",
@@ -210,7 +329,11 @@ export class WireClient {
             ...this.expirationArgs
           ],
           { json: true }
-        )
+        ),
+      send =
+        signerClient != null
+          ? () => this.pushSigned(signerClient, pushed)
+          : sendViaClio
     if (options.skipWait) return send()
     return this.withFinality(label, send, options.finality)
   }
@@ -229,15 +352,35 @@ export class WireClient {
     return ["--expiration", String(WireClient.TransactionExpirationSec)]
   }
 
-  /** Multi-action tx; variadic + flatten. Waits by default. */
+  /**
+   * Multi-action tx; variadic + flatten. Waits by default. A typed payload's
+   * data is encoded by clio against the deployed ABI; an sdk-core
+   * {@link Action} rides already encoded, for an action whose data the
+   * generated payload types cannot carry (`sysio.msig::propose`'s whole
+   * proposed transaction). When any action's actor has a registered signer
+   * ({@link addSigner}), every action must be authorized by that one account
+   * and the whole list is signed and sent through sdk-core instead of clio,
+   * an encoded {@link Action} as it is.
+   */
   async invokeTransaction(
     ...payloads: Array<
-      WireClient.ActionPayload<any, any> | WireClient.ActionPayload<any, any>[]
+      | WireClient.ActionPayload<any, any>
+      | WireClient.ActionPayload<any, any>[]
+      | Action
     >
   ): Promise<API.v1.SendTransactionResponse> {
-    const actions = flatten(payloads),
+    const flattened = flatten(payloads),
+      actions = flattened.map(payload =>
+        payload instanceof Action
+          ? WireClient.toEncodedActionJson(payload)
+          : payload
+      ),
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
-      send = () =>
+      signerClient = this.resolveSignerClient(
+        label,
+        actions.map(payload => payload.authorization)
+      ),
+      sendViaClio = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
           [
             "push",
@@ -247,14 +390,33 @@ export class WireClient {
             ...this.expirationArgs
           ],
           { json: true }
-        )
+        ),
+      send =
+        signerClient != null
+          ? () =>
+              this.pushSigned(
+                signerClient,
+                flattened.map(payload =>
+                  payload instanceof Action
+                    ? payload
+                    : {
+                        account: payload.account,
+                        name: payload.name,
+                        authorization: [...payload.authorization],
+                        data: payload.data
+                      }
+                )
+              )
+          : sendViaClio
     return this.withFinality(label, send)
   }
 
   /**
    * Single action pushed via a temp transaction file — for large `data` (e.g.
    * `sysio.roa::setsyscode`'s wasm hex) that would exceed the command-line arg
-   * limit (E2BIG). Waits for finality by default.
+   * limit (E2BIG). Waits for finality by default. A registered signer
+   * ({@link addSigner}) never meets that limit — sdk-core posts the transaction
+   * over HTTP — so its push goes exactly the way {@link invoke} sends one.
    */
   async invokeViaFile<Action extends object>(
     account: string,
@@ -264,13 +426,14 @@ export class WireClient {
     options: WireClient.InvocationOptions = {}
   ): Promise<API.v1.SendTransactionResponse> {
     const label = `${account}::${action} (file)`,
-      body = { actions: [{ account, name: action, authorization, data }] },
-      send = async () => {
+      pushed: AnyAction = { account, name: action, authorization, data },
+      signerClient = this.resolveSignerClient(label, [authorization]),
+      sendViaFile = async () => {
         const file = Path.join(
           Os.tmpdir(),
           `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
         )
-        await Fsp.writeFile(file, JSON.stringify(body))
+        await Fsp.writeFile(file, JSON.stringify({ actions: [pushed] }))
         try {
           return await this.runner.run<API.v1.SendTransactionResponse>(
             ["push", "transaction", "-j", file, ...this.expirationArgs],
@@ -279,7 +442,11 @@ export class WireClient {
         } finally {
           await Fsp.unlink(file).catch(() => {})
         }
-      }
+      },
+      send =
+        signerClient != null
+          ? () => this.pushSigned(signerClient, pushed)
+          : sendViaFile
     if (options.skipWait) return send()
     return this.withFinality(label, send, options.finality)
   }
@@ -360,6 +527,40 @@ export class WireClient {
     )
   }
 
+  /**
+   * Raise `account`'s RAM limit by `ramBytes` (`sysio::setacctram`, signed
+   * `sysio@active`), waiting for finality. `setacctram` sets an absolute limit,
+   * so the grant is the account's current limit plus `ramBytes`.
+   *
+   * Bootstrap uses this for `sysio.andon`, whose native permissions and action
+   * links outgrow its code + abi allowance, and for the governance authorities
+   * `sysio.nodes` and `sysio.cncl`, whose `active` `sysio.councl` rewrites. OPP
+   * bond rows use the privileged request issuer's system-pool payer, so batch
+   * operators need no separate bond-row grant. Other accounts' RAM needs depend
+   * on the rows they create and the payer selected for those rows.
+   *
+   * @param account - The account whose RAM limit is raised.
+   * @param ramBytes - Bytes added to the account's current RAM limit.
+   * @returns The `setacctram` push response.
+   */
+  async grantRam(
+    account: string,
+    ramBytes: number
+  ): Promise<API.v1.SendTransactionResponse> {
+    Assert.ok(
+      Number.isSafeInteger(ramBytes) && ramBytes > 0,
+      `grantRam: ${account}'s grant must be a positive byte count (got ${ramBytes})`
+    )
+    const ramQuota = await this.getRamQuota(account)
+    Assert.ok(
+      ramQuota >= 0,
+      `grantRam: ${account} has an unlimited RAM limit, so there is nothing to grant`
+    )
+    return this.getSysioContract(SysioContractName.system).actions.setacctram.invoke(
+      { account, ram_bytes: ramQuota + ramBytes }
+    )
+  }
+
   /** The chain's supported protocol features (POST /v1/producer/get_supported_protocol_features). */
   async getSupportedProtocolFeatures(): Promise<WireClient.ProtocolFeature[]> {
     const response = await fetch(
@@ -415,6 +616,17 @@ export class WireClient {
   async isPrivileged(account: string): Promise<boolean> {
     const { privileged } = await this.api.v1.chain.get_account(account)
     return privileged === true
+  }
+
+  /**
+   * `account`'s RAM limit in bytes (GET /v1/chain/get_account's `ram_quota`).
+   *
+   * @param account - The account to read.
+   * @returns The limit, or `-1` when the account is unlimited.
+   */
+  async getRamQuota(account: string): Promise<number> {
+    const { ram_quota: ramQuota } = await this.api.v1.chain.get_account(account)
+    return Number(ramQuota)
   }
 
   /**
@@ -722,6 +934,13 @@ export class WireClient {
    * TWICE, silently. `clio push action` re-signs with fresh TAPOS, so a
    * re-push is a NEW transaction, never a duplicate the chain dedupes.
    *
+   * A registered signer's push ({@link addSigner}) holds to the same rule:
+   * sdk-core BUILDS the transaction (`get_abi`, `get_info`) before it submits,
+   * so an `APIError` at one of those paths is proof nothing was sent and is
+   * re-sent like a refused connection; once `push_transaction` was posted,
+   * only the node's own rejection code proves anything
+   * ({@link WireClient.isSignerPushProvenUnapplied}).
+   *
    * @param label - Human label for the operation (logs + errors).
    * @param send - Performs the push; may be re-invoked ONLY on proven absence.
    * @param finality - How far to wait (default irreversible; see
@@ -739,17 +958,17 @@ export class WireClient {
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
           // Pre-inclusion retry ONLY of a push proven not applied: its connection failed or
-          // the node rejected it (`ClioRunner.isProvenUnapplied`). Anything else may have
-          // reached the node and is never re-sent: clio would sign it again as a second
-          // transaction. Deliberately NOT fused with the finality wait; fusing them is the
-          // defect above.
+          // the node rejected it (`WireClient.isProvenUnapplied`, whichever transport sent
+          // it). Anything else may have reached the node and is never re-sent: clio — or a
+          // registered signer — would sign it again as a second transaction. Deliberately
+          // NOT fused with the finality wait; fusing them is the defect above.
           result = await retry(send, {
             maxAttempts: WireClient.PushMaxAttempts,
             delayMs: WireClient.FinalityRetryDelayMs,
             label,
-            checkResult: negate(ClioRunner.isProvenUnapplied)
+            checkResult: negate(WireClient.isProvenUnapplied)
           }).catch(error => {
-            throw ClioRunner.isProvenUnapplied(error)
+            throw WireClient.isProvenUnapplied(error)
               ? error
               : new NestedError(
                   `${label}: the push may have reached the node, so it is not re-sent; read its outcome on the chain before running it again`,
@@ -1050,6 +1269,23 @@ function delay(ms: number): Promise<void> {
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
+/**
+ * `error` and every error it wraps, outermost first — a `NestedError`'s retained `causes` and
+ * the native ES2022 `cause` link, followed until the chain ends or repeats.
+ */
+function causeChain(error: unknown): unknown[] {
+  const seen = new Set<unknown>(),
+    walk = (link: unknown): unknown[] => {
+      if (!isObject(link) || seen.has(link)) return []
+      seen.add(link)
+      const wrapped = match<unknown>(link)
+        .with({ causes: P.array() }, ({ causes }) => causes)
+        .with({ cause: P.not(P.nullish) }, ({ cause }) => [cause])
+        .otherwise(() => [])
+      return [link, ...wrapped.flatMap(walk)]
+    }
+  return walk(error)
+}
 
 export namespace WireClient {
   /**
@@ -1152,6 +1388,16 @@ export namespace WireClient {
     readonly authorization: ReadonlyArray<PermissionLevelType>
     readonly data: ActionData<Name, Action>
   }
+  /**
+   * Any typed {@link ActionPayload} of any generated system contract — the element
+   * of a transaction that mixes contracts, each payload still checked against its
+   * own contract's action names and data.
+   */
+  export type AnyActionPayload = {
+    [Name in SysioContractName]: {
+      [Action in ActionName<Name>]: ActionPayload<Name, Action>
+    }[ActionName<Name>]
+  }[SysioContractName]
   export interface ActionInvoker<
     Name extends SysioContractName,
     Action extends ActionName<Name>
@@ -1320,6 +1566,16 @@ export namespace WireClient {
 
   /** The permission an account signs its own actions with. */
   export const ActivePermission = "active"
+  /** The root permission of every account; it can change any of the account's permissions. */
+  export const OwnerPermission = "owner"
+  /**
+   * The virtual permission a contract's own code holds: an authority that lists
+   * `<contract>@sysio.code` lets that contract's inline actions act for it. No key
+   * satisfies it.
+   */
+  export const CodePermission = "sysio.code"
+  /** The parent `owner` carries, spelled empty: `owner` is every account's root permission. */
+  export const OwnerParent = ""
 
   /**
    * `<account>@active` — the authorization for an action the ACCOUNT itself signs: a
@@ -1334,6 +1590,156 @@ export namespace WireClient {
    */
   export function activeAuthorization(account: string): PermissionLevelType[] {
     return [{ actor: account, permission: ActivePermission }]
+  }
+
+  // ── Signer-routed pushes ──
+
+  /**
+   * Node's system-error codes of a connection that never opened: nothing reached the node,
+   * so a push that failed with one is proven unapplied. `ECONNRESET`, `ETIMEDOUT` and the
+   * provider's own request timeout are deliberately absent — those fail AFTER the request
+   * may have been sent.
+   */
+  export enum ConnectionFailureCode {
+    ECONNREFUSED = "ECONNREFUSED",
+    ENOTFOUND = "ENOTFOUND",
+    EAI_AGAIN = "EAI_AGAIN",
+    EHOSTUNREACH = "EHOSTUNREACH",
+    ENETUNREACH = "ENETUNREACH"
+  }
+
+  /** The {@link ConnectionFailureCode} members, for a membership test on an arbitrary `code`. */
+  const ConnectionFailureCodes: ReadonlySet<string> = new Set(
+    Object.values(ConnectionFailureCode)
+  )
+
+  /**
+   * The chain-API paths that SUBMIT a signed transaction — exactly the three sdk-core's
+   * `ChainAPI` posts one to: `push_transaction` (what `APIClient.pushTransaction` uses) and
+   * the two `send_transaction` forms. An `APIError` raised at any OTHER path while
+   * `pushTransaction` runs — `get_abi`, `get_info` — came from BUILDING the transaction,
+   * before anything was sent.
+   */
+  export const TransactionSubmissionPaths = [
+    "/v1/chain/push_transaction",
+    "/v1/chain/send_transaction",
+    "/v1/chain/send_transaction2"
+  ] as const
+
+  /** {@link TransactionSubmissionPaths}, for a membership test on an `APIError`'s `path`. */
+  const TransactionSubmissionPathSet: ReadonlySet<string> = new Set(
+    TransactionSubmissionPaths
+  )
+
+  /**
+   * sdk-core's `APIError`, read structurally (an `instanceof` is false across jest realms):
+   * the path it failed at, the response it was built from and the chain code off that
+   * response — `0` when the response carried none.
+   */
+  const APIErrorShape = {
+    path: P.string,
+    response: { status: P.number },
+    code: P.number
+  }
+
+  /** {@link APIErrorShape} whose code is in the chain-exception family: the node's own rejection. */
+  const RejectionShape = {
+    ...APIErrorShape,
+    code: P.number
+      .int()
+      .between(
+        ClioRunner.ChainErrorCodeMinimum,
+        ClioRunner.ChainErrorCodeMaximum
+      )
+  }
+
+  /**
+   * True only when a failed push provably did not apply — whichever transport sent it — so
+   * {@link WireClient.withFinality} may send it again: clio's evidence
+   * ({@link ClioRunner.isProvenUnapplied}) or a registered signer's
+   * ({@link isSignerPushProvenUnapplied}). Anything else may have reached the node and is
+   * never re-sent.
+   *
+   * @param error - What the push threw.
+   * @returns True when the push is proven unapplied.
+   */
+  export function isProvenUnapplied(error: unknown): boolean {
+    return (
+      ClioRunner.isProvenUnapplied(error) || isSignerPushProvenUnapplied(error)
+    )
+  }
+
+  /**
+   * True only when a push sent through a registered signer (`APIClient.pushTransaction`)
+   * provably did not apply. sdk-core wraps every failure in a `NestedError`; its cause chain
+   * is walked for one of three proofs: a connection that never opened
+   * ({@link ConnectionFailureCode}, or the refused-connection wording of
+   * {@link ClioRunner.TransportFailurePattern}); an `APIError` the node answered at a path
+   * that submits nothing — `get_abi` / `get_info`, which `pushTransaction` calls while
+   * BUILDING the transaction ({@link TransactionSubmissionPaths} names the paths that do
+   * submit) — so the push was never sent, whatever the code; or the node's own rejection of
+   * the SUBMITTED push — an `APIError` at a submission path whose code is in the
+   * chain-exception family but neither `tx_duplicate` (the node already holds the
+   * transaction) nor the HTTP-exception family a lost reply raises, the two codes
+   * {@link ClioRunner.isProvenUnapplied} refuses as well. A timeout, a reset mid-reply, a
+   * signing failure, a submission answered without a chain code: each may have reached the
+   * node, and each answers false.
+   *
+   * @param error - What `pushTransaction` threw.
+   * @returns True when the push is proven unapplied.
+   */
+  export function isSignerPushProvenUnapplied(error: unknown): boolean {
+    const chain = causeChain(error)
+    return (
+      chain.some(isConnectionFailure) ||
+      chain.some(isBuildFailure) ||
+      chain.some(isSignerPushRejection)
+    )
+  }
+
+  /** Whether `code` names a {@link ConnectionFailureCode}. */
+  function isConnectionFailureCode(
+    code: unknown
+  ): code is ConnectionFailureCode {
+    return isString(code) && ConnectionFailureCodes.has(code)
+  }
+
+  /** A cause-chain link that is a connection the node never answered. */
+  function isConnectionFailure(link: unknown): boolean {
+    return match(link)
+      .with({ code: P.when(isConnectionFailureCode) }, () => true)
+      .with(
+        { message: P.string.regex(ClioRunner.TransportFailurePattern) },
+        () => true
+      )
+      .otherwise(() => false)
+  }
+
+  /**
+   * A cause-chain link that is the node refusing a call made while BUILDING the transaction
+   * — an `APIError` at a path that submits nothing (`get_abi`, `get_info`) — so the push was
+   * never sent, whatever the code.
+   */
+  function isBuildFailure(link: unknown): boolean {
+    return (
+      isMatching(APIErrorShape, link) &&
+      !TransactionSubmissionPathSet.has(link.path)
+    )
+  }
+
+  /**
+   * A cause-chain link that is the node rejecting the SUBMITTED push with a code proving it
+   * unapplied: a chain-family code that is neither `tx_duplicate` nor HTTP-exception family.
+   */
+  function isSignerPushRejection(link: unknown): boolean {
+    return (
+      isMatching(RejectionShape, link) &&
+      TransactionSubmissionPathSet.has(link.path) &&
+      link.code !== ClioRunner.DuplicateTransactionCode &&
+      !ClioRunner.HttpExceptionPattern.test(
+        `${ClioRunner.ChainErrorCodePrefix}${link.code}:`
+      )
+    )
   }
 
   // ── Table getters config ──
@@ -1353,6 +1759,134 @@ export namespace WireClient {
     limit?: number
     lowerBound?: string | null
     upperBound?: string | null
+  }
+
+  /**
+   * An already-encoded action as `clio push transaction` takes it: `data` is
+   * the action's hex bytes, so clio needs no ABI to push it.
+   */
+  export interface EncodedActionJson {
+    /** The contract account. */
+    readonly account: string
+    /** The action name. */
+    readonly name: string
+    /** The declared authorizations, in order. */
+    readonly authorization: PermissionLevelType[]
+    /** The encoded action data, as hex. */
+    readonly data: string
+  }
+
+  /**
+   * The {@link EncodedActionJson} form of an sdk-core {@link Action}.
+   *
+   * @param action - The encoded action.
+   * @returns Its push form, every name spelled as a string.
+   */
+  export function toEncodedActionJson(action: Action): EncodedActionJson {
+    return {
+      account: String(action.account),
+      name: String(action.name),
+      authorization: action.authorization.map(level => ({
+        actor: String(level.actor),
+        permission: String(level.permission)
+      })),
+      data: action.data.hexString
+    }
+  }
+
+  /**
+   * The generated {@link SysioContracts.SysioSystemAuthorityType} form of an
+   * sdk-core {@link Authority} — what `get_account` decodes a permission's
+   * `required_auth` into — with every number plain and every name and key a
+   * string (keys in sdk-core's `PUB_` spelling).
+   *
+   * @param authority - The decoded authority.
+   * @returns Its threshold, keys and accounts as the generated type spells them.
+   */
+  export function toAuthorityType(
+    authority: Authority
+  ): SysioContracts.SysioSystemAuthorityType {
+    return {
+      threshold: Number(authority.threshold),
+      keys: authority.keys.map(({ key, weight }) => ({
+        key: String(key),
+        weight: Number(weight)
+      })),
+      accounts: authority.accounts.map(({ permission, weight }) => ({
+        permission: {
+          actor: String(permission.actor),
+          permission: String(permission.permission)
+        },
+        weight: Number(weight)
+      }))
+    }
+  }
+
+  /**
+   * A traced action's data as its generated type. The trace API decodes `data`
+   * into `params` with the ABI the contract held when the action ran, and omits
+   * `params` when it holds no such ABI or cannot decode with it; such an action's
+   * `data` is decoded here with the contract's ABI as `abis` reads it, the ABI the
+   * generated type describes.
+   *
+   * @param abis - Reads the contract's ABI, only for an action without `params`;
+   *   the caller picks the cache lifetime (an sdk-core `ABICache` per scan).
+   * @param contract - The contract the action belongs to.
+   * @param action - The action.
+   * @param trace - A traced `action` of `contract`.
+   * @returns The action's data.
+   * @throws When `trace` is another action; the ABI read's own error when it
+   *   fails; NestedError when `trace` carries no `params` and its `data` does
+   *   not decode as `action`.
+   */
+  export async function decodeTraceActionData<
+    Name extends SysioContractName,
+    Action extends ActionName<Name>
+  >(
+    abis: AbiProvider,
+    contract: Name,
+    action: Action,
+    trace: TraceAction
+  ): Promise<ActionData<Name, Action>> {
+    const { account } = SysioContractDefinitions[contract]
+    Assert.ok(
+      trace.account === account && trace.name === action,
+      `a trace of ${trace.account}::${trace.name} is not ${account}::${action}`
+    )
+    return asOption(trace.params).match({
+      // Untyped trace JSON, typed here once: the node decoded it as this action.
+      Some: async params => params as ActionData<Name, Action>,
+      None: () => decodeTraceData<ActionData<Name, Action>>(abis, account, trace)
+    })
+  }
+
+  /**
+   * `trace`'s encoded `data` decoded with `account`'s ABI, as the plain object
+   * its generated type describes.
+   */
+  async function decodeTraceData<Data>(
+    abis: AbiProvider,
+    account: string,
+    trace: TraceAction
+  ): Promise<Data> {
+    const abi = await abis.getAbi(Name.from(account))
+    return Either.try(() =>
+      Serializer.objectify(
+        Action.from({
+          account,
+          name: trace.name,
+          authorization: [],
+          data: trace.data
+        }).decodeData(abi)
+      )
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          `a trace of ${account}::${trace.name} carries no decoded params, and its data does not decode with the ${account} ABI`,
+          { cause: error, context: { data: trace.data } }
+        )
+      })
+      .getOrThrow()
   }
 
   // ── Response shapes ──
@@ -1410,10 +1944,19 @@ export namespace WireClient {
   }
   /** One executed action in a trace-API response, inline actions and notifications included. */
   export interface TraceAction {
+    /** The account whose code ran the action: `account` itself, or a notified one. */
     receiver: string
+    /** The contract the action belongs to. */
     account: string
+    /** The action. */
     name: string
-    /** The action data, decoded with the ABI in effect when it ran; each action has its own type. */
+    /** The encoded action data, as hex; the trace API always serves it. */
+    data: string
+    /**
+     * The action data, decoded with the ABI in effect when it ran; each action has
+     * its own type. Absent when the node holds no such ABI or cannot decode with it
+     * — read it through {@link decodeTraceActionData}.
+     */
     params?: unknown
   }
   /** One transaction in a traced block; failed transactions are never traced. */

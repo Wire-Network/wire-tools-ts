@@ -24,7 +24,7 @@ function underwritingContext(funded: number, cap = 10_000_000_000n) {
     ctx.keyStore.setOperator({
       label,
       publicationLabel: label,
-      account: `wireno.op${index}`,
+      account: `acct.op${index}`,
       type: OperatorType.BATCH,
       wire: { type: KeyType.K1, publicKey: "PUB", privateKey: "PVT" }
     })
@@ -55,16 +55,16 @@ describe("BatchOperatorUnderwritingSteps operators and cap", () => {
   it("splits the operators into the funded prefix and the unfunded rest", () => {
     const ctx = underwritingContext(1)
     expect(BatchOperatorUnderwritingSteps.batchOperatorAccounts(ctx)).toEqual([
-      "wireno.op0",
-      "wireno.op1",
-      "wireno.op2"
+      "acct.op0",
+      "acct.op1",
+      "acct.op2"
     ])
     expect(BatchOperatorUnderwritingSteps.fundedOperatorAccounts(ctx)).toEqual([
-      "wireno.op0"
+      "acct.op0"
     ])
     expect(
       BatchOperatorUnderwritingSteps.unfundedOperatorAccounts(ctx)
-    ).toEqual(["wireno.op1", "wireno.op2"])
+    ).toEqual(["acct.op1", "acct.op2"])
     expect(
       BatchOperatorUnderwritingSteps.unfundedOperatorAccounts(
         underwritingContext(3)
@@ -119,13 +119,13 @@ describe("BatchOperatorUnderwritingSteps operators and cap", () => {
         .mockResolvedValue(0n)
     await BatchOperatorUnderwritingSteps.assertUnfundedHoldNothing(ctx)
     expect(read.mock.calls.map(([, account]) => account)).toEqual([
-      "wireno.op1",
-      "wireno.op2"
+      "acct.op1",
+      "acct.op2"
     ])
     read.mockResolvedValue(1n)
     await expect(
       BatchOperatorUnderwritingSteps.assertUnfundedHoldNothing(ctx)
-    ).rejects.toThrow(/unfunded batch operator wireno.op1 holds LIQSOL/)
+    ).rejects.toThrow(/unfunded batch operator acct.op1 holds LIQSOL/)
   })
 
   it("lists a plan's requests in issue order", () => {
@@ -269,7 +269,7 @@ describe("BatchOperatorUnderwritingSteps.shortestRetainingEpochSec", () => {
 describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
   const plan = BatchOperatorUnderwritingSteps.createPlan("settlement"),
     covered = SyndicationScenario.coveredOf(plan.amount),
-    funded = "wireno.op0",
+    funded = "acct.op0",
     signal = new AbortController().signal
 
   /** The context the verifies run in, with the plan's balances and requests recorded. */
@@ -319,7 +319,7 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
     })
 
     it("refuses a bond by an operator that is not funded", async () => {
-      serveBonds([bondRow(1, "wireno.op1", covered.toString())])
+      serveBonds([bondRow(1, "acct.op1", covered.toString())])
       await expect(run(step, settlementContext())).rejects.toThrow(/not a funded batch operator/)
     })
 

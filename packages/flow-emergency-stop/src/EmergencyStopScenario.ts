@@ -11,7 +11,9 @@ import {
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  EthereumFundingTool,
   EthereumSyndicationTool,
+  EthereumWallet,
   PendingPayoutReason,
   ProtocolTiming,
   Report,
@@ -908,7 +910,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
     ClusterBuildPhase.create(
       cluster,
       "EthereumSetup",
-      "Link the imported LIQETH position"
+      "Link the imported LIQETH position and fund the donor"
     ).push(
       EmergencyStopSteps.planAction(
         Actor.User,
@@ -916,6 +918,22 @@ export class EmergencyStopScenario extends SyndicationScenario {
         "sweep imported Ethereum position",
         write,
         Action.linkEthereum
+      ),
+      EthereumFundingTool.planCreateWallet(
+        Actor.User,
+        "create-ethereum-donor",
+        "generate the donor's Ethereum wallet",
+        write,
+        Constants.EthereumDonorWalletName,
+        "emergency stop — Ethereum donor and pending-payout cranker"
+      ),
+      EthereumFundingTool.planSetBalance(
+        Actor.User,
+        "fund-ethereum-donor",
+        "fund the donor for both custody repairs and every crank",
+        outpost,
+        Constants.EthereumDonorWalletName,
+        Constants.EthereumDonorBalanceWei
       )
     )
     this.planEthereumPayout(cluster, Constants.EthereumPayoutLane.EthereumPause)
@@ -1005,13 +1023,9 @@ export class EmergencyStopScenario extends SyndicationScenario {
           "derive a funded gap from the live allowance and net burn",
           async ctx => {
             const fixture = await readEthereumCustodyFixture(ctx, shortfall),
-              donor = EthereumSyndicationTool.hdWallet(
-                ctx,
-                Constants.EthereumDonor
-              ),
               donorBalance = await EthereumSyndicationTool.readLiqEthBalance(
                 ctx,
-                donor.address
+                EmergencyStopScenario.donorAddress(ctx)
               )
             Assert.ok(
               donorBalance >= fixture.recredit * Constants.EthereumScale,
@@ -1405,5 +1419,17 @@ export namespace EmergencyStopScenario {
     const address =
       Steps.registry.readMockSyndicationBonder(ctx).ethereum.address
     return address.startsWith("0x") ? address : `0x${address}`
+  }
+
+  /**
+   * The donor's address, read back from its persisted per-cluster wallet.
+   * @param ctx - The build context (supplies the data path).
+   * @returns The donor wallet's 0x address.
+   */
+  export function donorAddress(ctx: ClusterBuildContext): string {
+    return EthereumWallet.loadKeyPair(
+      ctx.config.dataPath,
+      Constants.EthereumDonorWalletName
+    ).address
   }
 }

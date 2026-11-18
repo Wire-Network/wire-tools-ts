@@ -1,30 +1,33 @@
 import { Keypair } from "@solana/web3.js"
-import { KeyType, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { Wallet } from "ethers"
-import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationUserSteps } from "@wireio/cluster-tool/orchestration/steps"
 import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
-import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
+import { EthereumFundingTool } from "@wireio/cluster-tool/tools/ethereum"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+import { ethereumPublicKeyFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 const signal = new AbortController().signal,
   account = "synd.parked",
   keypairName = "syndication-parked",
+  /** The durable handle of the user's persisted Ethereum wallet. */
+  walletName = "syndication-holder",
   tokenCode = "LIQSOL",
   net = 495_000_000n
 
 afterEach(() => jest.restoreAllMocks())
 
 describe("SyndicationUserSteps Ethereum link", () => {
-  it("links the syndicating wallet and propagates a refused link", async () => {
+  it("links the syndicating wallet, loaded by its handle, and propagates a refused link", async () => {
     const ctx = fixtureContext(),
-      wallet = Wallet.createRandom(),
+      // A plain `Wallet` — the type `EthereumFundingTool.signer` hands back.
+      wallet = new Wallet(Wallet.createRandom().privateKey),
       readWallet = jest
-        .spyOn(EthereumSyndicationTool, "hdWallet")
+        .spyOn(EthereumFundingTool, "signer")
         .mockReturnValue(wallet),
       link = jest
         .spyOn(AuthExLinkTool, "createLink")
@@ -35,24 +38,23 @@ describe("SyndicationUserSteps Ethereum link", () => {
         "link",
         {},
         account,
-        48
+        walletName
       )
     expect(step.runner).toBe(SyndicationUserSteps.runLinkEthereumKey)
     expect(step.input).toEqual({
       kind: "SyndicationUserSteps.LinkEthereumKeyInput",
       account,
-      ethereumHdIndex: 48
+      walletName
     })
     await step.runner(ctx, step.input, signal)
-    expect(readWallet).toHaveBeenCalledWith(ctx, 48)
-    expect(link.mock.calls[0][1]).toEqual(
-      expect.objectContaining({
-        chainKind: ChainKind.EVM,
-        account,
-        ethereumWallet: wallet
-      })
-    )
-    expect(link.mock.calls[0][1].privateKey.type).toBe(KeyType.EM)
+    expect(readWallet).toHaveBeenCalledWith(ctx, walletName)
+    // The link names the wallet's OWN public key and is signed by the wallet itself.
+    expect(link.mock.calls[0][1]).toEqual({
+      chainKind: ChainKind.EVM,
+      account,
+      publicKey: ethereumPublicKeyFromWallet(wallet).toString(),
+      signer: wallet
+    })
     link.mockRejectedValue(new Error("link refused"))
     await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
       "link refused"
@@ -60,7 +62,7 @@ describe("SyndicationUserSteps Ethereum link", () => {
   })
 
   it("refuses cancellation before reading or linking the wallet", async () => {
-    const readWallet = jest.spyOn(EthereumSyndicationTool, "hdWallet"),
+    const readWallet = jest.spyOn(EthereumFundingTool, "signer"),
       link = jest.spyOn(AuthExLinkTool, "createLink"),
       step = SyndicationUserSteps.planLinkEthereumKey(
         Report.Actor.User,
@@ -68,7 +70,7 @@ describe("SyndicationUserSteps Ethereum link", () => {
         "link",
         {},
         account,
-        48
+        walletName
       )
     await expect(
       step.runner(fixtureContext(), step.input, AbortSignal.abort())
@@ -76,25 +78,21 @@ describe("SyndicationUserSteps Ethereum link", () => {
     expect(readWallet).not.toHaveBeenCalled()
     expect(link).not.toHaveBeenCalled()
   })
-})
 
-describe("SyndicationUserSteps.nodeOwnerPolicy", () => {
-  it("builds the node owner's addpolicy with the given weights", () => {
-    expect(
-      SyndicationUserSteps.nodeOwnerPolicy("op", {
-        net: "0.0000 SYS",
-        cpu: "1.0000 SYS",
-        ram: "2.0000 SYS"
-      })
-    ).toEqual({
-      owner: "op",
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "0.0000 SYS",
-      cpu_weight: "1.0000 SYS",
-      ram_weight: "2.0000 SYS",
-      time_block: 0,
-      network_gen: 0
-    })
+  it("fails loudly for a handle whose wallet was never persisted", async () => {
+    const link = jest.spyOn(AuthExLinkTool, "createLink"),
+      step = SyndicationUserSteps.planLinkEthereumKey(
+        Report.Actor.User,
+        "link",
+        "link",
+        {},
+        account,
+        "never-created"
+      )
+    await expect(
+      step.runner(fixtureContext(), step.input, signal)
+    ).rejects.toThrow(/Ethereum wallet "never-created" not found/)
+    expect(link).not.toHaveBeenCalled()
   })
 })
 

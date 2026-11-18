@@ -104,7 +104,7 @@ describe("StartScriptSteps", () => {
           ctx.keyStore.setOperator({
             label,
             publicationLabel: label,
-            account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
+            account: `acct.${label.replace(/[^a-z1-5]/g, "")}`,
             type:
               batchOperatorLabel != null
                 ? OperatorType.BATCH

@@ -56,68 +56,28 @@ function importedKeys(
 describe("KeySteps.runCreateWallet", () => {
   it("imports the SEEDED genesis keys, not the dev constants", async () => {
     const { ctx, addPrivateKey } = walletContext()
-    ctx.keyStore
-      .setOperator({
-        label: NodeConfig.BiosName,
-        publicationLabel: NodeConfig.BiosName,
-        account: NodeConfig.BiosProducer,
-        type: OperatorType.UNKNOWN,
-        wire: wireKey("bios"),
-        wireFinalizer: finalizerKey("bios")
-      })
-      .setOperator({
-        label: Constants.BOOTSTRAP_NODE_OWNER,
-        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
-        account: Constants.BOOTSTRAP_NODE_OWNER,
-        type: OperatorType.UNKNOWN,
-        wire: wireKey("owner")
-      })
+    ctx.keyStore.setOperator({
+      label: NodeConfig.BiosName,
+      publicationLabel: NodeConfig.BiosName,
+      account: NodeConfig.BiosProducer,
+      type: OperatorType.UNKNOWN,
+      wire: wireKey("bios"),
+      wireFinalizer: finalizerKey("bios")
+    })
 
     await Steps.keys.runCreateWallet(ctx, null, signal)
 
     // Under SSM these are GENERATED and `genesis.initial_key` carries the
     // generated public half — importing `DEV_K1_PRIVATE_KEY` instead left the
-    // wallet unable to sign as `sysio` or as the node owner.
+    // wallet unable to sign as `sysio`.
     const imported = importedKeys(addPrivateKey)
     expect(imported).toEqual(
-      expect.arrayContaining(["PVT_K1_bios", "PVT_BLS_bios", "PVT_K1_owner"])
+      expect.arrayContaining(["PVT_K1_bios", "PVT_BLS_bios"])
     )
     expect(imported).not.toContain(Constants.DEV_K1_PRIVATE_KEY)
   })
 
-  it("DEDUPES — the genesis identities share one key under KEY/KIOD and kiod rejects a re-import", async () => {
-    const { ctx, addPrivateKey } = walletContext()
-    // `ClusterConfigProvider.resolveWithBiosKeys` hands back the SAME dev pair
-    // for the bios node and the bootstrap node owner under KEY/KIOD. Importing
-    // it twice makes clio fail the whole bootstrap with
-    // `3120008 key_exist_exception: Key already exists` — which is exactly what
-    // a real flow run hit before this dedupe.
-    const shared = wireKey("shared")
-    ctx.keyStore
-      .setOperator({
-        label: NodeConfig.BiosName,
-        publicationLabel: NodeConfig.BiosName,
-        account: NodeConfig.BiosProducer,
-        type: OperatorType.UNKNOWN,
-        wire: shared,
-        wireFinalizer: finalizerKey("shared")
-      })
-      .setOperator({
-        label: Constants.BOOTSTRAP_NODE_OWNER,
-        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
-        account: Constants.BOOTSTRAP_NODE_OWNER,
-        type: OperatorType.UNKNOWN,
-        wire: shared
-      })
-
-    await Steps.keys.runCreateWallet(ctx, null, signal)
-
-    const imported = importedKeys(addPrivateKey)
-    expect(imported).toContain("PVT_K1_shared")
-    expect(new Set(imported).size).toBe(imported.length)
-  })
-
-  it("also dedupes a node key that repeats a genesis key", async () => {
+  it("dedupes a node key that repeats the genesis key — kiod rejects a re-import", async () => {
     const { ctx, addPrivateKey } = walletContext()
     const shared = wireKey("both")
     ctx.keyStore.setOperator({

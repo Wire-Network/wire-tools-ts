@@ -30,7 +30,10 @@ import {
 } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
 import { createCreateCommand } from "@wireio/cluster-tool/cli/CreateCommand"
-import type { ClusterBuildOptions } from "@wireio/cluster-tool/config"
+import {
+  ClusterConfigProvider,
+  type ClusterBuildOptions
+} from "@wireio/cluster-tool/config"
 
 /** The recorder pair returned by {@link createYargsRecorder}. */
 interface YargsRecorder {
@@ -180,7 +183,9 @@ describe("createCreateCommand", () => {
       )
     ).toBe(42)
     // a fresh command built from a bare command line falls back to the CLI default
-    expect(registeredDefault(["create"], "epoch-duration-sec")).toBe(60)
+    expect(registeredDefault(["create"], "epoch-duration-sec")).toBe(
+      ClusterConfigProvider.DefaultEpochDurationSec
+    )
   })
 
   it("passes the document as the reverse-parse defaults so the flag-less collateral carries", async () => {

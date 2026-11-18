@@ -91,7 +91,8 @@ export class ClusterBuildContext<
       toURL(
         this.config.bind.anvil.port,
         toDialAddress(this.config.bind.anvil.address)
-      )
+      ),
+      this.config.dataPath
     ))
   }
 

@@ -234,7 +234,7 @@ describe("Steps.contracts.sysio.opreg", () => {
 
     it("readOperators returns every row of one complete read at OperatorTableReadLimit", async () => {
       const { ctx, query } = operatorsContext(),
-        rows = [fixtureOperatorRow("wireno.a1b2c"), fixtureOperatorRow("wireno.d3e4f")]
+        rows = [fixtureOperatorRow("acct.a1b2c"), fixtureOperatorRow("acct.d3e4f")]
       query.mockResolvedValue({ rows, more: false })
       await expect(Steps.contracts.sysio.opreg.readOperators(ctx)).resolves.toEqual(rows)
       expect(query).toHaveBeenCalledWith({
@@ -244,7 +244,7 @@ describe("Steps.contracts.sysio.opreg", () => {
 
     it("readOperators refuses a truncated read", async () => {
       const { ctx, query } = operatorsContext()
-      query.mockResolvedValue({ rows: [fixtureOperatorRow("wireno.a1b2c")], more: true })
+      query.mockResolvedValue({ rows: [fixtureOperatorRow("acct.a1b2c")], more: true })
       await expect(Steps.contracts.sysio.opreg.readOperators(ctx)).rejects.toThrow(
         `sysio.opreg::operators has more than ${Steps.contracts.sysio.opreg.OperatorTableReadLimit} rows; the read is truncated`
       )

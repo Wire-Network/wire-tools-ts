@@ -12,17 +12,10 @@ export namespace TerminationScenarioConstants {
   /**
    * The flow's DOOMED non-bootstrapped batch operator's durable harness `label`
    * handle (provisioned by the scenario; its daemon is deliberately never
-   * started). Harness-side only — its on-chain `account` is node-owner-generated
-   * (`wireno.<random>`). Slots next to the bootstrap's `batchop.[a-i]` roster
-   * without colliding.
+   * started), which is also its on-chain `account`. Slots next to the
+   * bootstrap's `batchop.[a-i]` roster without colliding.
    */
   export const DoomedOperatorLabel = "newop"
-  /**
-   * Anvil-mnemonic HD index for the operator's ETH identity, which backs its
-   * Ethereum authex link — past every bootstrap operator slot (batchops +
-   * underwriters).
-   */
-  export const DoomedOperatorEthereumHdIndex = 35
 
   /** Registered outpost chain codes whose inbound cursors must keep advancing. */
   export const EthereumChainCode = SlugName.from(

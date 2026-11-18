@@ -47,9 +47,7 @@ describe("ClusterBuildDefaults — the LIQ kicker", () => {
       names = collectPhaseNames(cluster.children),
       ordered = [
         "MockLiqPools", "Kicker", "KickerPools",
-        ...(enableBatchOperatorUnderwriting
-          ? ["Provision batchop.c", "BatchOperatorUnderwritingResources"]
-          : []),
+        ...(enableBatchOperatorUnderwriting ? ["Provision batchop.c"] : []),
         "MockSyndicationImport", "MockShadowBackingSolana",
         "MockShadowBackingEthereum", "EpochBootstrap"
       ]

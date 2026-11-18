@@ -12,8 +12,7 @@ const AutomaticUnderwritingPhaseNames = [
   "MockLiqPools",
   "MockSyndicationImport",
   "MockShadowBackingSolana",
-  "MockShadowBackingEthereum",
-  "BatchOperatorUnderwritingResources"
+  "MockShadowBackingEthereum"
 ] as const
 
 describe("ClusterBuildDefaults — automatic underwriting (create only)", () => {

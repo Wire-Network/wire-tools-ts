@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-emissions-soak",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Multi-Hour Emissions + sysio.dclaim Payout Soak",
@@ -14,8 +14,7 @@
     "@wireio/cluster-tool": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.56",
     "@wireio/sdk-core": "^1.0.110",
-    "@wireio/shared": "^1.0.109",
-    "ethers": "^6.14.0"
+    "@wireio/shared": "^1.0.109"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

@@ -9,17 +9,22 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
-import { Report } from "@wireio/cluster-tool/report"
+import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
 import {
   formatWireAsset,
   WireLcoImportTool,
   WireSyndicationTool
 } from "@wireio/cluster-tool/tools/wire"
 import { assetUnits } from "@wireio/cluster-tool/utils"
-import { BootstrapPlatformConfig, ChainKind } from "@wireio/opp-typescript-models"
+import {
+  BootstrapPlatformConfig,
+  ChainKind,
+  OperatorType
+} from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 import {
   LcoImportFixture,
   solanaSnapshot,
@@ -171,6 +176,130 @@ describe("LcoImportSteps", () => {
         ])
       )
       expect(phase.steps.filter(step => step.runner === LcoImportSteps.runSyndicationBatch)).toHaveLength(2)
+    })
+  })
+
+  describe("the pre-funded batch operators' credit verify", () => {
+    const Labels = ["batchop.a", "batchop.b"],
+      Label = Labels[0],
+      input: Steps.lcoImport.VerifyBatchOperatorCreditInput = {
+        kind: "LcoImportSteps.VerifyBatchOperatorCreditInput",
+        label: Label
+      }
+
+    describe("planVerifyBatchOperatorCredits", () => {
+      it("plans ONE verify step per pre-funded batch operator — named for the label, as the batch-operator actor, the label as input", () => {
+        const phase = LcoImportSteps.planVerifyBatchOperatorCredits(
+          ClusterBuild.forContext(importContext(false)),
+          "LcoImportOperatorCredit",
+          "verify the pre-funded credits",
+          {},
+          Labels
+        )
+        expect(phase.name).toBe("LcoImportOperatorCredit")
+        expect(phase.steps.map(step => [step.name, step.actor, step.runner])).toEqual(
+          Labels.map(label => [
+            `verify-${label}-lco-credit`,
+            Report.Actor.BatchOperator,
+            LcoImportSteps.runVerifyBatchOperatorCredit
+          ])
+        )
+        expect(phase.steps.map(step => step.input)).toEqual(
+          Labels.map(label => ({
+            kind: "LcoImportSteps.VerifyBatchOperatorCreditInput",
+            label
+          }))
+        )
+      })
+
+      it("plans an empty phase for an empty roster", () => {
+        expect(
+          LcoImportSteps.planVerifyBatchOperatorCredits(
+            ClusterBuild.forContext(importContext(false)),
+            "LcoImportOperatorCredit",
+            "verify",
+            {},
+            []
+          ).steps
+        ).toEqual([])
+      })
+    })
+
+    describe("runVerifyBatchOperatorCredit", () => {
+      /** The imported chains' shadow tokens, in plan order. */
+      const importedTokens = WireLcoImportTool.chainPlans(plan).map(
+        chainPlan => chainPlan.pool.tokenCode
+      )
+
+      /** A context holding the operator, every `sysio.liq` read answering from `balances` by token. */
+      function creditedContext(balances: Record<string, bigint>) {
+        const ctx = importContext(),
+          operator = fixtureOperatorAccount(Label, OperatorType.BATCH, Label)
+        ctx.keyStore.setOperator(operator)
+        const readLiqBalance = jest
+          .spyOn(WireSyndicationTool, "readLiqBalance")
+          .mockImplementation(async (_ctx, _account, tokenCode) => balances[tokenCode] ?? 0n)
+        return { ctx, operator, readLiqBalance }
+      }
+
+      it("passes when the operator holds a positive balance in EVERY imported chain's shadow, noting each credit", async () => {
+        expect(importedTokens).toEqual(["LIQETH", "LIQSOL"])
+        const balances = { LIQETH: 1_500_000_000n, LIQSOL: 2_000_000_000n },
+          { ctx, operator, readLiqBalance } = creditedContext(balances),
+          recorder = new StepExtraRecorder()
+        await StepExtraRecorder.runWith(recorder, () =>
+          LcoImportSteps.runVerifyBatchOperatorCredit(ctx, input, signal)
+        )
+        // One read per imported chain, by the operator's ON-CHAIN account.
+        expect(
+          readLiqBalance.mock.calls.map(([, account, tokenCode]) => [account, tokenCode])
+        ).toEqual(importedTokens.map(tokenCode => [operator.account, tokenCode]))
+        expect(recorder.calls).toEqual([
+          {
+            client: "harness",
+            kind: "note",
+            text: `${Label} holds its imported credit`,
+            label: Label,
+            account: operator.account,
+            credits: importedTokens.map(tokenCode => ({
+              tokenCode,
+              balance: balances[tokenCode].toString()
+            }))
+          }
+        ])
+      })
+
+      it("fails naming the chain whose shadow the operator holds none of", async () => {
+        const { ctx } = creditedContext({ LIQETH: 1n, LIQSOL: 0n })
+        await expect(
+          LcoImportSteps.runVerifyBatchOperatorCredit(ctx, input, signal)
+        ).rejects.toThrow(
+          /batch operator batchop\.a \(batchop\.a\) holds no LIQSOL after the SOLANA import — its pre-launch position was not in the export, or its SOLANA authex link did not sweep it/
+        )
+      })
+
+      it("fails before any read when the operator is not in the key store", async () => {
+        const ctx = importContext(),
+          readLiqBalance = jest
+            .spyOn(WireSyndicationTool, "readLiqBalance")
+            .mockResolvedValue(1n)
+        await expect(
+          LcoImportSteps.runVerifyBatchOperatorCredit(ctx, input, signal)
+        ).rejects.toThrow()
+        expect(readLiqBalance).not.toHaveBeenCalled()
+      })
+
+      it("fails when the import plan was never published", async () => {
+        const ctx = importContext(false),
+          readLiqBalance = jest
+            .spyOn(WireSyndicationTool, "readLiqBalance")
+            .mockResolvedValue(1n)
+        ctx.keyStore.setOperator(fixtureOperatorAccount(Label, OperatorType.BATCH, Label))
+        await expect(
+          LcoImportSteps.runVerifyBatchOperatorCredit(ctx, input, signal)
+        ).rejects.toThrow()
+        expect(readLiqBalance).not.toHaveBeenCalled()
+      })
     })
   })
 

@@ -1,56 +1,119 @@
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 
-import { EthereumClient } from "@wireio/cluster-tool/clients/ethereum"
+import {
+  EthereumClient,
+  EthereumWallet
+} from "@wireio/cluster-tool/clients/ethereum"
 import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { StepExtraRecorder } from "@wireio/cluster-tool/report/tools"
-import { toURL } from "@wireio/cluster-tool/utils"
+import type { EthereumKeyPair } from "@wireio/cluster-tool/types"
+import { ethereumKeyPairFromWallet, toURL } from "@wireio/cluster-tool/utils"
 
 /** Minimal ABI carrying the one event `getOPPEnvelopes` filters on. */
 const OppEnvelopeAbi = [
   `event ${EthereumClient.OppEnvelopeEvent}(bytes data)`
 ] as const
 
+/** A balance the faucet sets, in wei. */
+const FundedBalanceWei = 7n * ethers.WeiPerEther
+
 describe("EthereumClient", () => {
-  let rpcUrl: string
+  let rpcUrl: string, dataPath: string, deployer: EthereumKeyPair
   beforeAll(async () => {
     rpcUrl = toURL(
       await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
     )
-  })
-
-  it("derives a deterministic signer address from the default key", () => {
-    const a = new EthereumClient(rpcUrl)
-    const b = new EthereumClient(rpcUrl)
-    expect(a.wallet.address).toMatch(/^0x[0-9a-fA-F]{40}$/)
-    expect(b.wallet.address).toBe(a.wallet.address)
-  })
-
-  it("matches the default-key address when the key is supplied explicitly", () => {
-    const implicit = new EthereumClient(rpcUrl)
-    const explicit = new EthereumClient(
-      rpcUrl,
-      EthereumClient.DefaultPrivateKey
+    // The cluster data dir holding the PERSISTED deployer wallet the client
+    // signs as — a random pair, exactly as the Ethereum outpost phase creates it.
+    dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "eth-client-"))
+    deployer = EthereumWallet.saveWallet(
+      dataPath,
+      EthereumWallet.DeployerWalletName,
+      ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
     )
-    expect(explicit.wallet.address).toBe(implicit.wallet.address)
+  })
+  afterAll(() => {
+    Fs.rmSync(dataPath, { recursive: true, force: true })
+  })
+
+  describe("wallet", () => {
+    it("is the PERSISTED deployer wallet, loaded once and bound to the client's provider", () => {
+      const client = new EthereumClient(rpcUrl, dataPath)
+      expect(client.wallet.address).toBe(deployer.address)
+      expect(client.wallet).toBe(client.wallet)
+      expect(client.wallet.signer.provider).toBe(client.provider)
+      // Two clients over one data dir sign as the same persisted identity.
+      expect(new EthereumClient(rpcUrl, dataPath).wallet.address).toBe(
+        client.wallet.address
+      )
+    })
+
+    it("throws on first use when the deployer wallet has not been created yet — construction stays lazy", () => {
+      const empty = Fs.mkdtempSync(Path.join(Os.tmpdir(), "eth-client-empty-"))
+      try {
+        const client = new EthereumClient(rpcUrl, empty)
+        expect(() => client.wallet).toThrow(
+          /Ethereum wallet "deployer" not found/
+        )
+      } finally {
+        Fs.rmSync(empty, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("setBalance", () => {
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
+    it("sends ONE anvil_setBalance carrying the address and the 0x-hex amount", async () => {
+      const client = new EthereumClient(rpcUrl, dataPath),
+        send = jest.spyOn(client.provider, "send").mockResolvedValue(null),
+        address = ethers.Wallet.createRandom().address
+      await client.setBalance(address, FundedBalanceWei)
+      expect(EthereumClient.SetBalanceMethod).toBe("anvil_setBalance")
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(send).toHaveBeenCalledWith(EthereumClient.SetBalanceMethod, [
+        address,
+        ethers.toBeHex(FundedBalanceWei)
+      ])
+    })
+
+    it("propagates the faucet's failure", async () => {
+      const client = new EthereumClient(rpcUrl, dataPath),
+        error = new Error("anvil refused")
+      jest.spyOn(client.provider, "send").mockRejectedValue(error)
+      await expect(
+        client.setBalance(ethers.Wallet.createRandom().address, FundedBalanceWei)
+      ).rejects.toBe(error)
+    })
   })
 
   describe("getContract", () => {
     it("caches by (name, address)", () => {
-      const client = new EthereumClient(rpcUrl)
+      const client = new EthereumClient(rpcUrl, dataPath)
       const first = client.getContract("Foo", ethers.ZeroAddress, [])
       const again = client.getContract("Foo", ethers.ZeroAddress, [])
       expect(again).toBe(first)
     })
 
     it("re-binds the same name at a different address", () => {
-      const client = new EthereumClient(rpcUrl)
-      const otherAddress = new ethers.Wallet(EthereumClient.DefaultPrivateKey)
-        .address
+      const client = new EthereumClient(rpcUrl, dataPath)
+      const otherAddress = ethers.Wallet.createRandom().address
       const a = client.getContract("Foo", ethers.ZeroAddress, [])
       const b = client.getContract("Foo", otherAddress, [])
       expect(b).not.toBe(a)
+    })
+
+    it("binds every contract to the persisted deployer as its signer", () => {
+      const client = new EthereumClient(rpcUrl, dataPath),
+        contract = client.getContract("Foo", ethers.ZeroAddress, [])
+      expect(contract.runner).toBe(client.wallet.signer)
     })
   })
 
@@ -72,7 +135,7 @@ describe("EthereumClient", () => {
 
     beforeEach(() => {
       jest.useFakeTimers()
-      client = new EthereumClient(rpcUrl)
+      client = new EthereumClient(rpcUrl, dataPath)
       paused = true
       pausedError = ethers.makeError(
         "execution reverted: EnforcedPause()",
@@ -240,7 +303,7 @@ describe("EthereumClient", () => {
 
   describe("OPP events", () => {
     it("queries and filters the canonical OPPEnvelope event stream", async () => {
-      const client = new EthereumClient(rpcUrl),
+      const client = new EthereumClient(rpcUrl, dataPath),
         // A REAL contract carrying the event, so `filters[OppEnvelopeEvent]()`
         // runs ethers' own topic machinery; only the network round-trip is
         // doubled.
@@ -264,7 +327,7 @@ describe("EthereumClient", () => {
     })
 
     it("propagates query failures and exposes no retired epoch helper", async () => {
-      const client = new EthereumClient(rpcUrl),
+      const client = new EthereumClient(rpcUrl, dataPath),
         error = new Error("RPC unavailable"),
         opp = client.getContract("Opp", ethers.ZeroAddress, OppEnvelopeAbi)
       jest.spyOn(opp, "queryFilter").mockRejectedValue(error)

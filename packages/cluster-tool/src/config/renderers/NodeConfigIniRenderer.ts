@@ -89,8 +89,7 @@ export class NodeConfigIniRenderer implements Renderer {
           extraArgs.connectionCleanupPeriod
         ),
         // The operator's `batch-operator-account` / `underwriter-account` is
-        // NOT rendered here: the chain account is node-owner-generated at
-        // provisioning time, so it rides the daemon CLI args
+        // NOT rendered here: it rides the daemon CLI args
         // (`OperatorDaemonTool`) resolved from the key store at start.
         ...(isOperator
           ? [toIniLine(Constants.READ_MODE_OPTION, NodeopReadMode.irreversible)]

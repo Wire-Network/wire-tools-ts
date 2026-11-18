@@ -674,6 +674,19 @@
       ]
     },
     {
+      "name": "OutpostAccount",
+      "discriminator": [
+        87,
+        205,
+        242,
+        192,
+        212,
+        51,
+        26,
+        93
+      ]
+    },
+    {
       "name": "PendingPayout",
       "discriminator": [
         239,
@@ -1089,6 +1102,86 @@
               "zeroed tail reads as `false`."
             ],
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OutpostAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_liqsol",
+            "docs": [
+              "STAKE deposits (withdrawable pre-D-Day)",
+              "Principal amount staked (for display/tracking)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "staked_shares",
+            "docs": [
+              "Shares from staking (actual accounting for yield isolation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "purchased_liqsol",
+            "docs": [
+              "WARRANT_PURCHASE deposits with liqSOL (permanent)",
+              "Principal amount spent on pretokens (for display/tracking)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "purchased_shares",
+            "docs": [
+              "Shares from liqSOL pretoken purchases (actual accounting for yield isolation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Bytes of the retired Bonded Actor Registry bond block (`bonded_principals`,",
+              "`bonded_roles`, `unbond_requested`, `warmup_ends_at`). Kept so `bump` and the",
+              "trailing optional fields stay at their deployed offsets. Nothing reads them, so",
+              "staked liqSOL is never locked; `admin_purge_bonds` zeroed them before the registry",
+              "was removed, so confirm they are still zero before carving a field out."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                42
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "accumulated_pretoken_yield",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "last_epoch_synd_liqsol",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "last_synd_epoch",
+            "type": {
+              "option": "u64"
+            }
           }
         ]
       }

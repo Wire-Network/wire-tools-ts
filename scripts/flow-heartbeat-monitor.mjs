@@ -455,10 +455,10 @@ async function bail(reason, clusterPath) {
 /**
  * The bootstrap work a cluster config implies, counted in provisioned identities: producers,
  * batch operators and underwriters, plus each batch operator once more when
- * `batchOperatorUnderwriting` is set — every underwriting operator also gets a RAM grant
- * and each FUNDED one an epoch-zero import credit, each an irreversible write, and the mock
- * import and custody backing move behind operator provisioning, inside the measured window.
- * Counting every operator twice, funded or not, keeps the deadline an upper bound.
+ * `batchOperatorUnderwriting` is set — each FUNDED underwriting operator also gets an
+ * epoch-zero import credit, an irreversible write, and the mock import and custody backing
+ * move behind operator provisioning, inside the measured window. Counting every operator
+ * twice, funded or not, keeps the deadline an upper bound.
  *
  * @param {object} config the parsed cluster-config.json.
  * @return {number} the identity count {@link bootstrapDeadlineSeconds} scales by.

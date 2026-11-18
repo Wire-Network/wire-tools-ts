@@ -16,25 +16,17 @@ import type {
  * from, keyed by `label`.
  *
  * - `label` — the DURABLE harness handle (`batchop.a`, `uwrit.a`, a flow's
- *   `depositor`). It **does NOT exist on chain**: it is harness-side identity
- *   only — the `ClusterKeyStore` key, the SSM secret-id `{account}` segment
- *   (unless `publicationLabel` names the hosting node), and the operator
- *   daemon's node-directory name. Deterministic and known at PLAN
- *   time, which is why secret ids can be rendered before any account exists. It
- *   is NOT the `sysio.roa::newuser` sponsor nonce — that is a single-use token
- *   minted per call (`utils/nonceUtils.newSponsorNonce`) and never persisted.
+ *   `depositor`, the bios NODE's name): the `ClusterKeyStore` key, the SSM
+ *   secret-id `{account}` segment (unless `publicationLabel` names the hosting
+ *   node), and the operator daemon's node-directory name. Deterministic and
+ *   known at PLAN time, which is why secret ids can be rendered before any
+ *   account exists.
  * - `account` — the operator's WIRE account name ON CHAIN, and the only value
  *   that may cross a chain boundary (action payloads, authorization actors,
- *   table query keys, daemon `--*-account` argv). Batch operators and
- *   underwriters get a node-owner-sponsored GENERATED name (`wireno.<random>`,
- *   where `wireno` is a tier-1 node-owner prefix) recorded by the
- *   sponsored-creation step, which is the only writer of this field. The suffix
- *   is derived from the nonce as entropy and is therefore NOT choosable — there
- *   is no path that requests a specific name. Producers keep the deterministic
- *   `defproducer*` names, so their `account` equals their `label` from
- *   materialization onward. For an OPP operator the field is ABSENT between
- *   materialization and sponsored creation — deliberately, so a premature
- *   chain-boundary read fails loudly instead of silently passing the handle.
+ *   table query keys, daemon `--*-account` argv). `sysio` creates every
+ *   operator's account under its `label`, so the two are equal for producers,
+ *   batch operators and underwriters; the bios node is the one identity whose
+ *   `account` (`sysio`) differs from its `label`.
  * - `wire` (K1) — every operator: the WIRE account's controller key. Batch
  *   operators / underwriters get a UNIQUE generated K1 (imported into the kiod
  *   wallet so `account@active` signs); a producer carries its NODE's key —
@@ -70,7 +62,7 @@ export interface OperatorAccount {
    * is known at the moment the keys are handed over, and nowhere else.
    */
   readonly publicationLabel: string
-  readonly account?: string
+  readonly account: string
   readonly type: OperatorType
   readonly wire: WireKeyPair
   readonly wireFinalizer?: WireFinalizerKeyPair

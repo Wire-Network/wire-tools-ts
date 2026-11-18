@@ -29,6 +29,21 @@ export abstract class FlowScenario<
   readonly defaults: ClusterBuildOptions = {}
 
   /**
+   * The PRE-BOOTSTRAP stage — offline work that must exist before the cluster
+   * is even composed: generating the identities a launch-data export names,
+   * writing that export under the cluster path, seeding the custody store a
+   * bootstrap adopts from. It receives the fully resolved options (argv over
+   * {@link defaults}) and returns the options the bootstrap composes with, so a
+   * scenario can point `lcoImport` at the files it just wrote. It never
+   * contacts a chain: nothing is running yet. Values it produces that later
+   * Steps need ride the scenario instance into {@link createContext}.
+   *
+   * @param options - The resolved build options.
+   * @returns The options the bootstrap composes with.
+   */
+  prepare?(options: ClusterBuildOptions): Promise<ClusterBuildOptions>
+
+  /**
    * Build the flow's context `C`. Omit for the base {@link ClusterBuildContext};
    * override to return a scenario subclass (flow query helpers + typed events).
    *

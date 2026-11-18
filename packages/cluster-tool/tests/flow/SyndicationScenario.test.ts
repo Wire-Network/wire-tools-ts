@@ -13,7 +13,6 @@ import {
   SyndicateLIQ
 } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
-import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationScenario } from "@wireio/cluster-tool/flow"
 import {
   ClusterBuild,
@@ -102,21 +101,6 @@ describe("syndication scenario accounting", () => {
     ).toBe(2_000_000_001n)
     expect(SyndicationScenario.quantity(0n)).toBe("0.000000000 LIQSOL")
     expect(() => SyndicationScenario.quantity(-1n)).toThrow("negative")
-  })
-  it("keeps the participant policy on the shared node-owner builder", () => {
-    expect(SyndicationScenario.resourcePolicy(account)).toEqual({
-      owner: account,
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "25.0000 SYS",
-      cpu_weight: "25.0000 SYS",
-      ram_weight: "25.0000 SYS",
-      time_block: 0,
-      network_gen: 0
-    })
-  })
-  it("uses the account as resource-policy owner", () => {
-    expect(SyndicationScenario.resourcePolicy(account).owner).toBe(account)
-    expect(SyndicationScenario.resourcePolicy(account).issuer).not.toBe(account)
   })
   it("treats absent holdings as zero and refuses truncated reads", async () => {
     const ctx = fixtureContext(),
@@ -260,27 +244,6 @@ describe("syndication scenario accounting", () => {
 })
 
 describe("shared syndication user writes", () => {
-  it("creates one policy and refuses an aborted write", async () => {
-    const ctx = fixtureContext(),
-      contract = ctx.wire.getSysioContract(SysioContractName.roa)
-    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract as never)
-    const invoke = jest
-        .spyOn(contract.actions.addpolicy, "invoke")
-        .mockResolvedValue(undefined),
-      step = SyndicationUserSteps.planResourcePolicy(
-        Actor.User,
-        "policy",
-        "policy",
-        {},
-        SyndicationScenario.resourcePolicy(account)
-      )
-    await step.runner(ctx, step.input, signal)
-    expect(invoke).toHaveBeenCalledTimes(1)
-    await expect(
-      step.runner(ctx, step.input, AbortSignal.abort())
-    ).rejects.toThrow()
-    expect(invoke).toHaveBeenCalledTimes(1)
-  })
   it("links the persisted ED key in one createlink and refuses an absent wallet", async () => {
     const ctx = fixtureContext(),
       keypair = Keypair.generate(),
@@ -542,7 +505,6 @@ describe("syndication bond provider and fee arithmetic", () => {
       description: "Deliver the imported shadow to its bonder",
       steps: [
         "create-bonder",
-        "bonder-resources",
         "link-bonder",
         "verify-bonder"
       ],
@@ -559,14 +521,13 @@ describe("syndication bond provider and fee arithmetic", () => {
     expect(phase.name).toBe("ProvisionUnderwriter")
     expect(phase.steps).toEqual([
       "create-underwriter",
-      "underwriter-resources",
       "link-underwriter",
       "verify-underwriter"
     ])
     expect(phase.inputs[0]).toEqual(
       expect.objectContaining({ account: "synd.uwriter" })
     )
-    expect(phase.inputs[2]).toEqual(
+    expect(phase.inputs[1]).toEqual(
       expect.objectContaining({
         account: "synd.uwriter",
         keypairName: Steps.registry.MockSyndicationBonderLabel

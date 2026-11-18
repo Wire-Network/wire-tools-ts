@@ -1,7 +1,9 @@
 import Path from "node:path"
+import { SignatureProviderKeyPolicy } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
+import { Report } from "@wireio/cluster-tool/report"
 import { WireLcoImportTool } from "@wireio/cluster-tool/tools/wire"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { omit } from "lodash"
@@ -20,6 +22,7 @@ import {
 } from "../tools/wire/lcoImportFixture.js"
 import {
   collectPhaseNames,
+  collectStepActors,
   collectStepNames,
   findPhase
 } from "./clusterBuildFixture.js"
@@ -243,6 +246,58 @@ describe("ClusterBuildDefaults — launch-data import", () => {
         )
       }
     ])
+  })
+
+  describe("the pre-funded batch operators' credit verify (LcoImportOperatorCredit)", () => {
+    const CreditPhase = "LcoImportOperatorCredit"
+
+    it("is composed after every operator's provisioning and before the first epoch — ONLY with an import AND the adoptOnly policy — one step per batch operator, as the batch-operator actor", async () => {
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          signatureProvider: {
+            batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+          }
+        }),
+        names = collectPhaseNames(cluster.children),
+        actors = collectStepActors(cluster.children),
+        labels = Constants.batchOperatorLabels(
+          cluster.context.config.batchOperatorCount
+        ),
+        phase = findPhase(cluster.children, CreditPhase)
+      expect(labels.length).toBeGreaterThan(0)
+      expect(phase).toBeDefined()
+      expect(phase.steps.map(step => step.name)).toEqual(
+        labels.map(label => `verify-${label}-lco-credit`)
+      )
+      phase.steps.forEach(step => {
+        expect(step.runner).toBe(Steps.lcoImport.runVerifyBatchOperatorCredit)
+        expect(actors.get(step.name)).toBe(Report.Actor.BatchOperator)
+      })
+      labels.forEach(label =>
+        expect(names.indexOf(CreditPhase)).toBeGreaterThan(
+          names.indexOf(`Provision ${label}`)
+        )
+      )
+      expect(names.indexOf(CreditPhase)).toBeLessThan(names.indexOf("EpochBootstrap"))
+    })
+
+    it("is absent under adoptOrCreate — fresh operators have no positions to find", async () => {
+      const cluster = await ClusterBuildDefaults.create(baseOptions())
+      expect(cluster.context.config.signatureProvider.batchOperatorKeyPolicy).toBe(
+        SignatureProviderKeyPolicy.adoptOrCreate
+      )
+      expect(collectPhaseNames(cluster.children)).not.toContain(CreditPhase)
+    })
+
+    it("is absent without an import, even under adoptOnly", async () => {
+      const cluster = await ClusterBuildDefaults.create({
+        ...omit(baseOptions(), "ethereumBootstrapJsonFile", "solanaBootstrapJsonFile"),
+        signatureProvider: {
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+        }
+      })
+      expect(collectPhaseNames(cluster.children)).not.toContain(CreditPhase)
+    })
   })
 
   it("refuses placeholders and another program's export against external outposts, and imports real values without backing them", async () => {

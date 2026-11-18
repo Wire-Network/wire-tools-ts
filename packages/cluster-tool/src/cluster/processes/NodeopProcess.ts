@@ -284,9 +284,9 @@ export class NodeopProcess extends ManagedProcess {
     // no slot for, silently, with every assertion satisfied.
     if (node.producers.length > 0) {
       // Matched on EITHER identifier, because `producers` is not uniformly one of them: a planned
-      // producer node carries labels (and a producer never calls `roa::newuser`, so its label IS
-      // its account), while the bios node carries the on-chain genesis producer name `sysio` under
-      // the operator labelled `node_bios`. Requiring labels alone rejects the bios node outright.
+      // producer node carries labels (a producer's label IS its account), while the bios node
+      // carries the on-chain genesis producer name `sysio` under the operator labelled
+      // `node_bios`. Requiring labels alone rejects the bios node outright.
       const { operators = [] } = options,
         unmatched = node.producers.filter(
           producer =>
@@ -513,15 +513,19 @@ export namespace NodeopProcess {
   /**
    * Optional nodeop plugins by signature-provider SCHEME. `KEY` / `KIOD` are
    * built into `sysio::signature_provider_manager_plugin`; an `SSM:` spec
-   * resolves through `sysio::signature_provider_ssm_plugin`, which must be
-   * ENABLED via `--plugin` — otherwise provider creation aborts startup with
+   * resolves through `sysio::signature_provider_ssm_plugin` and a `KMS:` spec
+   * (an ethereum or solana key custodied by AWS KMS — Solana signing through
+   * KMS needs a nodeop with wire-sysio's Ed25519 KMS support) through
+   * `sysio::signature_provider_kms_plugin`, each of which must be ENABLED via
+   * `--plugin` — otherwise provider creation aborts startup with
    * `plugin_config_exception (3110006): Signature-provider scheme "SSM" is
    * provided by plugin "sysio::signature_provider_ssm_plugin"`.
    */
   export const SignatureProviderSchemePlugins: Partial<
     Record<SignatureProviderType, string>
   > = {
-    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin"
+    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin",
+    [SignatureProviderType.KMS]: "sysio::signature_provider_kms_plugin"
   }
 
   /**

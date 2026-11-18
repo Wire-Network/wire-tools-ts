@@ -1,14 +1,14 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const { Wallet } = require("ethers")
-const { KeyType, SlugName, SysioContracts } = require("@wireio/sdk-core")
+const { SlugName, SysioContracts } = require("@wireio/sdk-core")
 const {
   AuthExLinkTool,
   Report,
   Steps,
   WireCollateralTool,
   Constants: DepotConstants,
-  privateKeyFromNativeString
+  ethereumKeyPairFromWallet
 } = require("@wireio/cluster-tool")
 const {
   ProducerCollateralSteps: Collateral
@@ -106,11 +106,9 @@ test("bond-only steps use depot collateral without WIRE funding", async () => {
 })
 
 test("Ethereum link signs with the imported fixture identity", async () => {
-  const wallet = Wallet.createRandom()
-  const privateKey = privateKeyFromNativeString(KeyType.EM, wallet.privateKey)
-  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({
-    ethereum: { privateKey: privateKey.toString() }
-  }))
+  const wallet = Wallet.createRandom(),
+    ethereum = ethereumKeyPairFromWallet(wallet)
+  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({ ethereum }))
   const link = mock.method(AuthExLinkTool, "createLink", async () => {})
   await run(
     Collateral.planLinkEthereum(Report.Actor.Producer, "link", "link", {}),
@@ -118,8 +116,8 @@ test("Ethereum link signs with the imported fixture identity", async () => {
   )
   const input = link.mock.calls[0].arguments[1]
   Assert.equal(input.account, Constants.FundingAccount)
-  Assert.equal(input.ethereumWallet.address, wallet.address)
-  Assert.equal(input.privateKey.toString(), privateKey.toString())
+  Assert.equal(input.publicKey, ethereum.publicKey)
+  Assert.equal(await input.signer.getAddress(), wallet.address)
 })
 
 const balances = (rows, more = false) =>

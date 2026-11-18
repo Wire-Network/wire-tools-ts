@@ -1,8 +1,16 @@
+import { ethers } from "ethers"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey, SysioContracts } from "@wireio/sdk-core"
+import { KMSClientProvider } from "@wireio/cluster-tool/config/KMSClientProvider"
 import { AuthExLinkTool } from "@wireio/cluster-tool/tools/all"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
-import { Report } from "@wireio/cluster-tool/report"
+import { Report, StepExtraRecorder } from "@wireio/cluster-tool/report"
+import {
+  ethereumKeyPairFromKmsPublicKey,
+  solanaKeyPairFromKmsPublicKey,
+  solanaKeypair,
+  wireKeyPairFromKmsPublicKey
+} from "@wireio/cluster-tool/utils"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   ClusterBuild,
@@ -14,9 +22,10 @@ import {
   type ClusterBuildPhaseGroup,
   type StepInput
 } from "@wireio/cluster-tool/orchestration"
-import type { KeyPair } from "@wireio/cluster-tool/types"
+import type { KeyPair, SolanaSigner } from "@wireio/cluster-tool/types"
 import {
   AWSAccountName,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ExternalOutpostConfig
 } from "@wireio/cluster-tool-shared"
@@ -45,8 +54,8 @@ function firstPhaseStepKinds(group: ClusterBuildPhaseGroup): string[] {
 describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("returns a parallel PhaseGroup with one Phase per operator", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Create ops", "provision ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
-      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
+      { label: "batchopaaaa", type: OperatorType.BATCH, isBootstrapped: true },
+      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, isBootstrapped: false }
     ])
     expect(group.config.parallel).toBe(true)
     expect(group.children.length).toBe(2)
@@ -74,14 +83,28 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
     expect(phase.steps.map(step => step.actor)).toEqual([Report.Actor.Producer])
   })
 
-  it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {
+  it("a bootstrap batch/uw Phase (no funding) creates the account, authex-links both chains, registers", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
+      { label: "batchopaaaa", type: OperatorType.BATCH, isBootstrapped: true }
     ])
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
+      "WireOperatorProvisioningTool.AuthexLinkInput",
+      "WireOperatorProvisioningTool.AuthexLinkInput",
+      "WireOperatorProvisioningTool.RegistrationInput"
+    ])
+  })
+
+  it("a batch/uw Phase whose identity was materialized earlier plans NO materialization step", () => {
+    // The bootstrap's `OperatorKeys` phase materialized it long before — ahead of the
+    // Ethereum outpost deploy, which seats the operator's random address in the roster.
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
+      { label: "batchopaaaa", type: OperatorType.BATCH, identityMaterialized: true, isBootstrapped: true }
+    ])
+    expect(firstPhaseStepKinds(group)).toEqual([
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"
@@ -93,7 +116,6 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
       {
         label: "depositoraaa",
         type: OperatorType.BATCH,
-        ethereumHdIndex: 35,
         isBootstrapped: false,
         fundEthereumWei: 10n ** 18n,
         airdropSolanaLamports: 5_000_000_000n
@@ -105,185 +127,98 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 })
 
-/** A generated `wireno.<suffix>`-style chain account for the sponsored-creation tests. */
-const GeneratedAccount = "wireno.x3f9k"
-/** The operator's DURABLE handle — the keystore key, never the sponsor nonce. */
+/** The operator's durable handle — the keystore key and its on-chain account. */
 const OperatorHandle = "batchopaaaa"
-/** A FOREIGN sponsors row's nonce — never the one this operator's `newuser` minted. */
-const DecoyNonce = "zzzzzzzzzzzz"
-/** The account the foreign row carries — adopting it means the nonce predicate never ran. */
-const DecoyAccount = "wireno.decoy"
 
 /**
- * A REAL {@link ClusterBuildContext} whose `sponsors` table behaves like the
- * depot: a row appears ONLY for a nonce that `newuser` was actually called
- * with, AHEAD of it a foreign operator's row (the roster is shared, scoped to
- * the node owner) so the read-back's nonce predicate is genuinely exercised — a
- * read that returned `rows[0]` would adopt {@link DecoyAccount}. `emitRow` off
- * makes every read miss, which is how the "no row after newuser" case is
- * exercised without contriving a nonce value.
+ * A REAL {@link ClusterBuildContext} holding one materialized batch operator,
+ * with the two chain writes its provisioning performs doubled at their seams.
  *
  * Every double is a `jest.spyOn` against the real member it replaces, so the
- * doubled signatures are the shipped ones — a contract-client or key-store
- * change breaks this fixture instead of sliding past a hand-built stand-in.
- * `getSysioContract` mints a fresh Proxy (and a fresh invoker cache) per call,
- * so the two clients spied here are ALSO pinned as its return values.
+ * doubled signatures are the shipped ones — a client or key-store change breaks
+ * this fixture instead of sliding past a hand-built stand-in. `getSysioContract`
+ * mints a fresh Proxy (and a fresh invoker cache) per call, so the client spied
+ * here is ALSO pinned as its return value.
  */
-function fakeSponsorContext(emitRow = true) {
-  const nonces: string[] = [],
-    ctx = fixtureContext(),
+function fakeOperatorContext() {
+  const ctx = fixtureContext(),
     { keyStore } = ctx
   keyStore.setOperator({
     label: OperatorHandle,
     publicationLabel: OperatorHandle,
+    account: OperatorHandle,
     type: OperatorType.BATCH,
     wire: { type: KeyType.K1, publicKey: "PUB_K1_op", privateKey: "PVT_K1_op" }
   })
 
-  const roa = ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa),
-    opreg = ctx.wire.getSysioContract(
+  const opreg = ctx.wire.getSysioContract(
       SysioContracts.SysioContractName.opreg
     ),
-    newuserInvoke = jest
-      .spyOn(roa.actions.newuser, "invoke")
-      .mockImplementation(async data => {
-        nonces.push(data.nonce)
-        return undefined
-      }),
+    createAccount = jest
+      .spyOn(ctx.wire, "createAccount")
+      .mockResolvedValue(undefined),
     regoperatorInvoke = jest
       .spyOn(opreg.actions.regoperator, "invoke")
-      .mockResolvedValue(undefined),
-    sponsorsQuery = jest
-      .spyOn(roa.tables.sponsors, "query")
-      .mockImplementation(async args => ({
-        scope: args.scope,
-        rows: emitRow
-          ? [
-              { nonce: DecoyNonce, username: DecoyAccount },
-              ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
-            ]
-          : [],
-        more: false
-      }))
-  jest
-    .spyOn(ctx.wire, "getSysioContract")
-    .mockImplementation(name =>
-      name === SysioContracts.SysioContractName.roa ? roa : opreg
-    )
-  return { ctx, keyStore, nonces, newuserInvoke, regoperatorInvoke, sponsorsQuery }
+      .mockResolvedValue(undefined)
+  jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(opreg as never)
+  return { ctx, keyStore, createAccount, regoperatorInvoke }
 }
 
-/** The step input every sponsored-creation test drives the runner with. */
-const SponsoredInput = {
-  kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput" as const,
-  label: OperatorHandle
-}
+describe("WireOperatorProvisioningTool.runAccountCreation", () => {
+  /** The step input every account-creation test drives the runner with. */
+  const CreateInput = {
+    kind: "WireOperatorProvisioningTool.CreateAccountInput" as const,
+    label: OperatorHandle
+  }
 
-describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
-  it("invokes roa::newuser as the node owner and adopts the generated name into account", async () => {
-    const { ctx, keyStore, newuserInvoke } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
+  afterEach(() => jest.restoreAllMocks())
+
+  it("creates the operator's account as sysio, owned by its own wire key", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
+    await WireOperatorProvisioningTool.runAccountCreation(
       ctx,
-      SponsoredInput,
+      CreateInput,
       new AbortController().signal
     )
-    expect(newuserInvoke).toHaveBeenCalledTimes(1)
-    const [data, options] = newuserInvoke.mock.calls[0]
-    expect(data.creator).toBe(Constants.BOOTSTRAP_NODE_OWNER)
-    expect(data.pubkey).toBe("PUB_K1_op")
-    expect(options).toEqual({
-      authorization: [
-        { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
-      ]
-    })
-    const operator = keyStore.assertOperator(OperatorHandle)
-    // The read-back lands on account; the durable handle is untouched.
-    expect(operator.account).toBe(GeneratedAccount)
-    expect(operator.label).toBe(OperatorHandle)
+    expect(createAccount).toHaveBeenCalledTimes(1)
+    expect(createAccount).toHaveBeenCalledWith(
+      "sysio",
+      OperatorHandle,
+      "PUB_K1_op",
+      "PUB_K1_op"
+    )
   })
 
-  it("passes a FRESH single-use nonce — never the operator's durable handle", async () => {
-    const { ctx, newuserInvoke } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    const [{ nonce }] = newuserInvoke.mock.calls[0]
-    expect(nonce).not.toBe(OperatorHandle)
-    expect(nonce).toMatch(/^[a-z1-5]{12}$/)
-    expect(Name.isValid(nonce)).toBe(true)
-  })
-
-  it("mints a DIFFERENT nonce on every run (no reuse across operators)", async () => {
-    const first = fakeSponsorContext(),
-      second = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      first.ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      second.ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    expect(first.nonces[0]).not.toBe(second.nonces[0])
-  })
-
-  it("reads the sponsors table back BY THE MINTED NONCE, with an explicit row limit", async () => {
-    const { ctx, keyStore, sponsorsQuery } = fakeSponsorContext()
-    await WireOperatorProvisioningTool.runSponsoredAccountCreation(
-      ctx,
-      SponsoredInput,
-      new AbortController().signal
-    )
-    // ONE read — the pre-check is gone, so the only query is the read-back.
-    expect(sponsorsQuery).toHaveBeenCalledTimes(1)
-    const [args] = sponsorsQuery.mock.calls[0]
-    expect(args.scope).toBe(Constants.BOOTSTRAP_NODE_OWNER)
-    expect(args.limit).toBeGreaterThan(0)
-    // The foreign row precedes this operator's in the returned page, so the
-    // adopted account proves the NONCE selected the row — a read that took
-    // `rows[0]` (or dropped the predicate) would have adopted the decoy.
-    const operator = keyStore.assertOperator(OperatorHandle)
-    expect(operator.account).toBe(GeneratedAccount)
-    expect(operator.account).not.toBe(DecoyAccount)
-  })
-
-  it("propagates a failed sponsors read instead of treating it as 'no row yet'", async () => {
-    const { ctx, sponsorsQuery } = fakeSponsorContext()
-    sponsorsQuery.mockRejectedValueOnce(
-      new Error("Contract Table Query Exception: Table sponsors is not specified in the ABI")
-    )
+  it("propagates a failed newaccount", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
+    createAccount.mockRejectedValueOnce(new Error("account_name_exists_exception"))
     await expect(
-      WireOperatorProvisioningTool.runSponsoredAccountCreation(
+      WireOperatorProvisioningTool.runAccountCreation(
         ctx,
-        SponsoredInput,
+        CreateInput,
         new AbortController().signal
       )
-    ).rejects.toThrow(/Contract Table Query Exception/)
+    ).rejects.toThrow(/account_name_exists_exception/)
   })
 
-  it("throws when no sponsors row exists for the minted nonce after newuser", async () => {
-    const { ctx } = fakeSponsorContext(false)
+  it("refuses an operator that was never materialized", async () => {
+    const { ctx, createAccount } = fakeOperatorContext()
     await expect(
-      WireOperatorProvisioningTool.runSponsoredAccountCreation(
+      WireOperatorProvisioningTool.runAccountCreation(
         ctx,
-        SponsoredInput,
+        { ...CreateInput, label: "missingop" },
         new AbortController().signal
       )
-    ).rejects.toThrow(/no sponsors row for nonce/)
+    ).rejects.toThrow(/missingop/)
+    expect(createAccount).not.toHaveBeenCalled()
   })
 })
 
 describe("WireOperatorProvisioningTool.runRegistration", () => {
-  it("registers the operator's RESOLVED account, not its durable handle", async () => {
-    const { ctx, keyStore, regoperatorInvoke } = fakeSponsorContext()
-    keyStore.setOperator({
-      ...keyStore.assertOperator(OperatorHandle),
-      account: GeneratedAccount
-    })
+  afterEach(() => jest.restoreAllMocks())
+
+  it("registers the operator's account on sysio.opreg", async () => {
+    const { ctx, regoperatorInvoke } = fakeOperatorContext()
     await WireOperatorProvisioningTool.runRegistration(
       ctx,
       {
@@ -298,8 +233,7 @@ describe("WireOperatorProvisioningTool.runRegistration", () => {
     // `account:` is the GENERATED ABI field on `opreg::regoperator` — it never
     // renames with the harness, and it carries the on-chain account.
     const [data] = regoperatorInvoke.mock.calls[0]
-    expect(data.account).toBe(GeneratedAccount)
-    expect(data.account).not.toBe(OperatorHandle)
+    expect(data.account).toBe(OperatorHandle)
     expect(data.is_bootstrapped).toBe(true)
     expect(data.type).toBe(SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
   })
@@ -309,7 +243,6 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   const FundedSpec = {
     label: "depositoraaa",
     type: OperatorType.BATCH,
-    ethereumHdIndex: 35,
     isBootstrapped: false,
     fundEthereumWei: 10n ** 18n,
     airdropSolanaLamports: 5_000_000_000n
@@ -341,7 +274,7 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
     expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
     // every depot-side step still runs.
-    expect(kinds).toContain("WireOperatorProvisioningTool.SponsoredAccountCreationInput")
+    expect(kinds).toContain("WireOperatorProvisioningTool.CreateAccountInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.RegistrationInput")
   })
 })
@@ -428,14 +361,14 @@ describe("WireOperatorProvisioningTool.planProducerIdentityPhase", () => {
 
 /**
  * A COLLATERAL-BACKED producer: a PRODUCER spec with no `producerNodeIndex`. It takes the same
- * route every other bonded operator does — unique keys, a node-owner-sponsored account, authex
+ * route every other bonded operator does — unique keys, an account of its own, authex
  * links on both chains, `opreg::regoperator` — and its identity step additionally mints the
  * finalizer key a producer needs to hold a rank position at all.
  */
 describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no producerNodeIndex)", () => {
   const signal = new AbortController().signal
 
-  it("takes the OPP-operator route: unique identity, sponsored account, authex links, regoperator", () => {
+  it("takes the OPP-operator route: unique identity, its own account, authex links, regoperator", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       fakeParent(),
       "flow",
@@ -445,14 +378,13 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
         {
           label: "flowprod",
           type: OperatorType.PRODUCER,
-          ethereumHdIndex: 36,
           isBootstrapped: false
         }
       ]
     )
     expect(firstPhaseStepKinds(group)).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"
@@ -469,7 +401,7 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       "flow",
       "flow",
       {},
-      [{ label: "flowprod", type: OperatorType.PRODUCER, ethereumHdIndex: 36, isBootstrapped: false }]
+      [{ label: "flowprod", type: OperatorType.PRODUCER, isBootstrapped: false }]
     )
     const phase = group.children[0] as ClusterBuildPhase
     expect(new Set(phase.steps.map(step => step.actor))).toEqual(
@@ -485,39 +417,13 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       "flow",
       "flow",
       {},
-      [{ label: "flowprod", type: OperatorType.PRODUCER, ethereumHdIndex: 36 }]
+      [{ label: "flowprod", type: OperatorType.PRODUCER }]
     )
     const phase = group.children[0] as ClusterBuildPhase,
       registration = phase.steps
         .map(step => step.input as WireOperatorProvisioningTool.RegistrationInput)
         .find(input => input.kind === "WireOperatorProvisioningTool.RegistrationInput")
     expect(registration.isBootstrapped).toBe(false)
-  })
-
-  it("refuses a producer spec that names BOTH a hosting node and an ETH wallet index", () => {
-    // The genesis route would win and silently drop the outpost identity, the links and the
-    // registration.
-    expect(() =>
-      WireOperatorProvisioningTool.planOperatorAccountProvisioning(
-        fakeParent(),
-        "flow",
-        "flow",
-        {},
-        [{ label: "flowprod", type: OperatorType.PRODUCER, producerNodeIndex: 0, ethereumHdIndex: 36 }]
-      )
-    ).toThrow(/mutually exclusive/)
-  })
-
-  it("refuses a collateral-backed producer with no ethereumHdIndex — it bonds on Ethereum like any operator", () => {
-    expect(() =>
-      WireOperatorProvisioningTool.planOperatorAccountProvisioning(
-        fakeParent(),
-        "flow",
-        "flow",
-        {},
-        [{ label: "flowprod", type: OperatorType.PRODUCER, isBootstrapped: false }]
-      )
-    ).toThrow(/ethereumHdIndex is required/)
   })
 
   describe("runIdentityMaterialization", () => {
@@ -532,7 +438,35 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       } as KeyPair<KeyType>
     }
 
-    /** A context whose key generation and wallet import are doubled at their seams. */
+    /** The ONE region a KMS key lives in, and the alias the harness renders for the first batch operator's K1. */
+    const KmsRegion = "us-east-1",
+      BootstrapWireAlias = "alias/wire/test/batchop-a/K1"
+
+    /** A KMS-custodied K1 pair whose public identity is a fresh random key's — no material. */
+    function wireKmsPair(alias = BootstrapWireAlias) {
+      return wireKeyPairFromKmsPublicKey(
+        PrivateKey.generate(KeyType.K1).toPublic().data.array,
+        KmsRegion,
+        alias
+      )
+    }
+
+    /** The signer the KMS arm hands back — DERIVED from the provider's own return type. */
+    type KmsWireSigner = Awaited<ReturnType<typeof KMSClientProvider.createWireSigner>>
+
+    /** A sdk-core signer double for `wire`, with `KMSClientProvider.createWireSigner` doubled to hand it back. */
+    function kmsSignerFor(wire: ReturnType<typeof wireKmsPair>) {
+      const kmsSigner = {
+          pubKey: PublicKey.from(wire.publicKey),
+          sign: jest.fn()
+        } as unknown as KmsWireSigner,
+        createWireSigner = jest
+          .spyOn(KMSClientProvider, "createWireSigner")
+          .mockResolvedValue(kmsSigner)
+      return { kmsSigner, createWireSigner }
+    }
+
+    /** A context whose key generation, wallet import and external-signer registration are doubled at their seams. */
     function materializationContext() {
       const ctx = fixtureContext(),
         addPrivateKey = jest.fn().mockResolvedValue(undefined),
@@ -541,11 +475,12 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
           .mockImplementation(
             (async (_config: unknown, keyType: KeyType, account: string) =>
               fakePair(keyType, account)) as never
-          )
+          ),
+        addSigner = jest.spyOn(ctx.wire, "addSigner").mockImplementation(() => undefined)
       jest
         .spyOn(ctx.wire.wallet, "getOrCreate")
         .mockResolvedValue({ addPrivateKey } as never)
-      return { ctx, adopt, addPrivateKey }
+      return { ctx, adopt, addPrivateKey, addSigner }
     }
 
     afterEach(() => jest.restoreAllMocks())
@@ -557,8 +492,7 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
         {
           kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
           label: "flowprod",
-          type: OperatorType.PRODUCER,
-          ethereumHdIndex: 36
+          type: OperatorType.PRODUCER
         },
         signal
       )
@@ -571,22 +505,21 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       expect(stored.type).toBe(OperatorType.PRODUCER)
       expect(stored.wire.publicKey).toBe("PUB_K1_flowprod")
       expect(stored.wireFinalizer.publicKey).toBe("PUB_BLS_flowprod")
-      // `account` stays unset until the sponsored-creation step adopts the generated name.
-      expect(stored.account).toBeUndefined()
+      // `sysio` creates the account under the handle itself.
+      expect(stored.account).toBe("flowprod")
       // Both the controller key and the finalizer key reach the wallet, so a KIOD node can vote.
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_flowprod")
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_BLS_flowprod")
     })
 
     it("mints NO finalizer key for a batch operator — it has no finality role", async () => {
-      const { ctx, adopt, addPrivateKey } = materializationContext()
+      const { ctx, adopt, addPrivateKey, addSigner } = materializationContext()
       await WireOperatorProvisioningTool.runIdentityMaterialization(
         ctx,
         {
           kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
           label: "batchopaaaa",
-          type: OperatorType.BATCH,
-          ethereumHdIndex: 1
+          type: OperatorType.BATCH
         },
         signal
       )
@@ -594,11 +527,45 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
       expect(requested).toHaveLength(3)
       expect(requested).not.toContain(KeyType.BLS)
       expect(ctx.keyStore.assertOperator("batchopaaaa").wireFinalizer).toBeUndefined()
+      expect(ctx.keyStore.assertOperator("batchopaaaa").account).toBe("batchopaaaa")
       expect(addPrivateKey).toHaveBeenCalledTimes(1)
       expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_batchopaaaa")
+      // A wire key WITH material goes into kiod, never to the external-signer registry.
+      expect(addSigner).not.toHaveBeenCalled()
     })
 
-    it("rejects a handle longer than 12 chars — it is a node-directory and SSM path segment", async () => {
+    it("registers a freshly ADOPTED KMS-custodied wire key as an EXTERNAL signer instead of importing it — the adopt seam hands back a material-less K1", async () => {
+      const { ctx, adopt, addPrivateKey, addSigner } = materializationContext(),
+        label = Constants.batchOperatorLabel(1),
+        wire = wireKmsPair("alias/wire/test/batchop-b/K1"),
+        { kmsSigner, createWireSigner } = kmsSignerFor(wire)
+      adopt.mockImplementation(
+        (async (_config: unknown, keyType: KeyType, account: string) =>
+          keyType === KeyType.K1 ? wire : fakePair(keyType, account)) as never
+      )
+      await WireOperatorProvisioningTool.runIdentityMaterialization(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+          label,
+          type: OperatorType.BATCH
+        },
+        signal
+      )
+      expect(ctx.keyStore.assertOperator(label).wire).toBe(wire)
+      // The KMS arm of `wireSigner`: region + alias + the pinned K1 public key, off the pair.
+      expect(createWireSigner).toHaveBeenCalledTimes(1)
+      const [region, keyId, publicKey] = createWireSigner.mock.calls[0]
+      expect(region).toBe(KmsRegion)
+      expect(keyId).toBe("alias/wire/test/batchop-b/K1")
+      expect(publicKey.equals(wire.publicKey)).toBe(true)
+      // Registered for the ACCOUNT the pushes act as; kiod never sees a key that has no material.
+      expect(addSigner).toHaveBeenCalledTimes(1)
+      expect(addSigner).toHaveBeenCalledWith(label, kmsSigner)
+      expect(addPrivateKey).not.toHaveBeenCalled()
+    })
+
+    it("rejects a handle longer than 12 chars — it is the operator's WIRE account name", async () => {
       const { ctx } = materializationContext()
       await expect(
         WireOperatorProvisioningTool.runIdentityMaterialization(
@@ -606,12 +573,166 @@ describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no prod
           {
             kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
             label: "thirteenchars",
-            type: OperatorType.PRODUCER,
-            ethereumHdIndex: 36
+            type: OperatorType.PRODUCER
           },
           signal
         )
-      ).rejects.toThrow(/must be 1\.\.12 chars/)
+      ).rejects.toThrow(/must be a valid WIRE name/)
+    })
+
+    it("rejects a handle outside the WIRE name alphabet before any key is generated", async () => {
+      const { ctx, adopt } = materializationContext()
+      await expect(
+        WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          {
+            kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+            label: "Batch_Op9",
+            type: OperatorType.BATCH
+          },
+          signal
+        )
+      ).rejects.toThrow(/must be a valid WIRE name/)
+      expect(adopt).not.toHaveBeenCalled()
+    })
+
+    describe("a HELD identity (the key store already holds the label)", () => {
+      /** The materialization input for `label` as `type`. */
+      function input(
+        label: string,
+        type: OperatorType
+      ): WireOperatorProvisioningTool.MaterializeIdentityInput {
+        return {
+          kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+          label,
+          type
+        }
+      }
+
+      it("adopts it WHOLE: no key is generated, its wire key is imported, the store keeps it, and the adoption is noted", async () => {
+        const { ctx, adopt, addPrivateKey } = materializationContext(),
+          held = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH, "batchopaaaa"),
+          recorder = new StepExtraRecorder()
+        ctx.keyStore.setOperator(held)
+        await StepExtraRecorder.runWith(recorder, () =>
+          WireOperatorProvisioningTool.runIdentityMaterialization(
+            ctx,
+            input("batchopaaaa", OperatorType.BATCH),
+            signal
+          )
+        )
+        expect(adopt).not.toHaveBeenCalled()
+        expect(addPrivateKey).toHaveBeenCalledTimes(1)
+        expect(addPrivateKey).toHaveBeenCalledWith(held.wire.privateKey)
+        expect(ctx.keyStore.assertOperator("batchopaaaa")).toBe(held)
+        expect(recorder.calls).toEqual([
+          {
+            client: "harness",
+            kind: "note",
+            text: "adopted the identity batchopaaaa the context already held",
+            label: "batchopaaaa",
+            wire: held.wire.publicKey,
+            ethereum: held.ethereum.address,
+            solana: held.solana.publicKey
+          }
+        ])
+      })
+
+      it("registers a held identity's KMS-custodied wire key as an EXTERNAL signer — kiod never sees it, and the store keeps the pair as held", async () => {
+        const { ctx, adopt, addPrivateKey, addSigner } = materializationContext(),
+          label = Constants.batchOperatorLabel(0),
+          wire = wireKmsPair(),
+          held = { ...fixtureOperatorAccount(label, OperatorType.BATCH, label), wire },
+          { kmsSigner, createWireSigner } = kmsSignerFor(wire)
+        ctx.keyStore.setOperator(held)
+        await WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          input(label, OperatorType.BATCH),
+          signal
+        )
+        expect(adopt).not.toHaveBeenCalled()
+        expect(createWireSigner).toHaveBeenCalledTimes(1)
+        expect(createWireSigner.mock.calls[0][0]).toBe(KmsRegion)
+        expect(createWireSigner.mock.calls[0][1]).toBe(BootstrapWireAlias)
+        expect(addSigner).toHaveBeenCalledTimes(1)
+        expect(addSigner).toHaveBeenCalledWith(label, kmsSigner)
+        expect(addPrivateKey).not.toHaveBeenCalled()
+        expect(ctx.keyStore.assertOperator(label)).toBe(held)
+      })
+
+      it("imports a held PRODUCER's finalizer key alongside its wire key", async () => {
+        const { ctx, adopt, addPrivateKey } = materializationContext(),
+          held = {
+            ...fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod"),
+            wireFinalizer: fakePair(KeyType.BLS, "flowprod") as KeyPair<KeyType.BLS>
+          }
+        ctx.keyStore.setOperator(held)
+        await WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          input("flowprod", OperatorType.PRODUCER),
+          signal
+        )
+        expect(adopt).not.toHaveBeenCalled()
+        expect(addPrivateKey).toHaveBeenCalledTimes(2)
+        expect(addPrivateKey).toHaveBeenCalledWith(held.wire.privateKey)
+        expect(addPrivateKey).toHaveBeenCalledWith("PVT_BLS_flowprod")
+      })
+
+      it("refuses a held identity of another TYPE", async () => {
+        const { ctx, adopt, addPrivateKey } = materializationContext()
+        ctx.keyStore.setOperator(
+          fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH, "batchopaaaa")
+        )
+        await expect(
+          WireOperatorProvisioningTool.runIdentityMaterialization(
+            ctx,
+            input("batchopaaaa", OperatorType.PRODUCER),
+            signal
+          )
+        ).rejects.toThrow(
+          new RegExp(
+            `batchopaaaa is held as a ${OperatorType[OperatorType.BATCH]}, not a ${OperatorType[OperatorType.PRODUCER]}`
+          )
+        )
+        expect(adopt).not.toHaveBeenCalled()
+        expect(addPrivateKey).not.toHaveBeenCalled()
+      })
+
+      it("refuses a held identity carrying no outpost keys", async () => {
+        const { ctx, addPrivateKey } = materializationContext()
+        ctx.keyStore.setOperator({
+          label: "batchopaaaa",
+          publicationLabel: "batchopaaaa",
+          account: "batchopaaaa",
+          type: OperatorType.BATCH,
+          wire: fakePair(KeyType.K1, "batchopaaaa") as KeyPair<KeyType.K1>
+        })
+        await expect(
+          WireOperatorProvisioningTool.runIdentityMaterialization(
+            ctx,
+            input("batchopaaaa", OperatorType.BATCH),
+            signal
+          )
+        ).rejects.toThrow(/the held identity batchopaaaa carries no outpost keys/)
+        expect(addPrivateKey).not.toHaveBeenCalled()
+      })
+
+      it("refuses a held PRODUCER without a finalizer key", async () => {
+        const { ctx, addPrivateKey } = materializationContext()
+        ctx.keyStore.setOperator(
+          fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod")
+        )
+        await expect(
+          WireOperatorProvisioningTool.runIdentityMaterialization(
+            ctx,
+            input("flowprod", OperatorType.PRODUCER),
+            signal
+          )
+        ).rejects.toThrow(
+          /the held producer identity flowprod carries no finalizer key/
+        )
+        expect(addPrivateKey).not.toHaveBeenCalled()
+      })
     })
   })
 })
@@ -684,7 +805,7 @@ describe("WireOperatorProvisioningTool.runProducerMaterialization", () => {
     )
     const stored = ctx.keyStore.assertOperator("defproducera")
     expect(stored.type).toBe(OperatorType.PRODUCER)
-    // A producer never goes through roa::newuser: its on-chain name IS its handle.
+    // `sysio` creates the account under the handle itself.
     expect(stored.account).toBe("defproducera")
     expect(stored.publicationLabel).toBe("node_00")
     expect(stored.wire).toEqual(NodeKeys.keys.wire)
@@ -804,12 +925,15 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
         ssm: {
           awsRegions: SSMRegions,
           awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-        }
+        },
+        kms: null,
+        batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
       },
       awsClusterNodeConfig: {
         account: AWSAccountName.test,
         regions: SSMRegions,
-        ssm: null
+        ssm: null,
+        kms: null
       }
     })
   }
@@ -844,7 +968,7 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
       "KeySteps.PublishSignatureProviderKeyInput",
       "KeySteps.PublishSignatureProviderKeyInput",
       "KeySteps.PublishSignatureProviderKeyInput",
-      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.RegistrationInput"
@@ -868,8 +992,7 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
     const publications = publicationInputs(
       phaseSteps(ssmContext(), {
         label: "produceraaaa",
-        type: OperatorType.PRODUCER,
-        ethereumHdIndex: 36
+        type: OperatorType.PRODUCER
       })
     )
     expect(publications.map(publication => KeyType[publication.keyType])).toEqual([
@@ -886,7 +1009,6 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
         phaseSteps(ssmContext(), {
           label: Constants.batchOperatorLabel(0),
           type: OperatorType.BATCH,
-          ethereumHdIndex: 1,
           isBootstrapped: true
         })
       )
@@ -926,9 +1048,276 @@ describe("WireOperatorProvisioningTool.runAuthexLink", () => {
     )
 
     expect(createLink).toHaveBeenCalledTimes(1)
-    const [, params] = createLink.mock.calls[0]
+    // The EVM arm of the link params: the STORED public key plus a signer for it.
+    const params = createLink.mock.calls[0][1] as AuthExLinkTool.EthereumLinkParams
+    expect(params.chainKind).toBe(ChainKind.EVM)
     expect(params.account).toBe(operator.account)
-    expect(params.ethereumWallet.provider).toBeNull()
-    expect(params.ethereumWallet.address).toBe(operator.ethereum.address)
+    expect(params.publicKey).toBe(operator.ethereum.publicKey)
+    expect(params.signer.provider).toBeNull()
+    await expect(params.signer.getAddress()).resolves.toBe(
+      operator.ethereum.address
+    )
+  })
+
+  it("signs the EVM link THROUGH KMS when the operator's EM key lives there — the stored public key plus the KMS signer, offline", async () => {
+    const ctx = fixtureContext(),
+      wallet = ethers.Wallet.createRandom(),
+      kmsRegion = "us-east-1",
+      kmsAlias = "alias/wire/test/batchop-a/EM",
+      kmsPair = ethereumKeyPairFromKmsPublicKey(
+        ethers.getBytes(
+          ethers.SigningKey.computePublicKey(wallet.signingKey.publicKey, true)
+        ),
+        kmsRegion,
+        kmsAlias
+      ),
+      operator = {
+        ...fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+        ethereum: kmsPair
+      },
+      kmsSigner = new ethers.VoidSigner(wallet.address),
+      createSigner = jest
+        .spyOn(KMSClientProvider, "createSigner")
+        .mockResolvedValue(kmsSigner),
+      createLink = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator(operator)
+
+    await WireOperatorProvisioningTool.runAuthexLink(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.AuthexLinkInput",
+        label: operator.label,
+        chainKind: ChainKind.EVM
+      },
+      new AbortController().signal
+    )
+
+    // The custody facade routed to KMS — region + alias off the pair, no provider (offline).
+    expect(createSigner).toHaveBeenCalledTimes(1)
+    expect(createSigner).toHaveBeenCalledWith(kmsRegion, kmsAlias, undefined)
+    expect(createLink.mock.calls[0][1]).toEqual({
+      chainKind: ChainKind.EVM,
+      account: operator.account,
+      publicKey: kmsPair.publicKey,
+      signer: kmsSigner
+    })
+  })
+
+  it("signs the SVM link through the custody facade — the STORED ED public key is linked, the signer derived from the pair", async () => {
+    const ctx = fixtureContext(),
+      operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+      createLink = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator(operator)
+    await WireOperatorProvisioningTool.runAuthexLink(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.AuthexLinkInput",
+        label: operator.label,
+        chainKind: ChainKind.SVM
+      },
+      new AbortController().signal
+    )
+    const params = createLink.mock.calls[0][1] as AuthExLinkTool.SolanaLinkParams
+    expect(params.chainKind).toBe(ChainKind.SVM)
+    expect(params.account).toBe(operator.account)
+    expect(params.publicKey).toBe(operator.solana.publicKey)
+    // The signer IS the stored pair's: same point as the stored public key, and
+    // it signs with the pair's material (no privateKey rides the params).
+    expect(params.signer.publicKey.toBase58()).toBe(
+      solanaKeypair(operator.solana).publicKey.toBase58()
+    )
+    expect(params).not.toHaveProperty("privateKey")
+  })
+
+  it("signs the SVM link through KMS when the stored ED pair is KMS-custodied — no material is ever read", async () => {
+    const ctx = fixtureContext(),
+      operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH),
+      kmsPair = solanaKeyPairFromKmsPublicKey(
+        solanaKeypair(operator.solana).publicKey.toBytes(),
+        "us-east-1",
+        "alias/wire/test/batchopaaaa/ED"
+      ),
+      kmsSigner = {
+        publicKey: solanaKeypair(operator.solana).publicKey
+      } as unknown as SolanaSigner,
+      createSolanaSigner = jest
+        .spyOn(KMSClientProvider, "createSolanaSigner")
+        .mockResolvedValue(kmsSigner),
+      createLink = jest
+        .spyOn(AuthExLinkTool, "createLink")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator({ ...operator, solana: kmsPair })
+    await WireOperatorProvisioningTool.runAuthexLink(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.AuthexLinkInput",
+        label: operator.label,
+        chainKind: ChainKind.SVM
+      },
+      new AbortController().signal
+    )
+    expect(createSolanaSigner).toHaveBeenCalledWith(
+      "us-east-1",
+      "alias/wire/test/batchopaaaa/ED",
+      solanaKeypair(operator.solana).publicKey.toBytes()
+    )
+    const params = createLink.mock.calls[0][1] as AuthExLinkTool.SolanaLinkParams
+    expect(params.publicKey).toBe(kmsPair.publicKey)
+    expect(params.signer).toBe(kmsSigner)
+  })
+})
+
+describe("WireOperatorProvisioningTool.planOperatorIdentityPhase", () => {
+  it("materializes ONE identity per spec, named for the label and attributed to the operator's actor", () => {
+    const phase = WireOperatorProvisioningTool.planOperatorIdentityPhase(
+      fakeParent(),
+      "OperatorKeys",
+      "materialize the batch operators",
+      {},
+      [
+        { label: "batchopaaaa", type: OperatorType.BATCH },
+        { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER }
+      ]
+    )
+    expect(phase.name).toBe("OperatorKeys")
+    expect(phase.steps.map(step => step.name)).toEqual([
+      "batchopaaaa-identity",
+      "uwritaaaaaa-identity"
+    ])
+    expect(phase.steps.map(step => step.actor)).toEqual([
+      Report.Actor.BatchOperator,
+      Report.Actor.Underwriter
+    ])
+    expect(phase.steps.map(step => step.input)).toEqual([
+      {
+        kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+        label: "batchopaaaa",
+        type: OperatorType.BATCH
+      },
+      {
+        kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+        label: "uwritaaaaaa",
+        type: OperatorType.UNDERWRITER
+      }
+    ])
+    expect(phase.steps.map(step => step.runner)).toEqual([
+      WireOperatorProvisioningTool.runIdentityMaterialization,
+      WireOperatorProvisioningTool.runIdentityMaterialization
+    ])
+    expect(phase.steps.map(step => step.description)).toEqual([
+      "generate batchopaaaa WIRE + ETH + SOL identity",
+      "generate uwritaaaaaa WIRE + ETH + SOL identity"
+    ])
+  })
+
+  it("plans the SAME materialization step a provisioning Phase would — which is why identityMaterialized can skip it", () => {
+    const identity = WireOperatorProvisioningTool.planOperatorIdentityPhase(
+        fakeParent(),
+        "OperatorKeys",
+        "materialize",
+        {},
+        [{ label: "batchopaaaa", type: OperatorType.BATCH }]
+      ).steps[0],
+      provisioning = (
+        WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+          fakeParent(),
+          "ops",
+          "ops",
+          {},
+          [{ label: "batchopaaaa", type: OperatorType.BATCH, isBootstrapped: true }]
+        ).children[0] as ClusterBuildPhase
+      ).steps[0]
+    expect(identity.name).toBe(provisioning.name)
+    expect(identity.input).toEqual(provisioning.input)
+    expect(identity.runner).toBe(provisioning.runner)
+  })
+
+  it("plans an EMPTY phase for no specs — a cluster with no batch operators still composes", () => {
+    expect(
+      WireOperatorProvisioningTool.planOperatorIdentityPhase(
+        fakeParent(),
+        "OperatorKeys",
+        "materialize",
+        {},
+        []
+      ).steps
+    ).toEqual([])
+  })
+})
+
+describe("WireOperatorProvisioningTool.planEthereumFunding / runEthereumFunding", () => {
+  const signal = new AbortController().signal,
+    FundWei = WireOperatorProvisioningTool.DefaultEthereumFundWei,
+    /** The step input every funding test drives the runner with. */
+    FundInput = {
+      kind: "WireOperatorProvisioningTool.FundEthereumInput" as const,
+      label: OperatorHandle,
+      wei: FundWei
+    }
+
+  afterEach(() => jest.restoreAllMocks())
+
+  /** A context holding one materialized batch operator (random EM key), its anvil faucet doubled. */
+  function fundingContext() {
+    const ctx = fixtureContext(),
+      operator = fixtureOperatorAccount(OperatorHandle, OperatorType.BATCH),
+      setBalance = jest
+        .spyOn(ctx.ethereum, "setBalance")
+        .mockResolvedValue(undefined)
+    ctx.keyStore.setOperator(operator)
+    return { ctx, operator, setBalance }
+  }
+
+  it("plans a typed step carrying the label and wei, with its named runner", () => {
+    const step = WireOperatorProvisioningTool.planEthereumFunding(
+      Report.Actor.BatchOperator,
+      `${OperatorHandle}-fund-ethereum`,
+      `fund ${OperatorHandle} ETH wallet`,
+      {},
+      OperatorHandle,
+      FundWei
+    )
+    expect(step.actor).toBe(Report.Actor.BatchOperator)
+    expect(step.input).toEqual(FundInput)
+    expect(step.runner).toBe(WireOperatorProvisioningTool.runEthereumFunding)
+  })
+
+  it("sets the operator's RANDOM wallet balance through exactly one anvil_setBalance", async () => {
+    const { ctx, operator, setBalance } = fundingContext()
+    await WireOperatorProvisioningTool.runEthereumFunding(ctx, FundInput, signal)
+    expect(setBalance).toHaveBeenCalledTimes(1)
+    expect(setBalance).toHaveBeenCalledWith(operator.ethereum.address, FundWei)
+  })
+
+  it("refuses an operator that carries no Ethereum key", async () => {
+    const { ctx, operator, setBalance } = fundingContext()
+    ctx.keyStore.setOperator({ ...operator, ethereum: undefined })
+    await expect(
+      WireOperatorProvisioningTool.runEthereumFunding(ctx, FundInput, signal)
+    ).rejects.toThrow(/has no Ethereum key/)
+    expect(setBalance).not.toHaveBeenCalled()
+  })
+
+  it("refuses a label that was never materialized, and an aborted signal, before touching the faucet", async () => {
+    const { ctx, setBalance } = fundingContext()
+    await expect(
+      WireOperatorProvisioningTool.runEthereumFunding(
+        ctx,
+        { ...FundInput, label: "missingop" },
+        signal
+      )
+    ).rejects.toThrow(/missingop/)
+    await expect(
+      WireOperatorProvisioningTool.runEthereumFunding(
+        ctx,
+        FundInput,
+        AbortSignal.abort()
+      )
+    ).rejects.toThrow()
+    expect(setBalance).not.toHaveBeenCalled()
   })
 })

@@ -140,6 +140,8 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
+| `flow-batch-operator-prefunding` | `@wireio/test-flow-batch-operator-prefunding` | The pre-funded launch: batch-operator keys pre-created and persisted before the cluster, frozen into the launch-data exports, adopted by the bootstrap (`adoptOnly`), credited by the import, and bonding a user's Ethereum syndication from the first epochs |
+| `flow-governance-handoff` | `@wireio/test-flow-governance-handoff` | Tier-1 node owners take `sysio` through `sysio.nodes`, govern it by msig, absorb a late owner, then hand it to a stand-in council; authority audits before and after |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
@@ -165,9 +167,10 @@ and outbound queue entries are intermediate checks.
 | `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
 | `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
 
-The other six enabled flows (`flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-node-owner-nft`,
-`flow-operator-collateral-deposit`, `flow-producer-registration`) exercise their own paths. Imported
+The other seven enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-governance-handoff`,
+`flow-node-owner-nft`, `flow-operator-collateral-deposit`, `flow-producer-registration`)
+exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
@@ -512,7 +515,7 @@ in local mode:
 
 | Phase | What it does |
 |---|---|
-| `EthereumOutpost` | the deploy config names `panicAccount` (anvil HD index 49, granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
+| `EthereumOutpost` | the phase first creates and funds (`anvil_setBalance`) two persisted random wallets — the outpost DEPLOYER and the PANIC account (`EthereumWallet.DeployerWalletName` / `PanicWalletName`) — then the deploy config names `panicAccount` (granted the `panic` role by both the outpost and the liqETH deploy), `maxSyndicationPerTransfer` (1,000 liqETH) and `yieldDeadband` (0.01 liqETH); `verify-syndication-pool` reads them back, with `LIQETH` at 18 decimals and the panic account able to `pause` / `unpause` the pool |
 | `SolanaLiqsolSurface` | `set-max-syndication --fresh` right after `init-global-config` (a new outpost's maximum is 0, which refuses every `synd`), then `set_panic` naming the harness panic keypair (`<cluster>/data/sol-panic-keypair.json`), then `verify-emergency-stop` |
 
 ### Common options (every command)
@@ -538,7 +541,7 @@ command comes first).
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
-| `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
+| `--epoch-duration-sec` | | `300` | minimum epoch duration in seconds (60 is the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
 | `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |
@@ -548,7 +551,7 @@ command comes first).
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH positions during epoch zero, seal import, and back all mock shadow in outpost custody |
-| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator and grant bond-row RAM. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
+| `--enable-batch-operator-underwriting` | | `false`; forced on by a local `create` | run the underwriter role on every batch operator. OPP bond-row RAM is paid by the `sysio` pool through the privileged request issuer; no extra operator RAM grant is issued. Default caps: `10.000000000 LIQSOL` and `10.000000000 LIQETH`. Requires liquid shadow inventory; the flag alone does not fund it. With `--enable-mock-syndication-import`, import 100 of each shadow per funded operator using its linked ED/EM keys and back the full minted supply on both outposts before the first epoch. `batchOperatorUnderwriting` configures funded count and caps. See [underwriting operations](docs/syndication-underwriting-operations.md). |
 | `--api-count` | | `0` | API nodes — non-producing nodeops meshed with bios + producers, serving `/v1/chain/*` and the query engine's `POST /v1/query/execute`; never `producer_api_plugin` |
 | `--query-engine-read-mode` | | nodeop's own (`head`) | read mode of the API nodes' query engine (`head` or `irreversible`); renders `read-mode` only when set |
 | `--query-engine-timeout-ms` | | `30000` | `query-timeout-ms` of the API nodes' query engine — the request deadline, queue time included, which a client `timeout_ms` may only lower; always rendered into the API nodes' config.ini |
@@ -618,11 +621,13 @@ values only — the outposts' real-world deployed addresses and public keys:
     "chainId": 560048,
     "rpcUrl": "https://ethereum-hoodi-rpc.publicnode.com",
     "outpostAddresses": { "OPP": "0x…", "OPPInbound": "0x…", "BAR": "0x…" },
-    "liqEthAddresses": { "LiqEthToken": "0x…" }
+    "liqEthAddresses": { "LiqEthToken": "0x…" },
+    "asOfBlock": 1234567
   },
   "solana": {
     "rpcUrl": "https://api.testnet.solana.com",
-    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH"
+    "programId": "5nBtmutQLrRKBUxNfHJPDjiW5u8id6QM9Hhjg1D1g1XH",
+    "asOfSlot": 345678901
   }
 }
 ```
@@ -632,6 +637,17 @@ values only — the outposts' real-world deployed addresses and public keys:
   deploy record) and `solana.mints` (`[{ code, mint, decimals }]`) are optional.
 - `rpcUrl` is the endpoint the operator daemons dial. Without it they dial the
   bind config's `anvil` / `solana` address.
+- `ethereum.asOfBlock` / `solana.asOfSlot` are the FINALIZED block / slot the
+  document was generated at (`eth_getBlockByNumber("finalized")` /
+  `getSlot({ commitment: "finalized" })`). `fund-batch-operators` counts this
+  campaign's syndications from them: a position an operator created before
+  the marker is not this campaign's and does not count as "already funded".
+  Its post-launch paths require them (the Ethereum `Syndicated` scan runs
+  from `asOfBlock` in bounded chunks; the Solana history scan reads every
+  signature back to `asOfSlot`, and the RPC must still hold that ledger);
+  pre-launch funding and `create` ignore them. A document generated long
+  before its campaign should have the markers moved forward — a wide window
+  is a long scan.
 - The platform's `docs/ops/cluster-inputs/external-outpost-config.json` is a
   complete example (Hoodi + Solana testnet).
 

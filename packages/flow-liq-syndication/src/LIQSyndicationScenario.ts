@@ -287,13 +287,6 @@ export class LIQSyndicationScenario extends FlowScenario {
         Constants.UserAccount,
         HarnessConstants.DEV_K1_PUBLIC_KEY
       ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.User,
-        "destination-resources",
-        "allocate destination resources",
-        SyndicationScenario.WriteOptions,
-        SyndicationScenario.resourcePolicy(Constants.UserAccount)
-      ),
       WireSyndicationTool.planResolveEnvelope(
         Actor.Sysio,
         "resolve-syndication",

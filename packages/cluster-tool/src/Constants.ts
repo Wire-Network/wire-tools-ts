@@ -1,8 +1,13 @@
 import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey, SlugName } from "@wireio/sdk-core"
+import { Hash, KeyType, PrivateKey, SlugName, SysioContracts } from "@wireio/sdk-core"
 import { range } from "lodash"
 
-import type { QueryEngineLimitKey } from "@wireio/cluster-tool-shared"
+import {
+  EthereumNativeTokenCodename,
+  NativeTokenDepotPrecision,
+  SolanaNativeTokenCodename,
+  type QueryEngineLimitKey
+} from "@wireio/cluster-tool-shared"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
@@ -108,6 +113,50 @@ export namespace Constants {
     )
   }
 
+  /**
+   * The governance authority `sysio.councl::syncnodes` writes: its `active` is a
+   * supermajority of the `sysio.roa` tier-1 node owners. `sysio` can be handed to it.
+   */
+  export const NODE_OWNERS_AUTHORITY = "sysio.nodes"
+  /**
+   * The governance authority `sysio.councl` writes when an election seats its last
+   * member: its `active` is a supermajority of the seated council.
+   */
+  export const COUNCIL_AUTHORITY = "sysio.cncl"
+  /**
+   * The accounts `sysio` can be delegated to. The bootstrap creates each with an
+   * `owner` of `sysio@active` and an `active` nobody can satisfy until the contract
+   * first writes it.
+   */
+  export const GOVERNANCE_AUTHORITY_ACCOUNTS = [
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY
+  ] as const
+
+  /** One of {@link GOVERNANCE_AUTHORITY_ACCOUNTS}. */
+  export type GovernanceAuthorityAccount =
+    (typeof GOVERNANCE_AUTHORITY_ACCOUNTS)[number]
+
+  /**
+   * Whether `account` is one of the {@link GOVERNANCE_AUTHORITY_ACCOUNTS}.
+   *
+   * @param account - The account name.
+   * @returns True for `sysio.nodes` and `sysio.cncl`.
+   */
+  export function isGovernanceAuthorityAccount(
+    account: string
+  ): account is GovernanceAuthorityAccount {
+    return GOVERNANCE_AUTHORITY_ACCOUNTS.some(authority => authority === account)
+  }
+
+  /** The root account: every system account is governed by its `active`, and a handoff repoints it. */
+  export const SYSIO_ACCOUNT =
+    SysioContracts.SysioContractAccount[SysioContracts.SysioContractName.system]
+  /** The genesis account nobody can authorize; an authority delegating to it is unsatisfiable. */
+  export const NULL_ACCOUNT = "sysio.null"
+  /** The genesis account whose permissions the chain keeps equal to the producer schedule. */
+  export const PRODUCERS_ACCOUNT = "sysio.prods"
+
   /** System accounts created during bootstrap. */
   export const SYSTEM_ACCOUNTS = [
     "sysio.noop",
@@ -133,6 +182,8 @@ export namespace Constants {
     "sysio.bond",
     "sysio.synd",
     "sysio.councl",
+    NODE_OWNERS_AUTHORITY,
+    COUNCIL_AUTHORITY,
     "sysio.kicker",
     "sysio.gov",
     "sysio.ops",
@@ -209,6 +260,51 @@ export namespace Constants {
     return pair[1]
   }
 
+  /**
+   * The depot codename of the Ethereum outpost's native asset (`sysio.tokens`
+   * code `ETH`) — an ALIAS of the shared declaration the persisted config
+   * schemas default from, kept under the harness's codename spelling.
+   */
+  export const ETH_TOKEN_CODENAME = EthereumNativeTokenCodename
+  /** The depot codename of the Solana outpost's native asset (`sysio.tokens` code `SOL`); see {@link ETH_TOKEN_CODENAME}. */
+  export const SOL_TOKEN_CODENAME = SolanaNativeTokenCodename
+  /**
+   * The depot precision every native outpost token is registered at — the
+   * frame a native stake / reserve `TokenAmount` is in (an alias of the shared
+   * `NativeTokenDepotPrecision`).
+   */
+  export const NATIVE_TOKEN_PRECISION = NativeTokenDepotPrecision
+
+  /**
+   * Each outpost chain paired with its NATIVE asset's codename —
+   * `[chainCodename, tokenCodename]`, in {@link SHADOW_LIQ_TOKEN_PAIRS} order.
+   * The registry's native token rows, the chain-token bindings and a pre-funded
+   * launch's per-outpost stake all derive from it.
+   */
+  export const NATIVE_TOKEN_PAIRS = [
+    [ETHEREUM_CHAIN_CODENAME, ETH_TOKEN_CODENAME],
+    [SOLANA_CHAIN_CODENAME, SOL_TOKEN_CODENAME]
+  ] as const
+
+  /** An outpost chain's codename — derived from {@link NATIVE_TOKEN_PAIRS}, never re-spelled. */
+  export type OutpostChainCodename = (typeof NATIVE_TOKEN_PAIRS)[number][0]
+
+  /**
+   * The native asset codename of an outpost chain — its {@link NATIVE_TOKEN_PAIRS}
+   * entry's token.
+   *
+   * @param chainCode - The depot chain code (`SOLANA`).
+   * @returns The native token codename (`SOL`).
+   * @throws When the chain has no native asset pair.
+   */
+  export function nativeTokenCode(chainCode: string): string {
+    const pair = NATIVE_TOKEN_PAIRS.find(([chain]) => chain === chainCode)
+    if (pair == null) {
+      throw new Error(`Constants: chain ${chainCode} has no native asset`)
+    }
+    return pair[1]
+  }
+
   /** Suffix on a shadow's token codename naming its yield pool's pair token (`LIQSOL` → `LIQSOLP`). */
   export const LIQ_POOL_PAIR_SUFFIX = "P"
 
@@ -229,13 +325,6 @@ export namespace Constants {
   export const ROA_TOTAL_SYS = "75496.0000 SYS"
   /** `bytes_per_unit` for `activateroa`; must divide `newaccount_ram` (1144). */
   export const ROA_BYTES_PER_UNIT = 104
-  export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
-  export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
-  /** A resource weight that allocates nothing — for a policy that grants only another resource. */
-  export const NO_RESOURCE_WEIGHT = "0.0000 SYS"
-
-  /** Bootstrap node-owner account (2-6 chars to satisfy tier-1 name rules). */
-  export const BOOTSTRAP_NODE_OWNER = "wireno"
 
   /**
    * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
@@ -250,9 +339,27 @@ export namespace Constants {
   /** Producer-handoff timeout (seconds). */
   export const PRODUCER_HANDOFF_TIMEOUT_S = 90
   /** Maximum block CPU usage (microseconds). */
-  export const MAX_BLOCK_CPU_USAGE = 400_000
+  export const MAX_BLOCK_CPU_USAGE = 200_000
   /** Maximum transaction CPU usage (microseconds). */
-  export const MAX_TRANSACTION_CPU_USAGE = 375_000
+  export const MAX_TRANSACTION_CPU_USAGE = 150_000
+  /**
+   * Genesis `target_block_net_usage_pct` and `target_block_cpu_usage_pct`, in hundredths of a
+   * percent (10 = 0.1%). Above the target the chain shrinks every account's NET or CPU limit
+   * toward its share of the block maximum; one shared value prices NET the same way as CPU.
+   */
+  export const TARGET_BLOCK_USAGE_PCT = 10
+  /**
+   * Genesis `notify_cpu_stipend` (microseconds): the CPU of a notified contract
+   * that whoever pays for the notifying action covers. Matches wire-sysio's
+   * default; governance changes it through `setparams`.
+   */
+  export const NOTIFY_CPU_STIPEND = 100
+  /**
+   * The genesis `max_authority_depth`: how many delegations deep the chain follows
+   * when it checks whether an authority is satisfied. A delegation past it counts as
+   * unsatisfied, so raising it lets deeper delegation chains carry weight.
+   */
+  export const MAX_AUTHORITY_DEPTH = 10
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
   /**
@@ -470,17 +577,33 @@ export namespace Constants {
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
+   * The prefix every bootstrap batch-operator label carries — the one
+   * discriminator the batch-operator key policy
+   * (`signatureProvider.batchOperatorKeyPolicy`) selects its identities by.
+   */
+  export const BatchOperatorLabelPrefix = "batchop."
+
+  /**
    * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
-   * The label is the operator's `ClusterKeyStore` key and its SSM secret-id
-   * `{account}` segment. It does NOT exist on chain — the on-chain account name
-   * is node-owner-generated (`wireno.<random>`, `OperatorAccount.account`), and
-   * its suffix is nonce-derived entropy, so it cannot be requested.
+   * The label is the operator's `ClusterKeyStore` key, its SSM secret-id
+   * `{account}` segment, and the WIRE account name `sysio` creates for it
+   * (`OperatorAccount.account`).
    *
    * @param index - Zero-based operator index.
    * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
    */
   export function batchOperatorLabel(index: number): string {
-    return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+    return `${BatchOperatorLabelPrefix}${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
+  }
+
+  /**
+   * Whether `label` names a bootstrap batch operator ({@link batchOperatorLabel}).
+   *
+   * @param label - A durable harness label.
+   * @returns `true` for `batchop.<letter>` labels.
+   */
+  export function isBatchOperatorLabel(label: string): boolean {
+    return label.startsWith(BatchOperatorLabelPrefix)
   }
 
   /**
@@ -502,37 +625,6 @@ export namespace Constants {
    */
   export function underwriterLabel(index: number): string {
     return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
-  }
-
-  /**
-   * HD account index the operators' EM (Ethereum) keys derive from. Index 0 is
-   * reserved for the deploy owner (`EthereumOutpostBootstrapper.DeployerAccountIndex`),
-   * so operators start at 1: batch operators occupy `1..batchOperatorCount`,
-   * underwriters continue immediately after.
-   *
-   * These are the ONE authority for the mapping. The Ethereum outpost's genesis
-   * batch-operator roster is derived from the SAME (mnemonic, index) pair the
-   * operator's own key is later generated from, at a point in the bootstrap
-   * where the operator accounts do not exist yet — so a second spelling of the
-   * rule would silently authorize the wrong addresses.
-   */
-  export function batchOperatorEthereumHdIndex(index: number): number {
-    return index + 1
-  }
-
-  /**
-   * HD account index for an underwriter's EM key — continues past the batch
-   * operators. See {@link batchOperatorEthereumHdIndex}.
-   *
-   * @param batchOperatorCount - Size of the batch-operator roster.
-   * @param index - Zero-based underwriter index.
-   * @returns The HD account index.
-   */
-  export function underwriterEthereumHdIndex(
-    batchOperatorCount: number,
-    index: number
-  ): number {
-    return batchOperatorCount + index + 1
   }
 
   /**
@@ -601,6 +693,23 @@ export namespace Constants {
 
   /** The node owners tier 1 admits at most (wire-sysio `emissions.hpp` `T1_MAX_NODE_OWNERS`). */
   export const T1_MAX_NODE_OWNERS = 21
+  /**
+   * RAM one member entry of a governance authority bills: a `permission_level_weight`
+   * rounded up to the chain's 16-byte billing alignment.
+   */
+  export const GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES = 32
+  /** Entries of the placeholder `active` a governance authority is created with: `sysio.null@active`. */
+  export const GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES = 1
+  /**
+   * RAM added to each governance authority's limit at bootstrap (640 bytes): a full
+   * authority of {@link T1_MAX_NODE_OWNERS} members (the council's 21 seats, the tier-1
+   * cap) less the placeholder entry the account was created with. Without it
+   * `sysio.councl` cannot write the authority, so `syncnodes` fails and the last seat
+   * of an election cannot be tabulated.
+   */
+  export const GOVERNANCE_AUTHORITY_RAM_BYTES =
+    (T1_MAX_NODE_OWNERS - GOVERNANCE_AUTHORITY_PLACEHOLDER_ENTRIES) *
+    GOVERNANCE_AUTHORITY_MEMBER_RAM_BYTES
   /** The node owners tier 2 admits at most (`T2_MAX_NODE_OWNERS`). */
   export const T2_MAX_NODE_OWNERS = 84
   /** The node owners tier 3 admits at most (`T3_MAX_NODE_OWNERS`). */

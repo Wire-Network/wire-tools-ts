@@ -1,3 +1,4 @@
+import type { SysioContracts } from "@wireio/sdk-core"
 import { WireSysioContractTool } from "../../tools/wire/WireSysioContractTool.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -12,23 +13,40 @@ export namespace AccountSteps {
   /** Input for {@link planCreateSystem}. */
   export interface CreateSystemInput extends StepInput {
     readonly kind: "AccountSteps.CreateSystemInput"
+    /** The `sysio.*` account to create. */
     readonly account: string
+    /** Its `active` authority; its `owner` is always `sysio@active`. */
+    readonly active: SysioContracts.SysioSystemAuthorityType
   }
 
-  /** Create a `sysio.*` system account governed solely by `sysio@active`. */
+  /**
+   * Create a `sysio.*` system account whose `owner` is `sysio@active`.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param account - The `sysio.*` account to create.
+   * @param active - Its `active` authority: `sysio@active` by default; a
+   *   governance authority starts with the unsatisfiable
+   *   {@link WireSysioContractTool.sysioNullActiveAuthority} until
+   *   `sysio.councl` writes its members.
+   * @returns The definition step.
+   */
   export function planCreateSystem<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string
+    account: string,
+    active: SysioContracts.SysioSystemAuthorityType = WireSysioContractTool.sysioActiveAuthority()
   ): ClusterBuildStep<C, CreateSystemInput> {
     return ClusterBuildStep.create<C, CreateSystemInput>(
       actor,
       name,
       description,
       options,
-      { kind: "AccountSteps.CreateSystemInput", account },
+      { kind: "AccountSteps.CreateSystemInput", account, active },
       runCreateSystem
     )
   }
@@ -40,7 +58,10 @@ export namespace AccountSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await new WireSysioContractTool(ctx.wire).createSysioAccount(input.account)
+    await new WireSysioContractTool(ctx.wire).createSysioAccount(
+      input.account,
+      input.active
+    )
   }
 
   /** Input for {@link planCreateKeyed}. */
@@ -84,5 +105,55 @@ export namespace AccountSteps {
       input.publicKey,
       input.publicKey
     )
+  }
+
+  /** Input for {@link planRamGrant}. */
+  export interface RamGrantInput extends StepInput {
+    readonly kind: "AccountSteps.RamGrantInput"
+    /** The account whose RAM limit is raised. */
+    readonly account: string
+    /** Bytes added to the account's current RAM limit. */
+    readonly ramBytes: number
+  }
+
+  /**
+   * Raise an account's RAM limit by `ramBytes`, as `sysio` (`sysio::setacctram`)
+   * — for a system contract account whose own native permissions and action
+   * links outgrow its code + abi allowance (`sysio.andon`).
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param account - The account whose RAM limit is raised.
+   * @param ramBytes - Bytes added to the account's current RAM limit.
+   * @returns The definition step.
+   */
+  export function planRamGrant<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    account: string,
+    ramBytes: number
+  ): ClusterBuildStep<C, RamGrantInput> {
+    return ClusterBuildStep.create<C, RamGrantInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "AccountSteps.RamGrantInput", account, ramBytes },
+      runRamGrant
+    )
+  }
+
+  /** Named runner — `WireClient.grantRam`. */
+  export async function runRamGrant<C extends ClusterBuildContext>(
+    ctx: C,
+    input: RamGrantInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire.grantRam(input.account, input.ramBytes)
   }
 }

@@ -25,28 +25,21 @@ import { PersistedFixture } from "../../../config/clusterConfigFixture.js"
 import { fixtureExternalOutposts } from "../../../config/resolveEnvironmentFixture.js"
 import { fixtureOperatorAccount } from "../../../orchestration/outputs/operatorAccountFixture.js"
 
-/** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic =
-  "test test test test test test test test test test test junk"
-
 /**
  * A fully-keyed OperatorAccount fixture for the given label/type — REAL
- * (decodable) ethereum + solana keys, since `resolveOperatorDaemonArgs`
- * threads them through `KeyGenerator.toSignatureProvider`. `account` is the
- * DISTINCT `roa::newuser`-generated chain name, never the durable handle: a
- * fixture where the two are the same string cannot fail on a label/account
- * swap at a chain boundary (mirrors the helper in `OperatorDaemonTool.test.ts`).
+ * (decodable), RANDOM ethereum + solana keys, since `resolveOperatorDaemonArgs`
+ * threads them through `KeyGenerator.toSignatureProvider`. `account` is
+ * DISTINCT from the durable handle: a fixture where the two are the same
+ * string cannot fail on a label/account swap at a chain boundary (mirrors the
+ * helper in `OperatorDaemonTool.test.ts`).
  */
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
-  const wallet = ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-      "m/44'/60'/0'/0/1"
-    ),
+  const wallet = ethers.Wallet.createRandom(),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
     publicationLabel: label,
-    account: `wireno.${label}`,
+    account: `acct.${label}`,
     type,
     wire: {
       type: KeyType.K1,
@@ -589,7 +582,7 @@ describe("Steps.processes.nodeop", () => {
       expect(args).toEqual(
         expect.arrayContaining([
           "--batch-operator-account",
-          "wireno.batchopaaaa"
+          "acct.batchopaaaa"
         ])
       )
       // The depot matches this argv against `sysio.opreg::operators`, which is

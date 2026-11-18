@@ -9,9 +9,9 @@ import {
   FlowScenario,
   LcoImportPlanKey,
   Report,
-  SolanaFundingTool,
   Steps,
   SyndicationUserSteps,
+  WireLcoExportTool,
   WireLcoImportTool,
   WireSyndicationTool,
   eachSeries,
@@ -24,6 +24,7 @@ import {
   type ImportSeedChainKind
 } from "@wireio/cluster-tool"
 import { LcoImportScenarioConstants as Constants } from "./LcoImportScenarioConstants.js"
+import { LcoImportScenarioExports as Exports } from "./LcoImportScenarioExports.js"
 
 const {
   SysioContractAccount,
@@ -38,6 +39,14 @@ const { Actor } = Report
 /** The plan the bootstrap's `publish-lco-import-plan` published. */
 function readPlan(ctx: ClusterBuildContext): WireLcoImportTool.Plan {
   return ctx.outputs.assert(LcoImportPlanKey)
+}
+
+/** A holder's persisted identity, read back by its handle from the cluster data directory. */
+function identityOf(
+  ctx: ClusterBuildContext,
+  holder: Constants.Holder
+): WireLcoExportTool.HolderIdentity {
+  return Exports.holderIdentity(ctx.config.dataPath, holder)
 }
 
 /** The plan of `chain`; throws when the import has none. */
@@ -55,19 +64,24 @@ function chainPlanOf(
 /** A holder's imported position, in its liq token's subunits; nothing imported is `0n`. */
 function positionOf(
   plan: WireLcoImportTool.Plan,
-  holder: Constants.Holder
+  holder: Constants.Holder,
+  identity: WireLcoExportTool.HolderIdentity
 ): bigint {
   const spec = chainPlanOf(plan, holder.chain).syndications.find(
-    candidate => candidate.pubkey === holder.pubkey
+    candidate => candidate.pubkey === identity.pubkey
   )
   return spec == null ? 0n : spec.amount
 }
 
 /** A holder's imported WIRE claim, in subunits; nothing imported is `0n`. */
-function claimOf(plan: WireLcoImportTool.Plan, holder: Constants.Holder): bigint {
+function claimOf(
+  plan: WireLcoImportTool.Plan,
+  holder: Constants.Holder,
+  identity: WireLcoExportTool.HolderIdentity
+): bigint {
   const nativeAddress = WireLcoImportTool.nativeBytesHex(
     holder.chain,
-    holder.address
+    identity.address
   )
   const claim = chainPlanOf(plan, holder.chain).claims.find(
     candidate => candidate.native_address === nativeAddress
@@ -91,11 +105,12 @@ function holdingKey(chainCode: string, nativeHex: string): string {
 /** A holder's {@link holdingKey} for its imported position. */
 function positionKeyOf(
   plan: WireLcoImportTool.Plan,
-  holder: Constants.Holder
+  holder: Constants.Holder,
+  identity: WireLcoExportTool.HolderIdentity
 ): string {
   return holdingKey(
     chainPlanOf(plan, holder.chain).pool.chainCode,
-    WireLcoImportTool.nativeBytesHex(holder.chain, holder.pubkey)
+    WireLcoImportTool.nativeBytesHex(holder.chain, identity.pubkey)
   )
 }
 
@@ -179,11 +194,13 @@ async function readPool(
 }
 
 /**
- * Launch-data import — the bootstrap replays the committed exports under `resources/`
- * during epoch zero (`--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file`
- * through this flow's defaults). The flow then checks every imported position, claim and
- * pool on the depot, has each holder link its key (delivering its LIQ and moving its claim
- * to pending), claim its WIRE, and trades WIRE through the LIQSOL pool.
+ * Launch-data import — the pre-bootstrap stage generates each holder's random key, persists
+ * it under the holder's handle and writes both exports under the cluster path from the
+ * committed templates; the bootstrap replays those exports during epoch zero
+ * (`--ethereum-bootstrap-json-file` / `--solana-bootstrap-json-file`, set by `prepare`). The
+ * flow then checks every imported position, claim and pool on the depot, has each holder
+ * link its key (delivering its LIQ and moving its claim to pending), claim its WIRE, and
+ * trades WIRE through the LIQSOL pool.
  */
 export class LcoImportScenario extends FlowScenario {
   readonly name = "flow-lco-import"
@@ -192,9 +209,35 @@ export class LcoImportScenario extends FlowScenario {
 
   readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
-    ethereumBootstrapJsonFile: Constants.EthereumExportFile,
-    solanaBootstrapJsonFile: Constants.SolanaExportFile,
     lcoImport: Constants.LcoImport
+  }
+
+  /**
+   * The pre-bootstrap stage: generate (or read back) every holder's random key under its
+   * durable handle, write both exports from the committed templates with those keys in
+   * place of the placeholders, and point the bootstrap's import at the written files.
+   *
+   * @param options - The resolved build options.
+   * @returns The options the bootstrap composes with — the import pointed at the exports.
+   */
+  async prepare(options: ClusterBuildOptions): Promise<ClusterBuildOptions> {
+    const { clusterPath, buildPath } = options
+    Assert.ok(
+      clusterPath != null,
+      "flow-lco-import: clusterPath must be resolved before the exports are written"
+    )
+    Assert.ok(
+      buildPath != null,
+      "flow-lco-import: buildPath must be resolved before the holder keys are generated"
+    )
+    const dataPath = Exports.dataPath(clusterPath)
+    await Exports.createHolderKeys(dataPath, buildPath)
+    const { ethereum, solana } = Exports.writeExports(dataPath)
+    return {
+      ...options,
+      ethereumBootstrapJsonFile: ethereum,
+      solanaBootstrapJsonFile: solana
+    }
   }
 
   plan(cluster: ClusterBuild): void {
@@ -207,21 +250,23 @@ export class LcoImportScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "verify-lco-fixture-keys",
-        "the exports name the flow's holders: every holder has a claim, every staker a position",
+        "the exports name the holders' persisted keys: every holder has a claim, every staker a position",
         async ctx => {
           const plan = readPlan(ctx)
-          Constants.Holders.forEach(holder =>
+          Constants.Holders.forEach(holder => {
+            const identity = identityOf(ctx, holder)
             Assert.ok(
-              claimOf(plan, holder) > 0n,
-              `the ${holder.account} export rows carry no claim for ${holder.address}`
+              claimOf(plan, holder, identity) > 0n,
+              `the ${holder.account} export rows carry no claim for ${identity.address}`
             )
-          )
-          Constants.Stakers.forEach(holder =>
+          })
+          Constants.Stakers.forEach(holder => {
+            const identity = identityOf(ctx, holder)
             Assert.ok(
-              positionOf(plan, holder) > 0n,
-              `the ${holder.account} export rows carry no position for ${holder.pubkey}`
+              positionOf(plan, holder, identity) > 0n,
+              `the ${holder.account} export rows carry no position for ${identity.pubkey}`
             )
-          )
+          })
           Assert.deepStrictEqual(plan.placeholders, [], "the import took placeholders")
         }
       ),
@@ -318,11 +363,11 @@ export class LcoImportScenario extends FlowScenario {
       )
     )
 
-    // ── 2. Holder accounts + the Solana holders' seeded keys ──
+    // ── 2. Holder accounts (their keys were persisted by the pre-bootstrap stage) ──
     ClusterBuildPhase.create(
       cluster,
       "LcoHolderAccounts",
-      "Create each holder's WIRE account and persist the Solana holders' keys"
+      "Create each holder's WIRE account"
     ).push(
       ...Constants.Holders.map(holder =>
         Steps.user.planProvisionWire(
@@ -333,16 +378,6 @@ export class LcoImportScenario extends FlowScenario {
           holder.account,
           0n
         )
-      ),
-      ...Constants.SolanaHolders.map(holder =>
-        SolanaFundingTool.planSeededKeypair(
-          Actor.User,
-          `persist-${holder.keypairName}`,
-          `persist ${holder.account}'s Solana key`,
-          {},
-          holder.keypairName,
-          holder.seed
-        )
       )
     )
 
@@ -350,23 +385,23 @@ export class LcoImportScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "LcoHolderLinks",
-      "Each holder links the key its export names to its WIRE account"
+      "Each holder links the persisted key its export names to its WIRE account"
     ).push(
       ...Constants.EthereumHolders.map(holder =>
         SyndicationUserSteps.planLinkEthereumKey(
           Actor.User,
           `link-${holder.account}`,
-          `${holder.account} links its Ethereum key`,
+          `${holder.account} links its Ethereum key (${holder.walletName})`,
           {},
           holder.account,
-          holder.ethereumHdIndex
+          holder.walletName
         )
       ),
       ...Constants.SolanaHolders.map(holder =>
         SyndicationUserSteps.planLinkSolanaKey(
           Actor.User,
           `link-${holder.account}`,
-          `${holder.account} links its Solana key`,
+          `${holder.account} links its Solana key (${holder.keypairName})`,
           {},
           holder.account,
           holder.keypairName
@@ -386,16 +421,17 @@ export class LcoImportScenario extends FlowScenario {
           const plan = readPlan(ctx),
             parked = await readParkedPositions(ctx, plan)
           await eachSeries(Constants.Holders, async holder => {
-            const tokenCode = tokenOf(plan, holder)
+            const tokenCode = tokenOf(plan, holder),
+              identity = identityOf(ctx, holder)
             Assert.strictEqual(
               await WireSyndicationTool.readLiqBalance(ctx, holder.account, tokenCode),
-              positionOf(plan, holder),
+              positionOf(plan, holder, identity),
               `${holder.account} ${tokenCode}`
             )
             Assert.strictEqual(
-              parked.get(positionKeyOf(plan, holder)) ?? 0n,
+              parked.get(positionKeyOf(plan, holder, identity)) ?? 0n,
               0n,
-              `${tokenCode} still parked under ${holder.pubkey}`
+              `${tokenCode} still parked under ${identity.pubkey}`
             )
           })
         }
@@ -410,7 +446,7 @@ export class LcoImportScenario extends FlowScenario {
           Constants.Holders.forEach(holder =>
             Assert.strictEqual(
               pending.get(holder.account) ?? 0n,
-              claimOf(plan, holder),
+              claimOf(plan, holder, identityOf(ctx, holder)),
               `${holder.account} pending claim`
             )
           )
@@ -443,7 +479,7 @@ export class LcoImportScenario extends FlowScenario {
           await eachSeries(Constants.Holders, async holder => {
             Assert.strictEqual(
               await ctx.wire.getWireBalance(holder.account),
-              claimOf(plan, holder),
+              claimOf(plan, holder, identityOf(ctx, holder)),
               `${holder.account} WIRE`
             )
             Assert.strictEqual(
@@ -484,6 +520,7 @@ export class LcoImportScenario extends FlowScenario {
         "the WIRE in went to the pool, the LIQSOL out came from it, and the pool's product grew",
         async ctx => {
           const plan = readPlan(ctx),
+            identity = identityOf(ctx, SolanaStaker),
             { pool } = chainPlanOf(plan, SolanaStaker.chain),
             stat = await readPool(ctx, pool.pairSymbol),
             bought =
@@ -491,12 +528,12 @@ export class LcoImportScenario extends FlowScenario {
                 ctx,
                 SolanaStaker.account,
                 pool.tokenCode
-              )) - positionOf(plan, SolanaStaker),
+              )) - positionOf(plan, SolanaStaker, identity),
             poolLiq = assetUnits(stat.pool1.quantity),
             poolWire = assetUnits(stat.pool2.quantity)
           Assert.strictEqual(
             await ctx.wire.getWireBalance(SolanaStaker.account),
-            claimOf(plan, SolanaStaker) - Constants.TradeWireAmount,
+            claimOf(plan, SolanaStaker, identity) - Constants.TradeWireAmount,
             "the trader's WIRE after the trade"
           )
           Assert.ok(bought > 0n, "the trade bought no LIQSOL")

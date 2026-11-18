@@ -11,9 +11,9 @@ import type { StepInput } from "../StepRunner.js"
  * Steps that provision the WIRE-side user identities a flow scenario acts
  * as: a swap depositor, a swap-to-WIRE recipient, a reserve owner, a liq
  * holder. The harness ships {@link provisionWireUser} as the flow-layer
- * plumbing (create the account under the dev key, attach the resource
- * policy, optionally fund it from the treasury); these factories lift it
- * into ONE Report-validated step per user.
+ * plumbing (create the account under the dev key, optionally fund it from
+ * the treasury); these factories lift it into ONE Report-validated step per
+ * user.
  */
 export namespace UserSteps {
   /** Input for {@link planProvisionWire}. */
@@ -57,7 +57,7 @@ export namespace UserSteps {
     )
   }
 
-  /** Named runner — create + policy + fund via {@link provisionWireUser}. */
+  /** Named runner — create + fund via {@link provisionWireUser}. */
   export async function runProvisionWire<C extends ClusterBuildContext>(
     ctx: C,
     input: ProvisionWireInput,

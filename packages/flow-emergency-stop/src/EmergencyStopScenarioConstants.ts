@@ -1,3 +1,4 @@
+import { ethers } from "ethers"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   Constants as HarnessConstants,
@@ -57,8 +58,20 @@ export namespace EmergencyStopScenarioConstants {
   export const EthereumScale = 1_000_000_000n
   /** Pre-fund twice the estimated repair, then remeasure after deposit fees/rebases. */
   export const EthereumRecoveryFundingMultiplier = 2n
-  /** Funded donor and permissionless Ethereum cranker. */
-  export const EthereumDonor = 32
+  /**
+   * Durable handle of the persisted Ethereum wallet of the funded donor and permissionless
+   * cranker — a random per-cluster wallet, distinct from every bootstrap actor.
+   */
+  export const EthereumDonorWalletName = "emergency-ethereum-donor"
+  /**
+   * The donor's funded balance (one `anvil_setBalance`), a ceiling rather than an exact
+   * figure: each custody lane deposits {@link Amount} plus {@link EthereumRecoveryFundingMultiplier}
+   * times a recredit measured at run time from live pool custody (about one percent of the
+   * backed import at the deployed allowance), and every pending-payout crank pays gas.
+   * Lowering it toward the measured deposits makes the donor-balance check in
+   * `measure-ethereum-shortfall` the first failure.
+   */
+  export const EthereumDonorBalanceWei = 1_000n * ethers.WeiPerEther
   /** Ethereum pair token and chain. */
   export const EthereumToken = "LIQETH"
   export const EthereumChain = HarnessConstants.ETHEREUM_CHAIN_CODENAME

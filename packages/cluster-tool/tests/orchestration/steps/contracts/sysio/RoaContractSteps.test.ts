@@ -6,14 +6,14 @@ import { SysioContracts } from "@wireio/sdk-core"
 describe("Steps.contracts.sysio.roa", () => {
   it("newnameduser carries the roa::newnameduser data", () => {
     const data: SysioContracts.SysioRoaNewnameduserAction = {
-      account: "wireno",
+      account: "owner1",
       pubkey: "PUB_K1_examplekey",
       tier: NodeOwnerTier.T1
     }
     const step = Steps.contracts.sysio.roa.planNewnameduser(
       Report.Actor.Sysio,
       "create-node-owner",
-      "create the bootstrap node owner",
+      "create a node owner account",
       {},
       data
     )
@@ -25,7 +25,7 @@ describe("Steps.contracts.sysio.roa", () => {
 
   it("nodeownreg carries the roa::nodeownreg data", () => {
     const data: SysioContracts.SysioRoaNodeownregAction = {
-      owner: "wireno",
+      owner: "owner1",
       tier: NodeOwnerTier.T1,
       eth_pub_key: "PUB_EM_examplekey",
       wire_pub_key: "PUB_K1_examplekey",
@@ -34,7 +34,7 @@ describe("Steps.contracts.sysio.roa", () => {
     const step = Steps.contracts.sysio.roa.planNodeownreg(
       Report.Actor.Sysio,
       "register-node-owner",
-      "register the bootstrap node owner at tier 1",
+      "register the node owner at tier 1",
       {},
       data
     )

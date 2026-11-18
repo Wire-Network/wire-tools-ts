@@ -16,8 +16,8 @@ import { z } from "zod"
 const Label = "testnet-epoch60"
 /** Producer account in the fixture roster. */
 const ProducerAccount = "defproducera"
-/** Batch-operator accounts in the fixture roster (generated `wireno.` names). */
-const BatchAccounts = ["wireno.a1b2c", "wireno.d3e4f", "wireno.g5h1i"] as const
+/** Batch-operator accounts in the fixture roster. */
+const BatchAccounts = ["acct.a1b2c", "acct.d3e4f", "acct.g5h1i"] as const
 
 /** A fixture producer: K1 account key + BLS finality key. */
 function producer(accountName: string): WireOpregBootstrapOperator {
@@ -267,13 +267,13 @@ describe("WireOpregBootstrap", () => {
     it("rejects a group member that is not a BATCH operator in operators", () => {
       const json = wireForm(fixtureDocument())
       json.batchOperatorGroups.groups[0] = [ProducerAccount]
-      json.batchOperatorGroups.groups[1] = ["wireno.zzzzz"]
+      json.batchOperatorGroups.groups[1] = ["acct.zzzzz"]
       const issues = issuesOf(json)
       expect(issues).toContain(
         `batchOperatorGroups.groups.0.0: group member ${ProducerAccount} is not a BATCH operator in operators`
       )
       expect(issues).toContain(
-        "batchOperatorGroups.groups.1.0: group member wireno.zzzzz is not a BATCH operator in operators"
+        "batchOperatorGroups.groups.1.0: group member acct.zzzzz is not a BATCH operator in operators"
       )
     })
 
@@ -302,7 +302,7 @@ describe("WireOpregBootstrap", () => {
 
     it("admits an UNDERWRITER entry carrying the batch-operator key slots", () => {
       const json = wireForm(fixtureDocument())
-      json.operators.push({ ...json.operators[1], accountName: "wireno.u1w2r", type: "UNDERWRITER" })
+      json.operators.push({ ...json.operators[1], accountName: "acct.u1w2r", type: "UNDERWRITER" })
       expect(WireOpregBootstrapSchemaCodec.check(json)).toBe(true)
     })
   })

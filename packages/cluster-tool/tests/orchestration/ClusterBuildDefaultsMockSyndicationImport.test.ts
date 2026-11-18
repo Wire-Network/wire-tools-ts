@@ -113,17 +113,9 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
         underwriting = await create(true),
         names = collectPhaseNames(underwriting.children)
       expect(underwriting.config.batchOperatorUnderwriting).not.toBeNull()
-      expect(relayOnly).not.toContain("BatchOperatorUnderwritingResources")
-      expect(
-        names.indexOf("BatchOperatorUnderwritingResources")
-      ).toBeGreaterThan(names.indexOf("Provision batchop.c"))
-      expect(names.indexOf("BatchOperatorUnderwritingResources")).toBeLessThan(
-        names.indexOf("OperatorNodes")
-      )
       if (!enableMockSyndicationImport) {
-        expect(
-          names.filter(name => name !== "BatchOperatorUnderwritingResources")
-        ).toEqual(relayOnly)
+        // Underwriting alone composes no phase of its own: the role rides the daemon args.
+        expect(names).toEqual(relayOnly)
         return
       }
       const provisioned = names.indexOf("Provision batchop.c")
@@ -180,7 +172,7 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
     }
   )
 
-  it("imports credits only for the funded operators; every operator gets its RAM grant", async () => {
+  it("imports credits only for the funded operators", async () => {
     const cluster = await ClusterBuildDefaults.create({
         clusterPath: Path.join(environment.rootPath, "cluster-funded-one"),
         buildPath: environment.buildPath,
@@ -205,11 +197,6 @@ describe("ClusterBuildDefaults — mock syndication import", () => {
     ).toEqual([
       "import-underwriting-batchop.a-liqsol",
       "import-underwriting-batchop.a-liqeth"
-    ])
-    expect(steps.filter(name => name.startsWith("underwriting-ram-"))).toEqual([
-      "underwriting-ram-batchop.a",
-      "underwriting-ram-batchop.b",
-      "underwriting-ram-batchop.c"
     ])
   })
 })

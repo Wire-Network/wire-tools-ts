@@ -100,13 +100,6 @@ export abstract class SyndicationScenario extends FlowScenario {
           user.account,
           Constants.DEV_K1_PUBLIC_KEY
         ),
-        SyndicationUserSteps.planResourcePolicy(
-          Actor.User,
-          `resources-${user.account}`,
-          "allocate participant resources",
-          options,
-          SyndicationScenario.resourcePolicy(user.account)
-        ),
         SolanaFundingTool.planKeypairAirdrop(
           Actor.User,
           `fund-${user.account}`,
@@ -177,7 +170,7 @@ export abstract class SyndicationScenario extends FlowScenario {
     return group
   }
 
-  /** Deliver the mock import to `provider` by createlink: create, resource policy, link, verify. */
+  /** Deliver the mock import to `provider` by createlink: create, link, verify. */
   private planBondProvider(
     group: ClusterBuildPhaseGroup,
     provider: SyndicationScenario.BondProvider
@@ -196,13 +189,6 @@ export abstract class SyndicationScenario extends FlowScenario {
         options,
         account,
         Constants.DEV_K1_PUBLIC_KEY
-      ),
-      SyndicationUserSteps.planResourcePolicy(
-        Actor.Underwriter,
-        `${role}-resources`,
-        `allocate ${role} resources`,
-        options,
-        SyndicationScenario.resourcePolicy(account)
       ),
       SyndicationUserSteps.planLinkSolanaKey(
         Actor.Underwriter,
@@ -356,16 +342,6 @@ export namespace SyndicationScenario {
       "original pair rules"
     )
 
-  /** Generate the separate resource-policy action for an account. */
-  export function resourcePolicy(
-    owner: string
-  ): SysioContracts.SysioRoaAddpolicyAction {
-    return SyndicationUserSteps.nodeOwnerPolicy(owner, {
-      net: Constants.DEFAULT_RESOURCE_WEIGHT,
-      cpu: Constants.DEFAULT_RESOURCE_WEIGHT,
-      ram: Constants.DEFAULT_RAM_WEIGHT
-    })
-  }
   /** Encode a positive LIQSOL quantity in the registered depot frame. */
   export function quantity(amount: bigint): string {
     Assert.ok(amount >= 0n, "negative shadow quantity")

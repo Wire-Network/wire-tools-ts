@@ -6,16 +6,12 @@ import {
   ClusterBuild,
   ClusterBuildContext
 } from "@wireio/cluster-tool/orchestration"
-import {
-  Steps,
-  SyndicationUserSteps
-} from "@wireio/cluster-tool/orchestration/steps"
+import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { Constants } from "@wireio/cluster-tool/Constants"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
 
@@ -242,60 +238,6 @@ describe("RegistrySteps mock syndication import", () => {
         )
       )
     }
-
-    it("grants each operator RAM by one node-owner addpolicy for its generated account", async () => {
-      seedOperators()
-      const phase = RegistrySteps.planBatchOperatorUnderwritingResources(
-        ClusterBuild.forContext(context),
-        "resources",
-        "resources",
-        {},
-        labels
-      )
-      expect(phase.steps.map(step => step.name)).toEqual(
-        labels.map(label => `underwriting-ram-${label}`)
-      )
-      expect(phase.steps.map(step => step.input)).toEqual(
-        labels.map(label => ({
-          kind: "RegistrySteps.BatchOperatorResourcesInput",
-          label
-        }))
-      )
-      expect(
-        RegistrySteps.planBatchOperatorUnderwritingResource(
-          Report.Actor.Sysio,
-          "one",
-          "one",
-          {},
-          "batchop.a"
-        ).runner
-      ).toBe(RegistrySteps.runBatchOperatorUnderwritingResources)
-      const write = jest
-        .spyOn(SyndicationUserSteps, "runResourcePolicy")
-        .mockResolvedValue(undefined)
-      await phase.steps[1].runner(context, phase.steps[1].input, signal)
-      expect(write).toHaveBeenCalledTimes(1)
-      expect(write.mock.calls[0][1].data).toEqual({
-        owner: context.keyStore.assertOperator("batchop.b").account,
-        issuer: Constants.BOOTSTRAP_NODE_OWNER,
-        net_weight: "0.0000 SYS",
-        cpu_weight: "0.0000 SYS",
-        ram_weight: RegistrySteps.BatchOperatorUnderwritingRamWeight,
-        time_block: 0,
-        network_gen: 0
-      })
-      await expect(
-        RegistrySteps.runBatchOperatorUnderwritingResources(
-          context,
-          {
-            kind: "RegistrySteps.BatchOperatorResourcesInput",
-            label: "nobody"
-          },
-          signal
-        )
-      ).rejects.toThrow()
-      expect(write).toHaveBeenCalledTimes(1)
-    })
 
     it("plans both token credits per operator before the seal", () => {
       const phase = RegistrySteps.planMockSyndicationImport(

@@ -1,14 +1,16 @@
 import Assert from "node:assert"
 
-import { Base58, KeyType, SysioContracts } from "@wireio/sdk-core"
+import { SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { AuthExLinkTool } from "../../tools/all/index.js"
-import { WireClient } from "../../clients/wire/index.js"
 import { SolanaFundingTool } from "../../tools/solana/index.js"
-import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
+import { EthereumFundingTool } from "../../tools/ethereum/EthereumFundingTool.js"
 import { WireSyndicationTool } from "../../tools/wire/WireSyndicationTool.js"
-import { Constants } from "../../Constants.js"
-import { privateKeyFromNativeString } from "../../utils/keyPairUtils.js"
+import {
+  ethereumPublicKeyFromWallet,
+  solanaKeyPairFromKeypair,
+  solanaSignerFromKeypair
+} from "../../utils/keyPairUtils.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -24,76 +26,6 @@ import type { Report } from "../../report/Report.js"
  * `SYNDICATE_LIQ`.
  */
 export namespace SyndicationUserSteps {
-  /** The NET / CPU / RAM weights of one node-owner resource policy, as `SYS` assets. */
-  export interface PolicyWeights {
-    readonly net: string
-    readonly cpu: string
-    readonly ram: string
-  }
-
-  /**
-   * The `sysio.roa::addpolicy` the bootstrap node owner issues to `owner`: the ONE builder of
-   * a node-owner policy, so every flow account and harness account is funded the same way.
-   *
-   * @param owner - The account receiving the resources.
-   * @param weights - Its NET / CPU / RAM weights.
-   * @return The action payload.
-   */
-  export function nodeOwnerPolicy(
-    owner: string,
-    weights: PolicyWeights
-  ): SysioContracts.SysioRoaAddpolicyAction {
-    return {
-      owner,
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: weights.net,
-      cpu_weight: weights.cpu,
-      ram_weight: weights.ram,
-      time_block: 0,
-      network_gen: 0
-    }
-  }
-
-  /** Resource allocation carried by its own on-chain write. */
-  export interface ResourcePolicyInput extends StepInput {
-    readonly kind: "SyndicationUserSteps.ResourcePolicyInput"
-    readonly data: SysioContracts.SysioRoaAddpolicyAction
-  }
-
-  /** Plan one resource policy for an already-created flow account. */
-  export function planResourcePolicy<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    data: SysioContracts.SysioRoaAddpolicyAction
-  ): ClusterBuildStep<C, ResourcePolicyInput> {
-    return ClusterBuildStep.create<C, ResourcePolicyInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "SyndicationUserSteps.ResourcePolicyInput", data },
-      runResourcePolicy
-    )
-  }
-
-  /** Perform ONE addpolicy, signed by the policy issuer. */
-  export async function runResourcePolicy<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ResourcePolicyInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContracts.SysioContractName.roa)
-      .actions.addpolicy.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(input.data.issuer)
-      })
-  }
-
   /** Input for {@link planLinkSolanaKey}. */
   export interface LinkSolanaKeyInput extends StepInput {
     readonly kind: "SyndicationUserSteps.LinkSolanaKeyInput"
@@ -154,11 +86,9 @@ export namespace SyndicationUserSteps {
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.SVM,
       account: input.account,
-      // The web3 secret key IS the ED key's native form: base58 of its 64 bytes.
-      privateKey: privateKeyFromNativeString(
-        KeyType.ED,
-        Base58.encode(keypair.secretKey)
-      )
+      // The linked key is the keypair's own point; the keypair proves it.
+      publicKey: solanaKeyPairFromKeypair(keypair).publicKey,
+      signer: solanaSignerFromKeypair(keypair)
     })
   }
 
@@ -166,7 +96,8 @@ export namespace SyndicationUserSteps {
   export interface LinkEthereumKeyInput extends StepInput {
     readonly kind: "SyndicationUserSteps.LinkEthereumKeyInput"
     readonly account: string
-    readonly ethereumHdIndex: number
+    /** Durable handle of the user's persisted Ethereum wallet. */
+    readonly walletName: string
   }
 
   /**
@@ -176,7 +107,7 @@ export namespace SyndicationUserSteps {
    * @param description - Step description.
    * @param options - Step execution options.
    * @param account - WIRE destination account.
-   * @param ethereumHdIndex - The prefunded local wallet's index.
+   * @param walletName - Durable handle of the user's persisted Ethereum wallet.
    * @returns One createlink Step.
    */
   export function planLinkEthereumKey<
@@ -187,7 +118,7 @@ export namespace SyndicationUserSteps {
     description: string,
     options: ClusterBuildStepOptions,
     account: string,
-    ethereumHdIndex: number
+    walletName: string
   ): ClusterBuildStep<C, LinkEthereumKeyInput> {
     return ClusterBuildStep.create<C, LinkEthereumKeyInput>(
       actor,
@@ -197,7 +128,7 @@ export namespace SyndicationUserSteps {
       {
         kind: "SyndicationUserSteps.LinkEthereumKeyInput",
         account,
-        ethereumHdIndex
+        walletName
       },
       runLinkEthereumKey
     )
@@ -210,18 +141,12 @@ export namespace SyndicationUserSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumWallet = EthereumSyndicationTool.hdWallet(
-      ctx,
-      input.ethereumHdIndex
-    )
+    const wallet = EthereumFundingTool.signer(ctx, input.walletName)
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.EVM,
       account: input.account,
-      ethereumWallet,
-      privateKey: privateKeyFromNativeString(
-        KeyType.EM,
-        ethereumWallet.privateKey
-      )
+      publicKey: ethereumPublicKeyFromWallet(wallet).toString(),
+      signer: wallet
     })
   }
 

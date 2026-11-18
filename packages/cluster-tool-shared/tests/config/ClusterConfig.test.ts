@@ -8,6 +8,7 @@ import {
   DefaultSolanaSlotsPerEpoch,
   EthereumReadBlockTag,
   MaximumUint32,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
@@ -92,7 +93,12 @@ describe("ClusterConfig shape", () => {
     underwriterCollateral: null,
     initialKey: null,
     initialFinalizerKey: null,
-    signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+    signatureProvider: {
+      type: SignatureProviderType.KEY,
+      ssm: null,
+      kms: null,
+      batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+    },
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
@@ -216,7 +222,9 @@ describe("ClusterConfig shape", () => {
     )
     expect(rehydrated.signatureProvider).toEqual({
       type: SignatureProviderType.KEY,
-      ssm: null
+      ssm: null,
+      kms: null,
+      batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
     })
     expect(rehydrated.awsClusterNodeConfig).toBeNull()
     expect(rehydrated.externalOutposts).toBeNull()

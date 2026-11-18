@@ -3,8 +3,8 @@
 Exercises the liqSOL reward and redemption path through `sysio.synd` underwriting.
 Every write is a Report Step; depot confirmations wait for irreversibility.
 
-1. Provision the user and bonder accounts with separate create and resource-policy
-   Steps. Link the imported bonder's Solana key through `createlink`; the inline
+1. Create the user and bonder accounts. Link the imported bonder's Solana key
+   through `createlink`; the inline
    `sysio.synd::linkswept` delivers its parked shadow as liquid bonding capacity.
 2. Deposit SOL for liqSOL, transition the outpost to PostLaunch and call `synd`
    through the strict account map, including `globalConfig`.

@@ -1,37 +1,36 @@
 import Assert from "node:assert"
 import {
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterConfig,
   type CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
+import { EthereumWallet } from "../clients/ethereum/EthereumWallet.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
-import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
 import { formatWireAsset } from "../tools/wire/WireUserTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
 import { Report } from "../report/Report.js"
+import { EthereumFundingTool } from "../tools/ethereum/EthereumFundingTool.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
+import { WireSysioContractTool } from "../tools/wire/WireSysioContractTool.js"
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps, SyndicationUserSteps } from "./steps/index.js"
+import { Steps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
 const log = getLogger(__filename)
@@ -57,11 +56,11 @@ const WireSupply = formatWireAsset(Constants.WIRE_SUPPLY)
 const WireSymbol = "9,WIRE"
 /**
  * WIRE the panic account is funded with: none. It only signs `sysio.andon::pull`
- * and `clear`, which move no funds; its resource policy pays for them.
+ * and `clear`, which move no funds and are billed to `sysio.andon`.
  */
 const PanicAccountWireFunding = 0n
 /** RAM for the Andon child permissions and action links, beyond the deployment gift. */
-const AndonPermissionRamWeight = "0.0100 SYS"
+const AndonPermissionRamBytes = 10_400
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -95,15 +94,14 @@ const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
 const WeiPerEther = 10n ** 18n
 
 /**
- * Wei seeded into each bootstrapped operator's ETH wallet under SSM — the exact
- * ETH analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
+ * Wei each bootstrapped operator's ETH wallet is funded to — the exact ETH
+ * analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
  * on every outbound delivery to the Ethereum outpost, every epoch, for the whole
  * run.
  *
- * Only needed under SSM. Under KEY the operator EM keys derive from
- * `EthereumOutpostBootstrapper.AnvilMnemonic`, whose HD accounts anvil prefunds;
- * under SSM they derive from a GENERATED cluster mnemonic (`KeySteps.ethereumMnemonic`)
- * that anvil has never heard of, so every wallet starts at ZERO.
+ * Needed on every local cluster. Every operator EM key is a fresh random key
+ * anvil has never heard of, so every wallet starts at ZERO; the funding is one
+ * `anvil_setBalance` per operator (`WireOperatorProvisioningTool.planEthereumFunding`).
  *
  * An unfunded fee payer does not fail loudly — the daemon's outbound tx is rejected
  * by the RPC with `-32003 'Out of gas: gas required exceeds allowance: 0'`, the ETH
@@ -234,13 +232,6 @@ export namespace ClusterBuildDefaults {
     launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
-      // Seeded by `ClusterBuild.create` from
-      // `ClusterConfigProvider.resolveWithBiosKeys` — its `wire` key IS the
-      // bootstrap node owner's account authority.
-      nodeOwner = cluster.context.keyStore.assertOperator(
-        Constants.BOOTSTRAP_NODE_OWNER
-      ),
-      bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
@@ -299,19 +290,6 @@ export namespace ClusterBuildDefaults {
         config.externalOutposts
       )
     }
-    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction =
-      {
-        owner: Constants.BOOTSTRAP_NODE_OWNER,
-        tier: NodeOwnerTier.T1,
-        eth_pub_key: bootstrapNodeOwnerEth.publicKey,
-        // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
-        // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
-        // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
-        // this key can satisfy the account's `active` authority BY ITSELF —
-        // i.e. it must be exactly the `newnameduser.pubkey` below.
-        wire_pub_key: nodeOwner.wire.publicKey,
-        eth_address: bootstrapNodeOwnerEth.nativeAddress
-      }
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -376,13 +354,27 @@ export namespace ClusterBuildDefaults {
       {},
       producerSpecs
     )
+    // Batch-operator IDENTITIES are materialized HERE too, for the same reason: pure key work
+    // that must precede the Ethereum outpost deploy, because `OPPInbound.initialize` seats a
+    // provisional roster of the operators' ETH addresses and no address exists ahead of its
+    // random key (`EthereumOutpostSteps.resolveInitialRoster` reads `ctx.keyStore`). Their
+    // accounts, links and registration are chain WRITES that wait for the contracts and
+    // land in the post-deployment group with `identityMaterialized: true`.
+    WireOperatorProvisioningTool.planOperatorIdentityPhase<C>(
+      prerequisites,
+      "OperatorKeys",
+      "Materialize the bootstrapped batch operators' WIRE + ETH + SOL identities",
+      {},
+      batchOperators.map(label => ({ label, type: OperatorType.BATCH }))
+    )
     // SSM mode: publish the node signing keys BEFORE any node consumes them — a
     // node's `--signature-provider ...SSM:` spec fetches its private key from
     // SSM at nodeop startup, so publication must precede the BiosNode AND
     // ProducerNodes starts. Under SSM the bios node is NOT exempt: its genesis
     // keys are generated (or adopted) at config resolution like any other node
     // key and its specs render `SSM:` too — only KEY / KIOD keep the inline
-    // dev-key spec.
+    // dev-key spec. The operator keys publish right behind them, as soon as
+    // they exist: their daemons' `SSM:` specs resolve the same way at startup.
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
       Steps.keys.planSignatureProviderKeyPublications<C>(
         prerequisites,
@@ -391,6 +383,14 @@ export namespace ClusterBuildDefaults {
         {},
         config,
         Steps.keys.SignatureKeyPublishPhase.beforeNodes
+      )
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        prerequisites,
+        "PublishOperatorSignatureProviderKeys",
+        "Publish each operator signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
     ClusterBuildPhase.create<C>(
@@ -549,7 +549,10 @@ export namespace ClusterBuildDefaults {
       "Create remaining sysio.* accounts"
     ).push(
       ...Constants.SYSTEM_ACCOUNTS.filter(
-        account => account !== "sysio.roa" && account !== "sysio.acct"
+        account =>
+          account !== "sysio.roa" &&
+          account !== "sysio.acct" &&
+          !Constants.isGovernanceAuthorityAccount(account)
       ).map(account =>
         Steps.account.planCreateSystem<C>(
           Actor.Sysio,
@@ -559,6 +562,33 @@ export namespace ClusterBuildDefaults {
           account
         )
       )
+    )
+    // The two accounts `sysio` can later be handed to. `sysio.councl` writes their `active`
+    // (`syncnodes`; an election's last seat), so each starts unsatisfiable and gets the RAM a
+    // full authority of members adds — a creation step and a RAM step per account.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GovernanceAuthorities",
+      "Create sysio.nodes + sysio.cncl with an unsatisfiable active and room for 21 members"
+    ).push(
+      ...Constants.GOVERNANCE_AUTHORITY_ACCOUNTS.flatMap(account => [
+        Steps.account.planCreateSystem<C>(
+          Actor.Sysio,
+          `create-${account}`,
+          `create ${account} (owner sysio@active, active ${Constants.NULL_ACCOUNT}@active)`,
+          {},
+          account,
+          WireSysioContractTool.sysioNullActiveAuthority()
+        ),
+        Steps.account.planRamGrant<C>(
+          Actor.Sysio,
+          `fund-${account}-authority-ram`,
+          `raise ${account}'s RAM limit by ${Constants.GOVERNANCE_AUTHORITY_RAM_BYTES} bytes for its members`,
+          {},
+          account,
+          Constants.GOVERNANCE_AUTHORITY_RAM_BYTES
+        )
+      ])
     )
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -847,68 +877,6 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── the bootstrap node owner (issues every subsequent resource policy) ──
-    // Mirrors the OPP NFT-claim depot path (`newnameduser` + `nodeownreg`, the
-    // SAME actions flow-node-owner-nft exercises) rather than the admin
-    // `forcereg` shortcut. Registering at tier 1 allocates the ROA reserve
-    // that `WireUserTool.provisionWireUser` (and every `addpolicy` issued as
-    // `Constants.BOOTSTRAP_NODE_OWNER`) draws from.
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BootstrapNodeOwner",
-      "Create + register the bootstrap node owner"
-    ).push(
-      Steps.contracts.sysio.roa.planNewnameduser<C>(
-        Actor.Sysio,
-        "create-node-owner",
-        `create ${Constants.BOOTSTRAP_NODE_OWNER} with pool-gifted RAM`,
-        {},
-        {
-          account: Constants.BOOTSTRAP_NODE_OWNER,
-          // The account AUTHORITY — `newnameduser` sets this as the new
-          // account's owner/active key, and every subsequent action signed as
-          // BOOTSTRAP_NODE_OWNER (`roa::newuser` for every operator account,
-          // `roa::addpolicy`) is authorized by it. Its private half is imported
-          // into the kiod wallet by `KeySteps.runCreateWallet`.
-          pubkey: nodeOwner.wire.publicKey,
-          tier: NodeOwnerTier.T1
-        }
-      ),
-      Steps.contracts.sysio.roa.planNodeownreg<C>(
-        Actor.Sysio,
-        "register-node-owner",
-        `register ${Constants.BOOTSTRAP_NODE_OWNER} at tier 1`,
-        {},
-        bootstrapNodeOwnerRegistration
-      ),
-      // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
-      // silently-unregistered owner would otherwise surface much later as a
-      // cryptic "Only Node Owners can issue policies" on the first addpolicy.
-      verifyStep<C>(
-        Actor.Sysio,
-        "verify-node-owner",
-        "the nodeowners row exists (else surface the audit rejection)",
-        async ctx => {
-          const registered = await readNodeOwner(
-            ctx.wire,
-            Constants.BOOTSTRAP_NODE_OWNER
-          )
-          if (registered == null) {
-            const audit = await readNodeOwnerReg(
-              ctx.wire,
-              Constants.BOOTSTRAP_NODE_OWNER
-            )
-            Assert.fail(
-              `bootstrap node owner ${Constants.BOOTSTRAP_NODE_OWNER} was not registered by nodeownreg` +
-                (audit == null
-                  ? " (no audit row found)"
-                  : ` (rejected: status=${audit.status}, reason=${audit.reason})`)
-            )
-          }
-        }
-      )
-    )
-
     // ── the depot's emergency stop ──
     // Provision the panic delegate before referencing it in native authorities.
     // Arm both action links before traffic; privileged sysio.synd needs no registry.
@@ -931,20 +899,13 @@ export namespace ClusterBuildDefaults {
       "EmergencyStop",
       "Arm sysio.andon with native pull and clear permissions"
     ).push(
-      SyndicationUserSteps.planResourcePolicy<C>(
+      Steps.account.planRamGrant<C>(
         Actor.Sysio,
         "fund-andon-permission-ram",
         "fund RAM for sysio.andon native permissions and action links",
         {},
-        // This policy adds permission RAM only; it allocates no CPU or network weight.
-        SyndicationUserSteps.nodeOwnerPolicy(
-          SysioContractAccount[SysioContractName.andon],
-          {
-            net: Constants.NO_RESOURCE_WEIGHT,
-            cpu: Constants.NO_RESOURCE_WEIGHT,
-            ram: AndonPermissionRamWeight
-          }
-        )
+        SysioContractAccount[SysioContractName.andon],
+        AndonPermissionRamBytes
       ),
       ...[
         Steps.contracts.sysio.andon.Permission.pull,
@@ -1028,6 +989,41 @@ export namespace ClusterBuildDefaults {
           "start-anvil",
           "start the run-time anvil (instamine)",
           {}
+        ),
+        // The deploy signs as a random, persisted deployer wallet and names a
+        // random panic account — both created here and funded through the
+        // anvil faucet, never drawn from an anvil genesis account.
+        EthereumFundingTool.planCreateWallet<C>(
+          Actor.EthereumOutpost,
+          "create-ethereum-deployer",
+          "generate the outpost deployer wallet",
+          {},
+          EthereumWallet.DeployerWalletName,
+          "ethereum outpost deployer — OutpostManager admin"
+        ),
+        EthereumFundingTool.planSetBalance<C>(
+          Actor.EthereumOutpost,
+          "fund-ethereum-deployer",
+          "fund the deployer for every deploy and admin write",
+          {},
+          EthereumWallet.DeployerWalletName,
+          EthereumFundingTool.DeployerBalanceWei
+        ),
+        EthereumFundingTool.planCreateWallet<C>(
+          Actor.EthereumOutpost,
+          "create-ethereum-panic-account",
+          "generate the emergency-stop panic account",
+          {},
+          EthereumWallet.PanicWalletName,
+          "emergency-stop panic account — pause / unpause"
+        ),
+        EthereumFundingTool.planSetBalance<C>(
+          Actor.EthereumOutpost,
+          "fund-ethereum-panic-account",
+          "fund the panic account for its pause and unpause calls",
+          {},
+          EthereumWallet.PanicWalletName,
+          EthereumFundingTool.PanicBalanceWei
         ),
         Steps.ethereumOutpost.planDeploy<C>(
           Actor.EthereumOutpost,
@@ -1275,53 +1271,30 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // Bootstrapped batch operators use the shared provisioning mechanism. Fee-payer
-    // funding only — deposit flows provision their own non-bootstrapped ops with
-    // collateral funding on top.
-    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
+    // Bootstrapped batch operators use the shared provisioning mechanism. Their
+    // identities were materialized (and, under SSM, published) in Cluster
+    // Prerequisites' `OperatorKeys`. Fee-payer funding only — deposit flows
+    // provision their own non-bootstrapped ops with collateral funding on top.
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
       "Provision the bootstrapped batch operators",
       {},
       [
-        ...batchOperators.map((label, index) => ({
+        ...batchOperators.map(label => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
+          identityMaterialized: true,
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
-          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
-          // mnemonic and are prefunded, under SSM they come off a generated
-          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
+          // chains — every EM key is random and starts at zero on the run
+          // anvil. See BatchOperatorEthereumFundingWei.
           airdropSolanaLamports: BatchOperatorAirdropLamports,
-          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
+          fundEthereumWei: BatchOperatorEthereumFundingWei
         }))
       ]
     )
 
-    // SSM mode: publish the just-provisioned operator keys BEFORE the operator
-    // daemons start — their wire/ethereum/solana `--signature-provider ...SSM:`
-    // specs fetch the private keys from SSM at nodeop startup.
-    if (config.signatureProvider.type === SignatureProviderType.SSM) {
-      Steps.keys.planSignatureProviderKeyPublications<C>(
-        postContractDeployment,
-        "PublishOperatorSignatureProviderKeys",
-        "Publish each operator signing key to AWS SSM",
-        {},
-        config,
-        Steps.keys.SignatureKeyPublishPhase.afterOperators
-      )
-    }
-
-    if (config.batchOperatorUnderwriting != null)
-      Steps.registry.planBatchOperatorUnderwritingResources<C>(
-        postContractDeployment,
-        "BatchOperatorUnderwritingResources",
-        "Grant each underwriting batch operator RAM for its sysio.bond rows",
-        {},
-        batchOperators
-      )
     if (underwritingImport)
       planMockImportAndBacking<C>(
         postContractDeployment,
@@ -1329,6 +1302,26 @@ export namespace ClusterBuildDefaults {
         batchOperators,
         backLcoImport
       )
+
+    // A pre-funded launch: the batch operators' keys were pre-created
+    // (`adoptOnly`) and their positions frozen into the launch-data export, so
+    // once their links have swept the import each one holds its credit. The
+    // verify is the Report checkpoint of that pre-funding — composed only when
+    // both conditions hold; an adopt-or-create cluster's fresh operators have
+    // no positions to find.
+    if (
+      lcoImportPlan != null &&
+      config.signatureProvider.batchOperatorKeyPolicy ===
+        SignatureProviderKeyPolicy.adoptOnly
+    ) {
+      Steps.lcoImport.planVerifyBatchOperatorCredits<C>(
+        postContractDeployment,
+        "LcoImportOperatorCredit",
+        "Verify each pre-funded batch operator holds its imported shadow credit",
+        {},
+        batchOperators
+      )
+    }
 
     // API nodes are mesh members that no bootstrap step reads, so they start
     // outside the bootstrap's finality-sensitive window, right before the
