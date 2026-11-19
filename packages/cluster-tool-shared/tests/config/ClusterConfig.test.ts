@@ -101,6 +101,7 @@ describe("ClusterConfig shape", () => {
     },
     awsClusterNodeConfig: null,
     externalOutposts: null,
+    judgePublicKey: null,
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
@@ -195,6 +196,20 @@ describe("ClusterConfig shape", () => {
     expect(() =>
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     ).toThrow()
+  })
+
+  it("defaults judgePublicKey to null and round trips a named key", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.judgePublicKey
+    expect(
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).judgePublicKey
+    ).toBeNull()
+    expect(
+      ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize({ ...config, judgePublicKey: "PUB_K1_judge" })
+      ).judgePublicKey
+    ).toBe("PUB_K1_judge")
+    expect(ClusterConfigSchemaCodec.check({ ...config, judgePublicKey: 7 })).toBe(false)
   })
 
   it("rejects an underwriting config with no exposure cap", () => {

@@ -7,6 +7,7 @@ import {
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
 import {
+  FixtureJudgePublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -89,7 +90,8 @@ describe("ClusterBuildDefaults — Solana outpost launch (create only)", () => {
     const cluster = await ClusterBuildDefaults.create(
       {
         ...baseOptions(),
-        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath)
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        judgePublicKey: FixtureJudgePublicKey
       },
       { launchSolanaOutpost: true }
     )

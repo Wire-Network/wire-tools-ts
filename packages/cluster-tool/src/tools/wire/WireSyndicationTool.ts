@@ -719,7 +719,7 @@ export namespace WireSyndicationTool {
     readonly epoch: EnvelopeEpoch
   }
 
-  /** Plan ONE sysio-authorized VALID ruling; callers still crank and verify wallet delivery. */
+  /** Plan ONE VALID ruling through the delegated rslvvalid permission; callers still crank and verify wallet delivery. */
   export function planResolveEnvelope<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
