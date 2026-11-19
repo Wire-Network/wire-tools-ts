@@ -476,7 +476,7 @@ depot needs them too:
 |---|---|
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
 | `DelegateNamePrefixes` | creates `andon` and `bond`, the names the delegate accounts sit under, so no node owner can register them (a claim of an existing account is rejected); their `active` is one nothing satisfies |
-| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
+| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio`, under `--panic-public-key` (the cluster's initial key when omitted) |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
 | `JudgeAccount` | creates `bond.judge`, the account that may rule a bond request besides `sysio`, under `--judge-public-key` (the cluster's initial key when omitted) |
 | `BondRulings` | funds and delegates native `rslvvalid`/`rslvinvalid` permissions on `sysio.bond` to `bond.judge` and `sysio`, then links each ruling |
@@ -563,6 +563,7 @@ command comes first).
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults). Give a remote outpost as an IP literal: `run` treats every host name as local, so it checks and registers a host name's ports on this host ([bind registry §6](docs/bind-registry/README.md#6-ports-a-client-must-never-take)) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
 | `--judge-public-key` | | the cluster's initial key | the public key on `bond.judge`'s `owner` and `active`: its holder can rule any `sysio.bond` request, also after the governance handoff. Required with `--external-outpost-config`, which refuses the development key |
+| `--panic-public-key` | | the cluster's initial key | the public key on `andon.panic`'s `owner` and `active`: its holder can pull and clear the depot emergency stop, also after the governance handoff. Required with `--external-outpost-config`, which refuses the development key |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
@@ -678,6 +679,11 @@ What `create` does with it:
   build-options document) names the key `bond.judge` is created under. Its holder
   rules every `sysio.bond` request, also after `sysio` is handed to governance, so
   `create` refuses to run without it and refuses the development key.
+- **Requires the panic account's key.** `--panic-public-key` (or `panicPublicKey` in
+  the build-options document) names the key `andon.panic` is created under. Its
+  holder pulls and clears the depot emergency stop, also after `sysio` is handed to
+  governance, so `create` refuses to run without it and refuses the development key.
+  The outposts' own panic accounts are separate identities this key does not touch.
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
 values are rejected. Manual syndication bond providers can submit actions directly;

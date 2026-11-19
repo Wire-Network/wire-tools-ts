@@ -8,6 +8,7 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -91,7 +92,8 @@ describe("ClusterBuildDefaults — Solana outpost launch (create only)", () => {
       {
         ...baseOptions(),
         externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       },
       { launchSolanaOutpost: true }
     )

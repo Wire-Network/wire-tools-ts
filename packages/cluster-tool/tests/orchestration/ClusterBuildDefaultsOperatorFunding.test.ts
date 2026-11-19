@@ -13,6 +13,7 @@ import {
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -178,7 +179,8 @@ describe("ClusterBuildDefaults — bootstrapped operator fee funding on BOTH out
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
         externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       names = collectStepNames(cluster.children)
     expect(fundingSteps(names)).toEqual([])

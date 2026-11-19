@@ -427,7 +427,8 @@ export namespace ClusterConfigProvider {
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
     assertExternalOutpostMockData(options)
-    const judgePublicKey = resolveJudgePublicKey(options),
+    const judgePublicKey = resolveDelegatePublicKey(options, "judgePublicKey"),
+      panicPublicKey = resolveDelegatePublicKey(options, "panicPublicKey"),
       lcoImport = resolveLcoImport(options),
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
@@ -502,6 +503,7 @@ export namespace ClusterConfigProvider {
       awsClusterNodeConfig,
       externalOutposts,
       judgePublicKey,
+      panicPublicKey,
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
@@ -731,43 +733,79 @@ export namespace ClusterConfigProvider {
     )
   }
 
+  /** What a delegate account's key holder can do, as {@link resolveDelegatePublicKey}'s refusals word it. */
+  interface DelegateReach {
+    /** The delegate account. */
+    readonly account: string
+    /** What the account does — why a deployed cluster must name the key. */
+    readonly holds: string
+    /** What the account could never do under a key that cannot sign. */
+    readonly acts: string
+    /** What anyone could do on a deployed cluster under the development key. */
+    readonly exposes: string
+  }
+
   /**
-   * The key `bond.judge` is created under, or `null` for the cluster's initial
-   * key. Whoever holds it rules every `sysio.bond` request, also after `sysio` is
-   * handed to governance, so a build against EXTERNAL outposts must name it and
-   * may not name the well-known development key.
+   * The {@link ClusterBuildOptions} members naming the key a delegate account
+   * ({@link Constants.DELEGATE_ACCOUNTS}) is created under, each with its account's reach.
+   */
+  const DelegateReaches = {
+    judgePublicKey: {
+      account: Constants.JUDGE_ACCOUNT,
+      holds: "rules every sysio.bond request",
+      acts: "rule",
+      exposes: "rule a sysio.bond request"
+    },
+    panicPublicKey: {
+      account: Constants.PANIC_ACCOUNT,
+      holds: "pulls and clears the depot emergency stop",
+      acts: "pull or clear the depot emergency stop",
+      exposes: "pull or clear the depot emergency stop"
+    }
+  } as const satisfies Partial<Record<keyof ClusterBuildOptions, DelegateReach>>
+
+  /**
+   * The key a delegate account (`bond.judge`, `andon.panic`) is created under, or
+   * `null` for the cluster's initial key. Whoever holds it keeps the account's
+   * reach after `sysio` is handed to governance, so a build against EXTERNAL
+   * outposts must name it and may not name the well-known development key.
    *
-   * @param options - The caller's options (its `judgePublicKey` and `externalOutpostConfig`).
+   * @param options - The caller's options (the named key and `externalOutpostConfig`).
+   * @param optionKey - Which delegate's key to resolve.
    * @returns The key in its canonical `PUB_` spelling, the one `clio create account`
    *   parses whatever spelling the caller used, or `null` when none was named.
    * @throws When the key is not a public key or is a BLS key, which cannot sign a
    *   transaction, or when external mode names none or the development key.
    */
-  function resolveJudgePublicKey(options: ClusterBuildOptions): string {
-    const { judgePublicKey = null, externalOutpostConfig } = options
-    if (judgePublicKey == null) {
+  function resolveDelegatePublicKey(
+    options: ClusterBuildOptions,
+    optionKey: keyof typeof DelegateReaches
+  ): string {
+    const { [optionKey]: publicKey = null, externalOutpostConfig } = options,
+      { account, holds, acts, exposes } = DelegateReaches[optionKey]
+    if (publicKey == null) {
       Assert.ok(
         externalOutpostConfig == null,
-        `judgePublicKey is required with externalOutpostConfig: ${Constants.JUDGE_ACCOUNT} rules every sysio.bond request, so a deployed cluster must name the key that holds it.`
+        `${optionKey} is required with externalOutpostConfig: ${account} ${holds}, so a deployed cluster must name the key that holds it.`
       )
       return null
     }
-    const key = Either.try(() => PublicKey.from(judgePublicKey))
+    const key = Either.try(() => PublicKey.from(publicKey))
       .ifLeft(error => {
-        throw new NestedError("judgePublicKey is not a public key", {
+        throw new NestedError(`${optionKey} is not a public key`, {
           cause: error,
-          context: { judgePublicKey }
+          context: { [optionKey]: publicKey }
         })
       })
       .getOrThrow()
     Assert.ok(
       key.type !== KeyType.BLS,
-      `judgePublicKey is a ${KeyType.BLS} key, which cannot sign a transaction: ${Constants.JUDGE_ACCOUNT} could never rule.`
+      `${optionKey} is a ${KeyType.BLS} key, which cannot sign a transaction: ${account} could never ${acts}.`
     )
     Assert.ok(
       externalOutpostConfig == null ||
         !key.equals(PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
-      "judgePublicKey is the development key, which externalOutpostConfig refuses: anyone could rule a sysio.bond request on the deployed cluster."
+      `${optionKey} is the development key, which externalOutpostConfig refuses: anyone could ${exposes} on the deployed cluster.`
     )
     return key.toString()
   }

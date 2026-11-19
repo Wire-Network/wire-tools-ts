@@ -8,6 +8,7 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -106,6 +107,32 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
     expect(steps.indexOf("link-andon-clear")).toBeLessThan(
       steps.indexOf("seed-registry")
     )
+    // No key named: the panic account takes the cluster's initial key, the development key here.
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "andon.panic",
+      fundWireAmount: 0n,
+      publicKey: cluster.context.config.initialKey
+    })
+    expect(cluster.context.config.initialKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+  })
+
+  it("creates the panic account under the key the caller names", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      panicPublicKey: FixturePanicPublicKey
+    })
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "andon.panic",
+      fundWireAmount: 0n,
+      publicKey: FixturePanicPublicKey
+    })
+    // The judge's key is its own option: unnamed, it stays on the initial key.
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toMatchObject({
+      account: "bond.judge",
+      publicKey: Constants.DEV_K1_PUBLIC_KEY
+    })
   })
 
   it("delegates only pull/clear and preserves owner/active authority", async () => {
@@ -239,7 +266,7 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       fundWireAmount: 0n,
       publicKey: FixtureJudgePublicKey
     })
-    // The panic account is not the judge's: it keeps the development key.
+    // The panic account's key is its own option: unnamed, it stays on the initial key.
     expect(findPhase(cluster, "PanicAccount").steps[0].input).toMatchObject({
       account: "andon.panic",
       publicKey: Constants.DEV_K1_PUBLIC_KEY
