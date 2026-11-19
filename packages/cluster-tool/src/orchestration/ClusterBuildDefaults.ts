@@ -244,8 +244,8 @@ export namespace ClusterBuildDefaults {
     launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
-      // The judge's key: the caller's, or the cluster's initial key when none was named.
-      { judgePublicKey, initialKey } = config,
+      // Each delegate's key: the caller's, or the cluster's initial key when none was named.
+      { judgePublicKey, panicPublicKey, initialKey } = config,
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
@@ -920,8 +920,9 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── the depot's emergency stop ──
-    // Provision the panic delegate before referencing it in native authorities.
-    // Arm both action links before traffic; privileged sysio.synd needs no registry.
+    // Provision the panic delegate, under the configured key, before referencing it in
+    // native authorities. Arm both action links before traffic; privileged sysio.synd
+    // needs no registry.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "PanicAccount",
@@ -933,7 +934,8 @@ export namespace ClusterBuildDefaults {
         `create ${Constants.PANIC_ACCOUNT}, the account that may pull and clear the cord`,
         {},
         Constants.PANIC_ACCOUNT,
-        PanicAccountWireFunding
+        PanicAccountWireFunding,
+        panicPublicKey ?? initialKey
       )
     )
     ClusterBuildPhase.create<C>(

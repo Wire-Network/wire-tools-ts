@@ -127,6 +127,14 @@ export const FixtureJudgePublicKey = PrivateKey.generate(KeyType.K1)
   .toString()
 
 /**
+ * The `panicPublicKey` an external-outpost resolve must name: a random K1 key of
+ * its own, so never the development key that mode refuses nor the judge's.
+ */
+export const FixturePanicPublicKey = PrivateKey.generate(KeyType.K1)
+  .toPublic()
+  .toString()
+
+/**
  * Write {@link fixtureExternalOutposts} under `rootPath` as an
  * `--external-outpost-config` file: enough for `ClusterConfigProvider.resolve`
  * to take the external-outpost path.

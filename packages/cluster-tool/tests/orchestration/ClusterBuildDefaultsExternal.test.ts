@@ -3,6 +3,7 @@ import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -34,7 +35,8 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
       externalOutpostConfig: externalConfigFile,
-      judgePublicKey: FixtureJudgePublicKey
+      judgePublicKey: FixtureJudgePublicKey,
+      panicPublicKey: FixturePanicPublicKey
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MaterializeExternalOutposts")
@@ -47,7 +49,8 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
         externalOutpostConfig: externalConfigFile,
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       steps = collectStepNames(cluster.children)
     expect(steps).toContain("materialize-external-outposts")
@@ -63,7 +66,8 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
         externalOutpostConfig: externalConfigFile,
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       phases = collectPhaseNames(cluster.children),
       steps = collectStepNames(cluster.children),

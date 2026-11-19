@@ -286,6 +286,12 @@ export const ClusterConfigSchema = z.object({
    */
   judgePublicKey: z.string().nullable().default(null),
   /**
+   * The public key on `andon.panic`'s `owner` and `active` (the `--panic-public-key`
+   * create flag), or `null` for the cluster's `initialKey`. Never `null` against
+   * external outposts, where the caller must name it.
+   */
+  panicPublicKey: z.string().nullable().default(null),
+  /**
    * Whether operator daemons load the OPP-debugging sink plugin AND the cluster
    * starts the debugging server. Schema-defaulted `true`; persisted `false` by
    * `create-external-config --no-debugging-server` (run without a debugging server).

@@ -2,6 +2,7 @@ import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -40,7 +41,8 @@ describe("ClusterBuildDefaults — automatic underwriting (create only)", () => 
     return {
       ...baseOptions(),
       externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
-      judgePublicKey: FixtureJudgePublicKey
+      judgePublicKey: FixtureJudgePublicKey,
+      panicPublicKey: FixturePanicPublicKey
     }
   }
 

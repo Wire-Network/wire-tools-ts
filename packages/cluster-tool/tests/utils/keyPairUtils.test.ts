@@ -2,9 +2,10 @@ import { randomBytes } from "node:crypto"
 import { ethers } from "ethers"
 import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
 import nacl from "tweetnacl"
-import { KeyType, PrivateKey, PublicKey, Signature } from "@wireio/sdk-core"
+import { Base58, KeyType, PrivateKey, PublicKey, Signature } from "@wireio/sdk-core"
 import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
+  chainStringFromPublicKey,
   ethereumCompressedPubkey,
   ethereumKeyPairFromKmsPublicKey,
   ethereumKeyPairFromWallet,
@@ -15,8 +16,10 @@ import {
   ethereumSigner,
   ethereumUncompressedPublicKeyHex,
   isKmsCustodied,
+  isSameSigningKey,
   keyPairFromPrivate,
   privateKeyFromNativeString,
+  publicKeyFromChainString,
   solanaKeyPairFromKmsPublicKey,
   solanaKeypair,
   solanaNativePublicKey,
@@ -37,6 +40,10 @@ import type {
   SolanaSigner,
   WireKeyPair
 } from "@wireio/cluster-tool/types"
+import {
+  fixtureEthereumPublicKeySpellings,
+  fixtureWebAuthnPublicKey
+} from "./publicKeyFixture.js"
 
 /** A fresh random ethers wallet — the only kind the harness ever holds. */
 function randomWallet(): ethers.HDNodeWallet {
@@ -739,6 +746,122 @@ describe("keyPairUtils", () => {
       expect(() =>
         wireKeyFromPublicKey({ type: KeyType.BLS, compressed: new Uint8Array(96) })
       ).toThrow(/not a Wire account-authority key type/)
+    })
+  })
+
+  // sdk-core's types resolve differently for src and for these tests, so a key crosses
+  // into the functions under test as a string, never as a test-side PublicKey.
+  describe("publicKeyFromChainString", () => {
+    const ethereumKey = PrivateKey.generate(KeyType.EM).toPublic()
+
+    it.each(fixtureEthereumPublicKeySpellings(ethereumKey))(
+      "parses an EM key spelled %s as its compressed point",
+      (_label, spelling) => {
+        const parsed = publicKeyFromChainString(spelling)
+        expect(parsed.type).toBe(KeyType.EM)
+        expect(parsed.data.array).toEqual(ethereumKey.data.array)
+        expect(parsed.toString()).toBe(ethereumKey.toString())
+      }
+    )
+
+    it("parses every other type as sdk-core does", () => {
+      const k1 = PrivateKey.generate(KeyType.K1).toPublic()
+      expect(publicKeyFromChainString(k1.toLegacyString()).toString()).toBe(
+        k1.toString()
+      )
+      ;[KeyType.K1, KeyType.R1, KeyType.ED, KeyType.BLS].forEach(type => {
+        const spelling = PrivateKey.generate(type).toPublic().toString()
+        expect(publicKeyFromChainString(spelling).toString()).toBe(spelling)
+      })
+    })
+
+    it.each([
+      ["32 bytes, which ethers would read as a private key", 32],
+      ["32 bytes behind 0x", 32],
+      ["31 bytes", 31],
+      ["34 bytes", 34]
+    ])("refuses an EM payload of %s", (label, length) => {
+      // The point's x coordinate without its parity byte, cut or padded to `length`.
+      const payload = Buffer.from(ethereumKey.data.array)
+          .subarray(1)
+          .toString("hex")
+          .padEnd(length * 2, "0")
+          .slice(0, length * 2),
+        prefix = label.endsWith("0x") ? "PUB_EM_0x" : "PUB_EM_"
+      expect(() => publicKeyFromChainString(`${prefix}${payload}`)).toThrow(
+        new RegExp(`an EM public key holds 33, 64, 65 bytes, not ${length}`)
+      )
+    })
+
+    it("refuses an EM point that is not on the curve", () => {
+      expect(() =>
+        publicKeyFromChainString(`PUB_EM_04${"01".repeat(64)}`)
+      ).toThrow()
+    })
+
+    it("refuses a string that is not a public key", () => {
+      expect(() => publicKeyFromChainString("not-a-key")).toThrow()
+    })
+  })
+
+  describe("chainStringFromPublicKey", () => {
+    it("writes a WebAuthn key as base58 with the type's checksum, where sdk-core writes hex", () => {
+      const key = fixtureWebAuthnPublicKey(),
+        expected = `PUB_WA_${Base58.encodeRipemd160Check(key.data, KeyType.WA)}`
+      // From sdk-core's hex spelling and from libfc's own: the same string out.
+      ;[key.toString(), expected].forEach(spelling =>
+        expect(chainStringFromPublicKey(publicKeyFromChainString(spelling))).toBe(
+          expected
+        )
+      )
+      expect(expected).not.toBe(key.toString())
+    })
+
+    it.each([KeyType.K1, KeyType.R1, KeyType.EM, KeyType.ED, KeyType.BLS])(
+      "writes a %s key as sdk-core does",
+      type => {
+        const spelling = PrivateKey.generate(type).toPublic().toString()
+        expect(chainStringFromPublicKey(publicKeyFromChainString(spelling))).toBe(
+          spelling
+        )
+      }
+    )
+  })
+
+  describe("isSameSigningKey", () => {
+    const generated = PrivateKey.generate(KeyType.K1).toPublic(),
+      k1 = publicKeyFromChainString(generated.toString()),
+      samePointAsEthereum = publicKeyFromChainString(
+        fixtureEthereumPublicKeySpellings(generated)[1][1]
+      ),
+      /** A newly generated key of `type`, parsed by the function under test's module. */
+      newKey = (type: KeyType) =>
+        publicKeyFromChainString(PrivateKey.generate(type).toPublic().toString())
+
+    it("holds for a key and itself", () => {
+      expect(
+        isSameSigningKey(k1, publicKeyFromChainString(generated.toLegacyString()))
+      ).toBe(true)
+    })
+
+    it("holds for one secp256k1 point under K1 and EM, either way round", () => {
+      expect(samePointAsEthereum.type).toBe(KeyType.EM)
+      expect(k1.equals(samePointAsEthereum)).toBe(false)
+      expect(isSameSigningKey(k1, samePointAsEthereum)).toBe(true)
+      expect(isSameSigningKey(samePointAsEthereum, k1)).toBe(true)
+    })
+
+    it("fails for the same bytes on another curve", () => {
+      const r1 = publicKeyFromChainString(
+        `PUB_R1_${Buffer.from(generated.data.array).toString("hex")}`
+      )
+      expect(r1.type).toBe(KeyType.R1)
+      expect(isSameSigningKey(k1, r1)).toBe(false)
+    })
+
+    it("fails for two different keys", () => {
+      expect(isSameSigningKey(k1, newKey(KeyType.K1))).toBe(false)
+      expect(isSameSigningKey(k1, newKey(KeyType.EM))).toBe(false)
     })
   })
 })

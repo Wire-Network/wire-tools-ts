@@ -7,6 +7,7 @@ import { NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -60,7 +61,8 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
     return {
       ...baseOptions(),
       externalOutpostConfig: externalConfigFile,
-      judgePublicKey: FixtureJudgePublicKey
+      judgePublicKey: FixtureJudgePublicKey,
+      panicPublicKey: FixturePanicPublicKey
     }
   }
 
