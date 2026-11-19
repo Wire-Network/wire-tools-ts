@@ -8,6 +8,7 @@ import {
 import { Report } from "@wireio/cluster-tool/report"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import {
+  FixtureJudgePublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -112,7 +113,8 @@ describe("ClusterBuildDefaults — OperatorKeys phase", () => {
   it("keeps OperatorKeys in external-outpost mode — a real chain needs the daemons' keys all the same", async () => {
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
-        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath)
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        judgePublicKey: FixtureJudgePublicKey
       }),
       phases = collectPhaseNames(cluster.children)
     expect(phases).toContain(OperatorKeysPhase)

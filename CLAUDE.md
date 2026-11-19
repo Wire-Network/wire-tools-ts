@@ -360,7 +360,10 @@ persists the key reference
 bootstrap when a batch operator's key was not pre-created — the policy of a
 pre-funded launch), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — see "`create` against external
-outposts" below),
+outposts" below), `--judge-public-key <key>` (the key on `bond.judge`'s `owner` and
+`active`, whose holder rules `sysio.bond` requests also after the governance handoff;
+default the cluster's initial key; required with `--external-outpost-config`, which
+refuses the development key),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config` and must be an IP literal, since the bind
@@ -531,9 +534,15 @@ launch-data import is the operators' only credit, so the proof is the pre-fundin
 
 **Flow authoring — underwriting, syndication and the emergency stop.** The
 bootstrap deploys `sysio.andon`, `sysio.bond` and `sysio.synd` and configures them
-unconditionally: `PanicAccount` + `EmergencyStop` (the panic account
+unconditionally: `DelegateNamePrefixes` (the bare names `andon` and `bond`, created
+so no node owner can claim them, since a claim of an existing account is rejected,
+with an `active` nothing satisfies),
+`PanicAccount` + `EmergencyStop` (the panic account
 `Constants.PANIC_ACCOUNT`, then native `pull`/`clear` permissions and action links
-on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers) and
+on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers), `JudgeAccount` +
+`BondRulings` (the judge account `Constants.JUDGE_ACCOUNT`, then native
+`rslvvalid`/`rslvinvalid` permissions and action links on `sysio.bond`; a ruling step
+declares its linked permission, which the judge or `sysio@active` satisfies) and
 `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
 `Steps.registry.SyndicationConfigRegistrations`: free syndication;

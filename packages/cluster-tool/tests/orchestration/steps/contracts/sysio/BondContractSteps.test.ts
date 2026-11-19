@@ -15,6 +15,11 @@ function signedBy(account: string) {
   return { authorization: [{ actor: account, permission: "active" }] }
 }
 
+/** The `authorization` option a ruling passes: `sysio.bond`'s linked native permission. */
+function declaring(permission: string) {
+  return { authorization: [{ actor: "sysio.bond", permission }] }
+}
+
 describe("Steps.contracts.sysio.bond", () => {
   const signal = new AbortController().signal
 
@@ -124,7 +129,14 @@ describe("Steps.contracts.sysio.bond", () => {
     expect(step.runner).toBe(Steps.contracts.sysio.bond.runRslvvalid)
   })
 
-  it("runRslvvalid pushes bond::rslvvalid as the system account", async () => {
+  it("links each ruling to the native permission of the same name", () => {
+    expect(Object.values<string>(Steps.contracts.sysio.bond.Permission)).toEqual([
+      "rslvvalid",
+      "rslvinvalid"
+    ])
+  })
+
+  it("runRslvvalid pushes bond::rslvvalid declaring the linked rslvvalid permission", async () => {
     const { ctx, contract, getSysioContract } = bondContext(),
       invoke = jest.spyOn(contract.actions.rslvvalid, "invoke").mockResolvedValue(undefined),
       data: SysioContracts.SysioBondRslvvalidAction = { request_id: 7 }
@@ -134,7 +146,11 @@ describe("Steps.contracts.sysio.bond", () => {
       signal
     )
     expect(getSysioContract).toHaveBeenCalledWith(SysioContractName.bond)
-    expect(invoke).toHaveBeenCalledWith(data, signedBy(SystemAccount))
+    // Never sysio@active: the contract requires its own account, through the linked permission.
+    expect(invoke).toHaveBeenCalledWith(
+      data,
+      declaring(Steps.contracts.sysio.bond.Permission.rslvvalid)
+    )
   })
 
   it("rslvinvalid carries the bond::rslvinvalid data and binds runRslvinvalid", () => {
@@ -151,7 +167,7 @@ describe("Steps.contracts.sysio.bond", () => {
     expect(step.runner).toBe(Steps.contracts.sysio.bond.runRslvinvalid)
   })
 
-  it("runRslvinvalid pushes bond::rslvinvalid as the system account", async () => {
+  it("runRslvinvalid pushes bond::rslvinvalid declaring the linked rslvinvalid permission", async () => {
     const { ctx, contract, getSysioContract } = bondContext(),
       invoke = jest.spyOn(contract.actions.rslvinvalid, "invoke").mockResolvedValue(undefined),
       data: SysioContracts.SysioBondRslvinvalidAction = { request_id: 7 }
@@ -161,7 +177,10 @@ describe("Steps.contracts.sysio.bond", () => {
       signal
     )
     expect(getSysioContract).toHaveBeenCalledWith(SysioContractName.bond)
-    expect(invoke).toHaveBeenCalledWith(data, signedBy(SystemAccount))
+    expect(invoke).toHaveBeenCalledWith(
+      data,
+      declaring(Steps.contracts.sysio.bond.Permission.rslvinvalid)
+    )
   })
 
   it("claim carries the bond::claim data and binds runClaim", () => {

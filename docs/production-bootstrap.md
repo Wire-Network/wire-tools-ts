@@ -20,7 +20,8 @@ defaults*. They split into two kinds:
 - `account::action` — the contract account the action lives on. NOTE: `bios` and `system` both deploy to the
   **`sysio`** account itself (no separate `sysio.bios`/`sysio.system` account); `system` replaces `bios`.
 - Auth in `[brackets]` — the `-p` authorization.
-- **raw** = `sysio::setcode` + `sysio::setabi` (the `sysio`-account contracts `bios`/`system`, plus `sysio.roa`).
+- **raw** = `sysio::setcode` + `sysio::setabi` (the `sysio`-account contracts `bios`/`system`, plus the bootstrap
+  deploy of `sysio.roa`; `activateroa` pins `sysio.roa`'s RAM limit to its usage, so a later redeploy is **sys**).
 - **sys** = `sysio.roa::setsyscode({account, vmtype:0, vmversion:0, code:<wasm hex>})` (inline
   `setcode`+`setpriv`+`giftram`) + `sysio.roa::setsysabi({account, abi:<packed abi_def hex>})` (inline
   `setabi`+`giftram`). Privileged + RAM gifted from the `sysio` pool; requires ROA active; cannot target
@@ -31,17 +32,20 @@ defaults*. They split into two kinds:
 
 ## RAM model — no unlimited accounts
 Every account's RAM is **finite** and **gifted from the `sysio` pool** as a conserving transfer (never minted):
-- **`activateroa`** partitions the total RAM into node-owner reserves + `sysio.roa` allocation (`leftover/2`) +
-  the `sysio` pool + the `sysio.acct` seed, and sets finite limits on `sysio`, `sysio.roa`, `sysio.acct`. Total
-  RAM = `total_sys.amount * bytes_per_unit` — the asset's **smallest units**, NOT the display value. The tier
-  reserves are *fractions* of supply (per node: T1 4%, T2 0.15%, T3 0.003%; × the tier caps 21 / 84 / 1000 ⇒
-  **99.6% of supply**), so only **0.4%** is left for everything else, at any scale. With the cluster defaults
-  (`75496.0000 SYS` ⇒ amount `754,960,000`, `bytes_per_unit = 104`) total RAM ≈ `754,960,000 * 104` ≈
-  **78.5 GB**: ~66 GB reserved across 21 T1 owners (~3.1 GB each), ~9.9 GB T2, ~2.4 GB T3, and a ~314 MB
-  leftover split into `sysio.roa` ≈ 157 MB + the `sysio` bootstrap pool ≈ 157 MB (+ a 1144-byte `sysio.acct`
-  seed). So `total_sys` sets the **absolute** RAM budget — the split is ratiometric, but the bytes are real:
-  the leftover pool must clear the bootstrap's fixed RAM costs (every contract's code/abi + each account's
-  `newaccount_ram = 1144 B`), which is why the supply is tuned to this value, not arbitrary.
+- **`activateroa`** partitions the total RAM into node-owner reserves + the `sysio` pool + the `sysio.acct` seed,
+  and sets finite limits on `sysio`, `sysio.roa`, `sysio.acct`. `sysio.roa` gets **no pool**: its limit is pinned
+  to the RAM it already uses (its code, ABI and account rows), since its rows bill the issuing node owner or
+  `sysio`. Total RAM = `total_sys.amount * bytes_per_unit` — the asset's **smallest units**, NOT the display
+  value. The tier reserves are *fractions* of supply (per node: T1 4%, T2 0.15%, T3 0.003%; × the tier caps
+  21 / 84 / 1000 ⇒ **99.6% of supply**), so only **0.4%** is left for everything else, at any scale. With the
+  cluster defaults (`75496.0000 SYS` ⇒ amount `754,960,000`, `bytes_per_unit = 104`) total RAM ≈
+  `754,960,000 * 104` ≈ **78.5 GB**: ~66 GB reserved across 21 T1 slots (~3.1 GB each, a tenth of which is carved
+  into the `sysio` pool up front, leaving each T1 owner ~2.83 GB), ~9.9 GB T2, ~2.4 GB T3, and a ~314 MB leftover.
+  The `sysio` pool is the whole leftover plus the T1 carve (~6.6 GB), less `sysio.roa`'s pinned usage and the
+  1144-byte `sysio.acct` seed: ≈ 6.9 GB. So `total_sys` sets the **absolute** RAM budget — the split is
+  ratiometric, but the bytes are real: the `sysio` pool must clear the bootstrap's fixed RAM costs (every
+  contract's code/abi + each account's `newaccount_ram = 1144 B`), which is why the supply is tuned to this value,
+  not arbitrary.
 - **Account creation** (`system::native::newaccount`): `set_resource_limits(new, 0,0,0)` then
   `transfer_ram(sysio, new, newaccount_ram)` — the new account gets a finite limit funded from the pool. This
   requires `system` deployed AND ROA active, so all non-essential accounts are created **after** Stage 4.
@@ -53,10 +57,23 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
   model). `setsyscode`'s `giftram` covers only code/abi, so a self-billed row would overflow the contract's
   exact limit; routing rows to the pool keeps each contract account finite at code/abi size. `bios`/`system`
   code lives on `sysio` and likewise consumes the pool directly.
+- **`sysio.roa` rows** — a node owner pays for each policy row it issues: `addpolicy` bills the **issuer** 204
+  bytes, and an issuer without that much spare RAM cannot issue the policy. `expandpolicy`, `extendpolicy` and a
+  partial `reducepolicy` keep that payer; the `reducepolicy` that erases the row refunds it. A fresh T1 owner's
+  personal policy (from registration) leaves ~8.3 KB spare, about 40 rows; for more it adds RAM to that policy
+  with `expandpolicy` (one policy per issuer per owner). A T2 or T3 owner holds only its 1144-byte account gift
+  (200 bytes spare), so it funds itself first with a self-issued
+  `addpolicy(owner=self, issuer=self, ram_weight>=0.0001 SYS)`, which succeeds in one action because the RAM it
+  grants is counted before the chain's end-of-transaction RAM check; each further row costs another 204 bytes,
+  which 0.0002 SYS more on that policy covers at `bytes_per_unit = 104`, added with `expandpolicy`.
+  `newuser` / `raiseacctlim` bill their
+  `sponsors` / `sponsorcount` rows to the sponsoring T1 owner. Every other `sysio.roa` row — `roastate`,
+  `acctlimcfg`, `nodeowners`, `nodeownerreg` — bills `sysio`.
 - **Only transiently unlimited** during bring-up: `sysio` (genesis), `sysio.roa`, `sysio.acct` — all set
   finite by `activateroa`. No account is permanently unlimited.
 - Invariant: `sysio` pool remaining + `sysio.acct` bucket == initial pool; grand total across {node-owner
-  reserves + roa allocation + `sysio` pool + every gifted account/contract} == `total_sys * bytes_per_unit`.
+  reserves + `sysio.roa`'s pinned usage + `sysio` pool + every gifted account/contract} ==
+  `total_sys * bytes_per_unit`.
 
 ## Governance & privilege
 - **All `sysio.*` accounts: owner = active = `sysio@active`** (the governance authorities' `active`, below,
@@ -91,9 +108,12 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
     means it was never written, and delegating to it leaves `sysio` unsatisfiable), and audit every
     `sysio.*` account: each permission resolves to `sysio@active` with no key of its own, except the
     documented exceptions (each OPP account's own `@sysio.code` on its `owner`, `sysio.andon`'s
-    `pull`/`clear` panic permissions, each governance authority's `active` — its expected members — and
-    `sysio` itself, whose key is allowed only before a handoff). The cluster tooling's
-    `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
+    `pull`/`clear` panic permissions, `sysio.bond`'s `rslvvalid`/`rslvinvalid` ruling permissions, each
+    governance authority's `active` — its expected members — and
+    `sysio` itself, whose key is allowed only before a handoff). Each panic and ruling permission must
+    exist as a child of `active`, hold exactly its delegate and `sysio@active`, and carry the link to
+    its action. The cluster
+    tooling's `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
     `floor(2N/3)+1` members' approvals, normally through `sysio.msig`.
 - All system contracts are privileged: `sysio`/`bios`/`system` from genesis; the **sys**-deployed set via
   `setsyscode`. Hard requirements (from source): `sysio.token` (bills rows to `sysio`), `sysio.msig`,
@@ -142,9 +162,9 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It does not need one:
 
 - **CPU / NET** are billed to the contract an action runs on (or to an explicit `sysio.payer`), never to
-  the signer, and every `sysio.*` contract is unlimited. A batch operator, the panic account and a user
-  account therefore carry zero CPU/NET weight. A node subjectively bills a signer for transactions that
-  FAIL on it; an operator that hits that allowance is exempted with nodeop's
+  the signer, and every `sysio.*` contract is unlimited. A batch operator, the panic account, the judge
+  account and a user account therefore carry zero CPU/NET weight. A node subjectively bills a signer
+  for transactions that FAIL on it; an operator that hits that allowance is exempted with nodeop's
   `disable-subjective-account-billing`.
 - **RAM** — the `sysio.*` contracts bill their rows to the `sysio` pool, so an account needs only the
   `newaccount_ram` (1144 bytes) its creation transfers from `sysio`. The exception is rows any account
@@ -209,7 +229,8 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 6. deploy `sysio.roa` → `sysio.roa` — **raw** — `[sysio@active]`.
 7. `sysio::setpriv("sysio.roa", 1)` — `[sysio@active]`.
 8. `sysio.roa::activateroa({total_sys:"75496.0000 SYS", bytes_per_unit:104})` — `[sysio.roa@active]` — **RAM
-   POOL ESTABLISHED**; sets finite limits on `sysio`, `sysio.roa` (`leftover/2`), `sysio.acct` (seed). The
+   POOL ESTABLISHED**; sets finite limits on `sysio` (the pool), `sysio.roa` (pinned to its usage, no pool),
+   `sysio.acct` (seed). The
    bootstrap registers no node owner and never uses `forcereg` — node owners enter ONLY via the real
    `nodeownreg` flow, after launch.
 
@@ -305,9 +326,6 @@ before the operator `createlink` calls in Stage 12.
 
 | Field | Value | Notes |
 |---|---|---|
-| `max_available_producers` | `21` | |
-| `max_available_batch_ops` | `63` | |
-| `max_available_underwriters` | `21` | still part of the `opreg` config; the bootstrap registers no underwriter operators |
 | `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
 | `terminate_max_consecutive_misses` | `5` | |
 | `terminate_max_pct_misses_24h` | `5` | |
@@ -399,6 +417,17 @@ depot base units at precision 9. Production uses these values; the council can c
     indefinitely, including while awaiting account linking. `importseed` and `importdone` are
     external/operational tools, not part of this bootstrap sequence.
 
+## Stage 9a — Delegate name prefixes
+The delegate accounts of Stages 10 and 10a (`andon.panic`, `bond.judge`) hold keys, so they sit outside
+`sysio.*`, under the bare names `andon` and `bond`.
+
+26a. **Reserve each name** — for `andon`, then `bond`:
+    `sysio::newaccount({creator:"sysio", name, owner:sysio@active, active:{threshold:1, keys:[],
+    accounts:[{permission:{actor:"sysio.null",permission:"active"},weight:1}]}})` — `[sysio@active]`.
+    `sysio.roa::nodeownreg` rejects a claim that names an existing account, so with the name taken no
+    node owner can register it and no tier-1 owner mints `<name>.<generated>` accounts under it. Its
+    `active` is one nothing satisfies, so nobody acts for the name itself either.
+
 ## Stage 10 — Emergency stop (`sysio.andon`)
 `sysio.andon` exposes `pull(reason)` and `clear(note)`. Authorization is configured with native
 `sysio::updateauth` and `sysio::linkauth`; there is no contract-managed panic account or puller registry.
@@ -433,6 +462,46 @@ Privileged `sysio.synd` automatically pulls on a custody shortfall using the exi
 `sysio.andon@active` permission; it needs no puller registration. Changing the panic delegate through
 `updateauth` does not revoke that privileged inline path. Neither `sysio.andon`'s owner nor its active
 authority is replaced by this setup.
+
+## Stage 10a — Bond rulings (`sysio.bond`)
+`sysio.bond::rslvvalid(request_id)` and `rslvinvalid(request_id)` rule a request. Like the emergency
+stop, they are authorized with native `sysio::updateauth` and `sysio::linkauth`: the contract requires
+its own account, and each ruling has a native permission the judge account and governance both satisfy.
+
+**Companion requirement:** deploy the `sysio.bond` contract whose rulings require `sysio.bond` rather
+than `sysio`. Against the earlier contract these permissions exist but a ruling signed through them is
+refused. `ClusterBuildDefaults` implements the sequence below; its bond steps declare the linked
+`sysio.bond@rslvvalid` and `@rslvinvalid` permissions.
+
+29a. **Judge account** — `sysio::newaccount({creator:"sysio", name:"bond.judge", owner:<judge key>,
+    active:<judge key>})` — `[sysio@active]`. It gets no resource grant: the rulings are billed to
+    `sysio.bond`. No WIRE is transferred to it. Whoever holds the judge key can rule any request VALID
+    or INVALID, and keeps that reach after the governance handoff. The cluster tooling takes it from
+    `--judge-public-key` (`judgePublicKey` in a build-options document) and falls back to the
+    cluster's initial key: `DEV_K1` on a local or flow cluster, the generated bios key under `SSM`.
+    Against external outposts the key is required and `DEV_K1` is refused **(production: the judge's
+    hardware or multisig key)**.
+29b. **Permission RAM** — `sysio::setacctram({account:"sysio.bond", ram_bytes:<current limit + 10400>})` —
+    `[sysio@active]`, read and added as in step 28.
+29c. **Delegate and link each ruling**, first `rslvvalid`, then `rslvinvalid`. For each `permission`:
+    - `sysio::updateauth({account:"sysio.bond", permission, parent:"active", auth:{threshold:1,
+      keys:[], accounts:[{permission:{actor:"bond.judge",permission:"active"},weight:1},
+      {permission:{actor:"sysio",permission:"active"},weight:1}]}})` — `[sysio.bond@active]`.
+      Sort the authority's accounts by chain name value when substituting a production judge account.
+    - `sysio::linkauth({account:"sysio.bond", code:"sysio.bond", type:permission,
+      requirement:permission})` — `[sysio.bond@active]`.
+
+The judge account signs with its own key but declares `[sysio.bond@rslvvalid]` or
+`[sysio.bond@rslvinvalid]`. Governance is delegated in both authorities and retains control through
+the parent `active` permission, so it can rule, replace the judge or remove the delegation. The two
+permissions are separate, so the two rulings can be given different authorities. `setconfig` stays
+`[sysio@active]`.
+
+Under the native rules a permission can rewrite itself, so the judge can change the authority of the
+ruling permission it satisfies, add permissions beneath it and re-link or unlink that ruling. It cannot
+reach any other action. Governance reverts any of it through `sysio.bond@active`; read both authorities
+and links with `clio get account sysio.bond` after any change of judge. The same holds for the panic
+account and its `sysio.andon` permissions.
 
 ## Stage 11 — Outpost deploys, then registry + syndication configuration
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum

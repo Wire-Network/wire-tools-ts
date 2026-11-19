@@ -8,6 +8,7 @@ import { WireLcoImportTool } from "@wireio/cluster-tool/tools/wire"
 import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { omit } from "lodash"
 import {
+  FixtureJudgePublicKey,
   ExternalOutpostProgramId,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
@@ -308,7 +309,8 @@ describe("ClusterBuildDefaults — launch-data import", () => {
       ClusterBuildDefaults.create({
         ...baseOptions(),
         underwriterCount: 0,
-        externalOutpostConfig
+        externalOutpostConfig,
+        judgePublicKey: FixtureJudgePublicKey
       })
     ).rejects.toThrow(/takes real values only/)
 
@@ -339,7 +341,8 @@ describe("ClusterBuildDefaults — launch-data import", () => {
         dclaimFundingAccount: "sysio"
       },
       underwriterCount: 0,
-      externalOutpostConfig
+      externalOutpostConfig,
+      judgePublicKey: FixtureJudgePublicKey
     })
     await expect(
       ClusterBuildDefaults.create(

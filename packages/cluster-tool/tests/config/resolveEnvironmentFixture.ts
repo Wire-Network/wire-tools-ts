@@ -6,6 +6,7 @@ import {
   type ExternalOutpostConfig,
   ExternalOutpostConfigSchemaCodec
 } from "@wireio/cluster-tool-shared"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 
 /**
  * A disposable on-disk environment for tests that drive the REAL
@@ -116,6 +117,14 @@ export function fixtureExternalOutposts(): ExternalOutpostConfig {
     solana: { programId: ExternalOutpostProgramId }
   }
 }
+
+/**
+ * The `judgePublicKey` an external-outpost resolve must name: a random K1 key,
+ * so never the development key that mode refuses.
+ */
+export const FixtureJudgePublicKey = PrivateKey.generate(KeyType.K1)
+  .toPublic()
+  .toString()
 
 /**
  * Write {@link fixtureExternalOutposts} under `rootPath` as an
