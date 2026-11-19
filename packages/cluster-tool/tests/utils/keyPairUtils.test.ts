@@ -775,6 +775,24 @@ describe("keyPairUtils", () => {
       })
     })
 
+    it.each([
+      ["32 bytes, which ethers would read as a private key", 32],
+      ["32 bytes behind 0x", 32],
+      ["31 bytes", 31],
+      ["34 bytes", 34]
+    ])("refuses an EM payload of %s", (label, length) => {
+      // The point's x coordinate without its parity byte, cut or padded to `length`.
+      const payload = Buffer.from(ethereumKey.data.array)
+          .subarray(1)
+          .toString("hex")
+          .padEnd(length * 2, "0")
+          .slice(0, length * 2),
+        prefix = label.endsWith("0x") ? "PUB_EM_0x" : "PUB_EM_"
+      expect(() => publicKeyFromChainString(`${prefix}${payload}`)).toThrow(
+        new RegExp(`an EM public key holds 33, 64, 65 bytes, not ${length}`)
+      )
+    })
+
     it("refuses an EM point that is not on the curve", () => {
       expect(() =>
         publicKeyFromChainString(`PUB_EM_04${"01".repeat(64)}`)

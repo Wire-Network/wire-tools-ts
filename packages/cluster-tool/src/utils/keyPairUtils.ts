@@ -581,6 +581,13 @@ const EthereumPublicKeyPrefix = `PUB_${KeyType.EM}_`
 /** The optional prefix libfc strips from an `EM` key's hex payload. */
 const HexPrefix = "0x"
 /**
+ * Byte lengths of the secp256k1 point forms libfc parses for an `EM` key:
+ * compressed, then uncompressed without and with its `04` marker. ethers reads
+ * 32 bytes as a PRIVATE key and derives its public key, so any other length
+ * must be refused before {@link ethers.SigningKey.computePublicKey} sees it.
+ */
+const EthereumPublicKeyLengths: readonly number[] = [33, 64, 65]
+/**
  * The key types whose keys are secp256k1 points. One private key signs for both:
  * a `K1` signature, or an `EM` (Ethereum-message) one.
  */
@@ -595,7 +602,8 @@ const Secp256k1KeyTypes: readonly KeyType[] = [KeyType.K1, KeyType.EM]
  *
  * @param value - The public-key string.
  * @returns The parsed key; an `EM` key always holds its 33-byte compressed point.
- * @throws When the string is not a public key, or an `EM` point is not on the curve.
+ * @throws When the string is not a public key, or an `EM` payload is not a point
+ *   of one of {@link EthereumPublicKeyLengths} on the curve.
  */
 export function publicKeyFromChainString(value: string): PublicKey {
   const hexPrefixed = `${EthereumPublicKeyPrefix}${HexPrefix}`,
@@ -604,14 +612,19 @@ export function publicKeyFromChainString(value: string): PublicKey {
         ? `${EthereumPublicKeyPrefix}${value.slice(hexPrefixed.length)}`
         : value
     )
-  return key.type === KeyType.EM
-    ? PublicKey.from({
-        type: KeyType.EM,
-        compressed: ethers.getBytes(
-          ethers.SigningKey.computePublicKey(key.data.array, true)
-        )
-      })
-    : key
+  if (key.type !== KeyType.EM) {
+    return key
+  }
+  Assert.ok(
+    EthereumPublicKeyLengths.includes(key.data.length),
+    `publicKeyFromChainString: an ${KeyType.EM} public key holds ${EthereumPublicKeyLengths.join(", ")} bytes, not ${key.data.length}`
+  )
+  return PublicKey.from({
+    type: KeyType.EM,
+    compressed: ethers.getBytes(
+      ethers.SigningKey.computePublicKey(key.data.array, true)
+    )
+  })
 }
 
 /**

@@ -1922,6 +1922,17 @@ describe("ClusterConfigProvider", () => {
         await expect(resolved).rejects.toThrow(exposes)
       })
 
+      it("refuses a 32-byte EM payload, which is no public key, instead of deriving one from it", async () => {
+        const truncated = `PUB_EM_${Buffer.from(ethereumKey.data.array).subarray(1).toString("hex")}`,
+          resolved = ClusterConfigProvider.resolve(
+            localOptions({ [optionKey]: truncated })
+          )
+        await expect(resolved).rejects.toBeInstanceOf(NestedError)
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is not a public key`)
+        )
+      })
+
       it("refuses a value that is not a public key, keeping the parse error as its cause", async () => {
         const resolved = ClusterConfigProvider.resolve(
           localOptions({ [optionKey]: "not-a-key" })
