@@ -53,6 +53,11 @@ import {
 const PartialMergeKiodPin = BindConfigProvider.DefaultKiod + 1
 
 describe("ClusterConfigProvider", () => {
+  // A resolve locks its ports, a 64-port validator window among them, in get-port's
+  // in-process cache for up to 30 s. Each test's registry is its own, so nothing needs
+  // those locks afterwards, and a fast run would otherwise run out of windows.
+  afterEach(() => BindConfigProvider.clearPortLocks())
+
   describe("resolve", () => {
     it("fails fast when buildPath is missing", async () => {
       await expect(
