@@ -94,7 +94,8 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
     `pull`/`clear` panic permissions, `sysio.bond`'s `rslvvalid`/`rslvinvalid` ruling permissions, each
     governance authority's `active` — its expected members — and
     `sysio` itself, whose key is allowed only before a handoff). Each panic and ruling permission must
-    exist, hold exactly its delegate and `sysio@active`, and carry the link to its action. The cluster
+    exist as a child of `active`, hold exactly its delegate and `sysio@active`, and carry the link to
+    its action. The cluster
     tooling's `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
     `floor(2N/3)+1` members' approvals, normally through `sysio.msig`.
 - All system contracts are privileged: `sysio`/`bios`/`system` from genesis; the **sys**-deployed set via

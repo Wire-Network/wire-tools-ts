@@ -600,12 +600,12 @@ export namespace WireAuthorityAuditTool {
       .flatMap(delegated => delegated.permissions)
   }
 
-  /** What a delegated permission's authority must be, for a mismatch's reason. */
+  /** What a delegated permission must be, for a mismatch's reason: its parent and its authority. */
   function delegatedAuthorityReason(
     delegation: DelegatedPermissions,
     permission: string
   ): string {
-    return `${delegation.account}@${permission} must delegate to the ${delegation.role} account ${delegation.delegate}@${WireClient.ActivePermission} and ${Constants.SYSIO_ACCOUNT}@${WireClient.ActivePermission}, each alone`
+    return `${delegation.account}@${permission} must be a child of ${WireClient.ActivePermission} delegating to the ${delegation.role} account ${delegation.delegate}@${WireClient.ActivePermission} and ${Constants.SYSIO_ACCOUNT}@${WireClient.ActivePermission}, each alone`
   }
 
   /**
@@ -884,8 +884,8 @@ export namespace WireAuthorityAuditTool {
   /**
    * The mismatch, if any, between a permission and the WHOLE authority it must
    * hold: `sysio@owner` / `@active` after a handoff, a written governance
-   * authority's `active`, and a delegated permission. Every other permission is
-   * judged entry by entry.
+   * authority's `active`, and a delegated permission, which must also be a child
+   * of `active`. Every other permission is judged entry by entry.
    */
   function authorityMismatch(
     context: AuditContext,
@@ -946,16 +946,20 @@ export namespace WireAuthorityAuditTool {
       })
       .with({ delegated: true }, (): AuthorityMismatch => {
         const expected = WireSysioContractTool.sysioActiveDelegateAuthority(
-          delegation.delegate
-        )
-        return isEqual(actual, expected)
+            delegation.delegate
+          ),
+          parent = String(permission.parent),
+          // Under any other parent the contract's `active` could not update or revoke it.
+          parented = parent === WireClient.ActivePermission,
+          reason = delegatedAuthorityReason(delegation, name)
+        return parented && isEqual(actual, expected)
           ? null
           : {
               account,
               permission: name,
               expected,
               actual,
-              reason: delegatedAuthorityReason(delegation, name)
+              reason: parented ? reason : `${reason}; its parent is ${parent}`
             }
       })
       .otherwise((): AuthorityMismatch => null)

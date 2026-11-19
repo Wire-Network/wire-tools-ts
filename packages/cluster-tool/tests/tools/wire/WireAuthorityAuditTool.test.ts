@@ -890,9 +890,37 @@ describe("WireAuthorityAuditTool.audit", () => {
         "sysio.bond@rslvvalid"
       ])
       expect(result.mismatches[0].reason).toMatch(
-        /must delegate to the judge account bond\.judge@active and sysio@active, each alone/
+        /must be a child of active delegating to the judge account bond\.judge@active and sysio@active, each alone$/
       )
       expect(result.missingLinks).toEqual([])
+    })
+
+    it.each([
+      ["sysio.andon", "pull", "andon.panic"],
+      ["sysio.bond", "rslvvalid", "bond.judge"]
+    ])("fails %s@%s created under owner, though its authority and link are right", async (contract, name, delegate) => {
+      const chain = preHandoffChain(),
+        held = chain.get(contract)
+      const result = await auditBefore(
+        withAccount(
+          chain,
+          account(contract, [
+            ...held.permissions.filter(candidate => String(candidate.perm_name) !== name),
+            permission(name, "owner", 1, [], [`${delegate}@active`, "sysio@active"], [
+              link(contract, name)
+            ])
+          ])
+        )
+      )
+      expect(result.mismatches).toHaveLength(1)
+      expect(result.mismatches[0]).toMatchObject({
+        account: contract,
+        permission: name,
+        reason: expect.stringMatching(/must be a child of active .*; its parent is owner$/)
+      })
+      expect(result.mismatches[0].actual).toEqual(result.mismatches[0].expected)
+      expect(result.missingLinks).toEqual([])
+      expect(() => WireAuthorityAuditTool.assertClean(result)).toThrow(/its parent is owner/)
     })
 
     it("requires nothing of a contract the audit does not cover", async () => {

@@ -738,8 +738,10 @@ export namespace ClusterConfigProvider {
    * may not name the well-known development key.
    *
    * @param options - The caller's options (its `judgePublicKey` and `externalOutpostConfig`).
-   * @returns The key as the caller spelled it, or `null` when none was named.
-   * @throws When the key is not a public key, or when external mode names none or the development key.
+   * @returns The key in its canonical `PUB_` spelling, the one `clio create account`
+   *   parses whatever spelling the caller used, or `null` when none was named.
+   * @throws When the key is not a public key or is a BLS key, which cannot sign a
+   *   transaction, or when external mode names none or the development key.
    */
   function resolveJudgePublicKey(options: ClusterBuildOptions): string {
     const { judgePublicKey = null, externalOutpostConfig } = options
@@ -759,11 +761,15 @@ export namespace ClusterConfigProvider {
       })
       .getOrThrow()
     Assert.ok(
+      key.type !== KeyType.BLS,
+      `judgePublicKey is a ${KeyType.BLS} key, which cannot sign a transaction: ${Constants.JUDGE_ACCOUNT} could never rule.`
+    )
+    Assert.ok(
       externalOutpostConfig == null ||
         !key.equals(PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
       "judgePublicKey is the development key, which externalOutpostConfig refuses: anyone could rule a sysio.bond request on the deployed cluster."
     )
-    return judgePublicKey
+    return key.toString()
   }
 
   /**

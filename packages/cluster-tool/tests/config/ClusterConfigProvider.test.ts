@@ -14,7 +14,7 @@ import {
   type ClusterSignatureProviderOptions
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
+import { KeyType, PrivateKey, PublicKey, SlugName } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 
@@ -1771,7 +1771,7 @@ describe("ClusterConfigProvider", () => {
       expect(config.judgePublicKey).toBeNull()
     })
 
-    it("persists the key a local build names, as spelled", async () => {
+    it("persists the key a local build names", async () => {
       const config = await ClusterConfigProvider.resolve(
         localOptions({ judgePublicKey: FixtureJudgePublicKey })
       )
@@ -1782,8 +1782,42 @@ describe("ClusterConfigProvider", () => {
       const config = await ClusterConfigProvider.resolve(
         localOptions({ judgePublicKey: Constants.DEV_K1_PUBLIC_KEY })
       )
-      expect(config.judgePublicKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+      expect(config.judgePublicKey).toBe(
+        PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()
+      )
     })
+
+    it.each([
+      ["legacy", (key: PublicKey) => key.toLegacyString()],
+      ["hex-payload", (key: PublicKey) => `PUB_K1_${Buffer.from(key.data.array).toString("hex")}`]
+    ])("persists a %s spelling in the canonical one clio parses", async (_case, spell) => {
+      const key = PublicKey.from(FixtureJudgePublicKey),
+        spelling = spell(key)
+      expect(spelling).not.toBe(FixtureJudgePublicKey)
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({ judgePublicKey: spelling })
+      )
+      expect(config.judgePublicKey).toBe(FixtureJudgePublicKey)
+    })
+
+    it("refuses a BLS key, which cannot sign a transaction", async () => {
+      await expect(
+        ClusterConfigProvider.resolve(
+          localOptions({
+            judgePublicKey: PrivateKey.generate(KeyType.BLS).toPublic().toString()
+          })
+        )
+      ).rejects.toThrow(/judgePublicKey is a BLS key, which cannot sign a transaction/)
+    })
+
+    it.each([KeyType.ED, KeyType.EM, KeyType.R1])(
+      "accepts a %s key, whose signatures the chain recovers",
+      async type => {
+        const judgePublicKey = PrivateKey.generate(type).toPublic().toString(),
+          config = await ClusterConfigProvider.resolve(localOptions({ judgePublicKey }))
+        expect(config.judgePublicKey).toBe(judgePublicKey)
+      }
+    )
 
     it("refuses an external build that names no judge key, before claiming a port", async () => {
       // `buildPath` is asserted before `resolveBind`; omitting it fails there
