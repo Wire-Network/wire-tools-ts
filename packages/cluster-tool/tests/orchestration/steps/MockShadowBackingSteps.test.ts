@@ -1,3 +1,4 @@
+import { ethers } from "ethers"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
   ClusterBuild,
@@ -12,7 +13,10 @@ import {
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
-import { EthereumSyndicationTool } from "@wireio/cluster-tool/tools/ethereum"
+import {
+  EthereumFundingTool,
+  EthereumSyndicationTool
+} from "@wireio/cluster-tool/tools/ethereum"
 import {
   SolanaFundingTool,
   SolanaLiqSyndicationTool
@@ -51,10 +55,20 @@ describe("MockShadowBackingSteps", () => {
     ])
     expect(ethereum.steps.map(step => step.runner)).toEqual([
       MockShadowBackingSteps.runReadCustody,
+      MockShadowBackingSteps.runFundEthereum,
       MockShadowBackingSteps.runDepositEthereum,
       MockShadowBackingSteps.runDonateEthereum,
       MockShadowBackingSteps.runVerifyCustody
     ])
+  })
+
+  it("names the backer's persisted handles and the fee margins", () => {
+    // The backer is a wallet of its own on BOTH chains — never the deployer, an
+    // operator or the panic account.
+    expect(MockShadowBackingSteps.EthereumBackerLabel).toBe("mock-shadow-backer")
+    expect(MockShadowBackingSteps.SolanaBackerLabel).toBe("mock-shadow-backer")
+    expect(MockShadowBackingSteps.EthereumFundingMargin).toBe(ethers.WeiPerEther)
+    expect(MockShadowBackingSteps.SolanaFundingMargin).toBeGreaterThan(0n)
   })
 
   it.each([ChainKind.SVM, ChainKind.EVM] as const)(
@@ -408,7 +422,7 @@ describe("MockShadowBackingSteps", () => {
       expect(write).toHaveBeenCalledWith(
         context,
         expect.objectContaining({
-          ethereumHdIndex: MockShadowBackingSteps.EthereumBackerHdIndex,
+          walletName: MockShadowBackingSteps.EthereumBackerLabel,
           [amountField]: 110_000_000_000_000_000_000n
         }),
         signal
@@ -445,6 +459,106 @@ describe("MockShadowBackingSteps", () => {
       ).rejects.toThrow()
       expect(spy).not.toHaveBeenCalled()
       expect(write).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("Ethereum fund", () => {
+    const RequiredWei = 110_000_000_000_000_000_000n
+
+    /** Double both funding factories: keep their planned inputs, replace their runners. */
+    function doubleFunding() {
+      const createWrite = jest.fn().mockResolvedValue(undefined),
+        fundWrite = jest.fn().mockResolvedValue(undefined),
+        originalCreate = EthereumFundingTool.planCreateWallet,
+        originalSetBalance = EthereumFundingTool.planSetBalance,
+        create = jest
+          .spyOn(EthereumFundingTool, "planCreateWallet")
+          .mockImplementation(
+            (...args: Parameters<typeof EthereumFundingTool.planCreateWallet>) => {
+              const planned = originalCreate(...args)
+              return ClusterBuildStep.create(
+                planned.actor,
+                planned.name,
+                planned.description,
+                planned.options,
+                planned.input,
+                createWrite
+              )
+            }
+          ),
+        fund = jest
+          .spyOn(EthereumFundingTool, "planSetBalance")
+          .mockImplementation(
+            (...args: Parameters<typeof EthereumFundingTool.planSetBalance>) => {
+              const planned = originalSetBalance(...args)
+              return ClusterBuildStep.create(
+                planned.actor,
+                planned.name,
+                planned.description,
+                planned.options,
+                planned.input,
+                fundWrite
+              )
+            }
+          )
+      return { create, createWrite, fund, fundWrite }
+    }
+
+    it("plans the backer's handle with the measured-amount key and its named runner", () => {
+      const step = MockShadowBackingSteps.planFundEthereum(actor, "fund", "backing", {})
+      expect(step.input).toEqual({
+        kind: "MockShadowBackingSteps.EthereumBackingInput",
+        amountKey: MockShadowBackingEthereumRequiredKey,
+        walletName: MockShadowBackingSteps.EthereumBackerLabel
+      })
+      expect(step.runner).toBe(MockShadowBackingSteps.runFundEthereum)
+    })
+
+    it("creates the backer wallet once, then performs ONE set-balance of the amount plus the gas margin", async () => {
+      const { create, createWrite, fund, fundWrite } = doubleFunding(),
+        step = MockShadowBackingSteps.planFundEthereum(actor, "fund", "backing", {})
+      context.outputs.set(step.input.amountKey, RequiredWei)
+      await step.runner(context, step.input, signal)
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(createWrite).toHaveBeenCalledTimes(1)
+      expect(createWrite).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({
+          kind: "EthereumFundingTool.CreateWalletInput",
+          walletName: MockShadowBackingSteps.EthereumBackerLabel
+        }),
+        signal
+      )
+      expect(fund).toHaveBeenCalledTimes(1)
+      expect(fundWrite).toHaveBeenCalledTimes(1)
+      expect(fundWrite).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({
+          kind: "EthereumFundingTool.SetBalanceInput",
+          walletName: MockShadowBackingSteps.EthereumBackerLabel,
+          balanceWei: RequiredWei + MockShadowBackingSteps.EthereumFundingMargin
+        }),
+        signal
+      )
+      // The wallet is created BEFORE it is funded.
+      expect(createWrite.mock.invocationCallOrder[0]).toBeLessThan(
+        fundWrite.mock.invocationCallOrder[0]
+      )
+    })
+
+    it("skips covered custody and refuses missing amounts or cancellation before creating or funding", async () => {
+      const { create, createWrite, fund, fundWrite } = doubleFunding(),
+        step = MockShadowBackingSteps.planFundEthereum(actor, "fund", "backing", {})
+      await expect(step.runner(context, step.input, signal)).rejects.toThrow()
+      context.outputs.set(step.input.amountKey, 0n)
+      await step.runner(context, step.input, signal)
+      await expect(
+        step.runner(context, step.input, AbortSignal.abort())
+      ).rejects.toThrow()
+      expect(create).not.toHaveBeenCalled()
+      expect(createWrite).not.toHaveBeenCalled()
+      expect(fund).not.toHaveBeenCalled()
+      expect(fundWrite).not.toHaveBeenCalled()
     })
   })
 })

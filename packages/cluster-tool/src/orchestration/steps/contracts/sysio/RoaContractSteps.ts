@@ -54,9 +54,9 @@ export namespace RoaContractSteps {
   }
 
   /**
-   * `sysio.roa::newnameduser` — create a node-owner claim account with a
-   * finite, pool-gifted RAM allocation (the create step the depot inline-sends
-   * for a real NFT claim).
+   * `sysio.roa::newnameduser` — create a privileged fixture account with a
+   * finite, pool-gifted RAM allocation. NFT claims use nodeownreg instead;
+   * accounts created separately are ineligible for that claim path.
    */
   export function planNewnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -94,7 +94,7 @@ export namespace RoaContractSteps {
   }
 
   /**
-   * `sysio.roa::nodeownreg` — register a node owner at a tier (the production
+   * `sysio.roa::nodeownreg` — create and register a new node owner at a tier (the production
    * claim path: records the ETH key as a `sysio.authex` link and allocates the
    * tier's ROA reserve, which policies are then issued from). Claim-payload
    * problems SOFT-FAIL into a `nodeownerreg` audit row rather than throwing —

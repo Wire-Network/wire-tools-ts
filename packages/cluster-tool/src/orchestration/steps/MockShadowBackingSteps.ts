@@ -1,8 +1,10 @@
 import Assert from "node:assert"
+import { ethers } from "ethers"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import { Constants, ProtocolTiming } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import { EthereumFundingTool } from "../../tools/ethereum/EthereumFundingTool.js"
 import { EthereumSyndicationTool } from "../../tools/ethereum/EthereumSyndicationTool.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaLiqSyndicationTool } from "../../tools/solana/SolanaLiqSyndicationTool.js"
@@ -26,10 +28,12 @@ import type { StepInput } from "../StepRunner.js"
 export namespace MockShadowBackingSteps {
   /** Persisted backer keypair handle, independent of the imported bonder. */
   export const SolanaBackerLabel = "mock-shadow-backer"
-  /** The local deployer's funded anvil slot; never an operator or panic slot. */
-  export const EthereumBackerHdIndex = 0
+  /** Persisted backer wallet handle — a random wallet of its own, never the deployer, an operator or the panic account. */
+  export const EthereumBackerLabel = "mock-shadow-backer"
   /** SOL reserved for transaction fees, stake rent and ATA rent beyond the deposit. */
   export const SolanaFundingMargin = 1_000_000_000n
+  /** Wei reserved for the backer's deposit and donation gas beyond the deposit itself. */
+  export const EthereumFundingMargin = ethers.WeiPerEther
   /** Native liqETH wei per depot base unit (18 minus 9 decimals). */
   export const EthereumWeiPerDepotUnit = 1_000_000_000n
   /** Solana backer and the measured native amount carried between Steps. */
@@ -42,7 +46,8 @@ export namespace MockShadowBackingSteps {
   export interface EthereumBackingInput extends StepInput {
     readonly kind: "MockShadowBackingSteps.EthereumBackingInput"
     readonly amountKey: OutputKey<bigint>
-    readonly ethereumHdIndex: number
+    /** Durable handle of the backer's persisted wallet. */
+    readonly walletName: string
   }
 
   /** Selects one outpost for the read-before-write and final custody checks. */
@@ -113,6 +118,12 @@ export namespace MockShadowBackingSteps {
           "read custody and outstanding before depositing",
           options,
           ChainKind.EVM
+        ),
+        planFundEthereum<C>(
+          Report.Actor.EthereumOutpost,
+          "fund-mock-shadow-backer",
+          "fund the backer's deposit and gas",
+          options
         ),
         planDepositEthereum<C>(
           Report.Actor.EthereumOutpost,
@@ -395,6 +406,63 @@ export namespace MockShadowBackingSteps {
     await step.runner(ctx, step.input, signal)
   }
 
+  /** Plan one FundEthereum write with the amount resolved from the custody reading. */
+  export function planFundEthereum<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, EthereumBackingInput> {
+    return ClusterBuildStep.create<C, EthereumBackingInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "MockShadowBackingSteps.EthereumBackingInput",
+        amountKey: MockShadowBackingEthereumRequiredKey,
+        walletName: EthereumBackerLabel
+      },
+      runFundEthereum
+    )
+  }
+
+  /**
+   * Resolve backing from ctx.outputs, create the backer's wallet (once), then
+   * perform at most one `anvil_setBalance` covering the deposit and its gas —
+   * the Ethereum counterpart of {@link runAirdropSolana}.
+   */
+  export async function runFundEthereum<C extends ClusterBuildContext>(
+    ctx: C,
+    input: EthereumBackingInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const amount = ctx.outputs.assert(input.amountKey)
+    if (amount === 0n) return
+    Assert.ok(amount > 0n, "mock shadow backing must not be negative")
+    const create = EthereumFundingTool.planCreateWallet<C>(
+      Report.Actor.User,
+      "CreateBackerWallet",
+      "mock shadow custody backer",
+      {},
+      input.walletName,
+      "mock shadow backer — ethereum wallet"
+    )
+    await create.runner(ctx, create.input, signal)
+    const fund = EthereumFundingTool.planSetBalance<C>(
+      Report.Actor.User,
+      "FundEthereum",
+      "mock shadow custody backing",
+      {},
+      input.walletName,
+      amount + EthereumFundingMargin
+    )
+    await fund.runner(ctx, fund.input, signal)
+  }
+
   /** Plan one DepositEthereum write with the amount resolved from the custody reading. */
   export function planDepositEthereum<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -412,7 +480,7 @@ export namespace MockShadowBackingSteps {
       {
         kind: "MockShadowBackingSteps.EthereumBackingInput",
         amountKey: MockShadowBackingEthereumRequiredKey,
-        ethereumHdIndex: EthereumBackerHdIndex
+        walletName: EthereumBackerLabel
       },
       runDepositEthereum
     )
@@ -433,7 +501,7 @@ export namespace MockShadowBackingSteps {
       "DepositEthereum",
       "mock shadow custody backing",
       {},
-      input.ethereumHdIndex,
+      input.walletName,
       amount
     )
     await step.runner(ctx, step.input, signal)
@@ -456,7 +524,7 @@ export namespace MockShadowBackingSteps {
       {
         kind: "MockShadowBackingSteps.EthereumBackingInput",
         amountKey: MockShadowBackingEthereumRequiredKey,
-        ethereumHdIndex: EthereumBackerHdIndex
+        walletName: EthereumBackerLabel
       },
       runDonateEthereum
     )
@@ -477,7 +545,7 @@ export namespace MockShadowBackingSteps {
       "DonateEthereum",
       "mock shadow custody backing",
       {},
-      input.ethereumHdIndex,
+      input.walletName,
       amount
     )
     await step.runner(ctx, step.input, signal)

@@ -54,6 +54,7 @@ import { LiqsolPdaSeed } from "../../tools/solana/LiqsolPdaSeed.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaLiqSyndicationTool } from "../../tools/solana/SolanaLiqSyndicationTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
+import { solanaSignerFromKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -769,7 +770,7 @@ export namespace SolanaLiqsolSurfaceSteps {
       deployer,
       program: SolanaOutpostProgramTool.loadProgram(
         ctx.solana.connection,
-        deployer,
+        solanaSignerFromKeypair(deployer),
         ctx.config.solanaPath
       ),
       pdas: surfaceAccounts(ctx.config.solanaPath)

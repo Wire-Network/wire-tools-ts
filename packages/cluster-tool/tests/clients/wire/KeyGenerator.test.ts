@@ -2,20 +2,40 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
-import { KeyType, PrivateKey, PublicKey } from "@wireio/sdk-core"
-import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import {
+  SignatureProviderKeyPolicy,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { Constants } from "@wireio/cluster-tool/Constants"
+import {
+  ethereumKeyPairFromKmsPublicKey,
+  ethereumPrivateKeyHex,
+  ethereumSdkPrivateKey,
+  ethereumUncompressedPublicKeyHex,
+  solanaKeyPairFromKmsPublicKey,
+  solanaSdkPrivateKey
+} from "@wireio/cluster-tool/utils"
 
-const K1_OUTPUT =
-  "Private key: PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i\n" +
-  "Public key: PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
+/** `sys-util` console output for a BLS generation — the one backend that still shells out. */
 const BLS_OUTPUT =
   "Private key: PVT_BLS_abc123\n" +
   "Public key: PUB_BLS_def456\n" +
   "Proof of Possession: SIG_BLS_ghi789"
-/** anvil's deterministic mnemonic — HD-derived EM wallets are stable + well-known. */
-const AnvilMnemonic = "test test test test test test test test test test test junk"
+
+/**
+ * A K1 pair a real `clio create key --k1 --to-console` produced. K1 generation
+ * no longer shells out to clio, so this fixture is the PARITY proof: sdk-core's
+ * derivation and its `PVT_K1_` / `PUB_K1_` encoding must reproduce clio's
+ * public key from clio's private key exactly.
+ */
+const ClioK1Fixture = {
+  privateKey: "PVT_K1_26dtEi6dMPNeCZHB7HKbT4BN5f6VYc96VfBD5Nq9jWyRxaTkNv",
+  publicKey: "PUB_K1_88q65cbpw5hfCGFn51XJ1tfwWyWEEuXJXPmS4BFy6Ta4WXWDVF"
+} as const
+
+/** A build dir that holds NO binary — proves a backend touched no process. */
+const BinaryLessBuildPath = "/nonexistent/build"
 
 describe("KeyGenerator", () => {
   let dir: string
@@ -34,20 +54,46 @@ describe("KeyGenerator", () => {
     return file
   }
 
-  /** A Context whose clio/sys-util are fake scripts; EM uses the anvil mnemonic. */
-  function context(k1Stdout: string = K1_OUTPUT, blsStdout: string = BLS_OUTPUT): KeyGenerator.Context {
-    return {
-      clio: fakeBinary("clio", k1Stdout),
-      sysUtil: fakeBinary("sys-util", blsStdout),
-      ethereumMnemonic: ethers.Mnemonic.fromPhrase(AnvilMnemonic)
-    }
+  /** A Context whose sys-util is a fake script — the ONLY tooling the facade needs. */
+  function context(blsStdout: string = BLS_OUTPUT): KeyGenerator.Context {
+    return { sysUtil: fakeBinary("sys-util", blsStdout) }
   }
 
-  it("create(K1) parses clio output into a tagged WireKeyPair", async () => {
-    const keys = await KeyGenerator.create(KeyType.K1, context())
+  it("context(buildPath) names the build's sys-util and NOTHING else — no clio, no mnemonic", () => {
+    const built = KeyGenerator.context("/build")
+    expect(built).toEqual({
+      sysUtil: Path.join("/build", KeyGenerator.SysUtilSubpath)
+    })
+    expect(Object.keys(built)).toEqual(["sysUtil"])
+  })
+
+  it("create(K1) mints a RANDOM tagged WireKeyPair through sdk-core — no process, distinct per call", async () => {
+    const keys = await KeyGenerator.create(
+      KeyType.K1,
+      KeyGenerator.context(BinaryLessBuildPath)
+    )
     expect(keys.type).toBe(KeyType.K1)
     expect(keys.publicKey).toMatch(/^PUB_K1_/)
     expect(keys.privateKey).toMatch(/^PVT_K1_/)
+    // The public half IS the private half's derivation.
+    expect(PrivateKey.from(keys.privateKey).toPublic().toString()).toBe(
+      keys.publicKey
+    )
+    const other = await KeyGenerator.create(
+      KeyType.K1,
+      KeyGenerator.context(BinaryLessBuildPath)
+    )
+    expect(other.privateKey).not.toBe(keys.privateKey)
+    expect(other.publicKey).not.toBe(keys.publicKey)
+  })
+
+  it("derives exactly the public key clio derives from a clio-minted K1 secret (PVT_K1_ / PUB_K1_ parity)", () => {
+    // Pinned against a pair produced by the real `clio create key --k1
+    // --to-console`: the sdk-core backend's secp256k1 derivation and its WIRE
+    // prefixed encodings agree with clio's byte for byte.
+    expect(PrivateKey.from(ClioK1Fixture.privateKey).toPublic().toString()).toBe(
+      ClioK1Fixture.publicKey
+    )
   })
 
   it("create(BLS) parses sys-util output incl. proof of possession", async () => {
@@ -58,39 +104,50 @@ describe("KeyGenerator", () => {
     expect(keys.proofOfPossession).toBe("SIG_BLS_ghi789")
   })
 
+  it("throws a parse error on unrecognized sys-util output", async () => {
+    await expect(
+      KeyGenerator.create(KeyType.BLS, context("no keys here"))
+    ).rejects.toThrow(/Failed to parse BLS private key/)
+  })
+
   it("create(ED) generates a fresh tagged SolanaKeyPair (no external process)", async () => {
-    const keys = await KeyGenerator.create(KeyType.ED, context())
+    const keys = await KeyGenerator.create(
+      KeyType.ED,
+      KeyGenerator.context(BinaryLessBuildPath)
+    )
     expect(keys.type).toBe(KeyType.ED)
     expect(keys.publicKey).toMatch(/^PUB_ED_/)
     expect(keys.privateKey).toMatch(/^PVT_ED_/)
-    const other = await KeyGenerator.create(KeyType.ED, context())
+    const other = await KeyGenerator.create(
+      KeyType.ED,
+      KeyGenerator.context(BinaryLessBuildPath)
+    )
     expect(other.publicKey).not.toBe(keys.publicKey) // fresh each call
   })
 
-  it("create(EM, {ethereumHdIndex}) derives a deterministic EthereumKeyPair (carrying its address)", async () => {
-    const ctx = context()
-    const keys = await KeyGenerator.create(KeyType.EM, ctx, { ethereumHdIndex: 5 })
+  it("create(EM) mints a RANDOM EthereumKeyPair carrying its address — no mnemonic, no index, distinct per call", async () => {
+    const keys = await KeyGenerator.create(
+      KeyType.EM,
+      KeyGenerator.context(BinaryLessBuildPath)
+    )
     expect(keys.type).toBe(KeyType.EM)
     expect(keys.publicKey).toMatch(/^PUB_EM_/)
     expect(keys.privateKey).toMatch(/^PVT_EM_/)
-    expect(keys.address).toMatch(/^0x/)
-    // deterministic for the same HD index; distinct index → distinct key
-    const again = await KeyGenerator.create(KeyType.EM, ctx, { ethereumHdIndex: 5 })
-    expect(again.address).toBe(keys.address)
-    const other = await KeyGenerator.create(KeyType.EM, ctx, { ethereumHdIndex: 6 })
-    expect(other.address).not.toBe(keys.address)
-  })
-
-  it("create(EM) requires an ethereumHdIndex", async () => {
-    await expect(KeyGenerator.create(KeyType.EM, context())).rejects.toThrow(
-      /ethereumHdIndex is required/
+    expect(keys.address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+    // The address IS the stored secret's: the 0x secret the pair stores derives it.
+    expect(ethers.computeAddress(ethereumPrivateKeyHex(keys))).toBe(keys.address)
+    const other = await KeyGenerator.create(
+      KeyType.EM,
+      KeyGenerator.context(BinaryLessBuildPath)
     )
+    expect(other.address).not.toBe(keys.address)
+    expect(other.privateKey).not.toBe(keys.privateKey)
   })
 
-  it("throws a parse error on unrecognized clio output", async () => {
+  it("refuses a curve it has no backend for", async () => {
     await expect(
-      KeyGenerator.create(KeyType.K1, context("no keys here"))
-    ).rejects.toThrow(/Failed to parse K1 private key/)
+      KeyGenerator.create(KeyType.R1, KeyGenerator.context(BinaryLessBuildPath))
+    ).rejects.toThrow(/unsupported key type/)
   })
 
   it("toSignatureProvider formats WIRE (K1/BLS) nodeop specs via one generic entry", () => {
@@ -112,7 +169,7 @@ describe("KeyGenerator", () => {
   })
 
   it("toSignatureProvider formats an EM (ethereum outpost) spec — uncompressed pub + 0x-hex native key", async () => {
-    const ethereum = await KeyGenerator.create(KeyType.EM, context(), { ethereumHdIndex: 1 })
+    const ethereum = await KeyGenerator.create(KeyType.EM, context())
     const spec = KeyGenerator.toSignatureProvider(ethereum, "eth-batchopaaaa")
     const [name, chain, keyTag, publicKey, keyField] = spec.split(",")
     expect(name).toBe("eth-batchopaaaa")
@@ -150,38 +207,6 @@ describe("KeyGenerator", () => {
     expect(KeyGenerator.BiosBLSKey.proofOfPossession).toMatch(/^SIG_BLS_/)
   })
 
-  it("keeps the bios K1 key the launcher's well-known development key, in its legacy spelling", () => {
-    expect(KeyGenerator.BiosK1Key).toEqual({
-      type: KeyType.K1,
-      publicKey: "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV",
-      privateKey: "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"
-    })
-    expect(Constants.DEV_K1_PUBLIC_KEY).toBe(KeyGenerator.BiosK1Key.publicKey)
-    expect(Constants.DEV_K1_PRIVATE_KEY).toBe(KeyGenerator.BiosK1Key.privateKey)
-  })
-
-  it("regenerates the bios keys from their seeds", () => {
-    const k1 = KeyGenerator.createSeeded(KeyType.K1, KeyGenerator.BiosK1KeySeed)
-    expect(PublicKey.from(k1.publicKey).toLegacyString()).toBe(KeyGenerator.BiosK1Key.publicKey)
-    expect(PrivateKey.from(k1.privateKey).toWif()).toBe(KeyGenerator.BiosK1Key.privateKey)
-    expect(KeyGenerator.createSeeded(KeyType.BLS, KeyGenerator.BiosBLSKeySeed)).toEqual(
-      KeyGenerator.BiosBLSKey
-    )
-    expect(Constants.DEV_BLS_PUBLIC_KEY).toBe(KeyGenerator.BiosBLSKey.publicKey)
-    expect(Constants.DEV_BLS_PROOF_OF_POSSESSION).toBe(KeyGenerator.BiosBLSKey.proofOfPossession)
-  })
-
-  it("createSeeded regenerates the same pair for a seed and distinct pairs for distinct seeds", () => {
-    const pair = KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/gova")
-    expect(pair.type).toBe(KeyType.K1)
-    expect(pair.publicKey).toMatch(/^PUB_K1_/)
-    expect(KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/gova")).toEqual(pair)
-    expect(PrivateKey.from(pair.privateKey).toPublic().toString()).toBe(pair.publicKey)
-    expect(
-      KeyGenerator.createSeeded(KeyType.K1, "flow-governance-handoff/govb").publicKey
-    ).not.toBe(pair.publicKey)
-  })
-
   it("toSignatureProvider renders SSM: / KIOD: segments per the provider source", () => {
     const pair = {
       type: KeyType.K1,
@@ -191,7 +216,9 @@ describe("KeyGenerator", () => {
     const ssmSource = KeyGenerator.keySource(
       {
         type: SignatureProviderType.SSM,
-        ssm: { awsSecretIdPattern: "p" }
+        ssm: { awsSecretIdPattern: "p" },
+        kms: null,
+        batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
       },
       "/wire/batchop1/K1",
       "http://kiod"
@@ -204,7 +231,12 @@ describe("KeyGenerator", () => {
       "wire-PUB_K1_p,wire,wire,PUB_K1_p,SSM:/wire/batchop1/K1"
     )
     const kiodSource = KeyGenerator.keySource(
-      { type: SignatureProviderType.KIOD, ssm: null },
+      {
+        type: SignatureProviderType.KIOD,
+        ssm: null,
+        kms: null,
+        batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+      },
       "unused",
       "http://127.0.0.1:8900"
     )
@@ -230,12 +262,15 @@ describe("KeyGenerator", () => {
     // What `ClusterState.loadKeys` rehydrates on an SSM cluster: publicKey +
     // awsSecretId, no key material. `wire-cluster-tool run` must still build
     // every daemon's --signature-provider from it.
-    const ethereum = await KeyGenerator.create(KeyType.EM, context(), {
-        ethereumHdIndex: 2
-      }),
+    const ethereum = await KeyGenerator.create(KeyType.EM, context()),
       solana = await KeyGenerator.create(KeyType.ED, context()),
       ssmSource = KeyGenerator.keySource(
-        { type: SignatureProviderType.SSM, ssm: { awsSecretIdPattern: "p" } },
+        {
+          type: SignatureProviderType.SSM,
+          ssm: { awsSecretIdPattern: "p" },
+          kms: null,
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+        },
         "/wire/test/batchop.a/EM",
         "http://kiod"
       )
@@ -274,18 +309,142 @@ describe("KeyGenerator", () => {
   it("keySource selects the KEY default source for a KEY provider config", () => {
     expect(
       KeyGenerator.keySource(
-        { type: SignatureProviderType.KEY, ssm: null },
+        {
+          type: SignatureProviderType.KEY,
+          ssm: null,
+          kms: null,
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
+        },
         "s",
         "u"
       )
     ).toEqual(KeyGenerator.DefaultKeySource)
   })
+
+  describe("the KMS source (an EM key custodied by AWS KMS)", () => {
+    /** The ONE region a KMS key lives in, and the alias the harness renders. */
+    const KmsRegion = "us-east-1",
+      KmsAliasName = "alias/wire/test/batchop-a/EM",
+      KmsSource: KeyGenerator.SignatureProviderSource = {
+        type: SignatureProviderType.KMS,
+        awsKmsRegion: KmsRegion,
+        awsKmsKeyId: KmsAliasName
+      }
+
+    /** A KMS-custodied EM pair: the public identity + the key reference, NO material. */
+    function kmsPair() {
+      const wallet = ethers.Wallet.createRandom()
+      return ethereumKeyPairFromKmsPublicKey(
+        ethers.getBytes(
+          ethers.SigningKey.computePublicKey(wallet.signingKey.publicKey, true)
+        ),
+        KmsRegion,
+        KmsAliasName
+      )
+    }
+
+    it("renders KMS:<region>:<alias> for an EM pair — the regional form nodeop's parse_kms_spec reads", () => {
+      const pair = kmsPair(),
+        spec = KeyGenerator.toSignatureProvider(pair, "eth-batchopaaaa", KmsSource),
+        [name, chain, keyTag, publicKey, ...keyField] = spec.split(",")
+      expect(name).toBe("eth-batchopaaaa")
+      expect(chain).toBe("ethereum")
+      expect(keyTag).toBe("ethereum")
+      expect(publicKey).toBe(ethereumUncompressedPublicKeyHex(pair))
+      // The segment carries its own colons (region:alias) — rejoined, it is the whole tail.
+      expect(keyField.join(",")).toBe(`KMS:${KmsRegion}:${KmsAliasName}`)
+    })
+
+    it("NEVER evaluates key material for a KMS source — the pair has none to give", () => {
+      // A KMS pair carries no privateKey; the EM material derivation throws on
+      // it, so an eager `keyMaterial()` would crash this render.
+      const pair = kmsPair()
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(() => ethereumSdkPrivateKey(pair)).toThrow(/custodied by AWS KMS/)
+      expect(() =>
+        KeyGenerator.toSignatureProvider(pair, "eth-batchopaaaa", KmsSource)
+      ).not.toThrow()
+    })
+
+    it("renders KMS:<region>:<alias> for an ED pair — <name>,solana,solana,<base58>,KMS:<region>:<alias>, the spec nodeop's Ed25519 KMS provider takes, with NO material read", () => {
+      const solanaAliasName = "alias/wire/test/batchop-a/ED",
+        edPrivate = PrivateKey.generate(KeyType.ED),
+        pair = solanaKeyPairFromKmsPublicKey(
+          edPrivate.toPublic().data.array,
+          KmsRegion,
+          solanaAliasName
+        ),
+        spec = KeyGenerator.toSignatureProvider(pair, "sol-batchopaaaa", {
+          type: SignatureProviderType.KMS,
+          awsKmsRegion: KmsRegion,
+          awsKmsKeyId: solanaAliasName
+        })
+      expect(spec).toBe(
+        `sol-batchopaaaa,solana,solana,${edPrivate.toPublic().toNativeString()},KMS:${KmsRegion}:${solanaAliasName}`
+      )
+      expect(pair).not.toHaveProperty("privateKey")
+      expect(() => solanaSdkPrivateKey(pair)).toThrow(/custodied by AWS KMS/)
+    })
+
+    it("asserts a KMS source carries BOTH its region and its key id", () => {
+      const pair = kmsPair()
+      expect(() =>
+        KeyGenerator.toSignatureProvider(pair, "eth-batchopaaaa", {
+          type: SignatureProviderType.KMS,
+          awsKmsKeyId: KmsAliasName
+        })
+      ).toThrow(/a KMS source requires awsKmsRegion \+ awsKmsKeyId/)
+      expect(() =>
+        KeyGenerator.toSignatureProvider(pair, "eth-batchopaaaa", {
+          type: SignatureProviderType.KMS,
+          awsKmsRegion: KmsRegion
+        })
+      ).toThrow(/a KMS source requires awsKmsRegion \+ awsKmsKeyId/)
+    })
+  })
+
+  describe("a tooling-less context (a cluster-less key command has no wire-sysio build)", () => {
+    it("context() with no build path names NO sys-util", () => {
+      const built = KeyGenerator.context()
+      expect(built).toEqual({})
+      expect(built.sysUtil).toBeUndefined()
+    })
+
+    it("still generates K1 / ED / EM — those backends need no binary", async () => {
+      const context = KeyGenerator.context()
+      expect((await KeyGenerator.create(KeyType.K1, context)).type).toBe(KeyType.K1)
+      expect((await KeyGenerator.create(KeyType.ED, context)).type).toBe(KeyType.ED)
+      expect((await KeyGenerator.create(KeyType.EM, context)).address).toMatch(
+        /^0x[0-9a-fA-F]{40}$/
+      )
+    })
+
+    it("refuses a BLS generation, naming sys-util as the missing tooling", async () => {
+      await expect(
+        KeyGenerator.create(KeyType.BLS, KeyGenerator.context())
+      ).rejects.toThrow(
+        /BLS generation requires the sys-util binary — build the context from a wire-sysio build path/
+      )
+    })
+  })
 })
 
 describe("keygen extra records", () => {
+  let dir: string
+  beforeAll(() => {
+    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "keygen-extra-"))
+    Fs.mkdirSync(Path.join(dir, "bin"), { recursive: true })
+    const sysUtil = Path.join(dir, KeyGenerator.SysUtilSubpath)
+    Fs.writeFileSync(sysUtil, `#!/bin/sh\ncat <<'KEYEOF'\n${BLS_OUTPUT}\nKEYEOF\n`)
+    Fs.chmodSync(sysUtil, 0o755)
+  })
+  afterAll(() => {
+    Fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it("create(ED) records the keygen IDENTITY — public half only, never the secret", async () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
-    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
+    const context = KeyGenerator.context(BinaryLessBuildPath)
     const recorder = new StepExtraRecorder()
     const pair = await StepExtraRecorder.runWith(recorder, () =>
       KeyGenerator.create(KeyType.ED, context, { purpose: "operator x — solana key" })
@@ -302,32 +461,90 @@ describe("keygen extra records", () => {
     ])
   })
 
-  it("NEVER lands a private key in a keygen extra record, for any curve", async () => {
+  it("create(K1) records the sdk-core keygen — the backend that replaced clio", async () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
-    const { findKeyMaterial } = await import("@wireio/cluster-tool-shared")
-    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
     const recorder = new StepExtraRecorder()
     const pair = await StepExtraRecorder.runWith(recorder, () =>
-      KeyGenerator.create(KeyType.ED, context, { purpose: "leak guard" })
+      KeyGenerator.create(KeyType.K1, KeyGenerator.context(BinaryLessBuildPath), {
+        purpose: "operator x — wire key"
+      })
     )
-    // The recorder's payload is what the Report renderers serialize verbatim
-    // into cluster-build.{csv,md,html} — a real run's reports were VERIFIED to
-    // carry 15 PVT_ keys before this was fixed. Assert against the ONE shared
-    // pattern set so a new secret encoding is caught here too.
-    const serialized = JSON.stringify(recorder.calls)
-    expect(serialized).not.toContain(pair.privateKey)
-    expect(findKeyMaterial(serialized)).toEqual([])
+    expect(recorder.calls).toEqual([
+      {
+        client: "sdk-core",
+        kind: "keygen",
+        keyType: "K1",
+        purpose: "operator x — wire key",
+        type: KeyType.K1,
+        publicKey: pair.publicKey
+      }
+    ])
   })
 
-  it("create(EM) records the ethers derivation path", async () => {
+  it("create(EM) records the ethers keygen with the address — no derivation path, since nothing is derived", async () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
-    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
     const recorder = new StepExtraRecorder()
-    await StepExtraRecorder.runWith(recorder, () =>
-      KeyGenerator.create(KeyType.EM, context, { ethereumHdIndex: 3 })
+    const pair = await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.EM, KeyGenerator.context(BinaryLessBuildPath))
     )
-    expect(recorder.calls[0].client).toBe("ethers")
-    expect(recorder.calls[0].derivation).toBe(`${KeyGenerator.EthereumDerivationPath}3`)
-    expect(recorder.calls[0].purpose).toBeNull()
+    expect(recorder.calls).toEqual([
+      {
+        client: "ethers",
+        kind: "keygen",
+        keyType: "EM",
+        purpose: null,
+        type: KeyType.EM,
+        publicKey: pair.publicKey,
+        address: pair.address
+      }
+    ])
+    expect(recorder.calls[0]).not.toHaveProperty("derivation")
   })
+
+  it("create(BLS) records the exact sys-util command line and the proof of possession", async () => {
+    const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
+    const context = KeyGenerator.context(dir),
+      recorder = new StepExtraRecorder()
+    const pair = await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.BLS, context, { purpose: "node_00 — finalizer" })
+    )
+    expect(recorder.calls).toEqual([
+      {
+        client: "sys-util",
+        kind: "keygen",
+        command: [context.sysUtil, ...KeyGenerator.BLSCreateCommand],
+        keyType: "BLS",
+        purpose: "node_00 — finalizer",
+        type: KeyType.BLS,
+        publicKey: pair.publicKey,
+        proofOfPossession: pair.proofOfPossession
+      }
+    ])
+  })
+
+  it.each([
+    ["K1", KeyType.K1],
+    ["ED", KeyType.ED],
+    ["EM", KeyType.EM],
+    ["BLS", KeyType.BLS]
+  ])(
+    "NEVER lands a private key in a keygen extra record (%s)",
+    async (_curve, keyType) => {
+      const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
+      const { findKeyMaterial } = await import("@wireio/cluster-tool-shared")
+      const recorder = new StepExtraRecorder()
+      const pair = await StepExtraRecorder.runWith(recorder, () =>
+        KeyGenerator.create(keyType, KeyGenerator.context(dir), {
+          purpose: "leak guard"
+        })
+      )
+      // The recorder's payload is what the Report renderers serialize verbatim
+      // into cluster-build.{csv,md,html} — a real run's reports were VERIFIED to
+      // carry 15 PVT_ keys before this was fixed. Assert against the ONE shared
+      // pattern set so a new secret encoding is caught here too.
+      const serialized = JSON.stringify(recorder.calls)
+      expect(serialized).not.toContain(pair.privateKey)
+      expect(findKeyMaterial(serialized)).toEqual([])
+    }
+  )
 })

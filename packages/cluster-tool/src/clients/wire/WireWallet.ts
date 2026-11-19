@@ -1,12 +1,17 @@
+import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { flatten } from "lodash"
 import { asOption } from "@3fv/prelude-ts"
+import { KeyType } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
+import type { WireKeyPair } from "../../types/KeyPair.js"
 import { eachSeries } from "../../utils/asyncUtils.js"
+import { keyPairFromPrivate } from "../../utils/keyPairUtils.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClioRunner, type ClioError } from "./clio/ClioRunner.js"
+import { KeyGenerator } from "./KeyGenerator.js"
 
 const log = getLogger("WireWallet")
 
@@ -139,6 +144,16 @@ export class WireWallet {
   }
 }
 
+/**
+ * The kiod wallet's constants and error helpers, plus the harness's PERSISTED
+ * per-cluster WIRE keys by durable handle — the K1 counterpart of
+ * `EthereumWallet.saveWallet` / `loadKeyPair` and
+ * `SolanaFundingTool.createKeypair` / `loadKeypair`. A WIRE identity the
+ * harness must hold BEFORE a cluster exists (a pre-created batch operator's
+ * account key, which the bootstrap then adopts) is a freshly random pair
+ * written once under its handle and read back verbatim by every later
+ * consumer: reproducible from its own stored secret and from nothing else.
+ */
 export namespace WireWallet {
   export const DefaultName = "default"
   export const Subpath = "wallet"
@@ -147,6 +162,122 @@ export namespace WireWallet {
   export const PasswordPattern = /"(PW[A-Za-z0-9]+)"/
   /** Benign "wallet already open" signatures across clio/kiod versions. */
   export const AlreadyOpenPattern = /Already|already open|cannot open/
+  /** Filename prefix of a persisted per-cluster WIRE key. */
+  export const KeyFilePrefix = "wire-"
+  /** Filename suffix of a persisted per-cluster WIRE key. */
+  export const KeyFileSuffix = "-key.json"
+  /** File mode of a persisted key: owner read/write only. */
+  export const KeyFileMode = 0o600
+
+  /**
+   * Absolute path to a per-cluster WIRE key file (`<dataPath>/wire-<name>-key.json`).
+   * Every consumer resolves the path through this function so they load the SAME
+   * key for a given handle.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle (an operator's label).
+   * @returns Absolute path to the key JSON file.
+   */
+  export function keyFile(dataPath: string, name: string): string {
+    return Path.join(dataPath, `${KeyFilePrefix}${name}${KeyFileSuffix}`)
+  }
+
+  /**
+   * Whether a per-cluster WIRE key has been persisted under `name`.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle.
+   * @returns `true` when the key file exists.
+   */
+  export function hasKey(dataPath: string, name: string): boolean {
+    return Fs.existsSync(keyFile(dataPath, name))
+  }
+
+  /**
+   * Persist a freshly generated WIRE key under `name` (owner-only mode). The pair
+   * comes from `KeyGenerator.create(KeyType.K1, …)` — the one generation facade —
+   * never from an inline derivation; this only stores it. Refuses to replace a key
+   * already persisted under the handle, so an identity never silently changes
+   * under a consumer that loaded it earlier.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle.
+   * @param keyPair - The generated pair to persist.
+   * @returns The persisted pair, read back through {@link loadKeyPair}.
+   * @throws If a key already exists under `name`.
+   */
+  export function saveKey(
+    dataPath: string,
+    name: string,
+    keyPair: WireKeyPair
+  ): WireKeyPair {
+    const file = keyFile(dataPath, name)
+    Assert.ok(
+      !Fs.existsSync(file),
+      `WireWallet: WIRE key "${name}" already exists at ${file}`
+    )
+    mkdirs(Path.dirname(file))
+    Fs.writeFileSync(file, JSON.stringify(keyPair), {
+      mode: KeyFileMode,
+      flag: "wx"
+    })
+    return loadKeyPair(dataPath, name)
+  }
+
+  /**
+   * Get-or-create a persisted WIRE key under its handle: a random K1 pair from
+   * the `KeyGenerator` facade, persisted once ({@link saveKey}); a handle
+   * already holding a key is read back verbatim, so a re-run keeps the
+   * identity. The ONE get-or-create every persisted WIRE key site uses — the
+   * K1 counterpart of `EthereumFundingTool.createWallet`.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle.
+   * @param keyContext - The key-generation tooling.
+   * @param purpose - What the key is for (lands in the keygen record).
+   * @returns The persisted pair.
+   */
+  export async function createKey(
+    dataPath: string,
+    name: string,
+    keyContext: KeyGenerator.Context,
+    purpose: string
+  ): Promise<WireKeyPair> {
+    return hasKey(dataPath, name)
+      ? loadKeyPair(dataPath, name)
+      : saveKey(
+          dataPath,
+          name,
+          await KeyGenerator.create(KeyType.K1, keyContext, { purpose })
+        )
+  }
+
+  /**
+   * Load a persisted per-cluster WIRE key by handle as its stored key pair,
+   * re-deriving the public half from the secret so a tampered or truncated file
+   * is refused rather than trusted.
+   *
+   * @param dataPath - The cluster data directory.
+   * @param name - The key's durable handle.
+   * @returns The stored key pair.
+   * @throws If the key has not been created yet, or its halves disagree.
+   */
+  export function loadKeyPair(dataPath: string, name: string): WireKeyPair {
+    const file = keyFile(dataPath, name)
+    Assert.ok(
+      Fs.existsSync(file),
+      `WireWallet: WIRE key "${name}" not found at ${file}`
+    )
+    const saved = JSON.parse(Fs.readFileSync(file, "utf8")) as WireKeyPair,
+      // A `PVT_K1_…` string IS the curve's native form, so it parses as-is.
+      keyPair = keyPairFromPrivate(KeyType.K1, saved.privateKey)
+    Assert.strictEqual(
+      keyPair.publicKey,
+      saved.publicKey,
+      `WireWallet: WIRE key "${name}" public key does not match its secret`
+    )
+    return keyPair
+  }
 
   /** A clio error's message (`message ?? stderr ?? ""`) — every catch reads it through here. */
   export function errorMessage(error: unknown): string {

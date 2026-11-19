@@ -44,26 +44,23 @@ export namespace GovernanceHandoffScenarioConstants {
    * this flow's scope. Four members make a threshold of three.
    */
   export const CouncilMembers = ["cnla", "cnlb", "cnlc", "cnld"] as const
+  /** Every identity the flow controls: each holds a WIRE key of its own, none of them the bootstrap key. */
+  export const Identities = [...NodeOwners, ...CouncilMembers] as const
 
-  /** The prefix of every flow identity's development-key seed. */
-  export const KeySeedPrefix = "flow-governance-handoff/"
+  /** The prefix of every flow identity's durable handle. */
+  export const IdentityHandlePrefix = "governance-handoff-"
 
   /**
-   * The development-key seed of a flow identity.
+   * The durable handle of a flow identity: its random WIRE key, and an initial
+   * owner's depositor wallet, are persisted under it in the cluster data
+   * directory.
    *
    * @param account - The identity's account.
-   * @returns The seed its K1 key regenerates from.
+   * @returns The handle.
    */
-  export function keySeed(account: string): string {
-    return `${KeySeedPrefix}${account}`
+  export function identityHandle(account: string): string {
+    return `${IdentityHandlePrefix}${account}`
   }
-
-  /**
-   * Anvil-mnemonic HD index of the first initial owner's depositor EM key; each
-   * further owner takes the next index. Past every bootstrap and
-   * flow-node-owner-nft slot.
-   */
-  export const FirstDepositorEthereumHdIndex = 60
 
   /** ERC-1155 units the late owner mints and commits (the contract charges `1 ether` per unit). */
   export const LateOwnerMintAmount = 1

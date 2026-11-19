@@ -1,11 +1,11 @@
 import Assert from "node:assert"
-import { Asset, PrivateKey, SysioContracts } from "@wireio/sdk-core"
+import { Asset, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
-import { Wallet } from "ethers"
 import {
   assetUnits,
   AuthExLinkTool,
   ClusterBuildStep,
+  ethereumSigner,
   Steps,
   WireClient,
   WireCollateralTool,
@@ -50,14 +50,12 @@ export namespace ProducerCollateralSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const privateKey = PrivateKey.from(
-      Steps.registry.readMockSyndicationBonder(ctx).ethereum.privateKey
-    )
+    const bonder = Steps.registry.readMockSyndicationBonder(ctx)
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: ChainKind.EVM,
       account: Constants.FundingAccount,
-      privateKey,
-      ethereumWallet: new Wallet(privateKey.toNativeString())
+      publicKey: bonder.ethereum.publicKey,
+      signer: await ethereumSigner(bonder.ethereum)
     })
   }
 

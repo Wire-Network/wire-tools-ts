@@ -9,6 +9,7 @@ import {
   type SignatureProviderConfigOf,
   type SignatureProviderKEYConfig,
   type SignatureProviderKIODConfig,
+  type SignatureProviderKMSConfig,
   type SignatureProviderSSMConfig
 } from "@wireio/cluster-tool-shared"
 import type {
@@ -24,13 +25,13 @@ const log = getLogger(__filename)
 /**
  * The behavior half of {@link SignatureProviderConfig} — resolves a provider
  * config into a hydrated signing key (for `KEY` / `SSM`) or a material-less
- * marker (for `KIOD`). ONE generic facade ({@link SignatureProviderConfigProvider.resolve})
+ * marker (for `KIOD` / `KMS`). ONE generic facade ({@link SignatureProviderConfigProvider.resolve})
  * dispatches by {@link SignatureProviderType} to the private per-provider
  * backends, mirroring `provider_spec_result` from the C++
  * `signature_provider_manager_plugin`: raw-material consumers accept `KEY` /
- * `SSM` resolutions only, and the resolution TYPE omits `keyPair` for `KIOD`, so
- * consuming a `KIOD` resolution where key material is required fails at the type
- * boundary.
+ * `SSM` resolutions only, and the resolution TYPE omits `keyPair` for `KIOD`
+ * and `KMS`, so consuming such a resolution where key material is required
+ * fails at the type boundary.
  */
 export namespace SignatureProviderConfigProvider {
   /** The hydrated signing key a `KEY` / `SSM` resolution carries. */
@@ -42,8 +43,8 @@ export namespace SignatureProviderConfigProvider {
   /**
    * A resolved signature provider: the provider config PLUS a hydrated
    * {@link KeyPair} for the material-bearing providers (`KEY` / `SSM`). `KIOD`
-   * resolutions carry no key pair — the private key lives in the kiod wallet the
-   * consumer binds to.
+   * and `KMS` resolutions carry no key pair — the private key lives in the kiod
+   * wallet the consumer binds to, or inside AWS KMS, which it never leaves.
    */
   export type SignatureProviderResolution<
     T extends SignatureProviderType = SignatureProviderType,
@@ -72,6 +73,7 @@ export namespace SignatureProviderConfigProvider {
       .with({ providerType: SignatureProviderType.KIOD }, cfg =>
         resolveKIOD(cfg)
       )
+      .with({ providerType: SignatureProviderType.KMS }, cfg => resolveKMS(cfg))
       .exhaustive()
     return resolution as SignatureProviderResolution<T, K>
   }
@@ -133,6 +135,18 @@ export namespace SignatureProviderConfigProvider {
   async function resolveKIOD(
     config: SignatureProviderKIODConfig
   ): Promise<SignatureProviderKIODConfig> {
+    return config
+  }
+
+  /**
+   * `KMS` — material-less: the secret lives inside AWS KMS and every signature
+   * is a remote `KMS::Sign` (nodeop's `signature_provider_kms_plugin`;
+   * `keyPairUtils.ethereumSigner` in-process), so there is nothing to hydrate
+   * and the pinned public key is what the daemon spec renders.
+   */
+  async function resolveKMS(
+    config: SignatureProviderKMSConfig
+  ): Promise<SignatureProviderKMSConfig> {
     return config
   }
 
@@ -210,7 +224,7 @@ export namespace SignatureProviderConfigProvider {
    *
    * The exemption is a POLICY choice, not a capability gap — TS-side BLS
    * public-key derivation does exist (`PrivateKey.toPublic()` handles BLS, as
-   * `KeyGenerator.BiosBLSKey` and `keyPairUtils.keyPairFromPrivate` both
+   * `Constants.DefaultBLSKeyPair` and `keyPairUtils.keyPairFromPrivate` both
    * rely on). An earlier revision of this comment claimed otherwise; it was
    * wrong.
    */

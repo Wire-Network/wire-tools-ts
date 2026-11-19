@@ -32,8 +32,13 @@ export const GetClusterConfigRequestSchema = z.object({})
 export const GetClusterConfigRequestSchemaCodec =
   SchemaCodec.create<GetClusterConfigRequest>(GetClusterConfigRequestSchema)
 
-/** Codec for the `Cluster.GetConfig` response body (= the shared `ClusterConfig`). */
-export const GetClusterConfigResponseSchemaCodec =
+/**
+ * Codec for the `Cluster.GetConfig` response body (= the shared `ClusterConfig`).
+ * Annotated explicitly: `ClusterConfig` carries sdk-core's `KeyType` (the KMS
+ * `keyTypes` roster), which this package cannot name in an emitted declaration
+ * without the annotation.
+ */
+export const GetClusterConfigResponseSchemaCodec: SchemaCodec<GetClusterConfigResponse> =
   SchemaCodec.create<GetClusterConfigResponse>(ClusterConfigSchema)
 
 /** Schema for {@link GetClusterStateRequest} (empty body). */

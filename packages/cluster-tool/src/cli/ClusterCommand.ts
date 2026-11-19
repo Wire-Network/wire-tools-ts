@@ -28,5 +28,20 @@ export enum ClusterCommand {
    * `ClusterCommand["create-api-node"]` (the hyphen is not a valid identifier),
    * value === key like every other member.
    */
-  "create-api-node" = "create-api-node"
+  "create-api-node" = "create-api-node",
+  /**
+   * Pre-create (adopt-or-create + publish) the batch operators' signing keys in
+   * a cluster's AWS custody store — SSM parameters and KMS keys — ahead of the
+   * cluster, so they can be pre-funded on the outposts before launch. Quoted
+   * member like the two above; value === key.
+   */
+  "create-batch-operator-keys" = "create-batch-operator-keys",
+  /**
+   * Fund the pre-created batch operators on both deployed outposts — adopt
+   * their keys (adopt-only), check each balance covers stake + reserve, and
+   * stake the configured amount so the launch snapshot carries their
+   * positions. Cluster-less like `create-batch-operator-keys`. Quoted member;
+   * value === key.
+   */
+  "fund-batch-operators" = "fund-batch-operators"
 }

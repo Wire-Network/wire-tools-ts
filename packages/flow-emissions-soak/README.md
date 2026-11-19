@@ -36,15 +36,21 @@ Same as the other flow packages — see the repo-root README for the
 ## Test data
 
 This flow does **not** consume committed fixtures or the Wire Foundation
-index. Each run synthesizes an indexer dump in-test (`tests/syntheticDump.ts`)
-that matches the shape returned by:
+index. Each run synthesizes an indexer dump in-flow
+(`src/EmissionsSoakScenarioSyntheticDump.ts`) that matches the shape returned
+by:
 
 - `https://index.wire.foundation/opp/balances` (ETH)
 - `https://index.wire.foundation/opp/solana/balances` (SOL)
 
 The synthetic dump includes:
-- Controlled ETH stakers (test holds the wallets) — drives the
-  `importseed → createlink (inline linkswept) → claim` path end-to-end.
+- Controlled ETH stakers (the flow holds the wallets) — drives the
+  `importseed → createlink (inline linkswept) → claim` path end-to-end. Each
+  wallet is RANDOM: the scenario's pre-bootstrap stage (`prepare`) generates it
+  through the `KeyGenerator` facade and persists it under a durable handle
+  (`<cluster>/data/eth-controlled-staker-<n>-wallet.json`); the dump names its
+  address, and the link step reads the wallet back by that handle. Nothing
+  derives from a mnemonic, a seed or an index.
 - Bulk purchasers + stakers with overlapping addresses and partial
   `yieldClaimed` rows — exercises the dedup + netting paths in
   `convertImportSeed`.
@@ -52,8 +58,10 @@ The synthetic dump includes:
   batches. (No SVM link/claim today; outpost-side reward emission is on
   a separate track.)
 
-Generation is deterministic given `SYNTHETIC_SEED` (default `1`). Bump
-the seed via env to surface non-deterministic bugs across runs.
+Bulk-row generation (the throwaway addresses and every amount) is
+deterministic given `SYNTHETIC_SEED` (default `1`); only the controlled
+stakers' wallets are random. Bump the seed via env to surface
+non-deterministic bugs across runs.
 
 ## Running
 
@@ -91,11 +99,8 @@ SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-so
 
 ## Status
 
-**Scaffold only.** The bootstrap wiring (`ClusterManager.ts` Phase 15b/c)
-is in place; the seed + sample-claim test bodies are stubbed as `it.todo`
-pending the regen of `@wireio/sdk-core` types against the
-post-PR-354 wire-sysio ABIs (`sysio.system::setemitcfg`,
-`sysio.dclaim::*`).
-
-The `convertImportSeed` helper has full unit-test coverage in this file
-that runs independently of the cluster.
+Every phase (`ConfigureEmissions` → `GenerateAndImport` → `SetupClaimers` →
+`StabilityLoop` → `Claim`) runs as Report Steps: one write per `importseed`
+batch, one per claimer account, link and claim. The `convertImportSeed`
+helper is covered by `@wireio/cluster-tool`'s unit tests
+(`tests/tools/wire/WireDclaimSeedTool.test.ts`), independently of a cluster.

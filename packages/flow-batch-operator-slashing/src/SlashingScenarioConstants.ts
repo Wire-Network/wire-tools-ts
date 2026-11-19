@@ -97,7 +97,6 @@ export namespace SlashingScenarioConstants {
     Tier1AbstainerName
   ] as const
 
-
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
   /** The operators delivering the non-canonical checksums (slashed). */
@@ -105,8 +104,6 @@ export namespace SlashingScenarioConstants {
     DisputeOperators[1],
     DisputeOperators[2]
   ] as const
-  /** HD slots for the dispute operators' ETH wallets — past every bootstrapped operator slot. */
-  export const DisputeOperatorEthereumHdBase = 35
 
   /** Distinct payload tags → distinct envelope checksums (no majority). */
   export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const

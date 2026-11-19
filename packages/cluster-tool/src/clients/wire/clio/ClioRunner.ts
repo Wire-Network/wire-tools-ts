@@ -232,12 +232,16 @@ export namespace ClioRunner {
   /** The chain error code clio prints for a failed command (`Error 3050003: …`). */
   export const ChainErrorCodePattern = /Error (3\d{6}):/
 
-  /** Lower bound of the chain exception family accepted as rejection evidence. */
-  const ChainErrorCodeMinimum = 3_000_000
+  /**
+   * Lower bound of the chain exception family accepted as rejection evidence — shared with
+   * `WireClient.isSignerPushProvenUnapplied`, which judges an sdk-core `APIError`'s code by the
+   * same family.
+   */
+  export const ChainErrorCodeMinimum = 3_000_000
   /** Upper bound of the chain exception family accepted as rejection evidence. */
-  const ChainErrorCodeMaximum = 3_999_999
-  /** clio's text-mode prefix, used to apply the same HTTP exclusion to JSON codes. */
-  const ChainErrorCodePrefix = "Error "
+  export const ChainErrorCodeMaximum = 3_999_999
+  /** clio's text-mode prefix, used to apply the same HTTP exclusion to JSON (and sdk-core) codes. */
+  export const ChainErrorCodePrefix = "Error "
   /** JSON-looking stdout must never be scanned as text-mode rejection evidence. */
   const JsonResponsePrefixPattern = /^\s*[[{]/
 

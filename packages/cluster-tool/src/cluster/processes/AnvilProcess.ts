@@ -190,12 +190,9 @@ export namespace AnvilProcess {
       String(config.port),
       "--chain-id",
       String(config.chainId),
-      // The WIRE anvil is ALWAYS the outpost deploy target: the deployer
-      // (HD index 0) + operator HD accounts must all be pre-funded.
-      "--accounts",
-      String(AnvilProcess.AccountCount),
-      "--balance",
-      String(AnvilProcess.BalancePerAccountEther),
+      // No `--accounts` / `--balance`: nothing the harness runs draws from an
+      // anvil genesis account. Every local actor — the deployer included — is a
+      // random wallet funded through `anvil_setBalance` (`EthereumClient.setBalance`).
       // Mainnet gas parity: pin the EVM revision, enforce EIP-7825's per-tx gas
       // cap, and size the block gas limit — so a transaction mainnet would
       // reject is rejected here too, instead of passing only on the local node.
@@ -254,10 +251,6 @@ export namespace AnvilProcess {
    * direction.
    */
   export const BlockGasLimit = 60_000_000
-  /** `--accounts` — deployer (HD 0) + operator HD accounts must all be pre-funded. */
-  export const AccountCount = 50
-  /** `--balance` (ether) per pre-funded account. */
-  export const BalancePerAccountEther = 100_000
   /** Subpath (under the cluster data dir) for the anvil dumped-state file. */
   export const StateSubpath = "anvil"
   /** Anvil dumped-state filename (loaded on restart, dumped on stop). */

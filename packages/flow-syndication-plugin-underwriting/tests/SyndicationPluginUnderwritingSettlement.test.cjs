@@ -97,6 +97,7 @@ test("after setup the flow pushes no underwriter action and provisions no bonder
     writes = after.map(step => step.input?.kind).filter(kind => kind != null)
   Assert.ok(configured > 0)
   // The only writes after setup are the users' own: three syndications and one createlink,
+  // the Ethereum user's account, wallet, funding, link, deposit, approval and syndication,
   // then the shared restoration of the pair rules. The typed parked-credit verifies are the
   // only other Steps with an input, and they read only.
   Assert.deepEqual(
@@ -107,6 +108,8 @@ test("after setup the flow pushes no underwriter action and provisions no bonder
       "SolanaLiqSyndicationTool.SyndInput",
       "SyndicationUserSteps.LinkSolanaKeyInput",
       "AccountSteps.CreateKeyedInput",
+      "EthereumFundingTool.CreateWalletInput",
+      "EthereumFundingTool.SetBalanceInput",
       "SyndicationUserSteps.LinkEthereumKeyInput",
       "EthereumSyndicationTool.DepositLiqEthInput",
       "EthereumSyndicationTool.ApproveLiqEthInput",

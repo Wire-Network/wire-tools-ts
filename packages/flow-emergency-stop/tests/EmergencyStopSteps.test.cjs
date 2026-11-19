@@ -1,7 +1,6 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const { Wallet, Interface, makeError } = require("ethers")
-const { KeyType } = require("@wireio/sdk-core")
 const {
   AuthExLinkTool,
   EthereumSyndicationTool,
@@ -10,7 +9,7 @@ const {
   SolanaLiqSyndicationTool,
   Steps,
   SyndicationScenario,
-  privateKeyFromNativeString
+  ethereumKeyPairFromWallet
 } = require("@wireio/cluster-tool")
 const { EmergencyStopSteps } = require("../lib/steps/EmergencyStopSteps.js")
 const {
@@ -71,17 +70,16 @@ test("expected refusal is accepted, unexpected refusal and success are rejected"
   )
 })
 
-test("Ethereum link carries an EVM wallet matching the imported key", async () => {
+test("Ethereum link carries the imported public key and a signer for it", async () => {
   const wallet = Wallet.createRandom(),
-    privateKey = privateKeyFromNativeString(KeyType.EM, wallet.privateKey)
-  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({
-    ethereum: { privateKey: privateKey.toString() }
-  }))
+    ethereum = ethereumKeyPairFromWallet(wallet)
+  mock.method(Steps.registry, "readMockSyndicationBonder", () => ({ ethereum }))
   const stub = mock.method(
     AuthExLinkTool,
     "createLink",
     async (_wire, input) => {
-      Assert.equal(input.ethereumWallet.address, wallet.address)
+      Assert.equal(input.publicKey, ethereum.publicKey)
+      Assert.equal(await input.signer.getAddress(), wallet.address)
       Assert.equal(input.account, SyndicationScenario.Bonder)
     }
   )
@@ -658,7 +656,7 @@ test("Ethereum recovery funds before the final custody measurement and propagate
   const Fixture = require("../lib/ethereumCustodyFixture.js")
   const quote = mock.method(Fixture, "readEthereumCustodyFixture", async () => ({ recredit: 10_000_001n }))
   const deposit = mock.method(EthereumSyndicationTool, "runDepositLiqEth", async (_ctx, input) => {
-    Assert.equal(input.ethereumHdIndex, Constants.EthereumDonor)
+    Assert.equal(input.walletName, Constants.EthereumDonorWalletName)
     Assert.equal(input.amountWei, 2_020_000_002_000_000_000n)
   })
   await run(Action.fundEthereumRecovery)

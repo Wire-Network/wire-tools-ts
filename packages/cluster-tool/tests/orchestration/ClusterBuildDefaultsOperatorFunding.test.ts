@@ -5,12 +5,18 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
-import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
+import type { ClusterBuildOptions } from "@wireio/cluster-tool/config"
 import {
+  ClusterBuildDefaults,
+  type StepInput
+} from "@wireio/cluster-tool/orchestration"
+import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
+import {
+  fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-import { collectStepNames } from "./clusterBuildFixture.js"
+import { collectStepNames, findPhase } from "./clusterBuildFixture.js"
 
 const mockSend = jest.fn()
 // An SSM cluster ADOPTS its genesis keys during config resolution, so even a
@@ -42,6 +48,10 @@ const SecureStringType = "SecureString"
 
 /** Steps that fund an operator's ETH wallet, by the factory's name suffix. */
 const EthereumFundingStepSuffix = "-fund-ethereum"
+/** Steps that airdrop an operator's SOL keypair, by the factory's name suffix. */
+const SolanaAirdropStepSuffix = "-airdrop-solana"
+/** The provisioning phase of one bootstrapped operator. */
+const provisionPhaseName = (label: string) => `Provision ${label}`
 
 /** The deterministic dev private key, chain-native, for the curve `secretId` names. */
 function publishedKey(secretId: string): string {
@@ -53,7 +63,7 @@ function publishedKey(secretId: string): string {
   ).toNativeString()
 }
 
-describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () => {
+describe("ClusterBuildDefaults — bootstrapped operator fee funding on BOTH outposts", () => {
   let environment: ResolveEnvironment
 
   beforeEach(() => {
@@ -84,7 +94,7 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
     }
   }
 
-  function ssmOptions() {
+  function ssmOptions(): ClusterBuildOptions {
     return {
       ...baseOptions(),
       signatureProvider: {
@@ -94,44 +104,86 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
       awsClusterNodeConfig: {
         account: AWSAccountName.dev,
         regions: ["us-east-1"],
-        ssm: null
+        ssm: null,
+        kms: null
       }
     }
   }
 
   const fundingSteps = (names: string[]) =>
     names.filter(name => name.endsWith(EthereumFundingStepSuffix))
+  const solanaAirdrops = (names: string[]) =>
+    names.filter(name => name.endsWith(SolanaAirdropStepSuffix))
 
-  it("funds every bootstrapped operator's ETH wallet under SSM", async () => {
-    const cluster = await ClusterBuildDefaults.create(ssmOptions())
-    const funded = fundingSteps(collectStepNames(cluster.children))
-    // Under SSM the operator EM keys come off a GENERATED mnemonic anvil never
-    // funded, so an unfunded wallet cannot pay gas for its outbound deliveries
-    // and the ETH outpost's envelope is never written (epoch stalls at 1).
-    expect(funded.length).toBeGreaterThan(0)
-    expect(funded).toContain(
-      `${Constants.batchOperatorLabel(0)}${EthereumFundingStepSuffix}`
-    )
+  it.each([
+    ["KEY", () => baseOptions()],
+    ["SSM", () => ssmOptions()]
+  ])(
+    "funds EVERY bootstrapped batch operator's ETH wallet under %s — each EM key is random and starts at zero on the run anvil",
+    async (_provider, options) => {
+      const cluster = await ClusterBuildDefaults.create(options()),
+        labels = Constants.batchOperatorLabels(
+          cluster.context.config.batchOperatorCount
+        )
+      expect(labels.length).toBeGreaterThan(0)
+      expect(fundingSteps(collectStepNames(cluster.children))).toEqual(
+        labels.map(label => `${label}${EthereumFundingStepSuffix}`)
+      )
+    }
+  )
+
+  it("funds each operator the SAME positive fee-payer amount, after its account exists and before its links", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      labels = Constants.batchOperatorLabels(
+        cluster.context.config.batchOperatorCount
+      ),
+      amounts = labels.map(label => {
+        const phase = findPhase(cluster.children, provisionPhaseName(label)),
+          kinds = phase.steps.map(step => (step.input as StepInput).kind),
+          funding = phase.steps.find(
+            step => step.name === `${label}${EthereumFundingStepSuffix}`
+          )
+        expect(
+          kinds.indexOf("WireOperatorProvisioningTool.FundEthereumInput")
+        ).toBeGreaterThan(
+          kinds.indexOf("WireOperatorProvisioningTool.CreateAccountInput")
+        )
+        expect(
+          kinds.indexOf("WireOperatorProvisioningTool.FundEthereumInput")
+        ).toBeLessThan(
+          kinds.indexOf("WireOperatorProvisioningTool.AuthexLinkInput")
+        )
+        expect(funding.runner).toBe(
+          WireOperatorProvisioningTool.runEthereumFunding
+        )
+        return (funding.input as WireOperatorProvisioningTool.FundEthereumInput)
+          .wei
+      })
+    expect(new Set(amounts).size).toBe(1)
+    expect(amounts[0]).toBeGreaterThan(0n)
   })
 
-  it("composes NO ETH funding under the default KEY provider", async () => {
-    const cluster = await ClusterBuildDefaults.create(baseOptions())
-    // KEY mode derives the EM keys from the anvil mnemonic, whose HD accounts
-    // anvil prefunds — funding there would be redundant, and its absence is what
-    // keeps every flow bootstrap byte-identical.
-    expect(fundingSteps(collectStepNames(cluster.children))).toEqual([])
+  it("airdrops SOL fees in BOTH modes too — the two faucets are planned together", async () => {
+    const keyCluster = await ClusterBuildDefaults.create(baseOptions()),
+      ssmCluster = await ClusterBuildDefaults.create(ssmOptions())
+    ;[keyCluster, ssmCluster].forEach(cluster => {
+      const names = collectStepNames(cluster.children)
+      expect(solanaAirdrops(names).length).toBeGreaterThan(0)
+      expect(solanaAirdrops(names).length).toBe(fundingSteps(names).length)
+    })
   })
 
-  it("still airdrops SOL fees in BOTH modes — the ETH gate is ETH-only", async () => {
-    const solanaAirdrops = (names: string[]) =>
-      names.filter(name => name.endsWith("-airdrop-solana"))
-    const keyCluster = await ClusterBuildDefaults.create(baseOptions())
-    const ssmCluster = await ClusterBuildDefaults.create(ssmOptions())
+  it("composes NO outpost-chain funding in external-outpost mode — operators are pre-funded on the real chains", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+        ...baseOptions(),
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath)
+      }),
+      names = collectStepNames(cluster.children)
+    expect(fundingSteps(names)).toEqual([])
+    expect(solanaAirdrops(names)).toEqual([])
+    // The depot-side provisioning still runs for every operator.
     expect(
-      solanaAirdrops(collectStepNames(keyCluster.children)).length
-    ).toBeGreaterThan(0)
-    expect(
-      solanaAirdrops(collectStepNames(ssmCluster.children)).length
+      names.filter(name => name.endsWith("-register")).length
     ).toBeGreaterThan(0)
   })
 })

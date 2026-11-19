@@ -3,18 +3,21 @@ import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { SlugName } from "@wireio/sdk-core"
+import { KeyType, SlugName } from "@wireio/sdk-core"
 import {
   AWSAccountName,
+  ClusterSignatureProviderTypes,
   EthereumReadBlockTag,
   NodeopReadMode,
   QueryEngineReadModeSchema,
+  SignatureProviderKeyPolicy,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   ClusterConfigProvider,
-  QueryEngineConfigProvider
+  QueryEngineConfigProvider,
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool/config"
 import {
   applyClusterBuildOptionsArgs,
@@ -29,11 +32,14 @@ import {
   hasCommandLineFlag,
   loadClusterBuildOptionsFile,
   mergeAWSClusterNodeConfig,
+  mergeSignatureProviderKMS,
   mergeSignatureProviderSSM,
   OptionLeafType,
   QueryEngineOptionKey,
   readCommandLineFlag,
+  SignatureProviderKMSFlag,
   toAWSClusterNodeConfig,
+  toAWSKMSSignatureProviderOptions,
   toClusterBuildOptions,
   toAWSSSMSignatureProviderOptions,
   toFlag,
@@ -54,6 +60,7 @@ interface RecordedOption {
   default?: unknown
   demandOption?: boolean
   alias?: string
+  choices?: readonly string[]
 }
 
 /** A minimal `Argv` stand-in paired with the registrations it captured. */
@@ -798,14 +805,18 @@ describe("toAWSSSMSignatureProviderOptions", () => {
 
 describe("mergeSignatureProviderSSM", () => {
   it("is a no-op when no source carries settings", () => {
-    const options = { signatureProvider: { type: SignatureProviderType.SSM } }
+    const options: ClusterBuildOptions = {
+      signatureProvider: { type: SignatureProviderType.SSM }
+    }
     expect(
       mergeSignatureProviderSSM(options, {}).signatureProvider?.ssm
     ).toBeUndefined()
   })
 
   it("merges the SSM payload into signatureProvider.ssm", () => {
-    const options = { signatureProvider: { type: SignatureProviderType.SSM } },
+    const options: ClusterBuildOptions = {
+        signatureProvider: { type: SignatureProviderType.SSM }
+      },
       merged = mergeSignatureProviderSSM(options, { [SSMFlag]: SSMJson })
     expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
       SecretIdPattern
@@ -833,7 +844,8 @@ describe("mergeSignatureProviderSSM", () => {
         awsClusterNodeConfig: {
           account: AWSAccountName.dev,
           regions: ["us-east-1"],
-          ssm: { awsSecretIdPattern: "/node-config/{account}/{keyType}" }
+          ssm: { awsSecretIdPattern: "/node-config/{account}/{keyType}" },
+          kms: null
         }
       },
       {}
@@ -851,7 +863,8 @@ describe("mergeSignatureProviderSSM", () => {
         awsClusterNodeConfig: {
           account: AWSAccountName.dev,
           regions: ["us-east-1"],
-          ssm: { awsSecretIdPattern: "/node-config/{account}" }
+          ssm: { awsSecretIdPattern: "/node-config/{account}" },
+          kms: null
         }
       }
     expect(
@@ -865,6 +878,300 @@ describe("mergeSignatureProviderSSM", () => {
       mergeSignatureProviderSSM({ ...nodeConfigOptions }, {}, fileOptions)
         .signatureProvider?.ssm?.awsSecretIdPattern
     ).toBe("/file/{account}")
+  })
+})
+
+const KmsAliasPattern = "alias/wire/{cluster}/{account}/{keyType}"
+const KmsRegion = "us-east-1"
+const KmsJson = `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}"}`
+const KmsFlag = "signature-provider-kms"
+/** The codec-resolved form of {@link KmsJson}: `keyTypes` defaulted to every custodiable curve. */
+const ResolvedKmsOptions = {
+  awsKeyAliasPattern: KmsAliasPattern,
+  awsRegion: KmsRegion,
+  keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+}
+
+describe("toAWSKMSSignatureProviderOptions", () => {
+  it("is the --signature-provider-kms flag", () => {
+    expect(SignatureProviderKMSFlag).toBe(KmsFlag)
+  })
+
+  it("parses inline JSON — the alias pattern + the ONE key region, keyTypes defaulting to K1 + EM + ED", () => {
+    expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: KmsJson })).toEqual(
+      ResolvedKmsOptions
+    )
+  })
+
+  it("parses an authored keyTypes (K1 included), and rejects a repeated or non-custodiable curve", () => {
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM"]}`
+      }).keyTypes
+    ).toEqual([KeyType.EM])
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["K1"]}`
+      }).keyTypes
+    ).toEqual([KeyType.K1])
+    // The pre-#768 roster — K1 kept in SSM.
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM","ED"]}`
+      }).keyTypes
+    ).toEqual([KeyType.EM, KeyType.ED])
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["ED","ED"]}`
+      })
+    ).toThrow(/must not repeat a curve/)
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["BLS"]}`
+      })
+    ).toThrow()
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":[]}`
+      })
+    ).toThrow()
+  })
+
+  it("parses the OPTIONAL version token value", () => {
+    expect(
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}/{version}","awsRegion":"${KmsRegion}","version":"v3"}`
+      }).version
+    ).toBe("v3")
+  })
+
+  it("parses a file path", () => {
+    const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "kms-opts-")),
+      file = Path.join(dir, "kms.json")
+    Fs.writeFileSync(file, KmsJson)
+    try {
+      expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: file })).toEqual(
+        ResolvedKmsOptions
+      )
+    } finally {
+      Fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("returns null when the flag is absent or blank", () => {
+    expect(toAWSKMSSignatureProviderOptions({})).toBeNull()
+    expect(toAWSKMSSignatureProviderOptions({ [KmsFlag]: "  " })).toBeNull()
+  })
+
+  it("throws on a malformed KMS payload (missing awsRegion / missing pattern)", () => {
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}"}`
+      })
+    ).toThrow()
+    expect(() =>
+      toAWSKMSSignatureProviderOptions({
+        [KmsFlag]: `{"awsRegion":"${KmsRegion}"}`
+      })
+    ).toThrow()
+  })
+})
+
+describe("mergeSignatureProviderKMS", () => {
+  /** A node config whose own kms block is the LOWEST-precedence source. */
+  function nodeConfigOptions(awsKeyAliasPattern: string): ClusterBuildOptions {
+    return {
+      awsClusterNodeConfig: {
+        account: AWSAccountName.dev,
+        regions: [KmsRegion],
+        ssm: null,
+        kms: {
+          awsKeyAliasPattern,
+          awsRegion: KmsRegion,
+          keyTypes: [KeyType.EM, KeyType.ED]
+        }
+      }
+    }
+  }
+
+  it("is a no-op when no source carries settings", () => {
+    const options: ClusterBuildOptions = {
+      signatureProvider: { type: SignatureProviderType.SSM }
+    }
+    expect(mergeSignatureProviderKMS(options, {}).signatureProvider).toEqual({
+      type: SignatureProviderType.SSM
+    })
+    expect(mergeSignatureProviderKMS({}, {}).signatureProvider).toBeUndefined()
+  })
+
+  it("merges the flag's payload into signatureProvider.kms, keeping the other members", () => {
+    const merged = mergeSignatureProviderKMS(
+      {
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: { awsSecretIdPattern: SecretIdPattern }
+        }
+      },
+      { [KmsFlag]: KmsJson }
+    )
+    expect(merged.signatureProvider).toEqual({
+      type: SignatureProviderType.SSM,
+      ssm: { awsSecretIdPattern: SecretIdPattern },
+      kms: ResolvedKmsOptions
+    })
+  })
+
+  it("carries an authored keyTypes from the flag and from the document alike", () => {
+    expect(
+      mergeSignatureProviderKMS(
+        {},
+        {
+          [KmsFlag]: `{"awsKeyAliasPattern":"${KmsAliasPattern}","awsRegion":"${KmsRegion}","keyTypes":["EM"]}`
+        }
+      ).signatureProvider.kms.keyTypes
+    ).toEqual([KeyType.EM])
+    expect(
+      mergeSignatureProviderKMS(
+        {},
+        {},
+        {
+          signatureProvider: {
+            kms: {
+              awsKeyAliasPattern: KmsAliasPattern,
+              awsRegion: KmsRegion,
+              keyTypes: [KeyType.ED]
+            }
+          }
+        }
+      ).signatureProvider.kms.keyTypes
+    ).toEqual([KeyType.ED])
+  })
+
+  it("falls back to the options-file document's signatureProvider.kms", () => {
+    expect(
+      mergeSignatureProviderKMS(
+        {},
+        {},
+        {
+          signatureProvider: {
+            kms: { awsKeyAliasPattern: "alias/from/{account}", awsRegion: KmsRegion }
+          }
+        }
+      ).signatureProvider?.kms?.awsKeyAliasPattern
+    ).toBe("alias/from/{account}")
+  })
+
+  it("falls back LAST to the awsClusterNodeConfig's own kms", () => {
+    expect(
+      mergeSignatureProviderKMS(nodeConfigOptions("alias/node-config/{account}"), {})
+        .signatureProvider?.kms?.awsKeyAliasPattern
+    ).toBe("alias/node-config/{account}")
+  })
+
+  it("prefers the flag over the file, and the file over the node config", () => {
+    const fileOptions = {
+      signatureProvider: {
+        kms: { awsKeyAliasPattern: "alias/file/{account}", awsRegion: KmsRegion }
+      }
+    }
+    expect(
+      mergeSignatureProviderKMS(
+        nodeConfigOptions("alias/node-config/{account}"),
+        { [KmsFlag]: KmsJson },
+        fileOptions
+      ).signatureProvider?.kms?.awsKeyAliasPattern
+    ).toBe(KmsAliasPattern)
+    expect(
+      mergeSignatureProviderKMS(
+        nodeConfigOptions("alias/node-config/{account}"),
+        {},
+        fileOptions
+      ).signatureProvider?.kms?.awsKeyAliasPattern
+    ).toBe("alias/file/{account}")
+  })
+
+  it("re-validates a document / node-config kms block through the ONE codec, naming the source", () => {
+    expect(() =>
+      mergeSignatureProviderKMS(
+        {},
+        {},
+        {
+          signatureProvider: {
+            kms: { awsKeyAliasPattern: KmsAliasPattern } as ClusterBuildOptions["signatureProvider"]["kms"]
+          }
+        }
+      )
+    ).toThrow(
+      /signatureProvider\.kms in --cluster-build-options-file: invalid KMS settings \(awsKeyAliasPattern and awsRegion are required\)/
+    )
+    expect(() =>
+      mergeSignatureProviderKMS(
+        {
+          awsClusterNodeConfig: {
+            account: AWSAccountName.dev,
+            regions: [KmsRegion],
+            ssm: null,
+            kms: {
+              awsRegion: KmsRegion
+            } as ClusterBuildOptions["awsClusterNodeConfig"]["kms"]
+          }
+        },
+        {}
+      )
+    ).toThrow(/kms in --aws-cluster-node-config: invalid KMS settings/)
+  })
+})
+
+describe("signature-provider registration (the cluster-wide axis + the batch-operator key policy)", () => {
+  const TypeFlag = "signature-provider-type",
+    PolicyFlag = "signature-provider-batch-operator-key-policy"
+
+  it("--signature-provider-type offers KEY / SSM / KIOD, defaulting to KEY — never KMS, which is a per-key custody scheme", () => {
+    const option = register().get(TypeFlag)
+    expect(option).toMatchObject({
+      type: "string",
+      default: SignatureProviderType.KEY
+    })
+    expect(option.choices).toEqual([...ClusterSignatureProviderTypes])
+    expect(option.choices).not.toContain(SignatureProviderType.KMS)
+  })
+
+  it("--signature-provider-batch-operator-key-policy is a choices leaf defaulting to adoptOrCreate", () => {
+    const option = register().get(PolicyFlag)
+    expect(option).toMatchObject({
+      type: "string",
+      default: SignatureProviderKeyPolicy.adoptOrCreate
+    })
+    expect(option.choices).toEqual([
+      SignatureProviderKeyPolicy.adoptOrCreate,
+      SignatureProviderKeyPolicy.adoptOnly
+    ])
+    expect(toFlag(["signatureProvider", "batchOperatorKeyPolicy"])).toBe(PolicyFlag)
+  })
+
+  it("registers --signature-provider-kms as an out-of-shape string option with a describe", () => {
+    const option = register().get(SignatureProviderKMSFlag)
+    expect(option).toMatchObject({ type: "string" })
+    expect(option.describe.length).toBeGreaterThan(0)
+  })
+
+  it("round-trips the policy leaf: a scenario default seeds the flag, and the reverse parse re-nests the flag", () => {
+    expect(
+      register({
+        signatureProvider: {
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+        }
+      }).get(PolicyFlag)?.default
+    ).toBe(SignatureProviderKeyPolicy.adoptOnly)
+    expect(
+      toClusterBuildOptions({
+        [PolicyFlag]: SignatureProviderKeyPolicy.adoptOnly,
+        [TypeFlag]: SignatureProviderType.SSM
+      }).signatureProvider
+    ).toEqual({
+      type: SignatureProviderType.SSM,
+      batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+    })
   })
 })
 
@@ -1091,6 +1398,41 @@ describe("--cluster-build-options-file", () => {
     expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
       SecretIdPattern
     )
+  })
+
+  it("codec-validates the out-of-shape signatureProvider.kms and carries the batchOperatorKeyPolicy leaf", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: { awsSecretIdPattern: SecretIdPattern },
+          kms: { awsKeyAliasPattern: KmsAliasPattern, awsRegion: KmsRegion },
+          batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+        }
+      })
+    )
+    expect(loaded.signatureProvider).toEqual({
+      type: SignatureProviderType.SSM,
+      ssm: { awsSecretIdPattern: SecretIdPattern },
+      // The document's kms block, codec-resolved: `keyTypes` defaulted to K1 + EM + ED.
+      kms: ResolvedKmsOptions,
+      batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOnly
+    })
+  })
+
+  it("rejects a malformed signatureProvider.kms and an unknown batchOperatorKeyPolicy", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({
+          signatureProvider: { kms: { awsKeyAliasPattern: KmsAliasPattern } }
+        })
+      )
+    ).toThrow()
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ signatureProvider: { batchOperatorKeyPolicy: "createAlways" } })
+      )
+    ).toThrow(/"signatureProvider\.batchOperatorKeyPolicy" must be one of/)
   })
 
   it("rejects an unknown option, naming its dotted path", () => {

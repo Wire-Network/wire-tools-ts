@@ -1,5 +1,4 @@
 import Assert from "node:assert"
-import { createHash } from "node:crypto"
 import Fs from "node:fs"
 import Path from "node:path"
 import {
@@ -29,7 +28,7 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { solanaKeypair } from "../../utils/keyPairUtils.js"
+import { solanaPublicKey } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
 
@@ -294,91 +293,6 @@ export namespace SolanaFundingTool {
     return loadKeypair(dataPath, name)
   }
 
-  /** The digest a {@link seededKeypair} seed is hashed with. */
-  export const SeedDigest = "sha256"
-
-  /**
-   * The keypair a seed derives: Ed25519 from the {@link SeedDigest} of `seed` — a
-   * deterministic identity a committed fixture can name by its public key.
-   *
-   * @param seed - The seed text.
-   * @return The keypair.
-   */
-  export function seededKeypair(seed: string): Keypair {
-    return Keypair.fromSeed(createHash(SeedDigest).update(seed).digest())
-  }
-
-  /** Input for {@link planSeededKeypair}. */
-  export interface SeededKeypairInput extends StepInput {
-    readonly kind: "SolanaFundingTool.SeededKeypairInput"
-    /** The keypair's durable handle. */
-    readonly keypairName: string
-    /** The seed the keypair derives from. */
-    readonly seed: string
-  }
-
-  /**
-   * Persist the keypair `seed` derives under `keypairName`, so later Steps load it by its
-   * handle like any other per-cluster keypair.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name (report row).
-   * @param description - One-line description.
-   * @param options - Per-step tuning.
-   * @param keypairName - The keypair's durable handle.
-   * @param seed - The seed it derives from.
-   * @returns The definition step.
-   */
-  export function planSeededKeypair<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    keypairName: string,
-    seed: string
-  ): ClusterBuildStep<C, SeededKeypairInput> {
-    return ClusterBuildStep.create<C, SeededKeypairInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "SolanaFundingTool.SeededKeypairInput", keypairName, seed },
-      runSeededKeypair
-    )
-  }
-
-  /**
-   * Named runner — write the seeded keypair (0600); a handle already holding that key is
-   * left alone, one holding a different key is refused.
-   */
-  export async function runSeededKeypair<C extends ClusterBuildContext>(
-    ctx: C,
-    input: SeededKeypairInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const keypair = seededKeypair(input.seed),
-      file = keypairFile(ctx.config.dataPath, input.keypairName)
-    if (Fs.existsSync(file)) {
-      Assert.ok(
-        loadKeypair(ctx.config.dataPath, input.keypairName).publicKey.equals(
-          keypair.publicKey
-        ),
-        `SolanaFundingTool: SOL keypair "${input.keypairName}" already holds a different key`
-      )
-      return
-    }
-    mkdirs(Path.dirname(file))
-    Fs.writeFileSync(file, JSON.stringify(Array.from(keypair.secretKey)), {
-      mode: SeededKeypairFileMode
-    })
-  }
-
-  /** File mode of a seeded keypair: owner read/write only. */
-  export const SeededKeypairFileMode = 0o600
-
   /**
    * Load a persisted per-cluster SOL keypair by handle.
    *
@@ -544,7 +458,8 @@ export namespace SolanaFundingTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
-    const pubkey = solanaKeypair(operator.solana).publicKey
+    // The STORED public key — it renders under every custody form (a KMS pair has no keypair to derive).
+    const pubkey = solanaPublicKey(operator.solana)
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
     const requestLamports =
@@ -631,7 +546,7 @@ export namespace SolanaFundingTool {
       ctx.solana.connection,
       deployer,
       new PublicKey(mint),
-      solanaKeypair(operator.solana).publicKey,
+      solanaPublicKey(operator.solana),
       input.amount
     )
   }

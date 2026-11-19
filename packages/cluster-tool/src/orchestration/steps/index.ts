@@ -53,7 +53,7 @@ export namespace Steps {
   export import keys = KeySteps
   /** Handing the root `sysio` account to a governance authority (`sysio.nodes` / `sysio.cncl`). */
   export import governance = GovernanceSteps
-  /** Node-owner registration: the NFT mint, the OPP claim, and the depot's `sysio.roa` pair. */
+  /** Node-owner registration: the NFT mint, the OPP claim, and the depot's `sysio.roa::nodeownreg`. */
   export import nodeOwner = NodeOwnerSteps
   /** Per-node archive steps for the `package` command. */
   export import clusterPackage = ClusterPackageSteps

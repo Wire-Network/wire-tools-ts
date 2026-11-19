@@ -2,6 +2,7 @@ import {
   AWSAccountName,
   ClusterDeploymentKind,
   NodeopReadMode,
+  SignatureProviderKeyPolicy,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
@@ -467,12 +468,15 @@ describe("NodeConfig", () => {
             ssm: {
               awsRegions: ["us-east-1"],
               awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-            }
+            },
+            kms: null,
+            batchOperatorKeyPolicy: SignatureProviderKeyPolicy.adoptOrCreate
           },
           awsClusterNodeConfig: {
             account: AWSAccountName.dev,
             regions: ["us-east-1"],
-            ssm: null
+            ssm: null,
+            kms: null
           }
         }),
         bios = NodeConfig.plan(ssmCluster).find(n => n.role === NodeRole.bios)!
@@ -881,6 +885,19 @@ describe("NodeConfig", () => {
         ).render()
       )
       expect(genesis.initial_finalizer_key).toBeUndefined()
+    })
+
+    it("targets NET and CPU block usage at the same 0.1%", () => {
+      const { initial_configuration: configuration } = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
+      expect(configuration.target_block_net_usage_pct).toBe(
+        Constants.TARGET_BLOCK_USAGE_PCT
+      )
+      expect(configuration.target_block_cpu_usage_pct).toBe(
+        configuration.target_block_net_usage_pct
+      )
+      expect(Constants.TARGET_BLOCK_USAGE_PCT).toBe(10)
     })
 
     it("does not emit the removed net usage parameters", () => {

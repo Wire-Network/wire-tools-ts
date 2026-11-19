@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-ethereum-round-trip",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "commonjs",
   "description": "Fresh Ethereum acquisition, syndication and external redemption",

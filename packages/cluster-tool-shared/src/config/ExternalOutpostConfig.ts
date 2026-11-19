@@ -62,7 +62,18 @@ export const ExternalOutpostConfigEthereumSchema = z.strictObject({
    * The liqEth deploy's contract addresses (`liqeth-addrs-<network>.json`).
    * Omit when the outpost has no liqEth token.
    */
-  liqEthAddresses: EthereumAddressMapSchema.optional()
+  liqEthAddresses: EthereumAddressMapSchema.optional(),
+  /**
+   * The FINALIZED block at which this document was generated
+   * (`eth_getBlockByNumber("finalized")`, its `number`). `fund-batch-operators`
+   * treats a syndication from this block on as this campaign's: a position an
+   * operator created before it is not this campaign's and does not count as
+   * "already funded". The post-launch path REQUIRES it (its `SyndicationPool`
+   * event scan starts here, bounded); pre-launch ignores it. A document
+   * generated long before its campaign should have the marker moved forward —
+   * a wide window is a long scan.
+   */
+  asOfBlock: z.number().int().nonnegative().optional()
 })
 /** An already-deployed Ethereum outpost — the shape of {@link ExternalOutpostConfigEthereumSchema}. */
 export type ExternalOutpostConfigEthereum = z.infer<
@@ -84,7 +95,19 @@ export const ExternalOutpostConfigSolanaSchema = z.strictObject({
   /** The deployed `liqsol_core` program id (base58 public key). */
   programId: z.string().regex(SolanaAddressPattern),
   /** The outpost's SPL mints. Omit when the outpost has no SPL / LIQ tokens. */
-  mints: z.array(SolanaMintRecordSchema).optional()
+  mints: z.array(SolanaMintRecordSchema).optional(),
+  /**
+   * The FINALIZED slot at which this document was generated
+   * (`getSlot({ commitment: "finalized" })`). `fund-batch-operators` treats a
+   * `synd` from this slot on as this campaign's: a position an operator
+   * created before it is not this campaign's and does not count as "already
+   * funded". The post-launch path REQUIRES it (its scan of the operator's
+   * transaction history stops here, and the RPC must still hold the ledger
+   * back to it); pre-launch ignores it. A document generated long before its
+   * campaign should have the marker moved forward — a wide window is a long
+   * scan.
+   */
+  asOfSlot: z.number().int().nonnegative().optional()
 })
 /** An already-deployed Solana outpost — the shape of {@link ExternalOutpostConfigSolanaSchema}. */
 export type ExternalOutpostConfigSolana = z.infer<

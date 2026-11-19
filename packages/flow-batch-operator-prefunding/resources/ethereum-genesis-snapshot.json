@@ -1,0 +1,48 @@
+{
+  "stakers": [
+    {
+      "address": "0xcc576c12e50c7fbf0c6b48049d7cb9dc65d70e00",
+      "pubkey": "0x030a12686a4a418280392214cca986f14af93573a389e8a33c73ffc3d4e0d2bb03",
+      "totalShares": "4000000000000000000",
+      "totalPrincipalIn": "4000000000000000000",
+      "totalAmountOut": "0",
+      "netPrincipal": "4000000000000000000",
+      "yieldClaimed": "0",
+      "pretokenYield": "500000000000000000"
+    },
+    {
+      "address": "0x3d4e9bfb319097e51f4134abeeb3ed196f1b07f2",
+      "pubkey": "0x0326dc026d1ba7657269444848b726558d01c2d521ee56aed935ed586be118d619",
+      "totalShares": "4000000000000000000",
+      "totalPrincipalIn": "4000000000000000000",
+      "totalAmountOut": "0",
+      "netPrincipal": "4000000000000000000",
+      "yieldClaimed": "0",
+      "pretokenYield": "500000000000000000"
+    },
+    {
+      "address": "0xa2071c5a4a7c739fd1cc0d47a0afcc5e9569d678",
+      "pubkey": "0x028806a5266f836ccdcdaaba788b6a12b82ec38f86d89f70ffd3b927303f07310e",
+      "totalShares": "4000000000000000000",
+      "totalPrincipalIn": "4000000000000000000",
+      "totalAmountOut": "0",
+      "netPrincipal": "4000000000000000000",
+      "yieldClaimed": "0",
+      "pretokenYield": "500000000000000000"
+    }
+  ],
+  "purchasers": [],
+  "metadata": {
+    "lastMessageId": "flow-batch-operator-prefunding-fixture",
+    "lastTimestamp": "1761000000",
+    "latestIndex": "1000000000000000000000000000",
+    "totalMessages": 3,
+    "totalPrincipal": "12000000000000000000",
+    "yieldDust": "0",
+    "totalLiqEthStaked": "12000000000000000000",
+    "totalLiqEthPurchased": "0",
+    "generatedAt": "2026-11-11T00:00:00.000Z",
+    "lastPoolLiqBalance": "13000000000000000000",
+    "highestTranchePriceUsd": "20000000"
+  }
+}

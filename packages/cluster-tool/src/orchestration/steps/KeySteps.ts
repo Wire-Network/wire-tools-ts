@@ -1,24 +1,34 @@
 import Assert from "node:assert"
 import { asOption, Either } from "@3fv/prelude-ts"
-import { ethers } from "ethers"
 import { range, uniq } from "lodash"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { NestedError } from "@wireio/shared"
 import {
+  isKMSCustodiableKeyType,
+  KMSCustodiedKeyTypes,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
-  type ClusterConfig
+  type ClusterConfig,
+  type KeyCustodySettings,
+  type KMSCustodiedKeyType
 } from "@wireio/cluster-tool-shared"
 import type { Tag } from "@aws-sdk/client-ssm"
+import type { Tag as KMSTag } from "@aws-sdk/client-kms"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
 import {
+  ethereumKeyPairFromKmsPublicKey,
   keyPairFromPrivate,
-  privateKeyFromNativeString
+  privateKeyFromNativeString,
+  solanaKeyPairFromKmsPublicKey,
+  wireKeyPairFromKmsPublicKey
 } from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { WireWallet } from "../../clients/wire/WireWallet.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { KMSClientProvider } from "../../config/KMSClientProvider.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { SSMClientProvider } from "../../config/SSMClientProvider.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -34,21 +44,12 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterKeyStore } from "../outputs/ClusterKeyStore.js"
-import { EthereumMnemonicKey } from "../outputs/EthereumMnemonicOutput.js"
 import type { StepInput } from "../StepRunner.js"
-import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
 
 const log = getLogger(__filename)
 
 /** Steps that generate the cluster {@link ClusterKeyStore} + set up the kiod wallet. */
 export namespace KeySteps {
-  /**
-   * Entropy behind a cluster-scoped Ethereum HD mnemonic — 32 bytes, i.e. the
-   * 24-word BIP-39 form. Only an SSM cluster generates one (see
-   * {@link EthereumMnemonicKey}).
-   */
-  export const EthereumMnemonicEntropyBytes = 32
-
   /**
    * SSM tag key recording which platform version a published key belongs to.
    * Its value is the cluster's `signatureProvider.ssm.version`; absent when the
@@ -57,56 +58,23 @@ export namespace KeySteps {
   export const PlatformVersionTagKey = "wire:platform-version"
 
   /**
-   * The Ethereum HD mnemonic PHRASE this run derives operator EM (secp256k1)
-   * keys from: the cluster-scoped one {@link runGenerateNodeKeys} put in
-   * `ctx.outputs` under SSM, else the published
-   * `EthereumOutpostBootstrapper.AnvilMnemonic`.
-   *
-   * The anvil mnemonic is a PUBLISHED constant, so under it every operator's
-   * ETH collateral key is reproducible by anyone with the repo — acceptable for
-   * a local flow cluster (and required, so all 13 flows keep deriving
-   * byte-identical wallets), never for a real deployment. Read through this
-   * accessor, never off `EthereumOutpostBootstrapper` directly.
-   *
-   * @param ctx - The build context.
-   * @returns The mnemonic phrase to derive EM keys from.
-   */
-  export function ethereumMnemonic(ctx: ClusterBuildContext): string {
-    return (
-      ctx.outputs.get(EthereumMnemonicKey) ??
-      EthereumOutpostBootstrapper.AnvilMnemonic
-    )
-  }
-
-  /**
    * The {@link KeyGenerator.Context} every key-generation site in a run shares:
-   * the cluster's `clio`, its build's `sys-util`, and the run's Ethereum
-   * mnemonic ({@link ethereumMnemonic}). Resolved in ONE place so no site can
-   * pair the wrong mnemonic with the right binaries.
+   * the build's `sys-util`. Resolved in ONE place so every site generates with
+   * the same tooling. Every key the facade mints is random — there is no
+   * mnemonic, seed or index to thread through here.
    *
    * @param ctx - The build context.
    * @returns The generation context.
    */
   export function keyGeneratorContext(ctx: ClusterBuildContext): KeyGenerator.Context {
-    return KeyGenerator.context(
-      ctx.config.executables.clio,
-      ctx.config.buildPath,
-      ethereumMnemonic(ctx)
-    )
-  }
-
-  /** A freshly generated cluster-scoped Ethereum HD mnemonic phrase. */
-  function newEthereumMnemonic(): string {
-    return ethers.Mnemonic.fromEntropy(
-      ethers.randomBytes(EthereumMnemonicEntropyBytes)
-    ).phrase
+    return KeyGenerator.context(ctx.config.buildPath)
   }
 
   /**
-   * Generate the cluster's key material — one K1+BLS set per producer node
-   * (via `clio` / `sys-util`), one K1 + ED25519 per operator — and store it under
-   * {@link ClusterKeyStoreKey} for downstream node-config, wallet, authex, and
-   * registration steps.
+   * Generate the cluster's key material — one K1+BLS set per producer node —
+   * and store it in {@link ClusterKeyStore} for downstream node-config, wallet,
+   * authex, and registration steps. Operator identities accumulate into the
+   * same store from their own materialization steps.
    */
   export function planGenerateNodeKeys<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -131,14 +99,6 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    // The cluster-scoped Ethereum mnemonic is minted HERE, before the first key
-    // exists, because operator provisioning derives every EM key from it. It
-    // rides `ctx.outputs` and NEVER `ClusterConfig` — the config ships inside
-    // the release archives, which would make every operator EM private key
-    // re-derivable from the deployable artifact.
-    if (ctx.config.signatureProvider.type === SignatureProviderType.SSM) {
-      ctx.outputs.set(EthereumMnemonicKey, newEthereumMnemonic())
-    }
     const keyContext = keyGeneratorContext(ctx)
     // Producer NODE signing sets (K1+BLS per node), pushed into THE key store.
     // Operator identities (producer / batch / underwriter accounts) accumulate
@@ -163,57 +123,63 @@ export namespace KeySteps {
     ctx.keyStore.pushNodes(...nodes)
   }
 
-  /** Input for {@link planImportSeededKey}. */
-  export interface ImportSeededKeyInput extends StepInput {
-    readonly kind: "KeySteps.ImportSeededKeyInput"
-    /** The seed the K1 key regenerates from ({@link KeyGenerator.createSeeded}). */
-    readonly seed: string
-    /** The key's public half, for the Report. */
+  /** Input for {@link planImportPersistedKey}. */
+  export interface ImportPersistedKeyInput extends StepInput {
+    readonly kind: "KeySteps.ImportPersistedKeyInput"
+    /** The key's durable handle ({@link WireWallet.createKey}). */
+    readonly keyName: string
+    /** The key's public half: the Report's record, and what the persisted key must match. */
     readonly publicKey: string
   }
 
   /**
-   * Import the seeded development K1 key ({@link KeyGenerator.createSeeded})
-   * into the kiod wallet, so the account it controls can sign — a flow's test
-   * identity whose public key its plan already carries.
+   * Import a persisted WIRE key ({@link WireWallet.createKey}) into the kiod
+   * wallet, so the account it controls can sign — a flow's identity whose key
+   * its pre-bootstrap stage created, so its plan already carries the public
+   * half. The runner refuses a persisted key whose public half is not
+   * `publicKey`.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Step option overrides.
-   * @param seed - The key's seed.
+   * @param keyName - The key's durable handle.
+   * @param publicKey - The key's public half.
    * @returns The definition step.
    */
-  export function planImportSeededKey<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planImportPersistedKey<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    seed: string
-  ): ClusterBuildStep<C, ImportSeededKeyInput> {
-    return ClusterBuildStep.create<C, ImportSeededKeyInput>(
+    keyName: string,
+    publicKey: string
+  ): ClusterBuildStep<C, ImportPersistedKeyInput> {
+    return ClusterBuildStep.create<C, ImportPersistedKeyInput>(
       actor,
       name,
       description,
       options,
-      {
-        kind: "KeySteps.ImportSeededKeyInput",
-        seed,
-        publicKey: KeyGenerator.createSeeded(KeyType.K1, seed).publicKey
-      },
-      runImportSeededKey
+      { kind: "KeySteps.ImportPersistedKeyInput", keyName, publicKey },
+      runImportPersistedKey
     )
   }
 
-  /** Named runner — ONE wallet import of the seed's private key. */
-  export async function runImportSeededKey<C extends ClusterBuildContext>(
+  /** Named runner — read the key back by handle, then ONE wallet import of its private half. */
+  export async function runImportPersistedKey<C extends ClusterBuildContext>(
     ctx: C,
-    input: ImportSeededKeyInput,
+    input: ImportPersistedKeyInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    const keyPair = WireWallet.loadKeyPair(ctx.config.dataPath, input.keyName)
+    Assert.strictEqual(
+      keyPair.publicKey,
+      input.publicKey,
+      `KeySteps: the WIRE key persisted as "${input.keyName}" is not the planned ${input.publicKey}`
+    )
     const wallet = await ctx.wire.wallet.getOrCreate()
-    await wallet.addPrivateKey(KeyGenerator.createSeeded(KeyType.K1, input.seed).privateKey)
+    await wallet.addPrivateKey(keyPair.privateKey)
   }
 
   /**
@@ -273,55 +239,266 @@ export namespace KeySteps {
   // ── D21 adopt-existing (the GENERATION seam) ───────────────────────────────
 
   /**
-   * Obtain `account`'s `keyType` signing key: ADOPT the SSM parameter the AWS
-   * account already owns, else GENERATE a new pair.
+   * Obtain `account`'s `keyType` signing key: ADOPT the key the custody store
+   * already holds — the SSM parameter, or the KMS key behind the rendered alias
+   * for a KMS-custodied key — else GENERATE a new one (in KMS, for a
+   * KMS-custodied key; a random local pair otherwise). Which keys KMS
+   * custodies is `ClusterConfigProvider.custodySource`'s decision: the curves
+   * `kms.keyTypes` names, a K1 among them for a BATCH OPERATOR's account only
+   * (a producer node's block-signing K1 always stays in SSM — nodeop requires
+   * it local).
    *
-   * D21 — an existing parameter is the account's DURABLE key identity and is
-   * never regenerated. The read happens HERE, where key material is FIRST
-   * created, and deliberately NOT at publication time: a producer node's keys
-   * are imported into the kiod wallet and rendered into its `config.ini` right
+   * D21 — an existing key is the account's DURABLE key identity and is never
+   * regenerated. The read happens HERE, where key material is FIRST created,
+   * and deliberately NOT at publication time: a producer node's keys are
+   * imported into the kiod wallet and rendered into its `config.ini` right
    * after generation, and an operator's identity sets its ON-CHAIN authority
    * (`newaccount`) and both authex links, all long before its publish step
    * runs. Adopting at publish time would leave SSM holding key B while the
    * wallet, the chain authority, both links and the emitted external config all
    * held key A — silently, and only on the SECOND create in an account.
    *
-   * Under a non-SSM provider there is nothing to adopt and this is exactly
-   * `KeyGenerator.create`.
+   * The batch-operator key policy gates the CREATE arm: under
+   * {@link SignatureProviderKeyPolicy.adoptOnly} a bootstrap batch operator's
+   * missing key fails the step naming the id, because a real launch pre-creates
+   * and pre-funds those keys and a silently minted replacement would orphan
+   * that funding. Every other identity, and every operator under
+   * `adoptOrCreate`, creates as before.
+   *
+   * Under a non-SSM provider there is no custody store to adopt from and this
+   * is exactly `KeyGenerator.create` (plus the policy gate).
    *
    * @param config - The resolved cluster config.
    * @param keyType - The curve to obtain.
-   * @param account - The key's DURABLE handle (the secret-id `{account}`).
-   * @param keyContext - Binaries + mnemonic the generation backends require.
-   * @param options - Per-curve generation extras (EM's HD index, the purpose).
+   * @param account - The key's DURABLE handle (the secret-id / alias `{account}`).
+   * @param keyContext - The tooling the generation backends require.
+   * @param options - Generation extras (the purpose).
    * @returns The adopted or generated pair.
    */
   export async function adoptOrCreateSignatureProviderKey<T extends KeyType>(
-    config: ClusterConfig,
+    settings: KeyCustodySettings,
     keyType: T,
     account: string,
     keyContext: KeyGenerator.Context,
     options: KeyGenerator.CreateOptions = {}
   ): Promise<KeyPair<T>> {
-    const secretId = signatureProviderSecretId(config, account, keyType)
-    if (secretId != null) {
-      const adopted = await SSMClientProvider.getParameterAcrossRegions(
-        replicationRegions(config),
+    const source = ClusterConfigProvider.custodySource(
+        settings,
+        account,
+        keyType
+      ),
+      adopted = await match(source?.type)
+        .with(SignatureProviderType.KMS, () =>
+          adoptKMSKey(source, account, keyType)
+        )
+        .with(SignatureProviderType.SSM, () =>
+          adoptSSMKey(settings, source, account, keyType)
+        )
+        .otherwise(async (): Promise<KeyPair> => null)
+    // The ONE cast — the adopt backends return the concrete curve's pair.
+    if (adopted != null) return adopted as KeyPair<T>
+    assertKeyCreatable(settings, account, keyType, source)
+    return source?.type === SignatureProviderType.KMS
+      ? ((await createKMSKey(settings, source, account, keyType, options)) as KeyPair<T>)
+      : KeyGenerator.create(keyType, keyContext, options)
+  }
+
+  /**
+   * The custody REFERENCE of a source — `SSM:<secretId>` or
+   * `KMS:<region>:<alias>` — the public, material-free pointer a key listing
+   * reports.
+   *
+   * @param source - An SSM / KMS custody source.
+   * @returns The rendered reference.
+   */
+  export function custodyReference(
+    source: KeyGenerator.SignatureProviderSource
+  ): string {
+    return `${source.type}:${custodyId(source)}`
+  }
+
+  /** The id a custody source adopts by, for diagnostics (`<region>:<alias>` / the secret id). */
+  function custodyId(source: KeyGenerator.SignatureProviderSource): string {
+    return match(source.type)
+      .with(
+        SignatureProviderType.KMS,
+        () => `${source.awsKmsRegion}:${source.awsKmsKeyId}`
+      )
+      .otherwise(() => source.awsSecretId)
+  }
+
+  /** Adopt the SSM parameter the AWS account already holds under the rendered secret id, or nothing. */
+  async function adoptSSMKey(
+    settings: KeyCustodySettings,
+    source: KeyGenerator.SignatureProviderSource,
+    account: string,
+    keyType: KeyType
+  ): Promise<KeyPair> {
+    const secretId = source.awsSecretId,
+      adopted = await SSMClientProvider.getParameterAcrossRegions(
+        replicationRegions(settings),
         secretId
       )
-      if (adopted != null) {
-        log.info(
-          `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from ${secretId} — NOT regenerating`
-        )
-        StepExtraRecorder.note(
-          `adopted ${account}'s existing ${KeyType[keyType]} key from SSM`,
-          { account, keyType: KeyType[keyType], secretId }
-        )
-        return keyPairFromPrivate(keyType, adopted)
-      }
-    }
-    return KeyGenerator.create(keyType, keyContext, options)
+    if (adopted == null) return null
+    log.info(
+      `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from ${secretId} — NOT regenerating`
+    )
+    StepExtraRecorder.note(
+      `adopted ${account}'s existing ${KeyType[keyType]} key from SSM`,
+      { account, keyType: KeyType[keyType], secretId }
+    )
+    return keyPairFromPrivate(keyType, adopted)
   }
+
+  /**
+   * The curve of a KMS source, narrowed to the ones KMS can custody — a source
+   * for any other curve is a renderer bug, not a configuration a key can be
+   * adopted or created for.
+   */
+  function assertKMSCustodiableKeyType(
+    keyType: KeyType,
+    account: string
+  ): KMSCustodiedKeyType {
+    if (isKMSCustodiableKeyType(keyType)) return keyType
+    throw new Error(
+      `KeySteps: ${account}'s ${KeyType[keyType]} key cannot live in KMS — KMS custodies ${KMSCustodiedKeyTypes.map(
+        curve => KeyType[curve]
+      ).join(", ")} keys only`
+    )
+  }
+
+  /**
+   * The stored pair of a KMS key's public identity: K1 → the wire pair
+   * (`PUB_K1_…`, a batch operator's account key), EM → the ethereum pair
+   * (`PUB_EM_…` + address), ED → the solana pair (`PUB_ED_…`); each carries the
+   * source's key reference and NO material.
+   */
+  function kmsKeyPair(
+    identity: KMSClientProvider.PublicKey,
+    source: KeyGenerator.SignatureProviderSource
+  ): KeyPair {
+    const { awsKmsRegion, awsKmsKeyId } = source
+    return match(identity.keyType)
+      .with(KeyType.K1, () =>
+        wireKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
+      .with(KeyType.EM, () =>
+        ethereumKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
+      .with(KeyType.ED, () =>
+        solanaKeyPairFromKmsPublicKey(identity.publicKey, awsKmsRegion, awsKmsKeyId)
+      )
+      .exhaustive()
+  }
+
+  /**
+   * Adopt the KMS key behind the rendered alias, or nothing. The adopted pair
+   * carries the key's public identity and its reference — never material. The
+   * note records whether the key is multi-Region. A single-Region key is
+   * adopted all the same — it keeps working — but WARNED about: AWS fixes the
+   * property at creation, so it can never be replicated into another region,
+   * and a multi-Region key means a NEW key under a NEW alias, which the
+   * `kms.version` alias segment mints as a new generation.
+   */
+  async function adoptKMSKey(
+    source: KeyGenerator.SignatureProviderSource,
+    account: string,
+    keyType: KeyType
+  ): Promise<KeyPair> {
+    const { awsKmsRegion, awsKmsKeyId } = source,
+      existing = await KMSClientProvider.tryGetPublicKey(
+        awsKmsRegion,
+        awsKmsKeyId,
+        assertKMSCustodiableKeyType(keyType, account)
+      )
+    if (existing == null) return null
+    log.info(
+      `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from KMS ${awsKmsRegion}:${awsKmsKeyId} (${existing.keyArn}) — NOT regenerating`
+    )
+    if (!existing.multiRegion) {
+      log.warn(
+        `[keys] ${account}'s ${KeyType[keyType]} key ${existing.keyArn} (KMS ${awsKmsRegion}:${awsKmsKeyId}) is a single-Region key — it can never be replicated into another region (AWS fixes the multi-Region property at creation); a multi-Region key needs a NEW key under a NEW alias, which the kms.version alias segment mints as a new generation`
+      )
+    }
+    StepExtraRecorder.note(
+      `adopted ${account}'s existing ${KeyType[keyType]} key from KMS`,
+      {
+        account,
+        keyType: KeyType[keyType],
+        awsKmsRegion,
+        awsKmsKeyId,
+        keyArn: existing.keyArn,
+        multiRegion: existing.multiRegion
+      }
+    )
+    return kmsKeyPair(existing, source)
+  }
+
+  /**
+   * The policy gate on the CREATE arm — see
+   * {@link adoptOrCreateSignatureProviderKey}. Throws for a bootstrap batch
+   * operator under `adoptOnly`; every other identity may always create.
+   */
+  function assertKeyCreatable(
+    settings: KeyCustodySettings,
+    account: string,
+    keyType: KeyType,
+    source: KeyGenerator.SignatureProviderSource
+  ): void {
+    Assert.ok(
+      settings.signatureProvider.batchOperatorKeyPolicy !==
+        SignatureProviderKeyPolicy.adoptOnly ||
+        !Constants.isBatchOperatorLabel(account),
+      `KeySteps: batchOperatorKeyPolicy is ${SignatureProviderKeyPolicy.adoptOnly} and no existing ${KeyType[keyType]} key was found for batch operator ${account}${
+        source != null ? ` at ${custodyId(source)}` : ""
+      } — pre-create its keys (wire-cluster-tool create-batch-operator-keys) before bootstrapping`
+    )
+  }
+
+  /**
+   * Generate a KMS-custodied key: a new key of the curve's spec inside KMS
+   * (secp256k1 for K1 / EM, Ed25519 for ED), a multi-Region PRIMARY like every
+   * key the harness creates, bound to the rendered alias. The pair carries the
+   * key's public identity + reference, recorded in the step's `extra` the way
+   * `KeyGenerator.create` records a local generation (public half, purpose,
+   * mechanism, the multi-Region mark — never material, of which KMS has none
+   * to give).
+   */
+  async function createKMSKey(
+    settings: KeyCustodySettings,
+    source: KeyGenerator.SignatureProviderSource,
+    account: string,
+    keyType: KeyType,
+    options: KeyGenerator.CreateOptions
+  ): Promise<KeyPair> {
+    const { awsKmsRegion, awsKmsKeyId } = source,
+      { kms } = settings.signatureProvider,
+      tags: KMSTag[] =
+        kms.version != null
+          ? [{ TagKey: PlatformVersionTagKey, TagValue: kms.version }]
+          : [],
+      created = await KMSClientProvider.createKey(
+        awsKmsRegion,
+        awsKmsKeyId,
+        assertKMSCustodiableKeyType(keyType, account),
+        options.purpose ?? `${account} ${KeyType[keyType]} signing key`,
+        tags
+      ),
+      keyPair = kmsKeyPair(created, source)
+    StepExtraRecorder.record({
+      client: KMSKeygenClient,
+      kind: "keygen",
+      keyType: KeyType[keyType],
+      purpose: options.purpose ?? null,
+      keyArn: created.keyArn,
+      multiRegion: created.multiRegion,
+      ...keyPair
+    })
+    return keyPair
+  }
+
+  /** The `extra` client label of a KMS key generation (beside `sys-util` / `sdk-core` / `ethers`). */
+  const KMSKeygenClient = "aws-kms"
 
   /**
    * A producer node's composite K1 + BLS key set — each half adopted or
@@ -330,7 +507,7 @@ export namespace KeySteps {
    * curve published and the other not).
    *
    * @param config - The resolved cluster config.
-   * @param keyContext - Binaries + mnemonic the generation backends require.
+   * @param keyContext - The tooling the generation backends require.
    * @param nodeName - The node's name (the secret-id `{account}` segment).
    * @param purpose - What the set is FOR (lands in the step's `extra` record).
    * @returns The node's signing set.
@@ -354,46 +531,44 @@ export namespace KeySteps {
 
   /**
    * The SSM secret id `account`'s `keyType` key is published under, or nothing
-   * when the cluster is not SSM-custodied (there is nothing to adopt — the key
-   * is always generated). Rendered through the SAME
-   * `ClusterConfigProvider.signatureProviderSource` the daemon
+   * when the key is not SSM-custodied — under KEY / KIOD, or for a key KMS
+   * custodies (`ClusterConfigProvider.isKMSCustodiedKey`), which has no
+   * parameter. Rendered through the
+   * SAME `ClusterConfigProvider.signatureProviderSource` the daemon
    * `--signature-provider` args use, so the adopt read, the publish write and
    * the rendered spec can never disagree on an id.
    *
    * @param config - The resolved cluster config.
    * @param account - The key's DURABLE handle (the secret-id `{account}`).
    * @param keyType - The key's curve.
-   * @returns The rendered secret id, or nothing under KEY / KIOD.
+   * @returns The rendered secret id, or nothing when there is no parameter.
    */
   export function signatureProviderSecretId(
-    config: ClusterConfig,
+    settings: KeyCustodySettings,
     account: string,
     keyType: KeyType
   ): string {
-    if (config.signatureProvider.type !== SignatureProviderType.SSM) return null
-    return ClusterConfigProvider.signatureProviderSource(config)(
-      account,
-      keyType
-    ).awsSecretId
+    const source = ClusterConfigProvider.custodySource(settings, account, keyType)
+    return source?.type === SignatureProviderType.SSM ? source.awsSecretId : null
   }
 
   /**
    * Every AWS region an SSM cluster replicates its parameters to. `regions` on
    * `awsClusterNodeConfig` is the ONE author; `ssm.awsRegions` is derived from
-   * it at resolve time and only fills in for a config that reached here without
+   * it at resolve time and only fills in for settings that reached here without
    * going through `ClusterConfigProvider.resolve`.
    */
-  function replicationRegions(config: ClusterConfig): string[] {
-    const { ssm } = config.signatureProvider
+  function replicationRegions(settings: KeyCustodySettings): string[] {
+    const { ssm } = settings.signatureProvider
     Assert.ok(
       ssm != null,
       "KeySteps: SSM signature provider requires ssm settings"
     )
     Assert.ok(
-      config.awsClusterNodeConfig != null,
+      settings.awsClusterNodeConfig != null,
       "KeySteps: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source + the replication regions)"
     )
-    const { regions } = config.awsClusterNodeConfig,
+    const { regions } = settings.awsClusterNodeConfig,
       { awsRegions = regions } = ssm
     return awsRegions
   }
@@ -496,23 +671,22 @@ export namespace KeySteps {
    * never the on-chain account.
    */
   function publicationRenderer(
-    config: ClusterConfig
+    settings: KeyCustodySettings
   ): SignatureProviderKeyPublicationRenderer {
-    const awsRegions = replicationRegions(config),
-      { account: cluster } = config.awsClusterNodeConfig,
-      { ssm } = config.signatureProvider
+    const awsRegions = replicationRegions(settings),
+      { ssm } = settings.signatureProvider
     return (identity, keyType) => ({
       publishPhase: identity.publishPhase,
       label: identity.label,
       publicationLabel: identity.publicationLabel,
       keyType,
       awsRegions,
-      secretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
-        cluster,
-        account: identity.publicationLabel,
-        keyType: KeyType[keyType],
-        version: ssm.version
-      }),
+      // The SAME renderer the adopt read + the daemon spec go through.
+      secretId: signatureProviderSecretId(
+        settings,
+        identity.publicationLabel,
+        keyType
+      ),
       version: ssm.version
     })
   }
@@ -572,13 +746,38 @@ export namespace KeySteps {
    * @returns The per-key publications.
    */
   export function operatorKeyPublications(
-    config: ClusterConfig,
+    settings: KeyCustodySettings,
     label: string,
     type: OperatorType
   ): SignatureProviderKeyPublication[] {
-    const render = publicationRenderer(config),
+    const render = publicationRenderer(settings),
       identity = operatorKeyIdentity(label, type)
-    return identity.keyTypes.map(keyType => render(identity, keyType))
+    return publishedKeyTypes(settings, identity).map(keyType =>
+      render(identity, keyType)
+    )
+  }
+
+  /**
+   * The curves of `identity` that are PUBLISHED to SSM — every curve it
+   * materializes except the ones KMS custodies FOR IT
+   * (`ClusterConfigProvider.isKMSCustodiedKey`, gated on the identity's
+   * publication label: a batch operator's K1 is excluded when `kms.keyTypes`
+   * names K1, a producer's or the genesis identity's never is). A
+   * KMS-custodied key has no material to put, and its daemon spec resolves
+   * through `KMS:` rather than an SSM parameter.
+   */
+  function publishedKeyTypes(
+    settings: KeyCustodySettings,
+    identity: SignatureProviderKeyIdentity
+  ): readonly KeyType[] {
+    return identity.keyTypes.filter(
+      keyType =>
+        !ClusterConfigProvider.isKMSCustodiedKey(
+          settings,
+          identity.publicationLabel,
+          keyType
+        )
+    )
   }
 
   /**
@@ -672,7 +871,9 @@ export namespace KeySteps {
         )
       ],
       publications = identities.flatMap(identity =>
-        identity.keyTypes.map(keyType => render(identity, keyType))
+        publishedKeyTypes(config, identity).map(keyType =>
+          render(identity, keyType)
+        )
       ),
       duplicateSecretIds = publications
         .map(publication => publication.secretId)
@@ -804,27 +1005,46 @@ export namespace KeySteps {
       operator.publicationLabel === input.publicationLabel,
       `KeySteps: ${input.label} publishes under ${input.publicationLabel}, but its keys were recorded under ${operator.publicationLabel}`
     )
-    const privateKey = identityPrivateKey(operator, input.keyType, input.label)
+    await publishSignatureProviderKey(
+      input,
+      identityPrivateKey(operator, input.keyType, input.label)
+    )
+  }
+
+  /**
+   * Publish ONE signing key to every region of its publication — the
+   * probe-then-put loop {@link runPublishSignatureProviderKey} runs inside a
+   * Step, extracted so a cluster-less command (`create-batch-operator-keys`,
+   * which has no `ctx.keyStore`) publishes through the SAME primitive. The
+   * parameter value is the key's CHAIN-NATIVE string; it is never logged.
+   *
+   * @param publication - The per-key publication descriptor (metadata only).
+   * @param privateKey - The key's WIRE-canonical private key.
+   */
+  export async function publishSignatureProviderKey(
+    publication: SignatureProviderKeyPublication,
+    privateKey: string
+  ): Promise<void> {
     const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
       tags: Tag[] =
-        input.version != null
-          ? [{ Key: PlatformVersionTagKey, Value: input.version }]
+        publication.version != null
+          ? [{ Key: PlatformVersionTagKey, Value: publication.version }]
           : []
-    await eachSeries(input.awsRegions, async region => {
+    await eachSeries(publication.awsRegions, async region => {
       const existing = await SSMClientProvider.tryGetParameter(
         region,
-        input.secretId
+        publication.secretId
       )
       if (existing != null) {
-        assertPublishedKeyMatches(input, region, existing, nativePrivateKey)
+        assertPublishedKeyMatches(publication, region, existing, nativePrivateKey)
         log.info(
-          `[keys] ${input.secretId} is already published in ${region} and holds this run's key — retained`
+          `[keys] ${publication.secretId} is already published in ${region} and holds this run's key — retained`
         )
         return
       }
       await SSMClientProvider.putParameter(
         region,
-        input.secretId,
+        publication.secretId,
         nativePrivateKey,
         tags
       )
@@ -866,8 +1086,16 @@ export namespace KeySteps {
     )
   }
 
-  /** The private key of a producer-node key set for `keyType` (K1 / BLS). */
-  function identityPrivateKey(
+  /**
+   * The private key of an identity for `keyType` (K1 wire / BLS finalizer /
+   * EM ethereum / ED solana) — what a publish step puts.
+   *
+   * @param identity - The identity's signing key set.
+   * @param keyType - The curve.
+   * @param label - The identity's handle, for diagnostics.
+   * @returns The WIRE-canonical private key.
+   */
+  export function identityPrivateKey(
     identity: SigningKeySet,
     keyType: KeyType,
     label: string
@@ -894,6 +1122,4 @@ export namespace KeySteps {
         throw new Error(`KeySteps: ${label} has no ${KeyType[keyType]} key`)
       })
   }
-
-  /** The private key of an operator for `keyType` (K1 wire / EM ethereum / ED solana). */
 }

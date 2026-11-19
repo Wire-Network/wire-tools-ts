@@ -11,8 +11,14 @@ import {
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
+  isKMSCustodiableKeyType,
+  isKMSCustodied,
+  KMSCustodiedKeyTypes,
+  SignatureProviderKeyPolicy,
   SignatureProviderType,
   type AWSClusterNodeConfig,
+  type AWSKMSSignatureProviderOptions,
+  type AWSKMSSignatureProviderOptionsInput,
   type BatchOperatorUnderwritingConfig,
   type BindConfig,
   type BindOptions,
@@ -24,6 +30,7 @@ import {
   type ClusterTopologyOptions,
   type CollateralRequirement,
   type ExternalOutpostConfig,
+  type KeyCustodySettings,
   type LcoImportChainConfig,
   type LcoImportChainOptions,
   type LcoImportConfig,
@@ -65,6 +72,7 @@ import type {
 import { NodeConfig } from "./NodeConfig.js"
 import { EthereumReadConfirmationConfigProvider } from "./EthereumReadConfirmationConfigProvider.js"
 import { QueryEngineConfigProvider } from "./QueryEngineConfigProvider.js"
+import { KMSClientProvider } from "./KMSClientProvider.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
 
@@ -155,6 +163,19 @@ function assertQueryEngineUse(
  */
 export namespace ClusterConfigProvider {
   export const DataSubpath = "data"
+
+  /**
+   * The cluster data directory `clusterPath` resolves to — the ONE derivation
+   * {@link resolve} persists as `ClusterConfig.dataPath`, so a scenario's
+   * pre-bootstrap stage (`FlowScenario.prepare`) writes its wallets and
+   * exports exactly where `ctx.config.dataPath` later finds them.
+   *
+   * @param clusterPath - The cluster directory.
+   * @returns `<clusterPath>/data`.
+   */
+  export function dataPath(clusterPath: string): string {
+    return Path.join(clusterPath, DataSubpath)
+  }
   /**
    * The `bin/` directory holding the wire-sysio executables, relative to an
    * install prefix (or a build dir). Shared by {@link resolveExecutables} and
@@ -226,13 +247,18 @@ export namespace ClusterConfigProvider {
   /**
    * Resolve the underwriter role's configuration: `null` when
    * `enableBatchOperatorUnderwriting` is off, else every member defaulted — all bootstrap
-   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps.
+   * batch operators funded, {@link DefaultBatchUnderwriterMaxExposures} as the caps — and
+   * the pre-funded launch's native `stake` / `reserve` lists validated when the caller sets
+   * them (each names every outpost native token exactly once; a stake is positive, a reserve
+   * non-negative). An unset list is carried unset: the persisted schema defaults it
+   * (`BatchOperatorUnderwritingConfig.DefaultStake` / `DefaultReserve`), and a
+   * cluster-less consumer (`fund-batch-operators`) destructures the same defaults.
    *
    * @param options - The caller's options.
    * @param batchOperatorCount - The resolved batch-operator roster size.
    * @return The configuration, or `null` for relay-only operators.
    * @throws If underwriting options are set with the role off, more operators are funded
-   *   than exist, or `maxExposure` is empty.
+   *   than exist, `maxExposure` is empty, or a native `stake` / `reserve` list is malformed.
    */
   export function resolveBatchOperatorUnderwriting(
     options: ClusterBuildOptions,
@@ -261,7 +287,56 @@ export namespace ClusterConfigProvider {
       maxExposure.length > 0,
       "ClusterConfigProvider: batchOperatorUnderwriting.maxExposure must name at least one cap"
     )
-    return { fundedOperatorCount, maxExposure }
+    const stake = options.batchOperatorUnderwriting?.stake,
+      reserve = options.batchOperatorUnderwriting?.reserve
+    assertNativeTokenAmounts("stake", stake, true)
+    assertNativeTokenAmounts("reserve", reserve, false)
+    return {
+      fundedOperatorCount,
+      maxExposure,
+      ...(stake != null ? { stake } : {}),
+      ...(reserve != null ? { reserve } : {})
+    }
+  }
+
+  /**
+   * Validate one native-amount list of `batchOperatorUnderwriting` (`stake` /
+   * `reserve`) when the caller set it: it names each outpost native token
+   * ({@link Constants.NATIVE_TOKEN_PAIRS}) exactly once, with a positive amount
+   * for a stake and a non-negative one for a reserve. A list that is not set is
+   * left to the schema default.
+   *
+   * @param member - Which list is being validated (the config member's name).
+   * @param amounts - The list, or nothing when unset.
+   * @param positive - Whether every amount must be strictly positive.
+   */
+  function assertNativeTokenAmounts(
+    member: keyof BatchOperatorUnderwritingConfig,
+    amounts: readonly TokenAmount[],
+    positive: boolean
+  ): void {
+    if (amounts == null) return
+    const nativeCodenames = Constants.NATIVE_TOKEN_PAIRS.map(
+        ([, codename]) => codename
+      ),
+      nativeCodes = nativeCodenames.map(codename =>
+        BigInt(SlugName.from(codename))
+      ),
+      namedOnce = nativeCodes.every(
+        code => amounts.filter(amount => amount.tokenCode === code).length === 1
+      )
+    Assert.ok(
+      amounts.length === nativeCodes.length && namedOnce,
+      `ClusterConfigProvider: batchOperatorUnderwriting.${member} must name each outpost native token (${nativeCodenames.join(", ")}) exactly once`
+    )
+    amounts.forEach(amount =>
+      Assert.ok(
+        positive ? amount.amount > 0n : amount.amount >= 0n,
+        `ClusterConfigProvider: batchOperatorUnderwriting.${member} amount for ${SlugName.toString(
+          Number(amount.tokenCode)
+        )} must be ${positive ? "positive" : "non-negative"} (got ${amount.amount})`
+      )
+    )
   }
   /**
    * Resolve the launch-data (LCO) import: `null` without an export file, else each exported
@@ -381,7 +456,7 @@ export namespace ClusterConfigProvider {
     return {
       buildPath,
       clusterPath,
-      dataPath: Path.join(clusterPath, DataSubpath),
+      dataPath: dataPath(clusterPath),
       walletPath: Path.join(clusterPath, WalletSubpath),
       producerCount: options.producerCount ?? DefaultProducerCount,
       nodeCount: options.nodeCount ?? DefaultNodeCount,
@@ -490,13 +565,7 @@ export namespace ClusterConfigProvider {
         biosFinalizer: KeyGenerator.BiosBLSKey
       }
     }
-    // Only K1 + BLS are resolved here, so the EM backend (the one member that
-    // consumes `ethereumMnemonic`) is never reached.
-    const keyContext: KeyGenerator.Context = {
-        clio: config.executables.clio,
-        sysUtil: Path.join(config.buildPath, KeyGenerator.SysUtilSubpath),
-        ethereumMnemonic: null
-      },
+    const keyContext = KeyGenerator.context(config.buildPath),
       [biosWire, biosFinalizer] = await Promise.all([
         adoptOrCreateKey(
           config,
@@ -677,16 +746,65 @@ export namespace ClusterConfigProvider {
       options.regions?.length > 0,
       "awsClusterNodeConfig.regions must name at least one AWS region (every secret is replicated to all of them)"
     )
-    // Explicit `null` (not absence): the slot is persisted to cluster-config.json,
+    // Explicit `null` (not absence): the slots are persisted to cluster-config.json,
     // where an `undefined` would DROP the key on serialize.
-    return { ...options, ssm: options.ssm ?? null }
+    return { ...options, ssm: options.ssm ?? null, kms: options.kms ?? null }
+  }
+
+  /**
+   * The placeholders a KMS alias pattern MUST render: one alias per identity
+   * per custodied curve, so a pattern without either would bind two keys to
+   * one alias.
+   */
+  export const KMSAliasRequiredPlaceholders = ["{account}", "{keyType}"] as const
+
+  /**
+   * Resolve the KMS custody settings a caller authored: `keyTypes` defaults to
+   * every curve KMS can custody ({@link KMSCustodiedKeyTypes} — K1 + EM + ED)
+   * and must otherwise be a non-empty, duplicate-free subset of them. (A K1
+   * in the roster reaches the batch operators' account keys only — see
+   * {@link isKMSCustodiedKey}.)
+   *
+   * @param kms - The authored settings.
+   * @returns The resolved settings.
+   */
+  function resolveKMSCustody(
+    kms: AWSKMSSignatureProviderOptionsInput
+  ): AWSKMSSignatureProviderOptions {
+    const { keyTypes = [...KMSCustodiedKeyTypes] } = kms
+    Assert.ok(
+      keyTypes.length > 0,
+      `signatureProvider.kms.keyTypes must name at least one curve (${KMSCustodiedKeyTypes.join(", ")})`
+    )
+    Assert.ok(
+      new Set(keyTypes).size === keyTypes.length,
+      `signatureProvider.kms.keyTypes must not repeat a curve (got ${keyTypes.join(", ")})`
+    )
+    keyTypes.forEach(keyType =>
+      Assert.ok(
+        isKMSCustodiableKeyType(keyType),
+        `signatureProvider.kms.keyTypes: KMS custodies ${KMSCustodiedKeyTypes.join(", ")} keys only (got ${keyType})`
+      )
+    )
+    Assert.ok(
+      KMSAliasRequiredPlaceholders.every(placeholder =>
+        kms.awsKeyAliasPattern.includes(placeholder)
+      ),
+      `signatureProvider.kms.awsKeyAliasPattern must carry ${KMSAliasRequiredPlaceholders.join(" and ")} — one alias per operator per custodied curve (got "${kms.awsKeyAliasPattern}")`
+    )
+    return { ...kms, keyTypes }
   }
 
   /**
    * Resolve the cluster signature-provider config: default {@link
    * SignatureProviderType.KEY}, validate that SSM settings are present iff the
-   * type is `SSM`, and DERIVE the SSM replication regions from
-   * `awsClusterNodeConfig.regions` (its one author).
+   * type is `SSM`, DERIVE the SSM replication regions from
+   * `awsClusterNodeConfig.regions` (its one author), validate the optional KMS
+   * custody settings (SSM-only; the ONE key region must be a replication
+   * region; `keyTypes` resolved per {@link resolveKMSCustody}; the alias
+   * pattern must render a KMS alias name for every custodied curve), and
+   * default the batch-operator key policy to
+   * {@link SignatureProviderKeyPolicy.adoptOrCreate}.
    *
    * @param options - Caller signature-provider options (may be omitted).
    * @param awsClusterNodeConfig - The resolved AWS placement (required under SSM).
@@ -696,7 +814,13 @@ export namespace ClusterConfigProvider {
     options: ClusterSignatureProviderOptions,
     awsClusterNodeConfig: AWSClusterNodeConfig
   ): ClusterSignatureProviderConfig {
-    const { type = SignatureProviderType.KEY, ssm = null } = options ?? {}
+    const {
+        type = SignatureProviderType.KEY,
+        ssm = null,
+        kms: authoredKms = null,
+        batchOperatorKeyPolicy = SignatureProviderKeyPolicy.adoptOrCreate
+      } = options ?? {},
+      kms = authoredKms == null ? null : resolveKMSCustody(authoredKms)
     Assert.ok(
       type !== SignatureProviderType.SSM || ssm != null,
       "signatureProvider.ssm (awsSecretIdPattern) is required when type is SSM"
@@ -715,12 +839,42 @@ export namespace ClusterConfigProvider {
       ssm?.awsRegions == null || awsClusterNodeConfig == null,
       "signatureProvider.ssm.awsRegions and awsClusterNodeConfig.regions both author the SSM region set — author awsClusterNodeConfig.regions ONLY (signatureProvider.ssm.awsRegions is derived from it)"
     )
+    Assert.ok(
+      kms == null || type === SignatureProviderType.SSM,
+      "signatureProvider.kms is only valid when type is SSM (KMS custodies the K1 / EM / ED keys of an SSM cluster)"
+    )
+    Assert.ok(
+      kms == null || awsClusterNodeConfig.regions.includes(kms.awsRegion),
+      `signatureProvider.kms.awsRegion must be one of awsClusterNodeConfig.regions (${awsClusterNodeConfig?.regions?.join(", ")})`
+    )
+    // Render the pattern once per custodied curve at resolve time so an alias
+    // the KMS grammar refuses fails here, not at the first key the bootstrap
+    // materializes.
+    kms?.keyTypes.forEach(keyType =>
+      KMSClientProvider.assertAliasName(
+        toSecretId(kms.awsKeyAliasPattern, {
+          cluster: awsClusterNodeConfig.account,
+          account: KMSClientProvider.aliasAccountSegment(
+            Constants.batchOperatorLabel(0)
+          ),
+          keyType: KeyType[keyType],
+          version: kms.version
+        })
+      )
+    )
+    Assert.ok(
+      batchOperatorKeyPolicy !== SignatureProviderKeyPolicy.adoptOnly ||
+        type !== SignatureProviderType.KIOD,
+      "signatureProvider.batchOperatorKeyPolicy adoptOnly has no custody store to adopt from under KIOD"
+    )
     return {
       type,
       ssm:
         ssm == null
           ? null
-          : { ...ssm, awsRegions: awsClusterNodeConfig.regions }
+          : { ...ssm, awsRegions: awsClusterNodeConfig.regions },
+      kms,
+      batchOperatorKeyPolicy
     }
   }
 
@@ -1081,27 +1235,107 @@ export namespace ClusterConfigProvider {
    * when an SSM cluster carries no `awsClusterNodeConfig` ({@link resolve}
    * enforces it, but a hand-edited `cluster-config.json` can still omit it).
    *
-   * @param config - The cluster configuration.
+   * @param settings - The key-custody settings.
    * @returns The AWS account name.
    */
   function assertAWSAccountName(
-    config: ClusterConfig
+    settings: KeyCustodySettings
   ): AWSClusterNodeConfig["account"] {
     Assert.ok(
-      config.awsClusterNodeConfig != null,
+      settings.awsClusterNodeConfig != null,
       "ClusterConfigProvider: an SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
     )
-    return config.awsClusterNodeConfig.account
+    return settings.awsClusterNodeConfig.account
+  }
+
+  /**
+   * Whether `account`'s `keyType` key lives in AWS KMS — the ACCOUNT-level
+   * gate over the curve-level `isKMSCustodied`: an SSM cluster with KMS
+   * settings custodies the curves its `kms.keyTypes` names there, EXCEPT that
+   * a K1 is custodied for the BATCH OPERATORS' WIRE account keys only
+   * (`Constants.isBatchOperatorLabel`, the same policy discriminator
+   * `KeySteps.assertKeyCreatable` gates the key policy on). A producer / node
+   * K1 signs blocks, and nodeop's `producer_plugin` requires a local private
+   * key for every WIRE key on a node with producers configured (wire-sysio
+   * #768 — `signature_provider_kms_plugin` suits an account key, not a
+   * producer's), so those keys stay in Parameter Store whatever the roster
+   * says; the genesis identity (`node_bios`) and a flow-provisioned operator's
+   * handle are not batch-operator labels either, so theirs do too. Every
+   * custody decision — the adopt read, the publish walker, the persisted ref,
+   * the daemon spec, the emitted external config — goes through here.
+   *
+   * @param settings - The key-custody settings (a `ClusterConfig` is one).
+   * @param account - The key's DURABLE handle (the `{account}` placeholder).
+   * @param keyType - The key's curve.
+   * @returns `true` when the key is KMS-custodied.
+   */
+  export function isKMSCustodiedKey(
+    settings: KeyCustodySettings,
+    account: string,
+    keyType: KeyType
+  ): boolean {
+    return (
+      isKMSCustodied(settings.signatureProvider, keyType) &&
+      (keyType !== KeyType.K1 || Constants.isBatchOperatorLabel(account))
+    )
+  }
+
+  /**
+   * Where an SSM cluster custodies `account`'s `keyType` key — the ONE renderer
+   * of every custody id: the `SSM` source carrying the per-key secret id (via
+   * {@link toSecretId}; REGION-LESS — the depot plugin resolves the region from
+   * the AWS environment), or, for a key the cluster custodies in KMS
+   * ({@link isKMSCustodiedKey}), the `KMS` source: the ONE key region plus the
+   * alias rendered from the KMS pattern (same placeholders, `{account}` dots
+   * mapped per `KMSClientProvider.aliasAccountSegment`). Nothing under KEY /
+   * KIOD — those have no custody store to adopt from or publish to. The adopt
+   * read, the publish write, the persisted ref and the daemon spec all render
+   * through here, so none of them can disagree on an id.
+   *
+   * @param settings - The key-custody settings (a `ClusterConfig` is one).
+   * @param account - The key's DURABLE handle (the `{account}` placeholder).
+   * @param keyType - The key's curve.
+   * @returns The custody source, or nothing when the key has no custody store.
+   */
+  export function custodySource(
+    settings: KeyCustodySettings,
+    account: string,
+    keyType: KeyType
+  ): KeyGenerator.SignatureProviderSource {
+    const provider = settings.signatureProvider
+    if (provider.type !== SignatureProviderType.SSM) return null
+    return isKMSCustodiedKey(settings, account, keyType)
+      ? {
+          type: SignatureProviderType.KMS,
+          awsKmsRegion: provider.kms.awsRegion,
+          awsKmsKeyId: KMSClientProvider.assertAliasName(
+            toSecretId(provider.kms.awsKeyAliasPattern, {
+              cluster: assertAWSAccountName(settings),
+              account: KMSClientProvider.aliasAccountSegment(account),
+              keyType: KeyType[keyType],
+              version: provider.kms.version
+            })
+          )
+        }
+      : {
+          type: SignatureProviderType.SSM,
+          awsSecretId: toSecretId(provider.ssm.awsSecretIdPattern, {
+            cluster: assertAWSAccountName(settings),
+            account,
+            keyType: KeyType[keyType],
+            version: provider.ssm.version
+          })
+        }
   }
 
   /**
    * Build the per-key signature-provider source for a cluster's provider config —
-   * `KEY` → inline (byte-identical), `SSM` → the per-key rendered secret id (via
-   * {@link toSecretId}; REGION-LESS — the depot plugin resolves the region from
-   * the AWS environment), `KIOD` → the kiod wallet URL. Threaded into the node /
-   * operator-daemon `--signature-provider` args so an SSM/KIOD cluster's daemons
-   * obtain their keys accordingly. The bios genesis dev key is NOT SSM/KIOD-managed
-   * — callers that render it force {@link KeyGenerator.DefaultKeySource}.
+   * `KEY` → inline (byte-identical), `KIOD` → the kiod wallet URL, and under
+   * `SSM` the custody source {@link custodySource} renders (`SSM:<secretId>` or
+   * `KMS:<region>:<alias>`). Threaded into the node / operator-daemon
+   * `--signature-provider` args so an SSM/KIOD/KMS cluster's daemons obtain
+   * their keys accordingly. The bios genesis dev key is NOT SSM/KIOD-managed —
+   * callers that render it force {@link KeyGenerator.DefaultKeySource}.
    *
    * @param config - The resolved cluster config.
    * @returns A `(account, keyType) => source` builder.
@@ -1115,17 +1349,33 @@ export namespace ClusterConfigProvider {
         toDialAddress(config.bind.kiod.address)
       )
     return (account, keyType) =>
-      KeyGenerator.keySource(
-        provider,
-        provider.type === SignatureProviderType.SSM
-          ? toSecretId(provider.ssm.awsSecretIdPattern, {
-              cluster: assertAWSAccountName(config),
-              account,
-              keyType: KeyType[keyType],
-              version: provider.ssm.version
-            })
-          : "",
-        kiodUrl
-      )
+      custodySource(config, account, keyType) ??
+      KeyGenerator.keySource(provider, "", kiodUrl)
+  }
+
+  /**
+   * Resolve the key-custody settings a CLUSTER-LESS command works with — the
+   * same validation {@link resolve} applies to a cluster's `signatureProvider` +
+   * `awsClusterNodeConfig` (SSM settings present iff the type is SSM, the region
+   * set derived from the placement, the KMS settings checked), without
+   * binaries, ports or a cluster directory.
+   *
+   * @param options - The caller's build options (the document + the merged
+   *   `--aws-cluster-node-config` / `--signature-provider-*` sources).
+   * @returns The validated settings.
+   */
+  export function resolveKeyCustody(
+    options: ClusterBuildOptions
+  ): KeyCustodySettings {
+    const awsClusterNodeConfig = resolveAWSClusterNodeConfig(
+      options.awsClusterNodeConfig
+    )
+    return {
+      signatureProvider: resolveSignatureProvider(
+        options.signatureProvider,
+        awsClusterNodeConfig
+      ),
+      awsClusterNodeConfig
+    }
   }
 }

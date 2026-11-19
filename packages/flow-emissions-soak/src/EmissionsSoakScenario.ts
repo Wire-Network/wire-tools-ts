@@ -3,13 +3,16 @@ import { getLogger } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  ClusterConfigProvider,
   convertImportSeed,
   FlowScenario,
   formatWireAsset,
+  KeyGenerator,
   pollUntil,
   Report,
   sleep,
   Steps,
+  SyndicationUserSteps,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
@@ -23,9 +26,10 @@ import {
   toSeedConversionSummary
 } from "./EmissionsSoakScenarioOutputs.js"
 import {
-  buildControlledStakerIdentities,
-  buildSyntheticEthereumDump,
-  buildSyntheticSolanaDump
+  createControlledStakerIdentities,
+  createSyntheticEthereumDump,
+  createSyntheticSolanaDump,
+  type ControlledStakerIdentity
 } from "./EmissionsSoakScenarioSyntheticDump.js"
 import { EmissionsSoakScenarioSteps } from "./steps/EmissionsSoakScenarioSteps.js"
 
@@ -81,7 +85,8 @@ async function readCapConfig(
  *       `payepoch`; `t5_state.total_distributed` advances monotonically and
  *       respects `t5_distributable - t5_floor`.
  *   (c) **importseed → link → claim** — controlled staker accounts (this flow
- *       holds their ETH wallets) complete AuthEx linking, whose inline
+ *       holds their ETH wallets: random, persisted under durable handles by the
+ *       pre-bootstrap stage) complete AuthEx linking, whose inline
  *       `linkswept` sweeps `unmapped_tokens` into `pending_claims` → `claim`
  *       pays each staker its exact seeded WIRE. dclaim is pre-funded from
  *       `sysio` for the synthetic load; imports and claims use only that funding.
@@ -101,16 +106,49 @@ export class EmissionsSoakScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
+  /** The controlled-staker roster the pre-bootstrap stage created; `plan` builds the dump from it. */
+  private identities: ControlledStakerIdentity[] = []
+
+  /**
+   * The pre-bootstrap stage: generate (or read back) each controlled staker's
+   * random wallet under its handle, so the synthetic dump `plan` builds names
+   * real, persisted keys that the link steps later read back by handle.
+   *
+   * @param options - The resolved build options.
+   * @returns The options, unchanged — the roster rides the scenario instance.
+   */
+  async prepare(options: ClusterBuildOptions): Promise<ClusterBuildOptions> {
+    const { clusterPath, buildPath } = options
+    Assert.ok(
+      clusterPath != null,
+      "flow-emissions-soak: clusterPath must be resolved before the staker wallets are persisted"
+    )
+    Assert.ok(
+      buildPath != null,
+      "flow-emissions-soak: buildPath must be resolved before the staker wallets are generated"
+    )
+    this.identities = await createControlledStakerIdentities({
+      dataPath: ClusterConfigProvider.dataPath(clusterPath),
+      context: KeyGenerator.context(buildPath),
+      count: Constants.ControlledStakerCount,
+      wireAccountPrefix: Constants.ControlledStakerAccountPrefix,
+      walletNamePrefix: Constants.ControlledStakerWalletNamePrefix
+    })
+    return options
+  }
+
   plan(cluster: ClusterBuild): void {
     // Pure value generation (no chain side effects): the synthetic corpus is
-    // built here so the batch/staker step fan-out is known at registration
-    // time — one write step per importseed batch, one per claimer action.
-    const identities = buildControlledStakerIdentities(
-        Constants.ControlledStakerCount,
-        Constants.ControlledStakerAccountPrefix,
-        Constants.ControlledStakerEthereumHdIndexBase
-      ),
-      ethereumDump = buildSyntheticEthereumDump({
+    // built here, from the roster `prepare` persisted, so the batch/staker step
+    // fan-out is known at registration time — one write step per importseed
+    // batch, one per claimer action.
+    const { identities } = this
+    Assert.strictEqual(
+      identities.length,
+      Constants.ControlledStakerCount,
+      "flow-emissions-soak: prepare() must create the controlled stakers before plan()"
+    )
+    const ethereumDump = createSyntheticEthereumDump({
         seed: Constants.SyntheticSeed,
         purchaserCount: Constants.BulkEthereumPurchasers,
         stakerCount: Constants.BulkEthereumStakers,
@@ -119,7 +157,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         controlled: identities,
         controlledSourceUnits: Constants.ControlledStakerSourceUnits
       }),
-      solanaDump = buildSyntheticSolanaDump({
+      solanaDump = createSyntheticSolanaDump({
         seed: Constants.SyntheticSeed + 1,
         purchaserCount: Constants.BulkSolanaPurchasers,
         stakerCount: Constants.BulkSolanaStakers
@@ -322,12 +360,13 @@ export class EmissionsSoakScenario extends FlowScenario {
         )
       ),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.planAuthexLink(
+        SyndicationUserSteps.planLinkEthereumKey(
           Actor.User,
           `authex-link-${identity.wireAccount}`,
-          `authex-link ${identity.wireAccount}'s ETH wallet (hd=${identity.ethereumHdIndex})`,
+          `authex-link ${identity.wireAccount}'s ETH wallet (${identity.walletName})`,
           actionOptions,
-          identity
+          identity.wireAccount,
+          identity.walletName
         )
       ),
       verifyStep(
