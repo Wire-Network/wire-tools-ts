@@ -93,8 +93,9 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
     documented exceptions (each OPP account's own `@sysio.code` on its `owner`, `sysio.andon`'s
     `pull`/`clear` panic permissions, `sysio.bond`'s `rslvvalid`/`rslvinvalid` ruling permissions, each
     governance authority's `active` — its expected members — and
-    `sysio` itself, whose key is allowed only before a handoff). The cluster tooling's
-    `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
+    `sysio` itself, whose key is allowed only before a handoff). Each panic and ruling permission must
+    exist, hold exactly its delegate and `sysio@active`, and carry the link to its action. The cluster
+    tooling's `WireAuthorityAuditTool` performs this audit. After a handoff every `sysio` action needs
     `floor(2N/3)+1` members' approvals, normally through `sysio.msig`.
 - All system contracts are privileged: `sysio`/`bios`/`system` from genesis; the **sys**-deployed set via
   `setsyscode`. Hard requirements (from source): `sysio.token` (bills rows to `sysio`), `sysio.msig`,
@@ -407,9 +408,9 @@ The delegate accounts of Stages 10 and 10a (`andon.panic`, `bond.judge`) hold ke
 26a. **Reserve each name** — for `andon`, then `bond`:
     `sysio::newaccount({creator:"sysio", name, owner:sysio@active, active:{threshold:1, keys:[],
     accounts:[{permission:{actor:"sysio.null",permission:"active"},weight:1}]}})` — `[sysio@active]`.
-    With the name taken and an `active` nothing satisfies, no node owner can register it (a claim of an
-    existing account must match its `active` key), so no tier-1 owner mints `<name>.<generated>`
-    accounts under it.
+    `sysio.roa::nodeownreg` rejects a claim that names an existing account, so with the name taken no
+    node owner can register it and no tier-1 owner mints `<name>.<generated>` accounts under it. Its
+    `active` is one nothing satisfies, so nobody acts for the name itself either.
 
 ## Stage 10 — Emergency stop (`sysio.andon`)
 `sysio.andon` exposes `pull(reason)` and `clear(note)`. Authorization is configured with native
@@ -456,10 +457,14 @@ than `sysio`. Against the earlier contract these permissions exist but a ruling 
 refused. `ClusterBuildDefaults` implements the sequence below; its bond steps declare the linked
 `sysio.bond@rslvvalid` and `@rslvinvalid` permissions.
 
-29a. **Judge account** — `sysio::newaccount({creator:"sysio", name:"bond.judge", owner:DEV_K1_PUBLIC_KEY,
-    active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]`. It gets no resource grant: the rulings are billed to
-    `sysio.bond`. No WIRE is transferred to it **(cluster dev key; production: the judge's hardware or
-    multisig key — whoever holds this key can rule any request VALID or INVALID)**.
+29a. **Judge account** — `sysio::newaccount({creator:"sysio", name:"bond.judge", owner:<judge key>,
+    active:<judge key>})` — `[sysio@active]`. It gets no resource grant: the rulings are billed to
+    `sysio.bond`. No WIRE is transferred to it. Whoever holds the judge key can rule any request VALID
+    or INVALID, and keeps that reach after the governance handoff. The cluster tooling takes it from
+    `--judge-public-key` (`judgePublicKey` in a build-options document) and falls back to the
+    cluster's initial key: `DEV_K1` on a local or flow cluster, the generated bios key under `SSM`.
+    Against external outposts the key is required and `DEV_K1` is refused **(production: the judge's
+    hardware or multisig key)**.
 29b. **Permission RAM** — `sysio::setacctram({account:"sysio.bond", ram_bytes:<current limit + 10400>})` —
     `[sysio@active]`, read and added as in step 28.
 29c. **Delegate and link each ruling**, first `rslvvalid`, then `rslvinvalid`. For each `permission`:

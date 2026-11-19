@@ -7,6 +7,7 @@ import {
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
 import {
+  FixtureJudgePublicKey,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -188,7 +189,7 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
     expect([...Constants.DELEGATE_NAME_PREFIXES]).toEqual(["andon", "bond"])
     expectInOrder(names, ["DelegateNamePrefixes", "PanicAccount", "JudgeAccount"])
     expect(phase.steps.map(step => step.name)).toEqual(["reserve-andon", "reserve-bond"])
-    // Owned by sysio, with an active nothing satisfies: a node-owner claim of the name cannot match a key.
+    // Existing blocks a node-owner claim of the name; owned by sysio, with an active nothing satisfies.
     phase.steps.forEach((step, index) =>
       expect(step.input).toEqual({
         kind: "AccountSteps.CreateSystemInput",
@@ -217,10 +218,31 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       "delegate-bond-rslvinvalid",
       "link-bond-rslvinvalid"
     ])
+    // No key named: the judge takes the cluster's initial key, the development key here.
     expect(findPhase(cluster, "JudgeAccount").steps[0].input).toEqual({
       kind: "UserSteps.ProvisionWireInput",
       account: "bond.judge",
-      fundWireAmount: 0n
+      fundWireAmount: 0n,
+      publicKey: cluster.context.config.initialKey
+    })
+    expect(cluster.context.config.initialKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+  })
+
+  it("creates the judge account under the key the caller names", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      judgePublicKey: FixtureJudgePublicKey
+    })
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "bond.judge",
+      fundWireAmount: 0n,
+      publicKey: FixtureJudgePublicKey
+    })
+    // The panic account is not the judge's: it keeps the development key.
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toMatchObject({
+      account: "andon.panic",
+      publicKey: Constants.DEV_K1_PUBLIC_KEY
     })
   })
 

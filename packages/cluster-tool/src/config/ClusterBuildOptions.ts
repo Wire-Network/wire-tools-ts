@@ -150,6 +150,13 @@ export interface ClusterBuildOptions {
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
+  /**
+   * The public key on `bond.judge`'s `owner` and `active` (`--judge-public-key`): whoever
+   * holds it can rule any `sysio.bond` request, and keeps that reach after `sysio` is handed
+   * to governance. When omitted the judge takes the cluster's initial key. REQUIRED with
+   * `externalOutpostConfig`, where the development key is refused.
+   */
+  judgePublicKey?: string
   // launch-data (LCO) import
   /**
    * Path of the frozen Ethereum outpost's pre-launch export (`--ethereum-bootstrap-json-file`,

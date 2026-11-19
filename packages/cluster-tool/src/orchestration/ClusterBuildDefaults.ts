@@ -244,6 +244,8 @@ export namespace ClusterBuildDefaults {
     launchSolanaOutpost: CreateOptions<C>["launchSolanaOutpost"]
   ): void {
     const config = cluster.context.config,
+      // The judge's key: the caller's, or the cluster's initial key when none was named.
+      { judgePublicKey, initialKey } = config,
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = Constants.batchOperatorLabels(config.batchOperatorCount),
       plannedNodes = NodeConfig.plan(config),
@@ -960,8 +962,8 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── the bond rulings ──
-    // Same shape as the emergency stop: the judge delegate, then a native permission and
-    // an action link per ruling. Either delegate satisfies it; under the native rules the
+    // Same shape as the emergency stop: the judge delegate under the configured key, then
+    // a native permission and an action link per ruling. Either delegate satisfies it; under the native rules the
     // judge can also rewrite its own permission, which governance reverts through `active`.
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -974,7 +976,8 @@ export namespace ClusterBuildDefaults {
         `create ${Constants.JUDGE_ACCOUNT}, the account that may rule a bond request`,
         {},
         Constants.JUDGE_ACCOUNT,
-        JudgeAccountWireFunding
+        JudgeAccountWireFunding,
+        judgePublicKey ?? initialKey
       )
     )
     ClusterBuildPhase.create<C>(

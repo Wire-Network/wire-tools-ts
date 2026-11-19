@@ -37,9 +37,10 @@ import {
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
-import { Level } from "@wireio/shared"
+import { Either } from "@3fv/prelude-ts"
+import { Level, NestedError } from "@wireio/shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, SlugName } from "@wireio/sdk-core"
+import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
 import {
   ListenAllAddress,
@@ -426,7 +427,8 @@ export namespace ClusterConfigProvider {
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
     assertExternalOutpostMockData(options)
-    const lcoImport = resolveLcoImport(options),
+    const judgePublicKey = resolveJudgePublicKey(options),
+      lcoImport = resolveLcoImport(options),
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       queryEngine = QueryEngineConfigProvider.resolve(
@@ -499,6 +501,7 @@ export namespace ClusterConfigProvider {
       signatureProvider,
       awsClusterNodeConfig,
       externalOutposts,
+      judgePublicKey,
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
@@ -726,6 +729,41 @@ export namespace ClusterConfigProvider {
       options.externalOutpostConfig == null || requested.length === 0,
       `Mock data cannot be seeded against external outposts (${requested.join(", ")} set with externalOutpostConfig): the harness cannot back its shadow there.`
     )
+  }
+
+  /**
+   * The key `bond.judge` is created under, or `null` for the cluster's initial
+   * key. Whoever holds it rules every `sysio.bond` request, also after `sysio` is
+   * handed to governance, so a build against EXTERNAL outposts must name it and
+   * may not name the well-known development key.
+   *
+   * @param options - The caller's options (its `judgePublicKey` and `externalOutpostConfig`).
+   * @returns The key as the caller spelled it, or `null` when none was named.
+   * @throws When the key is not a public key, or when external mode names none or the development key.
+   */
+  function resolveJudgePublicKey(options: ClusterBuildOptions): string {
+    const { judgePublicKey = null, externalOutpostConfig } = options
+    if (judgePublicKey == null) {
+      Assert.ok(
+        externalOutpostConfig == null,
+        `judgePublicKey is required with externalOutpostConfig: ${Constants.JUDGE_ACCOUNT} rules every sysio.bond request, so a deployed cluster must name the key that holds it.`
+      )
+      return null
+    }
+    const key = Either.try(() => PublicKey.from(judgePublicKey))
+      .ifLeft(error => {
+        throw new NestedError("judgePublicKey is not a public key", {
+          cause: error,
+          context: { judgePublicKey }
+        })
+      })
+      .getOrThrow()
+    Assert.ok(
+      externalOutpostConfig == null ||
+        !key.equals(PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
+      "judgePublicKey is the development key, which externalOutpostConfig refuses: anyone could rule a sysio.bond request on the deployed cluster."
+    )
+    return judgePublicKey
   }
 
   /**

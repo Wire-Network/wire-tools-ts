@@ -1,6 +1,7 @@
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
+  FixtureJudgePublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -60,7 +61,8 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     // External outposts are seeded by their own operators, out of band.
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile
+      externalOutpostConfig: externalConfigFile,
+      judgePublicKey: FixtureJudgePublicKey
     })
     const names = collectStepNames(cluster.children)
     expect(names).not.toContain(SeedEthereumRosterStep)
@@ -78,7 +80,7 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
       // the schedule.
       const cluster = await ClusterBuildDefaults.create({
           ...baseOptions(),
-          ...(external && { externalOutpostConfig: externalConfigFile })
+          ...(external && { externalOutpostConfig: externalConfigFile, judgePublicKey: FixtureJudgePublicKey })
         }),
         names = collectStepNames(cluster.children)
       expect(names.filter(name => name === EmitWireOpregBootstrapStep)).toHaveLength(1)

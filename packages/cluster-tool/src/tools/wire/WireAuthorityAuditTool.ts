@@ -37,7 +37,9 @@ const JudgeRole = "judge"
  * bootstrap `sysio` key) can satisfy on its own through the delegation graph.
  * A key or delegation it cannot classify, an authority that differs from the
  * one expected, or an action link it does not expect, fails the audit: a
- * retained key anywhere in the graph could bypass the handoff.
+ * retained key anywhere in the graph could bypass the handoff. So does a
+ * delegated permission that is absent or lacks the link to its action: its
+ * delegate could no longer act.
  *
  * Every call is a read; it never writes. {@link discoverSystemAccounts}
  * enumerates the accounts from the chain's own history, so the audit covers
@@ -179,6 +181,16 @@ export namespace WireAuthorityAuditTool {
     readonly action: string
   }
 
+  /** The action link a delegated permission must carry, absent on chain. */
+  export interface MissingLink {
+    /** The account holding the delegated permission. */
+    readonly account: string
+    /** The delegated permission. */
+    readonly permission: string
+    /** The action that must be linked to it, as `code::action`. */
+    readonly action: string
+  }
+
   /** A permission whose whole authority differs from the one it must hold. */
   export interface AuthorityMismatch {
     /** The account. */
@@ -187,7 +199,7 @@ export namespace WireAuthorityAuditTool {
     readonly permission: string
     /** The authority it must hold, or `null` when nothing names one. */
     readonly expected: SysioContracts.SysioSystemAuthorityType
-    /** The authority the chain holds. */
+    /** The authority the chain holds, or `null` when the permission does not exist. */
     readonly actual: SysioContracts.SysioSystemAuthorityType
     /** What the expected authority is. */
     readonly reason: string
@@ -255,6 +267,8 @@ export namespace WireAuthorityAuditTool {
     readonly mismatches: AuthorityMismatch[]
     /** Every action link the audit does not expect — each one fails the audit. */
     readonly unexpectedLinks: UnexpectedLink[]
+    /** Every delegated permission without the link to its action — each one fails the audit. */
+    readonly missingLinks: MissingLink[]
     /** Every audited permission each checked key reaches with positive weight. */
     readonly keyReach: KeyReach[]
   }
@@ -378,7 +392,7 @@ export namespace WireAuthorityAuditTool {
    * @param wire - The WIRE client.
    * @param options - What to audit.
    * @returns The findings; {@link assertClean} fails on any unclassified entry,
-   *   authority mismatch or unexpected link.
+   *   authority mismatch, unexpected link or missing link.
    * @throws When an after-handoff audit names no authority `sysio` was handed to.
    */
   export async function audit(
@@ -406,12 +420,20 @@ export namespace WireAuthorityAuditTool {
         )
       ).then(nested => nested.flat()),
       entries = permissions.flatMap(permission => permission.entries),
-      mismatches = responses.flatMap(response =>
-        response.permissions
-          .map(permission =>
-            authorityMismatch(context, String(response.account_name), permission)
-          )
-          .filter(mismatch => mismatch != null)
+      mismatches = [
+        ...responses.flatMap(response =>
+          response.permissions
+            .map(permission =>
+              authorityMismatch(context, String(response.account_name), permission)
+            )
+            .filter(mismatch => mismatch != null)
+        ),
+        ...responses.flatMap(response =>
+          missingDelegatedPermissions(options, response)
+        )
+      ],
+      missingLinks = responses.flatMap(response =>
+        missingDelegatedLinks(options, response)
       ),
       unexpectedLinks = responses.flatMap(response => {
         const account = String(response.account_name)
@@ -474,6 +496,7 @@ export namespace WireAuthorityAuditTool {
       unclassified: entries.filter(entry => entry.classification == null),
       mismatches,
       unexpectedLinks,
+      missingLinks,
       keyReach
     }
   }
@@ -564,6 +587,78 @@ export namespace WireAuthorityAuditTool {
       String(link.account) === account &&
       String(link.action) === permission
     )
+  }
+
+  /** The delegated permissions `response`'s account must hold, by name; empty when the bootstrap delegates none on it. */
+  function delegatedPermissionNames(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): ReadonlyArray<string> {
+    const account = String(response.account_name)
+    return delegatedPermissions(options)
+      .filter(delegated => delegated.account === account)
+      .flatMap(delegated => delegated.permissions)
+  }
+
+  /** What a delegated permission's authority must be, for a mismatch's reason. */
+  function delegatedAuthorityReason(
+    delegation: DelegatedPermissions,
+    permission: string
+  ): string {
+    return `${delegation.account}@${permission} must delegate to the ${delegation.role} account ${delegation.delegate}@${WireClient.ActivePermission} and ${Constants.SYSIO_ACCOUNT}@${WireClient.ActivePermission}, each alone`
+  }
+
+  /**
+   * The delegated permissions `response`'s account must hold and does not: each
+   * a mismatch against no authority. Without the permission its action falls
+   * back to the contract's `active`, which the delegate cannot satisfy.
+   */
+  function missingDelegatedPermissions(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): AuthorityMismatch[] {
+    const account = String(response.account_name)
+    return delegatedPermissionNames(options, response)
+      .filter(permission => findPermission(response, permission) == null)
+      .map(permission => {
+        const delegation = findDelegatedPermissions(options, account, permission)
+        return {
+          account,
+          permission,
+          expected: WireSysioContractTool.sysioActiveDelegateAuthority(
+            delegation.delegate
+          ),
+          actual: null,
+          reason: `${delegatedAuthorityReason(delegation, permission)}, and does not exist`
+        }
+      })
+  }
+
+  /**
+   * The delegated permissions of `response`'s account that exist without the
+   * link to their action. An unlinked action requires the contract's `active`,
+   * so a transaction declaring the delegated permission is rejected.
+   */
+  function missingDelegatedLinks(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): MissingLink[] {
+    const account = String(response.account_name)
+    return delegatedPermissionNames(options, response)
+      .filter(permission => {
+        const found = findPermission(response, permission)
+        return (
+          found != null &&
+          !(found.linked_actions ?? []).some(link =>
+            isDelegatedPermissionLink(options, account, permission, link)
+          )
+        )
+      })
+      .map(permission => ({
+        account,
+        permission,
+        action: `${account}::${permission}`
+      }))
   }
 
   /** Whether `permission` is one every account has (`owner`, `active`). */
@@ -788,8 +883,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * The mismatch, if any, between a permission and the WHOLE authority it must
-   * hold: `sysio@owner` / `@active` after a handoff, and a written governance
-   * authority's `active`. Every other permission is judged entry by entry.
+   * hold: `sysio@owner` / `@active` after a handoff, a written governance
+   * authority's `active`, and a delegated permission. Every other permission is
+   * judged entry by entry.
    */
   function authorityMismatch(
     context: AuditContext,
@@ -799,10 +895,12 @@ export namespace WireAuthorityAuditTool {
     const name = String(permission.perm_name),
       actual = WireClient.toAuthorityType(permission.required_auth),
       { options } = context,
-      handedTo = options.phase === AuditPhase.afterHandoff && options.handedTo === account
+      handedTo = options.phase === AuditPhase.afterHandoff && options.handedTo === account,
+      delegation = findDelegatedPermissions(options, account, name)
     return match({
       root: options.phase === AuditPhase.afterHandoff && isRootPermission(account, name),
-      governance: isGovernanceAuthorityActive(account, name)
+      governance: isGovernanceAuthorityActive(account, name),
+      delegated: delegation != null
     })
       .with({ root: true }, (): AuthorityMismatch => {
         const expected = WireSysioContractTool.delegatedAuthority(options.handedTo)
@@ -845,6 +943,20 @@ export namespace WireAuthorityAuditTool {
                       : `${account}@${name} must be [${[...members].join(", ")}] at ${expected.threshold}`
                 }
           )
+      })
+      .with({ delegated: true }, (): AuthorityMismatch => {
+        const expected = WireSysioContractTool.sysioActiveDelegateAuthority(
+          delegation.delegate
+        )
+        return isEqual(actual, expected)
+          ? null
+          : {
+              account,
+              permission: name,
+              expected,
+              actual,
+              reason: delegatedAuthorityReason(delegation, name)
+            }
       })
       .otherwise((): AuthorityMismatch => null)
   }
@@ -949,8 +1061,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * Fail on any entry the audit could not classify, any authority that differs
-   * from the one it must hold, any unexpected action link, and any listed
-   * system account the chain never created.
+   * from the one it must hold, any unexpected action link, any delegated
+   * permission missing its link, and any listed system account the chain never
+   * created.
    *
    * @param result - The audit's findings.
    * @param inventory - The enumerated accounts, when the audit's accounts came from {@link discoverSystemAccounts}.
@@ -969,6 +1082,9 @@ export namespace WireAuthorityAuditTool {
       ),
       ...result.unexpectedLinks.map(
         link => `unexpected link of ${link.action} to ${link.account}@${link.permission}`
+      ),
+      ...result.missingLinks.map(
+        link => `missing link of ${link.action} to ${link.account}@${link.permission}`
       ),
       ...(inventory?.missing ?? []).map(
         account => `system account ${account} does not exist on chain`

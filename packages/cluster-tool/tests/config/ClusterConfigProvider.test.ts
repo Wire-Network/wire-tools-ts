@@ -14,7 +14,8 @@ import {
   type ClusterSignatureProviderOptions
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, SlugName } from "@wireio/sdk-core"
+import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
+import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
@@ -29,6 +30,7 @@ import {
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
   ExternalOutpostChainId,
+  FixtureJudgePublicKey,
   fixtureExternalOutpostConfig,
   fixtureExternalOutposts,
   fixtureResolveEnvironment,
@@ -1559,6 +1561,7 @@ describe("ClusterConfigProvider", () => {
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
         externalOutpostConfig: externalConfigFile,
+        judgePublicKey: FixtureJudgePublicKey,
         ...extra
       }
     }
@@ -1621,7 +1624,8 @@ describe("ClusterConfigProvider", () => {
         buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
-        externalOutpostConfig: configFile
+        externalOutpostConfig: configFile,
+        judgePublicKey: FixtureJudgePublicKey
       })
       expect(config.externalOutposts).toEqual(outposts)
     })
@@ -1638,7 +1642,8 @@ describe("ClusterConfigProvider", () => {
           buildPath: environment.buildPath,
           ethereumPath: "/fake/eth",
           solanaPath: "/fake/sol",
-          externalOutpostConfig: configFile
+          externalOutpostConfig: configFile,
+          judgePublicKey: FixtureJudgePublicKey
         })
       ).rejects.toThrow()
     })
@@ -1672,6 +1677,7 @@ describe("ClusterConfigProvider", () => {
     ): ClusterBuildOptions {
       return localOptions({
         externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        judgePublicKey: FixtureJudgePublicKey,
         ...extra
       })
     }
@@ -1727,6 +1733,92 @@ describe("ClusterConfigProvider", () => {
       )
       expect(config.enableMockLiqPools).toBe(true)
       expect(config.enableMockSyndicationImport).toBe(true)
+    })
+  })
+
+  describe("the judge key", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("judge-key-")
+    })
+
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base options for a LOCAL-outpost resolve over the sandbox. */
+    function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...extra
+      }
+    }
+
+    /** Base options for an EXTERNAL-outpost resolve. */
+    function externalOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+      return localOptions({
+        externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        ...extra
+      })
+    }
+
+    it("leaves the judge on the cluster's initial key when a local build names none", async () => {
+      const config = await ClusterConfigProvider.resolve(localOptions())
+      expect(config.judgePublicKey).toBeNull()
+    })
+
+    it("persists the key a local build names, as spelled", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({ judgePublicKey: FixtureJudgePublicKey })
+      )
+      expect(config.judgePublicKey).toBe(FixtureJudgePublicKey)
+    })
+
+    it("lets a local build name the development key", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        localOptions({ judgePublicKey: Constants.DEV_K1_PUBLIC_KEY })
+      )
+      expect(config.judgePublicKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+    })
+
+    it("refuses an external build that names no judge key, before claiming a port", async () => {
+      // `buildPath` is asserted before `resolveBind`; omitting it fails there
+      // unless the judge-key refusal runs first.
+      await expect(
+        ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath)
+        })
+      ).rejects.toThrow(/judgePublicKey is required with externalOutpostConfig/)
+    })
+
+    it("accepts an external build that names the judge key", async () => {
+      const config = await ClusterConfigProvider.resolve(
+        externalOptions({ judgePublicKey: FixtureJudgePublicKey })
+      )
+      expect(config.judgePublicKey).toBe(FixtureJudgePublicKey)
+    })
+
+    it.each([
+      ["its legacy spelling", Constants.DEV_K1_PUBLIC_KEY],
+      ["its PUB_K1 spelling", PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()]
+    ])("refuses the development key against external outposts, in %s", async (_case, judgePublicKey) => {
+      await expect(
+        ClusterConfigProvider.resolve(externalOptions({ judgePublicKey }))
+      ).rejects.toThrow(/judgePublicKey is the development key/)
+    })
+
+    it("refuses a value that is not a public key, keeping the parse error as its cause", async () => {
+      const resolved = ClusterConfigProvider.resolve(
+        localOptions({ judgePublicKey: "not-a-key" })
+      )
+      await expect(resolved).rejects.toBeInstanceOf(NestedError)
+      await expect(resolved).rejects.toThrow(/judgePublicKey is not a public key/)
+      await expect(resolved).rejects.toHaveProperty("cause", expect.any(Error))
     })
   })
 
