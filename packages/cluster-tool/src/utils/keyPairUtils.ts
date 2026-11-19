@@ -573,3 +573,75 @@ export function wireKeyFromPublicKey(publicKey: PublicKeyType): WireKey {
       })
   return WireKey.create({ keyType, key: parsed.data.array })
 }
+
+// ── public-key strings in the spellings libfc (`clio`) parses ──────────────
+
+/** The prefix of an `EM` public key string, whose payload libfc reads as hex. */
+const EthereumPublicKeyPrefix = `PUB_${KeyType.EM}_`
+/** The optional prefix libfc strips from an `EM` key's hex payload. */
+const HexPrefix = "0x"
+/**
+ * The key types whose keys are secp256k1 points. One private key signs for both:
+ * a `K1` signature, or an `EM` (Ethereum-message) one.
+ */
+const Secp256k1KeyTypes: readonly KeyType[] = [KeyType.K1, KeyType.EM]
+
+/**
+ * The sdk-core {@link PublicKey} of a public-key string in any spelling libfc's
+ * `public_key::from_string` parses, which is what `clio` accepts. sdk-core parses
+ * all of them but two `EM` forms: it refuses a `0x` payload, and it keeps an
+ * uncompressed point (64 or 65 bytes) as given. An `EM` key is therefore returned
+ * as its compressed point, so two spellings of one key compare equal.
+ *
+ * @param value - The public-key string.
+ * @returns The parsed key; an `EM` key always holds its 33-byte compressed point.
+ * @throws When the string is not a public key, or an `EM` point is not on the curve.
+ */
+export function publicKeyFromChainString(value: string): PublicKey {
+  const hexPrefixed = `${EthereumPublicKeyPrefix}${HexPrefix}`,
+    key = PublicKey.from(
+      value.startsWith(hexPrefixed)
+        ? `${EthereumPublicKeyPrefix}${value.slice(hexPrefixed.length)}`
+        : value
+    )
+  return key.type === KeyType.EM
+    ? PublicKey.from({
+        type: KeyType.EM,
+        compressed: ethers.getBytes(
+          ethers.SigningKey.computePublicKey(key.data.array, true)
+        )
+      })
+    : key
+}
+
+/**
+ * A public key in the `PUB_` spelling libfc's `public_key::from_string` parses.
+ * `PublicKey.toString()` is that spelling for every type but `WA`, which it writes
+ * as hex where libfc expects base58 with the type's checksum.
+ *
+ * @param publicKey - The key ({@link publicKeyFromChainString} for an `EM` one, so its point is compressed).
+ * @returns The key's `PUB_<type>_<payload>` string.
+ */
+export function chainStringFromPublicKey(publicKey: PublicKey): string {
+  return publicKey.type === KeyType.WA
+    ? `PUB_${KeyType.WA}_${Base58.encodeRipemd160Check(publicKey.data, KeyType.WA)}`
+    : publicKey.toString()
+}
+
+/**
+ * Whether one private key signs for both public keys: they are equal, or they
+ * are the same secp256k1 point under `K1` and `EM`. `PublicKey.equals` compares
+ * the type too, so it tells such a pair apart.
+ *
+ * @param left - A key ({@link publicKeyFromChainString} for an `EM` one).
+ * @param right - The key to compare it with.
+ * @returns `true` when the holder of either key's private key controls both.
+ */
+export function isSameSigningKey(left: PublicKey, right: PublicKey): boolean {
+  return (
+    left.equals(right) ||
+    (Secp256k1KeyTypes.includes(left.type) &&
+      Secp256k1KeyTypes.includes(right.type) &&
+      left.data.equals(right.data))
+  )
+}

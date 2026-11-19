@@ -505,8 +505,12 @@ wire-cluster-tool create \
   --build-path              <wire-sysio>/build/release \
   --ethereum-path           <wire-ethereum> \
   --solana-path             <wire-solana> \
-  --external-outpost-config ~/external-outpost-config.json
+  --external-outpost-config ~/external-outpost-config.json \
+  --judge-public-key        <PUB_K1_…> \
+  --panic-public-key        <PUB_K1_…>
 ```
+
+Both delegate keys are required in this mode, and neither may be the development key.
 
 `create` never contacts either outpost. It builds the operator daemons' ABI /
 IDL files from the wire-ethereum / wire-solana builds with the config's

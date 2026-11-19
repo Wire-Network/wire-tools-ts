@@ -14,7 +14,7 @@ import {
   type ClusterSignatureProviderOptions
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, PrivateKey, PublicKey, SlugName } from "@wireio/sdk-core"
+import { Base58, KeyType, PrivateKey, PublicKey, SlugName } from "@wireio/sdk-core"
 import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 
@@ -37,6 +37,10 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
+import {
+  fixtureEthereumPublicKeySpellings,
+  fixtureWebAuthnPublicKey
+} from "../utils/publicKeyFixture.js"
 
 /**
  * PREFERRED kiod pin for the partial-bind-config merge test — one ABOVE the
@@ -1768,6 +1772,7 @@ describe("ClusterConfigProvider", () => {
   ] as const)(
     "the $delegate key",
     ({ optionKey, publicKey, otherKeys, holds, acts, exposes }) => {
+      const ethereumKey = PrivateKey.generate(KeyType.EM).toPublic()
       let environment: ResolveEnvironment
 
       beforeEach(() => {
@@ -1831,6 +1836,31 @@ describe("ClusterConfigProvider", () => {
         expect(config[optionKey]).toBe(publicKey)
       })
 
+      it.each(fixtureEthereumPublicKeySpellings(ethereumKey))(
+        "persists an EM key spelled %s as its compressed point",
+        async (_case, spelling) => {
+          const config = await ClusterConfigProvider.resolve(
+            localOptions({ [optionKey]: spelling })
+          )
+          expect(config[optionKey]).toBe(ethereumKey.toString())
+        }
+      )
+
+      it("persists a WebAuthn key in the base58 spelling clio parses", async () => {
+        const key = fixtureWebAuthnPublicKey(),
+          spelling = `PUB_WA_${Base58.encodeRipemd160Check(key.data, KeyType.WA)}`
+        // sdk-core writes this key as hex, which clio refuses.
+        expect(key.toString()).not.toBe(spelling)
+        await Promise.all(
+          [spelling, key.toString()].map(async named => {
+            const config = await ClusterConfigProvider.resolve(
+              localOptions({ [optionKey]: named })
+            )
+            expect(config[optionKey]).toBe(spelling)
+          })
+        )
+      })
+
       it("refuses a BLS key, which cannot sign a transaction", async () => {
         const resolved = ClusterConfigProvider.resolve(
           localOptions({
@@ -1877,7 +1907,11 @@ describe("ClusterConfigProvider", () => {
 
       it.each([
         ["its legacy spelling", Constants.DEV_K1_PUBLIC_KEY],
-        ["its PUB_K1 spelling", PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()]
+        ["its PUB_K1 spelling", PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()],
+        // The development private key signs for the same point as an EM key too.
+        ...fixtureEthereumPublicKeySpellings(
+          PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)
+        ).map(([spelling, key]) => [`an EM key on its point, ${spelling}`, key])
       ])("refuses the development key against external outposts, in %s", async (_case, developmentKey) => {
         const resolved = ClusterConfigProvider.resolve(
           externalOptions({ [optionKey]: developmentKey })

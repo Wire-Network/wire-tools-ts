@@ -53,7 +53,12 @@ import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
-import { keyPairFromPrivate } from "../utils/keyPairUtils.js"
+import {
+  chainStringFromPublicKey,
+  isSameSigningKey,
+  keyPairFromPrivate,
+  publicKeyFromChainString
+} from "../utils/keyPairUtils.js"
 import type {
   KeyPair,
   WireFinalizerKeyPair,
@@ -775,7 +780,8 @@ export namespace ClusterConfigProvider {
    * @returns The key in its canonical `PUB_` spelling, the one `clio create account`
    *   parses whatever spelling the caller used, or `null` when none was named.
    * @throws When the key is not a public key or is a BLS key, which cannot sign a
-   *   transaction, or when external mode names none or the development key.
+   *   transaction, or when external mode names none or the development key, under
+   *   either type its private key signs for.
    */
   function resolveDelegatePublicKey(
     options: ClusterBuildOptions,
@@ -790,7 +796,7 @@ export namespace ClusterConfigProvider {
       )
       return null
     }
-    const key = Either.try(() => PublicKey.from(publicKey))
+    const key = Either.try(() => publicKeyFromChainString(publicKey))
       .ifLeft(error => {
         throw new NestedError(`${optionKey} is not a public key`, {
           cause: error,
@@ -804,10 +810,10 @@ export namespace ClusterConfigProvider {
     )
     Assert.ok(
       externalOutpostConfig == null ||
-        !key.equals(PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
+        !isSameSigningKey(key, PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
       `${optionKey} is the development key, which externalOutpostConfig refuses: anyone could ${exposes} on the deployed cluster.`
     )
-    return key.toString()
+    return chainStringFromPublicKey(key)
   }
 
   /**
