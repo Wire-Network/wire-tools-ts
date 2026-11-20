@@ -11,6 +11,8 @@ const LastKickBefore = "2026-10-10T12:00:00.000"
 const LastKickAfter = "2026-10-10T12:10:00.500"
 const Gift = 3805n
 const Budget = 1_000_000_000_000_000n
+// Format discovery checks the envelope without decoding the probe's row data.
+const BinaryTableProbeValue = "00"
 
 function steps(node) {
   return node.steps ? [...node.steps] : node.children.flatMap(steps)
@@ -229,7 +231,11 @@ test("SDK table JSON reaches snapshots with only the two safety flags normalized
   client.getSysioContract = name => name === SysioContracts.SysioContractName.kicker ? getSysioContract(name) : reads.getSysioContract(name)
   const call = jest.spyOn(client.api.v1Provider, "call").mockImplementation(async ({ params }) => {
     const row = String(params.table) === "kickpools" ? holder.state.pool : holder.state.config,
-      json = { rows: [{ key: "LIQETH", value: cloneDeep(row) }], more: false }
+      json = { rows: [{
+        key: "LIQETH",
+        value: params.json === false ? BinaryTableProbeValue : cloneDeep(row),
+        ...(params.show_payer ? { payer: String(params.code) } : {})
+      }], more: false }
     return { status: 200, headers: {}, json, text: JSON.stringify(json) }
   })
   try {
