@@ -30,6 +30,10 @@ export namespace SolanaDeliveryHistory {
   export const SignatureLimit = 1000
   /** Program seed for the buffer scoped to one epoch and one signing operator. */
   const ChunkBufferSeed = "envelope_chunks"
+  /** Phase-A program marker identifying calls that cannot mutate the buffer. */
+  const LateNoopLogPrefix = "Program log: opp_outpost: epoch_in late no-op "
+  /** Finalizer marker identifying a newly recorded vote rather than a retry. */
+  const FreshVoteLogSuffix = " consensus_retry=false"
   /** Program ABI instruction names as converted by Anchor's deployed IDL loader. */
   enum Instruction {
     EpochIn = "epochIn",
@@ -132,12 +136,7 @@ export namespace SolanaDeliveryHistory {
       if (decoded.name !== Instruction.EpochIn) continue
       const logs = directLogs(response.meta.logMessages, program.programId)
       // Phase A returns before authorization or buffer access for closed epochs.
-      if (
-        logs.some(line =>
-          line.startsWith("Program log: opp_outpost: epoch_in late no-op ")
-        )
-      )
-        continue
+      if (logs.some(line => line.startsWith(LateNoopLogPrefix))) continue
       const accounts = program.idl.instructions.find(
           ix => ix.name === Instruction.EpochIn
         )?.accounts,
@@ -180,7 +179,7 @@ export namespace SolanaDeliveryHistory {
           line =>
             line.startsWith(
               `Program log: opp_outpost: epoch_in finalize epoch=${chunk.epochIndex} operator=${signer} digest=`
-            ) && line.endsWith(" consensus_retry=false")
+            ) && line.endsWith(FreshVoteLogSuffix)
         )
       ) {
         if (
