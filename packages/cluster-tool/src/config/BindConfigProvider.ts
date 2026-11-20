@@ -151,6 +151,23 @@ export namespace BindConfigProvider {
     first: 8_000,
     last: 10_000
   }
+  /**
+   * Ports Node's Fetch implementation rejects before making an HTTP request.
+   * Keep every Node allocation compatible with readiness probes, including
+   * explicit pins and resumed bindings. This is Node client policy, not a
+   * registry validity rule: other clients' live registrations remain honored.
+   * Source: Node 24's Undici Fetch bad-port table (WHATWG port blocking).
+   * Changing this set changes which ports this provider can issue or reclaim.
+   * @see https://fetch.spec.whatwg.org/#port-blocking
+   */
+  export const FetchBlockedPorts: ReadonlySet<number> = new Set([
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+    87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135,
+    137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531,
+    532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1_719,
+    1_720, 1_723, 2_049, 3_659, 4_045, 4_190, 5_060, 5_061, 6_000, 6_566, 6_665,
+    6_666, 6_667, 6_668, 6_669, 6_679, 6_697, 10_080
+  ])
   // Daemon default preferences. Layout: everything lives in 10500-11999 —
   // above the reserved agave band, below the 12000+ dynamic-range windows,
   // inside the service pool, subject to the host's automatic-range exclusions.
@@ -884,6 +901,7 @@ export namespace BindConfigProvider {
         // fail on get-port's in-process lock from the first.
         ports = locallyBoundPorts(config),
         reserved = ports.filter(isReservedPort),
+        fetchBlocked = ports.filter(port => FetchBlockedPorts.has(port)),
         heldElsewhere = ports.filter(
           port =>
             !isReservedPort(port) && exclusions.has(port) && !ownPorts.has(port)
@@ -891,6 +909,12 @@ export namespace BindConfigProvider {
       if (reserved.length > 0) {
         log.warn(
           `bind registry: ports inside the reserved agave band ${ReservedAgavePortBand.first}-${ReservedAgavePortBand.last}: ${reserved.join(", ")}`
+        )
+        return false
+      }
+      if (fetchBlocked.length > 0) {
+        log.warn(
+          `bind registry: ports blocked by Node Fetch: ${fetchBlocked.join(", ")}`
         )
         return false
       }
@@ -953,7 +977,11 @@ export namespace BindConfigProvider {
 
   /** {@link isPortAvailable}'s probe, for callers already holding the port lock. */
   async function isPortBindable(port: number): Promise<boolean> {
-    return (await getPort({ port })) === port && (await isIpv6PortFree(port))
+    return (
+      !FetchBlockedPorts.has(port) &&
+      (await getPort({ port })) === port &&
+      (await isIpv6PortFree(port))
+    )
   }
 
   /**
@@ -1037,6 +1065,7 @@ export namespace BindConfigProvider {
             (callerPin != null ||
               !isAutomaticPort(websocket, automaticPortRanges)) &&
             !isReservedPort(websocket) &&
+            !FetchBlockedPorts.has(websocket) &&
             !claimed.has(websocket) &&
             (await getPort({ port: websocket, exclude: claimed })) ===
               websocket &&
@@ -1134,6 +1163,10 @@ export namespace BindConfigProvider {
   ): Promise<number> {
     if (callerPin !== null) {
       Assert.ok(
+        !FetchBlockedPorts.has(callerPin),
+        `port ${callerPin} for ${daemon} is blocked by Node Fetch — pin a compatible port`
+      )
+      Assert.ok(
         !isReservedPort(callerPin),
         `port ${callerPin} for ${daemon} is inside the reserved agave validator band ` +
           `${ReservedAgavePortBand.first}-${ReservedAgavePortBand.last} ` +
@@ -1173,6 +1206,7 @@ export namespace BindConfigProvider {
         )
         return !claimed.has(candidate) &&
           !isReservedPort(candidate) &&
+          !FetchBlockedPorts.has(candidate) &&
           (await isIpv6PortFree(candidate)) &&
           (protocol === BindConfigPortProtocol.tcp ||
             (await isUdpPortFree(candidate)))
@@ -1207,6 +1241,7 @@ export namespace BindConfigProvider {
     const available = (port: number) =>
       !claimed.has(port) &&
       !isReservedPort(port) &&
+      !FetchBlockedPorts.has(port) &&
       !isAutomaticPort(port, automaticPortRanges)
     if (preferred != null && available(preferred)) yield preferred
     const candidates = range(ServicePortFirst, MaximumPort + 1).filter(
@@ -1246,7 +1281,8 @@ export namespace BindConfigProvider {
     exclusions: Set<number>
   ): Promise<boolean> {
     const ports = range(first, last + 1)
-    if (ports.some(port => exclusions.has(port))) return false
+    if (ports.some(port => exclusions.has(port) || FetchBlockedPorts.has(port)))
+      return false
     // One occupied port rejects the window. Probing the remaining ports wastes
     // syscalls AND locks otherwise-free candidates in get-port's cache.
     return Bluebird.reduce(

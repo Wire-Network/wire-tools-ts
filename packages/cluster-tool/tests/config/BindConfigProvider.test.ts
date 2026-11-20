@@ -15,6 +15,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { Deferred, guard } from "@wireio/shared"
 import {
+  eachSeries,
   ListenAllAddress,
   Localhost,
   processCommandBasename,
@@ -209,6 +210,154 @@ describe("BindConfigProvider", () => {
 
   afterEach(() => {
     jest.restoreAllMocks()
+  })
+
+  describe("Node Fetch port compatibility", () => {
+    /**
+     * Replay a port issued before the Fetch policy existed. Obtain it through
+     * the provider while disabling only that policy, then restore the policy
+     * and release in-process locks before testing reuse of the issued port.
+     */
+    async function legacyFetchBlockedPort(
+      preferred = Math.max(...BindConfigProvider.FetchBlockedPorts)
+    ): Promise<number> {
+      const policy = jest
+        .spyOn(BindConfigProvider.FetchBlockedPorts, "has")
+        .mockReturnValue(false)
+      try {
+        return await BindConfigProvider.findAvailable(preferred)
+      } finally {
+        policy.mockRestore()
+        await BindConfigProvider.clearPortLocks()
+      }
+    }
+
+    it("reproduces Fetch refusing a formerly issued port before connecting", async () => {
+      const port = await legacyFetchBlockedPort()
+      await expect(fetch(`http://${Localhost}:${port}`)).rejects.toMatchObject({
+        cause: { message: "bad port" }
+      })
+    })
+
+    it("rejects every blocked port as a pin and in availability checks", async () => {
+      await eachSeries(
+        [...BindConfigProvider.FetchBlockedPorts],
+        async preferred => {
+          const port = await legacyFetchBlockedPort(preferred)
+          await expect(
+            BindConfigProvider.pickPort(
+              port,
+              null,
+              new Set(),
+              "Fetch policy test"
+            )
+          ).rejects.toThrow(/blocked by Node Fetch/)
+          expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+        }
+      )
+    })
+
+    it("redraws a blocked preference", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        port = await BindConfigProvider.findAvailable(blocked)
+      expect(port).not.toBe(blocked)
+      expect(BindConfigProvider.FetchBlockedPorts.has(port)).toBe(false)
+    })
+
+    it("skips the blocked first service candidate when a default is occupied", async () => {
+      const blocked = await legacyFetchBlockedPort()
+      mockAutomaticPortRanges.push({
+        first: BindConfigProvider.ServicePortFirst,
+        last: blocked - 1
+      })
+      allocator.markTaken(BindConfigProvider.DefaultKiod)
+      const config = await BindConfigProvider.resolve({}, {})
+      expect(config.kiod.port).toBe(blocked + 1)
+      expect(BindConfigProvider.allPorts(config)).not.toContain(blocked)
+    })
+
+    it("rejects a caller pin with a useful Fetch diagnostic", async () => {
+      const port = await legacyFetchBlockedPort()
+      await expect(
+        BindConfigProvider.resolve({ kiod: { port } }, {})
+      ).rejects.toThrow(/blocked by Node Fetch/)
+    })
+
+    it("reports a blocked port unavailable without probing it", async () => {
+      const port = await legacyFetchBlockedPort()
+      expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+      expect(allocator.locked.has(port)).toBe(false)
+    })
+
+    it("redraws an RPC pair whose WebSocket companion is Fetch-blocked", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        preferred = await BindConfigProvider.findAvailable(
+          blocked - BindConfigProvider.SolanaWsPortOffset
+        )
+      await BindConfigProvider.clearPortLocks()
+      const port = await BindConfigProvider.findAvailableSolanaRpc(preferred)
+      expect(port).not.toBe(preferred)
+      expect(BindConfigProvider.FetchBlockedPorts.has(port)).toBe(false)
+      expect(
+        BindConfigProvider.FetchBlockedPorts.has(
+          port + BindConfigProvider.SolanaWsPortOffset
+        )
+      ).toBe(false)
+    })
+
+    it("rejects a pinned RPC pair whose companion is Fetch-blocked", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        http = await BindConfigProvider.findAvailable(
+          blocked - BindConfigProvider.SolanaWsPortOffset
+        )
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.resolve({ solana: { ports: { http } } }, {})
+      ).rejects.toThrow(/WebSocket companion .* unavailable or reserved/)
+    })
+
+    it("rejects a pinned dynamic window containing a blocked port", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        first = await BindConfigProvider.findAvailable(blocked - 1),
+        last = await BindConfigProvider.findAvailable(blocked + 1)
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.pickPortRange(
+          { first, last },
+          new Set(),
+          "Fetch compatibility test"
+        )
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
+    it("refuses to reclaim a persisted local blocked binding without losing claims", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        config = await BindConfigProvider.resolve({}, {})
+      config.kiod.port = blocked
+      const before = Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")
+      expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      expect(Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")).toBe(
+        before
+      )
+    })
+
+    it("preserves valid live registrations containing Fetch-blocked ports", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        file = BindConfigProvider.registryFile()
+      await BindConfigProvider.resolve({}, {})
+      Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+      Fs.writeFileSync(
+        file,
+        BindRegistrationSchemaCodec.serialize({
+          executable: processCommandBasename(process.pid),
+          ports: [blocked]
+        })
+      )
+      expect(BindConfigProvider.readRegistryPortExclusions().has(blocked)).toBe(
+        true
+      )
+      expect(Fs.existsSync(file)).toBe(true)
+    })
   })
 
   describe("resolve", () => {
