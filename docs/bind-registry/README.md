@@ -33,8 +33,9 @@ back to other directories. Implement the steps above directly.
 
 ## 2. Registry directory
 
-- `$WIRE_BIND_REGISTRY_PATH` when the variable is set and not empty. Tests use it to give each
-  suite a private registry.
+- `$WIRE_BIND_REGISTRY_PATH` when the variable is set and not empty. Synthetic allocator
+  and registry-protocol fixtures use a private registry. Tests binding real host sockets
+  share the host registry with clusters, including ports reserved before daemons start.
 - Otherwise `<tmpdir>/wire-platform-bind-config`.
 
 Create the directory if it is missing (`mkdir -p`).
@@ -61,13 +62,21 @@ is a directory created with `mkdir`:
 2. If it fails with `EEXIST`, `stat` the lock directory. If it vanished in between, go to 1.
 3. If its mtime is more than **30 seconds** in the past, the holder is dead: `rmdir` it (ignore
    `ENOENT`) and go to 1.
-4. Otherwise wait and retry. Bound the total wait. Node retries 8 times with exponential backoff
-   from 100 ms (about 25.5 s in all) and then fails with "Lock file is already being held". A
-   client waiting about 25 s with 100 ms sleeps behaves the same way. When the wait runs out,
+4. Otherwise wait and retry. Bound the total wait. Node's port operations retry every 100 ms
+   for up to five minutes, allowing a complete cluster's TCP/UDP probes to finish. Clients
+   choose a bounded wait appropriate for that critical section. When the wait runs out,
    fail loudly; never proceed without the lock.
 
+The clients currently choose different acquisition budgets: Node port operations wait up to
+300 seconds, while wire-sysio's Python test-port client and the Python interop fixture wait
+25.5 seconds. The Python client's older comment that its wait mirrors Node is no longer
+accurate. This affects how long a client tolerates contention, not the lock path, registration
+format, or shared 30-second stale threshold. A long Node reservation can therefore exhaust
+Python's shorter budget. Tests of a deliberately long hold use a private synthetic registry;
+the real-host socket test keeps the host registry and does not deliberately hold its mutex.
+
 **Hold.** Keep the lock only while you read the registry, choose ports and write your file. That
-takes milliseconds. A Node holder refreshes the lock's mtime every 15 seconds, so a live holder
+can take minutes for a complete cluster on a loaded host. A Node holder refreshes the lock's mtime every 15 seconds, so a live holder
 never looks stale. A client that may hold the lock for more than 15 seconds must do the same
 (`utime` the lock directory), or another process will take the lock away from it after 30 seconds.
 

@@ -228,8 +228,8 @@ export namespace BatchOperatorUnderwritingSteps {
   /**
    * Epochs of emitted outbound envelopes the Solana outpost keeps on chain, mirroring
    * `MAX_TRACKED_ENVELOPES` in wire-solana's `liqsol-core/src/states/opp_states.rs`. The
-   * underwriter role verifies a request's statement against that log, so a request whose
-   * epoch has left it can never be bonded.
+   * underwriter role can verify a recent checkpoint against that log and authenticate an
+   * older request through the depot's accepted syndication row.
    */
   export const SolanaRetainedEnvelopeEpochs = 10
   /**

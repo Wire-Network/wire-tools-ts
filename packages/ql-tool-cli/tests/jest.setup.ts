@@ -1,15 +1,3 @@
-import Fs from "node:fs"
-import Os from "node:os"
-import Path from "node:path"
-
-// Sandbox the cross-process bind-port registry (BindConfigProvider.RegistryPathEnvVar)
-// so stub-server port claims neither read live runs' reservations nor write the real
-// host registry. The sandbox is SHARED by every worker of one jest run (keyed by the
-// jest parent pid): parallel test files claim stub ports against one registry, so
-// two workers never pick the same port.
-process.env.WIRE_BIND_REGISTRY_PATH = Path.join(Os.tmpdir(), `wire-bind-registry-test-ql-tool-cli-${process.ppid}`)
-Fs.mkdirSync(process.env.WIRE_BIND_REGISTRY_PATH, { recursive: true })
-
 // react-test-renderer drives the TUI components under React's act() environment.
 // IS_REACT_NATIVE_TEST_ENVIRONMENT makes it create synchronous (legacy) roots and
 // skips its per-create deprecation notice — it is the renderer these CJS tests can

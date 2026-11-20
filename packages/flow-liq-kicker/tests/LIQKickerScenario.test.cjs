@@ -11,8 +11,8 @@ const LastKickBefore = "2026-10-10T12:00:00.000"
 const LastKickAfter = "2026-10-10T12:10:00.500"
 const Gift = 3805n
 const Budget = 1_000_000_000_000_000n
-// Format discovery checks the envelope without decoding the probe's row data.
-const BinaryTableProbeValue = "00"
+/** Includes waiting behind a whole-cluster reservation in the shared host registry. */
+const PortResolutionTimeoutMs = 360_000
 
 function steps(node) {
   return node.steps ? [...node.steps] : node.children.flatMap(steps)
@@ -221,6 +221,8 @@ for (const field of ["spot_deviation", "gift_overflow"]) {
 }
 
 test("SDK table JSON reaches snapshots with only the two safety flags normalized", async () => {
+  // Discovery only classifies the binary wrapper; subsequent JSON reads exercise the row.
+  const BinaryFormatProbeValue = "00"
   const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp),
     client = new WireClient({ clusterPath: Os.tmpdir(), binary: Path.join(Os.tmpdir(), "clio"), nodeopUrl: toURL(port), kiodUrl: null }),
     holder = { state: cloneDeep(before) }, reads = fakeWire(holder),
@@ -233,7 +235,7 @@ test("SDK table JSON reaches snapshots with only the two safety flags normalized
     const row = String(params.table) === "kickpools" ? holder.state.pool : holder.state.config,
       json = { rows: [{
         key: "LIQETH",
-        value: params.json === false ? BinaryTableProbeValue : cloneDeep(row),
+        value: params.json === false ? BinaryFormatProbeValue : cloneDeep(row),
         ...(params.show_payer ? { payer: String(params.code) } : {})
       }], more: false }
     return { status: 200, headers: {}, json, text: JSON.stringify(json) }
@@ -251,10 +253,13 @@ test("SDK table JSON reaches snapshots with only the two safety flags normalized
         Assert.equal(holder.state.pool.gift_overflow, rawOverflow)
       }
     }
+    const probes = call.mock.calls.filter(([request]) => request.params.json === false)
+    Assert.equal(probes.length, 1, "the SDK must discover and cache the endpoint's format")
+    Assert.equal(probes[0][0].params.show_payer, true)
   } finally {
     call.mockRestore()
   }
-})
+}, PortResolutionTimeoutMs)
 
 for (const [fault, patch, receipt, message] of [
   ["paid more than the model", {}, { paid: Gift + 1n, blockTime: LastKickAfter }, /treasury draw is not the modelled gift/],

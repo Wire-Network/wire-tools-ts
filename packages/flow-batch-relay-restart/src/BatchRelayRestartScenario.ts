@@ -3,7 +3,6 @@ import { SysioContracts } from "@wireio/sdk-core"
 
 import {
   ClusterBuildPhase,
-  ClusterBuildStep,
   EthereumRoundTripScenario,
   NodeConfig,
   NodeRole,
@@ -12,8 +11,7 @@ import {
   SyndicationScenario,
   verifyStep,
   type ClusterBuild,
-  type ClusterBuildContext,
-  type StepInput
+  type ClusterBuildContext
 } from "@wireio/cluster-tool"
 
 /** Restart the sole real batch relay while a burned principal awaits external payout. */
@@ -22,18 +20,18 @@ export class BatchRelayRestartScenario extends EthereumRoundTripScenario {
   readonly description = "Restart a real relay with a queued external payout"
 
   protected override planBeforeRedemption(cluster: ClusterBuild): void {
+    const node = BatchRelayRestartScenario.relayNode(cluster.context)
     ClusterBuildPhase.create(
       cluster,
       "StopRelay",
       "Stop the sole relay after its successful intake delivery"
     ).push(
-      ClusterBuildStep.create(
+      Steps.processes.nodeop.planStop(
         Report.Actor.BatchOperator,
         "stop-relay",
         "stop and reap the real relay, retaining its data",
         SyndicationScenario.VerifyOptions,
-        { kind: "BatchRelayRestartScenario.StopInput" },
-        BatchRelayRestartScenario.runStop
+        node.name
       )
     )
   }
@@ -86,10 +84,6 @@ export class BatchRelayRestartScenario extends EthereumRoundTripScenario {
 
 /** Process selection and the one stop write. */
 export namespace BatchRelayRestartScenario {
-  /** One process stop, separate from the restart spawn. */
-  export interface StopInput extends StepInput {
-    readonly kind: "BatchRelayRestartScenario.StopInput"
-  }
   /**
    * Select the only planned relay; extra relays would invalidate the interruption.
    * @param ctx - The live cluster context and its deployed chain clients.
@@ -105,22 +99,5 @@ export namespace BatchRelayRestartScenario {
       "restart scenario requires exactly one relay"
     )
     return nodes[0]
-  }
-  /**
-   * Reap the real daemon and remove only its process registration, preserving disk state.
-   * @param ctx - The live cluster context and its deployed chain clients.
-   * @param _input - The reported step input; this action needs no additional payload.
-   * @param signal - Cancellation signal for the reported action.
-   */
-  export async function runStop(
-    ctx: ClusterBuildContext,
-    _input: StopInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    const node = relayNode(ctx),
-      process = ctx.processManager.get(node.name)
-    Assert.ok(process, "relay was not running before interruption")
-    await process.stop(signal)
-    ctx.processManager.remove(node.name)
   }
 }
