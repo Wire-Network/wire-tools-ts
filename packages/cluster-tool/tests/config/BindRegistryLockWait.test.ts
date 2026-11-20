@@ -36,7 +36,7 @@ describe("bind registry lock acquisition budget", () => {
   it("waits beyond the short-file budget without holding the host's cluster lock", async () => {
     expect(BindConfigProvider.portLockPath()).not.toBe(hostLockPath)
     child = spawn(process.execPath, [
-      Path.join(__dirname, "../fixtures/bind-registry/reserve-host-port.cjs"), "--hold-lock"
+      Path.join(__dirname, "../fixtures/bind-registry/bind-registry-owner.cjs"), "--hold-lock"
     ], { env: { ...process.env }, stdio: ["pipe", "ignore", "inherit", "ipc"] })
     const [message] = await Promise.race([
       once(child, "message"),

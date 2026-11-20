@@ -14,7 +14,7 @@ function launchRegistryOwner(): ChildProcess {
   delete environment[BindConfigProvider.RegistryPathEnvVar]
   return spawn(
     process.execPath,
-    [Path.join(__dirname, "../fixtures/bind-registry/reserve-host-port.cjs")],
+    [Path.join(__dirname, "../fixtures/bind-registry/bind-registry-owner.cjs")],
     { env: environment, stdio: ["pipe", "ignore", "inherit", "ipc"] }
   )
 }

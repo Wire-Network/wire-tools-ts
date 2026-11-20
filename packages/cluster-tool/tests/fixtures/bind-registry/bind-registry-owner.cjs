@@ -1,5 +1,5 @@
-// A real flow reserves its complete binding before any daemon starts. Keep the
-// owner alive until the test closes stdin, including when its worker dies.
+// Hold a cluster reservation or a private registry lock until the test closes
+// stdin. Worker exit also closes the pipe, so neither mode outlives the test.
 const { BindConfigProvider } = require("../../../lib/cjs/config/BindConfigProvider.js"),
   { withFileLock } = require("../../../lib/cjs/utils/fsUtils.js"),
   { Deferred, getLogger } = require("@wireio/shared"),
@@ -21,6 +21,6 @@ const ready = process.argv.includes("--hold-lock")
 ready
   .then(() => process.exit(0))
   .catch(error => {
-    log.error("Host port reservation failed", error)
+    log.error("Bind registry fixture failed", error)
     process.exit(1)
   })
