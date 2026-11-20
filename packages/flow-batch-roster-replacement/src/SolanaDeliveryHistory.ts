@@ -33,7 +33,7 @@ export namespace SolanaDeliveryHistory {
   /** Phase-A program marker identifying calls that cannot mutate the buffer. */
   const LateNoopLogPrefix = "Program log: opp_outpost: epoch_in late no-op "
   /** Finalizer marker identifying a newly recorded vote rather than a retry. */
-  const FreshVoteLogSuffix = " consensus_retry=false"
+  const NewVoteLogSuffix = " consensus_retry=false"
   /** Program ABI instruction names as converted by Anchor's deployed IDL loader. */
   enum Instruction {
     EpochIn = "epochIn",
@@ -179,7 +179,7 @@ export namespace SolanaDeliveryHistory {
           line =>
             line.startsWith(
               `Program log: opp_outpost: epoch_in finalize epoch=${chunk.epochIndex} operator=${signer} digest=`
-            ) && line.endsWith(FreshVoteLogSuffix)
+            ) && line.endsWith(NewVoteLogSuffix)
         )
       ) {
         if (
