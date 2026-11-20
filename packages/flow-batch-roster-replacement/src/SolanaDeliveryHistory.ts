@@ -136,8 +136,7 @@ export namespace SolanaDeliveryHistory {
       if (decoded.name !== Instruction.EpochIn) continue
       const logs = directLogs(response.meta.logMessages, program.programId)
       // Phase A returns before authorization or buffer access for closed epochs.
-      if (logs.some(line => line.startsWith(LateNoopLogPrefix)))
-        continue
+      if (logs.some(line => line.startsWith(LateNoopLogPrefix))) continue
       const accounts = program.idl.instructions.find(
           ix => ix.name === Instruction.EpochIn
         )?.accounts,
