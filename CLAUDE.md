@@ -363,7 +363,9 @@ against already-deployed REMOTE ETH+SOL outposts — see "`create` against exter
 outposts" below), `--judge-public-key <key>` (the key on `bond.judge`'s `owner` and
 `active`, whose holder rules `sysio.bond` requests also after the governance handoff;
 default the cluster's initial key; required with `--external-outpost-config`, which
-refuses the development key),
+refuses the development key), `--panic-public-key <key>` (the key on `andon.panic`'s
+`owner` and `active`, whose holder pulls and clears the depot emergency stop also after
+the governance handoff; same default, requirement and refusal),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config` and must be an IP literal, since the bind

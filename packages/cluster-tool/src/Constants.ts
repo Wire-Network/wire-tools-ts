@@ -329,15 +329,17 @@ export namespace Constants {
 
   /**
    * The `sysio.andon` panic account: besides `sysio`, the one account that may pull and
-   * clear the depot's emergency stop. The bootstrap creates it (under the dev key) and
-   * delegates the native `sysio.andon@pull` and `@clear` permissions to it.
+   * clear the depot's emergency stop. The bootstrap creates it (under `panicPublicKey`, or
+   * the cluster's initial key when none is named) and delegates the native
+   * `sysio.andon@pull` and `@clear` permissions to it.
    */
   export const PANIC_ACCOUNT = "andon.panic"
 
   /**
    * The `sysio.bond` judge account: besides `sysio`, the one account that may rule a
-   * request VALID or INVALID. The bootstrap creates it (under the dev key) and delegates
-   * the native `sysio.bond@rslvvalid` and `@rslvinvalid` permissions to it.
+   * request VALID or INVALID. The bootstrap creates it (under `judgePublicKey`, or the
+   * cluster's initial key when none is named) and delegates the native
+   * `sysio.bond@rslvvalid` and `@rslvinvalid` permissions to it.
    */
   export const JUDGE_ACCOUNT = "bond.judge"
 

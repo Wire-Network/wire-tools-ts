@@ -631,6 +631,13 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(toClusterBuildOptions({}).judgePublicKey).toBeUndefined()
   })
 
+  it("round trips the panic public key leaf, absent by default", () => {
+    expect(
+      toClusterBuildOptions({ "panic-public-key": "PUB_K1_panic" }).panicPublicKey
+    ).toBe("PUB_K1_panic")
+    expect(toClusterBuildOptions({}).panicPublicKey).toBeUndefined()
+  })
+
   it("round trips the batch-operator underwriting leaf, off by default", () => {
     expect(
       toClusterBuildOptions({ "enable-batch-operator-underwriting": true })

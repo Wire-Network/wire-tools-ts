@@ -9,6 +9,7 @@ import { LiqPoolSpec } from "@wireio/opp-typescript-models"
 import { omit } from "lodash"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   ExternalOutpostProgramId,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
@@ -310,7 +311,8 @@ describe("ClusterBuildDefaults — launch-data import", () => {
         ...baseOptions(),
         underwriterCount: 0,
         externalOutpostConfig,
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       })
     ).rejects.toThrow(/takes real values only/)
 
@@ -342,7 +344,8 @@ describe("ClusterBuildDefaults — launch-data import", () => {
       },
       underwriterCount: 0,
       externalOutpostConfig,
-      judgePublicKey: FixtureJudgePublicKey
+      judgePublicKey: FixtureJudgePublicKey,
+      panicPublicKey: FixturePanicPublicKey
     })
     await expect(
       ClusterBuildDefaults.create(

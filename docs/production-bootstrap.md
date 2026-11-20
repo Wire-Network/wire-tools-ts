@@ -142,7 +142,7 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | Per-operator K1/EM/ED keys | Each batch operator's UNIQUE identity: a WIRE account key (K1 — imported into kiod so `<account>@active` signs, or, KMS-custodied, signed for by the harness through sdk-core since kiod never holds it), an ETH key (EM, a random secp256k1 key) and a SOL key (ED25519, a random key) — or, on an SSM cluster with `kms` settings, keys of the curves `kms.keyTypes` names (K1, EM and ED by default) created inside AWS KMS (`ECC_SECG_P256K1` for K1 and EM, `ECC_NIST_EDWARDS25519` for ED) that never leave it. The EM and ED custody reaches EVERY identity the bootstrap provisions through `KeySteps.adoptOrCreateSignatureProviderKey` the same way — underwriters and collateral-backed producers hold their outpost keys in KMS exactly as the batch operators do — while the K1 custody is the batch operators' WIRE account keys only. Every key the tooling creates is a multi-Region PRIMARY (AWS `MultiRegion: true`, key id `mrk-…`): replicating it into another region (`ReplicateKey` plus an alias there) is a separate later step the tooling does not perform, and a replica carries the identical public key, so the WIRE account key, the EM address and the ED key never change; a key created single-Region can never be converted — the adoption warning names one. The daemon's K1 spec then reads `wire-<pub>,wire,wire,<pub>,KMS:<region>:<alias>` and `signature_provider_kms_plugin` signs with `ECDSA_SHA_256` as `MessageType=DIGEST` over the 32-byte signing digest (low-S normalised, the recovery id found against the pinned key; wire-sysio #768) — `["EM","ED"]` keeps the K1 in SSM for a nodeop without it; signing a Solana transaction through KMS on the daemon side requires wire-sysio's Ed25519 KMS support and aws-sdk-cpp 1.11.686 or later. Nothing is derived from a mnemonic or an index; under `SSM` an existing parameter / KMS key under the rendered id is ADOPTED, and a pre-funded launch pre-creates them with `create-batch-operator-keys`. The chain ACCOUNT is created by `sysio` under the operator's deterministic label (`batchop.a`, …), which is also the tooling's keystore key. | generated at runtime (`KeyGenerator`) or adopted from SSM / KMS |
 | `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
 
-¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the genesis block-signing key and the standalone key on `sysio`'s own `owner` and `active` until a governance handoff — nothing else. Producer accounts are keyed by their **hosting node's generated K1**, operators (`batchop.*`) by their **own per-operator generated K1**, and the `sysio.*` system accounts (and `dev.owner1`) by `sysio@active` — production substitutes real keys / msig throughout.
+¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the genesis block-signing key, the standalone key on `sysio`'s own `owner` and `active` until a governance handoff, and — on a local or flow cluster that names no key for them — the key on the delegate accounts `andon.panic` and `bond.judge` (steps 27 and 29a). Nothing else holds it. Producer accounts are keyed by their **hosting node's generated K1**, operators (`batchop.*`) by their **own per-operator generated K1**, and the `sysio.*` system accounts (and `dev.owner1`) by `sysio@active` — production substitutes real keys / msig throughout.
 
 ### Core symbol, tokens & supplies
 | Constant | Value |
@@ -437,9 +437,13 @@ Create the panic account first so the delegated authority can reference it.
 matching SDK declarations. `ClusterBuildDefaults` implements the sequence below; its Andon steps
 declare the linked `sysio.andon@pull` and `@clear` permissions.
 
-27. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:DEV_K1_PUBLIC_KEY,
-    active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]`. It gets no resource grant: `pull` and `clear` are
-    billed to `sysio.andon`. No WIRE is transferred to it **(cluster dev key; production: the
+27. **Panic account** — `sysio::newaccount({creator:"sysio", name:"andon.panic", owner:<panic key>,
+    active:<panic key>})` — `[sysio@active]`. It gets no resource grant: `pull` and `clear` are
+    billed to `sysio.andon`. No WIRE is transferred to it. Whoever holds the panic key can pull and
+    clear the cord, and keeps that reach after the governance handoff. The cluster tooling takes it
+    from `--panic-public-key` (`panicPublicKey` in a build-options document) and falls back to the
+    cluster's initial key: `DEV_K1` on a local or flow cluster, the generated bios key under `SSM`.
+    Against external outposts the key is required and `DEV_K1` is refused **(production: the
     governance-held panic key)**.
 28. **Permission RAM** — `sysio::setacctram({account:"sysio.andon", ram_bytes:<current limit + 10400>})` —
     `[sysio@active]`. `setacctram` sets an absolute limit, so the tooling reads the account's current
@@ -759,7 +763,8 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   account later registers with `regfinkey`, step 23), and `setprodkeys` (Stage 5) switches
   production to the producer nodes' generated K1 keys — the same node K1s the producer accounts are keyed
   with and register with `regproducer`. Batch operators carry their own per-operator generated K1s.
-  `DEV_K1` remains only as `sysio`'s owner/active key; production replaces all of these with
+  `DEV_K1` remains only as `sysio`'s owner/active key and, when no key is named for them, the
+  delegate accounts' (`andon.panic`, `bond.judge`); production replaces all of these with
   real keys / msig, and the governance handoff replaces `sysio`'s with `sysio.nodes@active`.
 - **`activateroa` sizing:** the bootstrap passes `total_sys = ROA_TOTAL_SYS = 75496.0000 SYS` and
   `bytes_per_unit = ROA_BYTES_PER_UNIT = 104` (both from `Constants.ts`). Per the asset-amount semantics in the

@@ -5,6 +5,7 @@ import { Report } from "@wireio/cluster-tool/report"
 import { EthereumFundingTool } from "@wireio/cluster-tool/tools/ethereum"
 import {
   FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -120,7 +121,8 @@ describe("ClusterBuildDefaults — EthereumOutpost deployer + panic wallets", ()
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
         externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
-        judgePublicKey: FixtureJudgePublicKey
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       steps = collectStepNames(cluster.children)
     expect(collectPhaseNames(cluster.children)).not.toContain(

@@ -164,6 +164,7 @@ export function makeFixtureCluster(): FixtureCluster {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     judgePublicKey: null,
+    panicPublicKey: null,
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
