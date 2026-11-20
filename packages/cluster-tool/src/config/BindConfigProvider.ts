@@ -7,6 +7,7 @@ import Path from "node:path"
 import { Either } from "@3fv/prelude-ts"
 import Bluebird from "bluebird"
 import { isEmpty, range, uniq } from "lodash"
+import type { LockOptions } from "proper-lockfile"
 
 import {
   BindConfigPortProtocol,
@@ -95,6 +96,23 @@ export namespace BindConfigProvider {
   const PortLockKeyLength = 16
 
   /**
+   * Wait up to five minutes behind a complete cluster reservation. Its many
+   * TCP/UDP probes can hold the shared lock beyond the short-file default's
+   * 25-second acquisition budget. Keep the protocol's 30-second stale threshold;
+   * live holders refresh it. Fixed retries also serve short standalone picks.
+   */
+  const PortLockOptions: LockOptions = {
+    realpath: false,
+    retries: { retries: 3_000, factor: 1, minTimeout: 100, maxTimeout: 100 },
+    stale: 30_000
+  }
+
+  /** Run one port operation under the shared registry lock and its wait budget. */
+  function withPortLock<T>(criticalSection: () => Promise<T>): Promise<T> {
+    return withFileLock(portLockPath(), criticalSection, PortLockOptions)
+  }
+
+  /**
    * Lock path serializing port SELECTION across every process that shares a
    * registry (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only
    * de-dupes within one process; this cross-process advisory lock (via
@@ -104,18 +122,10 @@ export namespace BindConfigProvider {
    * KEYED BY {@link registryPath}, but kept in the OS temp dir. The lock's
    * scope must match the scope of the registry it guards: real runs all
    * resolve the same default registry dir, so they hash to the SAME lock and
-   * still serialize host-globally — behaviour unchanged. A caller that
-   * sandboxes the registry via {@link RegistryPathEnvVar} (every jest suite
-   * does, in `tests/jest.setup.ts`) hashes to its OWN lock. This isolates
-   * registry bookkeeping, not the OS network namespace: real concurrent clusters
-   * must still share the host registry to coordinate pending reservations.
-   *
-   * When the path was a FIXED tmpdir name the two scopes disagreed, and every
-   * port-drawing test across all 8 jest projects queued on one global lock
-   * despite already holding private registries — blowing `FileLockOptions`'
-   * retry budget and failing ~37 tests per run with "Lock file is already
-   * being held". Raising that budget had already been tried once; it treats
-   * the symptom, because the contention was self-inflicted.
+   * serialize host-globally. Only synthetic allocator/protocol fixtures use
+   * private registries and locks: real sockets share the host network and must
+   * observe every pending reservation. Whole-cluster probing can hold this
+   * mutex for minutes, so every operation uses {@link PortLockOptions}.
    *
    * The lock lives in the temp dir rather than INSIDE the registry dir because
    * a sandboxing caller owns (and deletes) that dir: `proper-lockfile` keeps an
@@ -252,7 +262,7 @@ export namespace BindConfigProvider {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
     // only de-dupes within one process — see portLockPath()).
-    return withFileLock(portLockPath(), () => resolveLocked(options, topology))
+    return withPortLock(() => resolveLocked(options, topology))
   }
 
   /** {@link resolve} body — always runs under the {@link portLockPath} lock. */
@@ -873,7 +883,7 @@ export namespace BindConfigProvider {
    * @returns Whether every port was free and is now registered to this process.
    */
   export async function claimResolved(config: BindConfig): Promise<boolean> {
-    return withFileLock(portLockPath(), async () => {
+    return withPortLock(async () => {
       // Resolve-time in-process locks would make this process's own ports
       // read as taken; clear them so the probes see true OS bindability.
       await clearPortLocks()
@@ -948,7 +958,7 @@ export namespace BindConfigProvider {
    * @returns Whether the port is free.
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
-    return withFileLock(portLockPath(), () => isPortBindable(port))
+    return withPortLock(() => isPortBindable(port))
   }
 
   /** {@link isPortAvailable}'s probe, for callers already holding the port lock. */
@@ -975,7 +985,7 @@ export namespace BindConfigProvider {
     preferred: number,
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
-    return withFileLock(portLockPath(), () =>
+    return withPortLock(() =>
       pickPort(
         null,
         preferred,
@@ -997,7 +1007,7 @@ export namespace BindConfigProvider {
   export function findAvailableSolanaRpc(
     preferred = DefaultSolanaRpc
   ): Promise<number> {
-    return withFileLock(portLockPath(), () =>
+    return withPortLock(() =>
       pickSolanaRpc(null, preferred, readRegistryPortExclusions())
     )
   }
@@ -1347,7 +1357,7 @@ export namespace BindConfigProvider {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(portLockPath(), () =>
+    return withPortLock(() =>
       pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
     )
   }

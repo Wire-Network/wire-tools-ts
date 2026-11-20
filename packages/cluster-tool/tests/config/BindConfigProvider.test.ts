@@ -183,7 +183,16 @@ describe("BindConfigProvider", () => {
   let BindConfigProvider: typeof import("@wireio/cluster-tool/config").BindConfigProvider
 
   beforeAll(async () => {
+    // This suite mocks allocation and network probes; its synthetic claims must
+    // never enter the host registry used by real socket fixtures and clusters.
+    process.env.WIRE_BIND_REGISTRY_PATH = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "wire-bind-registry-test-")
+    )
     ;({ BindConfigProvider } = await import("@wireio/cluster-tool/config"))
+  })
+
+  afterAll(() => {
+    Fs.rmSync(BindConfigProvider.registryPath(), { recursive: true, force: true })
   })
 
   beforeEach(() => {
@@ -200,7 +209,7 @@ describe("BindConfigProvider", () => {
     })
     // Fresh registry per test — resolve() registers its ports, and a leftover
     // registration would leak exclusions into the next test's outcome. The
-    // scratch dir itself is installed by tests/jest.setup.ts.
+    // scratch dir itself is installed by this suite's beforeAll.
     Fs.rmSync(BindConfigProvider.registryPath(), {
       recursive: true,
       force: true

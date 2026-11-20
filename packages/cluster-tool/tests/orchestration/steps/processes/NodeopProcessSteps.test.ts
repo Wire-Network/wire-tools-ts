@@ -5,6 +5,7 @@ import { ethers } from "ethers"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Deferred } from "@wireio/shared"
 import {
   NodeopProcess,
   ProcessManager
@@ -126,6 +127,66 @@ describe("Steps.processes.nodeop", () => {
       executables: { ...PersistedFixture.executables, nodeop: "/bin/true" }
     }
   }
+
+  it("stop records the node and uses the shared named runner", () => {
+    const step = Steps.processes.nodeop.planStop(
+      Report.Actor.BatchOperator, "stop-relay", "retain disk state", {}, "relay"
+    )
+    expect(step.input).toEqual({ kind: "NodeopProcessSteps.StopInput", nodeName: "relay" })
+    expect(step.runner).toBe(Steps.processes.nodeop.runStop)
+  })
+
+  it("stop waits for shutdown before unregistering and preserves disk data", async () => {
+    const ctx = fixtureContext(sandbox()),
+      signal = new AbortController().signal,
+      stopped = new Deferred<void>(),
+      running: NodeopProcess = Object.create(NodeopProcess.prototype),
+      markerFile = Path.join(dir, "retained-chain-data")
+    Fs.writeFileSync(markerFile, "retained")
+    jest.spyOn(running, "stop").mockReturnValue(stopped.promise)
+    jest.spyOn(ctx.processManager, "get").mockReturnValue(running)
+    const remove = jest.spyOn(ctx.processManager, "remove").mockReturnValue(ctx.processManager),
+      stopping = Steps.processes.nodeop.runStop(ctx,
+        { kind: "NodeopProcessSteps.StopInput", nodeName: "relay" }, signal)
+    expect(running.stop).toHaveBeenCalledWith(signal)
+    expect(remove).not.toHaveBeenCalled()
+    stopped.resolve()
+    await stopping
+    expect(remove).toHaveBeenCalledWith("relay")
+    expect(Fs.readFileSync(markerFile, "utf8")).toBe("retained")
+  })
+
+  it("stop refuses a missing daemon", async () => {
+    const ctx = fixtureContext(sandbox())
+    jest.spyOn(ctx.processManager, "get").mockReturnValue(null)
+    await expect(Steps.processes.nodeop.runStop(ctx,
+      { kind: "NodeopProcessSteps.StopInput", nodeName: "absent" },
+      new AbortController().signal)).rejects.toThrow(/not running/)
+  })
+
+  it("failed stop retains the registration for cleanup", async () => {
+    const ctx = fixtureContext(sandbox()),
+      failure = new Error("shutdown failed"),
+      running: NodeopProcess = Object.create(NodeopProcess.prototype)
+    jest.spyOn(running, "stop").mockRejectedValue(failure)
+    jest.spyOn(ctx.processManager, "get").mockReturnValue(running)
+    const remove = jest.spyOn(ctx.processManager, "remove").mockReturnValue(ctx.processManager)
+    await expect(Steps.processes.nodeop.runStop(ctx,
+      { kind: "NodeopProcessSteps.StopInput", nodeName: "relay" },
+      new AbortController().signal)).rejects.toBe(failure)
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it("cancelled stop never touches the process manager", async () => {
+    const ctx = fixtureContext(sandbox()),
+      controller = new AbortController(),
+      get = jest.spyOn(ctx.processManager, "get")
+    controller.abort()
+    await expect(Steps.processes.nodeop.runStop(ctx,
+      { kind: "NodeopProcessSteps.StopInput", nodeName: "relay" },
+      controller.signal)).rejects.toThrow()
+    expect(get).not.toHaveBeenCalled()
+  })
 
   it("start carries the target node name as typed input", () => {
     const step = Steps.processes.nodeop.planStart(
