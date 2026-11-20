@@ -970,10 +970,10 @@ export namespace ClusterConfigProvider {
    * Resolve the cluster's network binding. Without `--bind-config` the resolver
    * picks free ports (current behavior). WITH `--bind-config`, the file is
    * classified via {@link BindConfigSchemaCodec}'s `check`:
-   * - COMPLETE `BindConfig` → cross-validated against the topology counts and
-   *   used VERBATIM (remote addresses taken as-is — no port probe / claim /
-   *   registry, since a remote endpoint's port is not this host's to reserve),
-   *   with any CLI `--bind-*` overrides layered on top (CLI > file).
+   * - COMPLETE `BindConfig` → cross-validated against the topology counts, with
+   *   any CLI `--bind-*` overrides layered on top (CLI > file). The Solana
+   *   port window must be valid and local ports must be compatible with Node
+   *   Fetch. No ports are probed or registered.
    * - PARTIAL override → validated via {@link BindOptionsSchema} and merged over
    *   the resolver's picked defaults (CLI > file > resolver).
    *
@@ -1000,7 +1000,7 @@ export namespace ClusterConfigProvider {
     return bind
   }
 
-  /** Classify + merge a `--bind-config` file (complete → verbatim | partial → merged). */
+  /** Resolve a complete `--bind-config` or merge a partial file over defaults. */
   async function resolveBindFromFile(
     bindConfigFile: string,
     cliBind: BindOptions,
@@ -1010,10 +1010,20 @@ export namespace ClusterConfigProvider {
       await Fsp.readFile(Path.resolve(bindConfigFile), "utf-8")
     )
     if (BindConfigSchemaCodec.check(parsed)) {
-      // COMPLETE: cross-validate cardinality, then use verbatim with the CLI
-      // `--bind-*` overrides layered on top — remote ports are NOT probed.
       assertBindCardinality(parsed, topology)
-      return defaultsDeep({ ...cliBind }, parsed) as BindConfig
+      const bind = defaultsDeep({ ...cliBind }, parsed) as BindConfig
+      BindConfigProvider.assertValidPortRange(
+        bind.solana.ports.dynamicRange,
+        "--bind-config solana.dynamicRange"
+      )
+      const fetchBlocked = BindConfigProvider.locallyBoundPorts(bind).filter(
+        port => BindConfigProvider.FetchBlockedPorts.has(port)
+      )
+      Assert.ok(
+        fetchBlocked.length === 0,
+        `--bind-config: locally bound ports blocked by Node Fetch: ${fetchBlocked.join(", ")}`
+      )
+      return bind
     }
     // PARTIAL: validate the override shape, then merge over resolver defaults.
     const fileBind = BindOptionsSchema.parse(parsed) as BindOptions

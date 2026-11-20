@@ -233,11 +233,7 @@ test("SDK table JSON reaches snapshots with only the two safety flags normalized
   client.getSysioContract = name => name === SysioContracts.SysioContractName.kicker ? getSysioContract(name) : reads.getSysioContract(name)
   const call = jest.spyOn(client.api.v1Provider, "call").mockImplementation(async ({ params }) => {
     const row = String(params.table) === "kickpools" ? holder.state.pool : holder.state.config,
-      json = { rows: [{
-        key: "LIQETH",
-        value: params.json === false ? BinaryFormatProbeValue : cloneDeep(row),
-        ...(params.show_payer ? { payer: String(params.code) } : {})
-      }], more: false }
+      json = { rows: [{ key: "LIQETH", value: params.json === false ? BinaryFormatProbeValue : cloneDeep(row) }], more: false }
     return { status: 200, headers: {}, json, text: JSON.stringify(json) }
   })
   try {

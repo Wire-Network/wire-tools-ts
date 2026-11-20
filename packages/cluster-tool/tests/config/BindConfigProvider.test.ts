@@ -13,13 +13,14 @@ import {
   type BindConfig,
   type BindConfigPortRange
 } from "@wireio/cluster-tool-shared"
-import { Deferred, guard } from "@wireio/shared"
+import { Deferred, guard, Logger } from "@wireio/shared"
 import {
   eachSeries,
   ListenAllAddress,
   Localhost,
   processCommandBasename,
-  sleep
+  sleep,
+  toURL
 } from "@wireio/cluster-tool/utils"
 import { NetworkInterfaceFixture } from "../fixtures/NetworkInterfaceFixture.js"
 
@@ -32,6 +33,14 @@ interface FakeGetPortOptions {
   host?: string
   exclude?: Iterable<number>
 }
+
+/** Node wraps both dispatch and bad-port failures as the cause of a Fetch error. */
+interface FetchProbeError extends Error {
+  cause?: Error
+}
+
+/** Node's rejection before dispatch for a Fetch-blocked port. */
+const FetchBadPortMessage = "bad port"
 
 /** Effective user id of root, which reads any file whatever its mode. */
 const RootUserId = 0
@@ -243,9 +252,56 @@ describe("BindConfigProvider", () => {
 
     it("reproduces Fetch refusing a formerly issued port before connecting", async () => {
       const port = await legacyFetchBlockedPort()
-      await expect(fetch(`http://${Localhost}:${port}`)).rejects.toMatchObject({
-        cause: { message: "bad port" }
+      await expect(fetch(toURL(port))).rejects.toMatchObject({
+        cause: { message: FetchBadPortMessage }
       })
+    })
+
+    it("matches Node Fetch across the service port pool without connecting", async () => {
+      const { FetchBlockedPorts, ServicePortFirst } = BindConfigProvider,
+        allocate = allocator.allocate.bind(allocator),
+        policy = jest.spyOn(FetchBlockedPorts, "has").mockReturnValue(false)
+      let candidates: number[] = []
+      // Capture the provider's whole pool before applying either port policy.
+      mockAutomaticPortRanges.length = 0
+      jest.spyOn(allocator, "allocate").mockImplementationOnce(options => {
+        candidates = Array.from(options.port as Iterable<number>)
+        return allocate({ ...options, port: candidates })
+      })
+      try {
+        await BindConfigProvider.findAvailable(ServicePortFirst)
+      } finally {
+        policy.mockRestore()
+      }
+      expect(candidates).toHaveLength(MaximumPort - ServicePortFirst + 1)
+
+      const stopped = new Error("Fetch probe stopped before connecting"),
+        dispatcher: Pick<RequestInit["dispatcher"], "dispatch"> = {
+          dispatch(_options, handler) {
+            handler.onError(stopped)
+            return false
+          }
+        },
+        blocked: number[] = []
+      await eachSeries(candidates, async port => {
+        const cause = await fetch(toURL(port), {
+          // The test dispatcher implements the one method Fetch uses.
+          dispatcher: dispatcher as RequestInit["dispatcher"]
+        }).then(
+          () => {
+            throw new Error("Fetch policy probe must never receive a response")
+          },
+          (error: FetchProbeError) => error.cause
+        )
+        if (cause?.message === FetchBadPortMessage) {
+          blocked.push(port)
+        } else if (cause !== stopped) {
+          throw new Error(`Unexpected Fetch result for port ${port}`, { cause })
+        }
+      })
+      expect(blocked).toEqual(
+        [...FetchBlockedPorts].filter(port => port >= ServicePortFirst)
+      )
     })
 
     it("rejects every blocked port as a pin and in availability checks", async () => {
@@ -322,7 +378,9 @@ describe("BindConfigProvider", () => {
       await BindConfigProvider.clearPortLocks()
       await expect(
         BindConfigProvider.resolve({ solana: { ports: { http } } }, {})
-      ).rejects.toThrow(/WebSocket companion .* unavailable or reserved/)
+      ).rejects.toThrow(
+        `WebSocket companion ${blocked} is blocked by Node Fetch`
+      )
     })
 
     it("rejects a pinned dynamic window containing a blocked port", async () => {
@@ -336,15 +394,20 @@ describe("BindConfigProvider", () => {
           new Set(),
           "Fetch compatibility test"
         )
-      ).rejects.toThrow(/pinned but unavailable/)
+      ).rejects.toThrow(`includes ports blocked by Node Fetch: ${blocked}`)
     })
 
     it("refuses to reclaim a persisted local blocked binding without losing claims", async () => {
       const blocked = await legacyFetchBlockedPort(),
-        config = await BindConfigProvider.resolve({}, {})
+        config = await BindConfigProvider.resolve({}, {}),
+        logged = jest.spyOn(Logger.prototype, "log")
       config.kiod.port = blocked
       const before = Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")
       expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      expect(logged).toHaveBeenCalledWith(
+        "warn",
+        `bind registry: ports blocked by Node Fetch: ${blocked}`
+      )
       expect(Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")).toBe(
         before
       )

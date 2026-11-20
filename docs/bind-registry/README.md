@@ -191,10 +191,10 @@ policy, not a change to the registration protocol.
 Node also excludes Fetch-blocked ports (`BindConfigProvider.FetchBlockedPorts`),
 including **10080**, from every allocation, explicit pin, derived WebSocket port,
 and dynamic window. Its HTTP readiness probes cannot contact these ports even
-when the daemon is listening. Availability checks and reclaiming persisted local
-bindings reject them too. This is Node tooling policy, not a language-neutral
-registry restriction: readers still honor every port in another client's valid
-live registration, and never discard that registration because of this policy.
+when the daemon is listening. Availability checks, reclaiming persisted local
+bindings, and the local ports in complete `--bind-config` files reject them too.
+The policy applies to Node tooling. Registry readers continue to honor every
+port in other clients' valid live registrations.
 
 Before writing a port into its file, a client should check that the port binds: TCP on the IPv4
 and IPv6 wildcards, and UDP as well for a port a UDP socket will use. That is what Node does.

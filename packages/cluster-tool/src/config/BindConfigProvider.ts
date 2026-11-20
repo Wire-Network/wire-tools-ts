@@ -887,14 +887,14 @@ export namespace BindConfigProvider {
   /**
    * Re-claim an already-resolved binding for a relaunch (`wire-cluster-tool
    * run`): under the {@link BindConfigProvider.portLockPath} lock, check that
-   * none of its locally bound ports ({@link locallyBoundPorts}) is reserved or
-   * registered by another live process and that each still binds, then
-   * register it for this process. Ports of daemons bound to another host (a
+   * none of its locally bound ports ({@link locallyBoundPorts}) is reserved,
+   * blocked by Node Fetch, registered by another live process or no longer
+   * bindable, then register it for this process. Ports on another host (a
    * complete external bind config's remote outposts) are not checked. The check and the
    * registration form one critical section, so no other resolver can take a
    * port in between. A refusal logs a `bind registry:` warn naming the ports
-   * that sit inside {@link ReservedAgavePortBand}, are held elsewhere, or no
-   * longer bind.
+   * that sit inside {@link ReservedAgavePortBand}, are blocked by Node Fetch,
+   * are held elsewhere, or no longer bind.
    *
    * @param config - The persisted, already-resolved binding.
    * @returns Whether every port was free and is now registered to this process.
@@ -972,14 +972,14 @@ export namespace BindConfigProvider {
   }
 
   /**
-   * True if `port` is bindable right now, via `get-port` (asks it for exactly
-   * `port`; a differing result means `port` is taken or already locked in
-   * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
-   * in-process cache (its collision-avoidance) — to re-check an already-resolved
-   * port, call {@link clearPortLocks} first (see {@link BindConfigProvider.claimResolved}).
+   * True if `port` is compatible with Node Fetch and currently bindable.
+   * The `get-port` probe requests exactly `port`. A differing result means it
+   * is taken or already locked in get-port's cache. A successful probe also
+   * locks `port` in that cache. To re-check an already-resolved port, call
+   * {@link clearPortLocks} first (see {@link BindConfigProvider.claimResolved}).
    *
    * @param port - Port to probe.
-   * @returns Whether the port is free.
+   * @returns Whether the port is free and compatible with Node Fetch.
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
     return withPortLock(() => isPortBindable(port))
@@ -1070,19 +1070,22 @@ export namespace BindConfigProvider {
             automaticPortRanges
           ),
           websocket = http + SolanaWsPortOffset,
+          fetchBlocked = FetchBlockedPorts.has(websocket),
           available =
             websocket <= MaximumPort &&
             (callerPin != null ||
               !isAutomaticPort(websocket, automaticPortRanges)) &&
             !isReservedPort(websocket) &&
-            !FetchBlockedPorts.has(websocket) &&
+            !fetchBlocked &&
             !claimed.has(websocket) &&
             (await getPort({ port: websocket, exclude: claimed })) ===
               websocket &&
             (await isIpv6PortFree(websocket))
         Assert.ok(
           callerPin == null || available,
-          `Solana RPC port ${http} is pinned but its WebSocket companion ${websocket} is unavailable or reserved`
+          fetchBlocked
+            ? `Solana RPC port ${http} is pinned but its WebSocket companion ${websocket} is blocked by Node Fetch — pin a compatible port pair`
+            : `Solana RPC port ${http} is pinned but its WebSocket companion ${websocket} is unavailable or reserved`
         )
         return available ? http : null
       },
@@ -1216,7 +1219,6 @@ export namespace BindConfigProvider {
         )
         return !claimed.has(candidate) &&
           !isReservedPort(candidate) &&
-          !FetchBlockedPorts.has(candidate) &&
           (await isIpv6PortFree(candidate)) &&
           (protocol === BindConfigPortProtocol.tcp ||
             (await isUdpPortFree(candidate)))
@@ -1307,6 +1309,27 @@ export namespace BindConfigProvider {
   }
 
   /**
+   * Validate a port window before probing or expanding it.
+   *
+   * @param range - The inclusive port window.
+   * @param daemon - Label for the error message.
+   * @throws If the endpoints are outside the port bounds, non-integers or reversed.
+   */
+  export function assertValidPortRange(
+    { first, last }: BindConfigPortRange,
+    daemon: string
+  ): void {
+    Assert.ok(
+      Number.isInteger(first) &&
+        Number.isInteger(last) &&
+        first >= MinimumPort &&
+        last <= MaximumPort &&
+        first <= last,
+      `invalid port range ${first}-${last} for ${daemon}`
+    )
+  }
+
+  /**
    * Resolve a free contiguous {@link SolanaDynamicPortRangeSize}-port window: a
    * caller-pinned range must be entirely free (else THROW, mirroring
    * {@link pickPort}); otherwise candidate windows are scanned from
@@ -1327,20 +1350,20 @@ export namespace BindConfigProvider {
     automaticPortRanges?: readonly BindConfigPortRange[]
   ): Promise<BindConfigPortRange> {
     if (callerPin !== null) {
-      Assert.ok(
-        Number.isInteger(callerPin.first) &&
-          Number.isInteger(callerPin.last) &&
-          callerPin.first >= MinimumPort &&
-          callerPin.last <= MaximumPort &&
-          callerPin.first <= callerPin.last,
-        `invalid port range ${callerPin.first}-${callerPin.last} for ${daemon}`
-      )
+      assertValidPortRange(callerPin, daemon)
       Assert.ok(
         callerPin.first > ReservedAgavePortBand.last ||
           callerPin.last < ReservedAgavePortBand.first,
         `port range ${callerPin.first}-${callerPin.last} for ${daemon} overlaps the reserved agave validator band ` +
           `${ReservedAgavePortBand.first}-${ReservedAgavePortBand.last} ` +
           `(agave binds implicit sockets there regardless of flags) — pin a window outside it`
+      )
+      const fetchBlocked = [...FetchBlockedPorts].filter(
+        port => port >= callerPin.first && port <= callerPin.last
+      )
+      Assert.ok(
+        fetchBlocked.length === 0,
+        `port range ${callerPin.first}-${callerPin.last} for ${daemon} includes ports blocked by Node Fetch: ${fetchBlocked.join(", ")} — pin a compatible window`
       )
       Assert.ok(
         await isRangeFree(callerPin.first, callerPin.last, exclusions),
