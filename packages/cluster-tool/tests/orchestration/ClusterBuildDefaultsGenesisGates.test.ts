@@ -12,7 +12,11 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-import { collectPhaseNames, collectStepNames } from "./clusterBuildFixture.js"
+import {
+  collectPhaseNames,
+  collectStepNames,
+  findPhase
+} from "./clusterBuildFixture.js"
 import { seedProducerOperators } from "./outputs/operatorAccountFixture.js"
 
 /** One `finalizer_policy` entry as `bios::setfinalizer` receives it. */
@@ -98,6 +102,41 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
           ProtocolTiming.effectiveEpochSec(60) *
           ProtocolTiming.MsPerSecond
       )
+    })
+  })
+
+  describe("economic clock", () => {
+    it.each(["local", "external"])(
+      "configures the clock after the epoch config and before init-t5 and the genesis bootstrap in %s mode",
+      async mode => {
+        const cluster = await ClusterBuildDefaults.create(
+            mode === "local" ? baseOptions() : externalOptions()
+          ),
+          names = collectStepNames(cluster.children),
+          economy = names.indexOf("configure-economy")
+        expect(economy).toBeGreaterThan(names.indexOf("configure-epoch"))
+        expect(names.indexOf("init-t5")).toBeGreaterThan(economy)
+        expect(names.indexOf("bootstrap-epoch")).toBeGreaterThan(economy)
+        expect(names.filter(name => name === "configure-economy")).toHaveLength(1)
+      }
+    )
+
+    it("passes the resolved duration and start to seteconomy", async () => {
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          epochDurationSec: 60,
+          economicEpochDurationSec: 360,
+          economicStartTime: "2026-11-01T06:00:00"
+        }),
+        step = findPhase(cluster.children, "OPPConfig").steps.find(
+          candidate => candidate.name === "configure-economy"
+        )
+      expect(step.input).toEqual({
+        kind: "EpochContractSteps.SeteconomyInput",
+        epochDurationSec: 360,
+        startTime: "2026-11-01T06:00:00"
+      })
+      expect(step.runner).toBe(Steps.contracts.sysio.epoch.runSeteconomy)
     })
   })
 

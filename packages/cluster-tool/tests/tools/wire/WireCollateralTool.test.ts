@@ -93,8 +93,9 @@ function withdrawRequest(
     chain_code: "WIRE",
     token_code: token,
     amount: amount.toString(),
-    eligible_at_epoch: 3,
-    requested_at_epoch: 1
+    eligible_at_economic_epoch: 3,
+    eligible_at_consensus_epoch: 3,
+    requested_at_economic_epoch: 1
   }
 }
 
@@ -858,7 +859,7 @@ describe("WireCollateralTool", () => {
       serveRemitClaims(ctx, [
         { account, token_code: "WIRE", balance: "1" }
       ])
-      const deadlineMs = WireCollateralTool.remitClaimDeadlineMs(ctx.config.epochDurationSec),
+      const deadlineMs = WireCollateralTool.remitClaimDeadlineMs(ctx.config),
         verified = WireCollateralTool.runVerifyRemitClaim(
           ctx,
           {
@@ -895,18 +896,30 @@ describe("WireCollateralTool", () => {
       ).rejects.toThrow(/remitclaims has more than 100 rows; the read is truncated/)
     })
 
-    it("remitClaimDeadlineMs spans RemitClaimEpochCount effective epochs", () => {
-      expect(WireCollateralTool.remitClaimDeadlineMs(60)).toBe(
+    /** A resolved config with only the two clock durations varied. */
+    function clocks(epochDurationSec: number, economicEpochDurationSec: number) {
+      return { ...fixtureContext().config, epochDurationSec, economicEpochDurationSec }
+    }
+
+    it("remitClaimDeadlineMs spans RemitClaimEpochCount effective epochs of the slower clock", () => {
+      expect(WireCollateralTool.remitClaimDeadlineMs(clocks(60, 60))).toBe(
         WireCollateralTool.RemitClaimEpochCount * 90_000
+      )
+      // Either clock can be the slower one: the withdrawal waits on both.
+      expect(WireCollateralTool.remitClaimDeadlineMs(clocks(60, 300))).toBe(
+        WireCollateralTool.RemitClaimEpochCount * 330_000
+      )
+      expect(WireCollateralTool.remitClaimDeadlineMs(clocks(300, 60))).toBe(
+        WireCollateralTool.RemitClaimEpochCount * 330_000
       )
     })
 
-    it("remitClaimStepTimeoutMs sits one poll buffer above the poll deadline for the same epoch", () => {
-      expect(WireCollateralTool.remitClaimStepTimeoutMs(60)).toBe(
-        WireCollateralTool.remitClaimDeadlineMs(60) + ProtocolTiming.PollDeadlineBufferMs
+    it("remitClaimStepTimeoutMs sits one poll buffer above the poll deadline for the same config", () => {
+      expect(WireCollateralTool.remitClaimStepTimeoutMs(clocks(60, 60))).toBe(
+        WireCollateralTool.remitClaimDeadlineMs(clocks(60, 60)) + ProtocolTiming.PollDeadlineBufferMs
       )
-      expect(WireCollateralTool.remitClaimStepTimeoutMs(120)).toBeGreaterThan(
-        WireCollateralTool.remitClaimStepTimeoutMs(60)
+      expect(WireCollateralTool.remitClaimStepTimeoutMs(clocks(60, 120))).toBeGreaterThan(
+        WireCollateralTool.remitClaimStepTimeoutMs(clocks(60, 60))
       )
     })
   })

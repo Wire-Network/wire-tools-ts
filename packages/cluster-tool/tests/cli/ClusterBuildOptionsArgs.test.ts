@@ -689,6 +689,21 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(toClusterBuildOptions({}).ethereumRead).toBeUndefined()
   })
 
+  it("maps the economic clock flags onto their options", () => {
+    const options = toClusterBuildOptions({
+      "economic-epoch-duration-sec": 360,
+      "economic-start-time": "2026-11-01T06:00:00"
+    })
+    expect(options.economicEpochDurationSec).toBe(360)
+    expect(options.economicStartTime).toBe("2026-11-01T06:00:00")
+  })
+
+  it("leaves the economic clock unset when no flag names it, so resolve picks the defaults", () => {
+    const options = toClusterBuildOptions({ "epoch-duration-sec": 60 })
+    expect(options.economicEpochDurationSec).toBeUndefined()
+    expect(options.economicStartTime).toBeUndefined()
+  })
+
   it("reads the camelCase alias yargs also emits", () => {
     // yargs stores both kebab + camelCase; the reverse falls back to camelCase
     expect(

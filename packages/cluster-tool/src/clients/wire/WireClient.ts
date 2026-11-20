@@ -606,6 +606,17 @@ export class WireClient {
   }
 
   /**
+   * The chain's `head_block_time` as the stamp a `time_point_sec` action field takes.
+   *
+   * Every singleton anchored to a start instant reads it from here rather than from the local
+   * wall clock: the contracts measure elapsed time on the chain's own clock, so a local-clock
+   * anchor skews vesting and epoch accrual by the host's drift.
+   */
+  async chainHeadTimestamp(): Promise<string> {
+    return WireClient.toChainSeconds((await this.getInfo()).head_block_time)
+  }
+
+  /**
    * Whether `account` is privileged (GET /v1/chain/get_account's `privileged`).
    * A privileged contract's inline actions skip the authorization check, which
    * is what lets `sysio.kicker` draw from `sysio` under `sysio@active`.
@@ -758,7 +769,7 @@ export class WireClient {
   /**
    * Pull `account`'s credited epoch pay from `sysio.system` — a producer, standby or
    * batch-operator share. `payepoch` credits rather than transfers for the same reason as above:
-   * it runs inline from `sysio.epoch::advance`, which must never abort.
+   * it runs inline from `sysio.epoch::tickeconomy`, which must never abort.
    *
    * The T5 category buckets (`sysio.ops`, `sysio.gov`) are NOT claimable: `payepoch` transfers to
    * them directly, because ROA zeroes net/cpu for every `sysio`-prefixed account and neither
@@ -1314,6 +1325,23 @@ export namespace WireClient {
    */
   export function chainTimeMs(stamp: string): number {
     return Date.parse(`${stamp.replace(/Z$/, "")}Z`)
+  }
+
+  /** Chars of an ISO-8601 timestamp up to whole seconds (`YYYY-MM-DDTHH:MM:SS`). */
+  export const IsoSecondsLength = 19
+
+  /**
+   * A timestamp as the zone-less, second-precision stamp a `time_point_sec` action field
+   * takes. Sub-second digits are dropped, as the contract drops them.
+   *
+   * @param stamp - An ISO-8601 stamp, read as UTC with or without a trailing `Z`.
+   * @returns `YYYY-MM-DDTHH:MM:SS`.
+   * @throws If `stamp` does not parse.
+   */
+  export function toChainSeconds(stamp: string): string {
+    const ms = chainTimeMs(stamp)
+    Assert.ok(!Number.isNaN(ms), `unparseable timestamp: ${stamp}`)
+    return new Date(ms).toISOString().slice(0, IsoSecondsLength)
   }
 
   /**

@@ -186,6 +186,17 @@ export const ClusterConfigSchema = z.object({
   /** Depot epoch duration, seconds (global — see the epoch-duration rule). */
   epochDurationSec: z.number(),
   /**
+   * Economic epoch duration, seconds — the `sysio.epoch` clock emissions, collateral
+   * withdrawals and producer pay run on, independent of consensus.
+   */
+  economicEpochDurationSec: z.number(),
+  /**
+   * Start of economic epoch 1 (ISO-8601, UTC), or `null` to anchor it at the chain head
+   * when the bootstrap configures the clock. `null` (not absence) so the slot round-trips
+   * through JSON persistence.
+   */
+  economicStartTime: z.string().nullable().default(null),
+  /**
    * `operators_per_epoch` (batch-op group SIZE) override, or `null` to derive
    * it from `batchOperatorCount` at bootstrap. `null` (not absence) so the slot
    * round-trips through JSON persistence.

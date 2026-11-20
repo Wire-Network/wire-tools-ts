@@ -17,25 +17,6 @@ const { SysioContractName } = SysioContracts
  * bios-ABI actions and belong under `Steps.contracts.sysio.bios`.
  */
 export namespace SystemContractSteps {
-  /** Chars of an ISO-8601 timestamp up to seconds (`YYYY-MM-DDTHH:MM:SS`). */
-  const IsoSecondsLength = 19
-  /** Suffix appended to the chain's `head_block_time` so it parses as UTC. */
-  const UtcSuffix = "Z"
-
-  /**
-   * The chain's `head_block_time` as a second-precision ISO-8601 timestamp.
-   *
-   * Every singleton anchored to a start instant reads it from here rather than from the
-   * local wall clock, because the contracts measure elapsed time against the chain's own
-   * clock — a local-clock anchor skews vesting and epoch accrual by the host's drift.
-   */
-  async function chainHeadTimestamp<C extends ClusterBuildContext>(ctx: C): Promise<string> {
-    const info = await ctx.wire.getInfo()
-    return new Date(info.head_block_time + UtcSuffix)
-      .toISOString()
-      .slice(0, IsoSecondsLength)
-  }
-
   /** Input for {@link planSetemitcfg} — the generated emission-config struct. */
   export interface SetemitcfgInput extends StepInput {
     readonly kind: "SystemContractSteps.SetemitcfgInput"
@@ -111,14 +92,14 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.setinittime.invoke({
-        no_reward_init_time: await chainHeadTimestamp(ctx)
+        no_reward_init_time: await ctx.wire.chainHeadTimestamp()
       })
   }
 
   /**
-   * `sysio.system::initt5` — seed the `t5_state` singleton, anchored to the
-   * chain's `head_block_time` (the clock `accrueepoch` uses). Input-less; the
-   * runner reads the head time.
+   * `sysio.system::initt5` — seed the `t5_state` singleton. Its start time and epoch
+   * duration come from the `sysio.epoch` economic clock, so `seteconomy` must run first.
+   * Input-less.
    */
   export function planInitt5<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -136,16 +117,14 @@ export namespace SystemContractSteps {
     )
   }
 
-  /** Named runner — `sysio.system::initt5` anchored to chain head time. */
+  /** Named runner — `sysio.system::initt5` (empty payload). */
   export async function runInitt5<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.initt5.invoke({ start_time: await chainHeadTimestamp(ctx) })
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.initt5.invoke({})
   }
 
   /** Input for {@link planInit} — the generated `system::init` data. */

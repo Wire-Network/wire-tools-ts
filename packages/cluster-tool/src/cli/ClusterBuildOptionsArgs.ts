@@ -552,6 +552,16 @@ export function buildOptionShape(
       CliDefault.epochDurationSec,
       "minimum epoch duration in seconds"
     ),
+    // optionalLeaf: omitting it must resolve to the consensus duration, which only
+    // `ClusterConfigProvider.resolve` knows.
+    economicEpochDurationSec: optionalLeaf(
+      OptionLeafType.number,
+      "economic epoch duration in seconds (emissions, collateral withdrawals, producer pay); omit to match the epoch duration"
+    ),
+    economicStartTime: optionalLeaf(
+      OptionLeafType.string,
+      "start of economic epoch 1, an ISO-8601 UTC timestamp (a past start is caught up); omit to anchor it at the chain head"
+    ),
     operatorsPerEpoch: optionalLeaf(
       OptionLeafType.number,
       "batch-op group SIZE (operators_per_epoch); omit to derive from batchOperatorCount"

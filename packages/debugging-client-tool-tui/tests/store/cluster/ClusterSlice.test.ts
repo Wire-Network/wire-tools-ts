@@ -37,6 +37,8 @@ const stubConfig: ClusterConfig = {
   underwriterCount: 0,
   apiCount: 0,
   epochDurationSec: 60,
+  economicEpochDurationSec: 60,
+  economicStartTime: null,
   solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
   operatorsPerEpoch: null,
   batchOpGroups: null,

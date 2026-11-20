@@ -43,6 +43,8 @@ export const PersistedFixture: ClusterConfig = {
   underwriterCount: 0,
   apiCount: 1,
   epochDurationSec: 60,
+  economicEpochDurationSec: 60,
+  economicStartTime: null,
   operatorsPerEpoch: null,
   batchOpGroups: null,
   epochRetentionEnvelopeLogCount: null,

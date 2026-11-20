@@ -545,6 +545,8 @@ command comes first).
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
 | `--epoch-duration-sec` | | `300` | minimum epoch duration in seconds (60 is the depot floor — `sysio.epoch::setconfig` rejects lower) |
+| `--economic-epoch-duration-sec` | | the epoch duration | economic epoch duration in seconds — the `sysio.epoch` clock emissions, collateral withdrawals and producer pay run on (60 is its floor) |
+| `--economic-start-time` | | the chain head | start of economic epoch 1, an ISO-8601 UTC timestamp; a past start is caught up one epoch per tick after the genesis advance |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
 | `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |
