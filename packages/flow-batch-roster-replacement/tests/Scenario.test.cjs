@@ -8,7 +8,46 @@ const { PrivateKey, KeyType } = require("@wireio/sdk-core")
 const {
   BatchRosterReplacementScenario: Scenario
 } = require("../lib/BatchRosterReplacementScenario.js")
+const { SolanaDeliveryHistory } = require("../lib/SolanaDeliveryHistory.js")
 afterEach(() => mock.restoreAll())
+for (const exists of [true, false])
+  test(`replacement delivery uses live votes before history: ${exists}`, async () => {
+    const { Keypair } = require("@solana/web3.js"),
+      signer = Keypair.generate().publicKey,
+      accepted = { epochIndex: 4, checksum: Array(32).fill(7) },
+      votes = {
+        epochIndex: 4,
+        consensusReached: true,
+        consensusHash: accepted.checksum,
+        deliveries: [{ operator: signer, envelopeHash: accepted.checksum }]
+      },
+      program = {
+        programId: Keypair.generate().publicKey,
+        coder: { accounts: { decode: () => votes } }
+      },
+      connection = {
+        getAccountInfo: async () => (exists ? { data: Buffer.alloc(0) } : null)
+      },
+      ctx = {
+        solana: { connection },
+        config: { solanaPath: "/tmp/deployed-idl" }
+      },
+      fallback = mock.method(SolanaDeliveryHistory, "read", async (...args) => {
+        Assert.deepEqual(args, [connection, program, accepted, signer])
+        return false
+      })
+    mock.method(SolanaOutpostProgramTool, "loadReadOnlyProgram", () => program)
+    Assert.equal(
+      await Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      exists
+    )
+    Assert.equal(fallback.mock.callCount(), exists ? 0 : 1)
+    votes.deliveries = []
+    Assert.equal(
+      await Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      false
+    )
+  })
 test("Ethereum signer normalization preserves the replacement identity", () => {
   for (const address of [
     "1234567890123456789012345678901234567890",

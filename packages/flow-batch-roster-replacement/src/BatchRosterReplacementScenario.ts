@@ -26,6 +26,8 @@ import {
   type ClusterBuildContext
 } from "@wireio/cluster-tool"
 
+import { SolanaDeliveryHistory } from "./SolanaDeliveryHistory.js"
+
 const { Actor } = Report
 
 /** A funded nonbootstrap replacement must be consumed by both real outposts before user work. */
@@ -201,15 +203,9 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
                   record.epochIndex >= first &&
                   record.epochIndex < config.nextEpochIndex
               )) {
-                const deliveries =
-                  await BatchRosterReplacementScenario.solanaDeliveries(
-                    ctx,
-                    record.epochIndex
-                  )
                 if (
-                  deliveries &&
-                  BatchRosterReplacementScenario.isAcceptedSolanaDelivery(
-                    deliveries,
+                  await BatchRosterReplacementScenario.hasAcceptedSolanaDelivery(
+                    ctx,
                     record,
                     BatchRosterReplacementScenario.solanaAddress(ctx)
                   )
@@ -455,6 +451,31 @@ export namespace BatchRosterReplacementScenario {
       Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
       index
     ])
+  }
+  /**
+   * Prove the replacement's vote even after the settled tally has been reaped.
+   * @param ctx - The live cluster context and deployed program.
+   * @param accepted - A canonical envelope whose epoch the caller verified is closed.
+   * @param signer - The replacement's actual Solana signing key.
+   * @returns Whether live votes or complete confirmed upload history prove delivery.
+   */
+  export async function hasAcceptedSolanaDelivery(
+    ctx: ClusterBuildContext,
+    accepted: EnvelopeRecord,
+    signer: PublicKey
+  ): Promise<boolean> {
+    const deliveries = await solanaDeliveries(ctx, accepted.epochIndex)
+    if (deliveries)
+      return isAcceptedSolanaDelivery(deliveries, accepted, signer)
+    return SolanaDeliveryHistory.read(
+      ctx.solana.connection,
+      SolanaOutpostProgramTool.loadReadOnlyProgram(
+        ctx.solana.connection,
+        ctx.config.solanaPath
+      ),
+      accepted,
+      signer
+    )
   }
   /**
    * Load an account through the deployed IDL; absent epoch votes remain absent evidence.
