@@ -1,4 +1,5 @@
 import { SysioContracts } from "@wireio/sdk-core"
+import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -51,6 +52,59 @@ export namespace EpochContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.epoch)
       .actions.setconfig.invoke(input.data)
+  }
+
+  /** Input for {@link planSeteconomy} — the economic clock's duration and grid anchor. */
+  export interface SeteconomyInput extends StepInput {
+    readonly kind: "EpochContractSteps.SeteconomyInput"
+    /** Economic epoch length (s). */
+    readonly epochDurationSec: SysioContracts.SysioEpochSeteconomyAction["epoch_duration_sec"]
+    /**
+     * Start of economic epoch 1 (ISO-8601, read as UTC), or `null` to anchor it at the
+     * chain head when the step runs. A past start is caught up one epoch per tick once
+     * the consensus genesis advance has run.
+     */
+    readonly startTime: SysioContracts.SysioEpochSeteconomyAction["start_time"]
+  }
+
+  /**
+   * `sysio.epoch::seteconomy` — configure the economic clock emissions, collateral
+   * withdrawals and producer pay run on. Must precede `sysio.system::initt5`, which reads
+   * it, and `sysio.msgch::bootstrap`, which refuses to start without it.
+   */
+  export function planSeteconomy<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    epochDurationSec: SeteconomyInput["epochDurationSec"],
+    startTime: SeteconomyInput["startTime"]
+  ): ClusterBuildStep<C, SeteconomyInput> {
+    return ClusterBuildStep.create<C, SeteconomyInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec, startTime },
+      runSeteconomy
+    )
+  }
+
+  /** Named runner — `sysio.epoch::seteconomy`, a `null` start read from the chain head. */
+  export async function runSeteconomy<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SeteconomyInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const startTime =
+      input.startTime == null
+        ? await ctx.wire.chainHeadTimestamp()
+        : WireClient.toChainSeconds(input.startTime)
+    await ctx.wire.getSysioContract(SysioContractName.epoch).actions.seteconomy.invoke({
+      epoch_duration_sec: input.epochDurationSec,
+      start_time: startTime
+    })
   }
 
   /** `sysio.epoch::schbatchgps` — build the initial batch-operator group schedule. */

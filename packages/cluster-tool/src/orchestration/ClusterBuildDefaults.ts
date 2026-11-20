@@ -758,6 +758,15 @@ export namespace ClusterBuildDefaults {
         {},
         epochConfig(config)
       ),
+      // Before `init-t5` and `msgch::bootstrap`, which both read the economic clock.
+      Steps.contracts.sysio.epoch.planSeteconomy<C>(
+        Actor.Sysio,
+        "configure-economy",
+        `set the economic clock: ${config.economicEpochDurationSec}s epochs from ${config.economicStartTime ?? "the chain head"}`,
+        {},
+        config.economicEpochDurationSec,
+        config.economicStartTime
+      ),
       Steps.contracts.sysio.opreg.planSetconfig<C>(
         Actor.Sysio,
         "configure-opreg",
@@ -864,7 +873,7 @@ export namespace ClusterBuildDefaults {
       Steps.contracts.sysio.system.planInitt5<C>(
         Actor.Sysio,
         "init-t5",
-        "seed t5_state at chain head time",
+        "seed t5_state from the economic clock",
         {}
       )
     )

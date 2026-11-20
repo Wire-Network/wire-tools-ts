@@ -209,14 +209,14 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         token_code: Liqsol,
         direction: "SYNDICATION",
         level: 10,
-        last_epoch: 4
+        last_refill: "2026-01-01T00:00:04"
       },
       {
         chain_code: Solana,
         token_code: Liqsol,
         direction: SysioSyndBucketDirection.DESYNDICATION,
         level: 20,
-        last_epoch: 4
+        last_refill: "2026-01-01T00:00:04"
       }
     ])
     const syndication = await WireSyndicationTool.readBucket(

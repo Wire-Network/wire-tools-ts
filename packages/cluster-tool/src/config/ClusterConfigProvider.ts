@@ -134,6 +134,22 @@ function assertApiCount(options: ClusterBuildOptions): number {
 }
 
 /**
+ * The economic clock's start, refused here when it does not parse rather than at the
+ * bootstrap's `seteconomy` step.
+ *
+ * @param options - The caller's options (its `economicStartTime`, if any).
+ * @returns The start as given, or `null` to anchor it at the chain head.
+ */
+function assertEconomicStartTime(options: ClusterBuildOptions): string {
+  const { economicStartTime = null } = options
+  Assert.ok(
+    economicStartTime == null || !Number.isNaN(Date.parse(economicStartTime)),
+    `ClusterConfigProvider: economicStartTime must be an ISO-8601 timestamp — got ${economicStartTime}`
+  )
+  return economicStartTime
+}
+
+/**
  * A query-engine setting with no API node to read it is a misconfiguration,
  * not a default: every member the CALLER set requires at least one planned API
  * node. The harness's own defaults
@@ -437,6 +453,8 @@ export namespace ClusterConfigProvider {
       lcoImport = resolveLcoImport(options),
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
+      economicStartTime = assertEconomicStartTime(options),
+      { epochDurationSec = DefaultEpochDurationSec } = options,
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)
       ),
@@ -471,7 +489,9 @@ export namespace ClusterConfigProvider {
       batchOperatorCount,
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
       apiCount,
-      epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
+      epochDurationSec,
+      economicEpochDurationSec: options.economicEpochDurationSec ?? epochDurationSec,
+      economicStartTime,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,
       batchOpGroups: options.batchOpGroups ?? null,
       epochRetentionEnvelopeLogCount:

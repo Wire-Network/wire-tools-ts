@@ -1996,6 +1996,36 @@ describe("ClusterConfigProvider", () => {
       expect(config.epochDurationSec).toBe(60)
     })
 
+    it("defaults the economic clock to the epoch duration, anchored at the chain head", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 60
+      })
+      expect(config.economicEpochDurationSec).toBe(60)
+      expect(config.economicStartTime).toBeNull()
+    })
+
+    it("keeps a caller's economic duration and past start", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 60,
+        economicEpochDurationSec: 360,
+        economicStartTime: "2026-11-01T06:00:00"
+      })
+      expect(config.epochDurationSec).toBe(60)
+      expect(config.economicEpochDurationSec).toBe(360)
+      expect(config.economicStartTime).toBe("2026-11-01T06:00:00")
+    })
+
+    it("refuses an economic start that is not a timestamp", async () => {
+      await expect(
+        ClusterConfigProvider.resolveWithBiosKeys({
+          ...keyModeOptions(),
+          economicStartTime: "last tuesday"
+        })
+      ).rejects.toThrow(/economicStartTime must be an ISO-8601 timestamp/)
+    })
+
     it("plain resolve already carries the same genesis publics (config-only facade)", async () => {
       const config = await ClusterConfigProvider.resolve(keyModeOptions())
       expect(config.initialKey).toBe(KeyGenerator.BiosK1Key.publicKey)

@@ -440,6 +440,12 @@ describe("ProtocolTiming", () => {
     expect(ProtocolTiming.effectiveEpochSec(300)).toBe(330)
   })
 
+  it("effectiveSlowerEpochSec extends whichever clock is slower", () => {
+    expect(ProtocolTiming.effectiveSlowerEpochSec(60, 60)).toBe(90)
+    expect(ProtocolTiming.effectiveSlowerEpochSec(60, 360)).toBe(390)
+    expect(ProtocolTiming.effectiveSlowerEpochSec(300, 60)).toBe(330)
+  })
+
   describe("irreversibilityBudgetMs", () => {
     it("pins the two constants the budget is built from", () => {
       expect(ProtocolTiming.IrreversibilityBaseMs).toBe(60_000)

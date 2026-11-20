@@ -23,15 +23,19 @@ export namespace SyndicationRateLimitScenarioConstants {
   }
   /** Syndication burst. */
   export const Burst = 1_000_000_000n
-  /** Refill per advancing epoch. */
-  export const Refill = 250_000_000n
-  /** One propagation budget per epoch needed to refill an empty bucket. */
+  /** Syndication refill per elapsed second, slow enough that one crank gap refills only part of a burst. */
+  export const Refill = 10_000_000n
+  /** Seconds an empty bucket takes to refill to the burst. */
+  export const FullRefillSec = Number(Burst / Refill)
+  /** Wait for a full refill: its seconds, plus one propagation budget for the chain head to reach them. */
   export const FullRefillBudgetMs =
-    Number(Burst / Refill) * ProtocolTiming.SingleHopBudgetMs
-  /** A's arrival consumes the initial burst and first refill. */
-  export const AmountA = Burst + Refill
+    FullRefillSec * ProtocolTiming.MsPerSecond + ProtocolTiming.SingleHopBudgetMs
+  /** The part of A's item past one burst. */
+  export const Overflow = 250_000_000n
+  /** A's arrival exceeds the initial burst by {@link Overflow}. */
+  export const AmountA = Burst + Overflow
   /** B's arrival makes the total exactly twice the burst. */
-  export const AmountB = Burst - Refill
+  export const AmountB = Burst - Overflow
   /** Desyndication burst, less than A's released balance. */
   export const DesyndicationBurst = 500_000_000n
   /** Accepted payout within the desyndication budget. */
@@ -75,12 +79,12 @@ export namespace SyndicationRateLimitScenarioConstants {
   export const SecondRequest = outputKey<
     SysioContracts.SysioBondApproveAction["request_id"]
   >("rate.secondRequest", "second arrival request")
-  /** Bucket after the initial burst, before the first refill. */
+  /** Bucket after the initial burst, before any refill. */
   export const FirstBucket = outputKey<SysioContracts.SysioSyndBucketRowType>(
     "rate.firstBucket",
     "bucket after initial release"
   )
-  /** Bucket after the first refill, before the final refill. */
+  /** Bucket after the partial refill, before the full one. */
   export const RefillBucket = outputKey<SysioContracts.SysioSyndBucketRowType>(
     "rate.refillBucket",
     "bucket after refill release"

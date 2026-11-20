@@ -23,6 +23,7 @@ import Assert from "node:assert"
 
 import type {
   ChainTokenAmount,
+  ClusterConfig,
   CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
@@ -70,9 +71,9 @@ export namespace WireCollateralTool {
   export const TableRowLimit = 100
 
   /**
-   * Epochs a remit claim may take to appear: the contract's two-epoch withdraw wait, the
-   * boundary whose `flushwtdw` credits the claim, and one epoch of margin. Changing it
-   * moves the {@link planVerifyRemitClaim} deadline.
+   * Epochs of the slower clock a remit claim may take to appear: the contract's two-epoch
+   * withdraw wait on each clock, the economic tick whose `flushwtdw` credits the claim, and
+   * one epoch of margin. Changing it moves the {@link planVerifyRemitClaim} deadline.
    */
   export const RemitClaimEpochCount = 4
 
@@ -700,7 +701,7 @@ export namespace WireCollateralTool {
     await pollUntil(
       `${account} remitclaims(${tokenSpelling(tokenCode)}) = ${amount}`,
       async () => (await readRemitClaim(ctx, account, tokenCode)) === amount,
-      remitClaimDeadlineMs(ctx.config.epochDurationSec),
+      remitClaimDeadlineMs(ctx.config),
       RemitClaimPollIntervalMs
     )
   }
@@ -726,13 +727,18 @@ export namespace WireCollateralTool {
   }
 
   /**
-   * The {@link planVerifyRemitClaim} deadline for a cluster's epoch duration (ms):
-   * {@link RemitClaimEpochCount} effective epochs.
+   * The {@link planVerifyRemitClaim} deadline for a cluster (ms): {@link RemitClaimEpochCount}
+   * effective epochs of its slower clock.
+   *
+   * @param config - The resolved cluster config (its consensus and economic durations).
    */
-  export function remitClaimDeadlineMs(epochDurationSec: number): number {
+  export function remitClaimDeadlineMs(config: ClusterConfig): number {
     return (
       RemitClaimEpochCount *
-      ProtocolTiming.effectiveEpochSec(epochDurationSec) *
+      ProtocolTiming.effectiveSlowerEpochSec(
+        config.epochDurationSec,
+        config.economicEpochDurationSec
+      ) *
       ProtocolTiming.MsPerSecond
     )
   }
@@ -740,15 +746,13 @@ export namespace WireCollateralTool {
   /**
    * The Step ceiling for a {@link planVerifyRemitClaim} Step (ms): its poll deadline
    * ({@link remitClaimDeadlineMs}) plus `ProtocolTiming.PollDeadlineBufferMs`, so the Step's
-   * timeout never races the poll it wraps. Pass the same epoch duration the runner reads —
-   * a scenario's `plan()` passes `cluster.context.config.epochDurationSec`, the value its
-   * runners later read as `ctx.config.epochDurationSec`.
+   * timeout never races the poll it wraps. Pass the config the runner reads — a scenario's
+   * `plan()` passes `cluster.context.config`, which its runners later read as `ctx.config`.
+   *
+   * @param config - The resolved cluster config.
    */
-  export function remitClaimStepTimeoutMs(epochDurationSec: number): number {
-    return (
-      remitClaimDeadlineMs(epochDurationSec) +
-      ProtocolTiming.PollDeadlineBufferMs
-    )
+  export function remitClaimStepTimeoutMs(config: ClusterConfig): number {
+    return remitClaimDeadlineMs(config) + ProtocolTiming.PollDeadlineBufferMs
   }
 
   // ── value helpers ────────────────────────────────────────────────────────

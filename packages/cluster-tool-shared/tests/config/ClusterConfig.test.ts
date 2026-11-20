@@ -30,6 +30,8 @@ describe("ClusterConfig shape", () => {
     underwriterCount: 1,
     apiCount: 0,
     epochDurationSec: 60,
+    economicEpochDurationSec: 60,
+    economicStartTime: null,
     operatorsPerEpoch: null,
     batchOpGroups: null,
     epochRetentionEnvelopeLogCount: null,
@@ -367,5 +369,21 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.terminateMaxConsecutiveMisses).toBeNull()
     expect(rehydrated.terminateMaxPercentMisses24h).toBeNull()
     expect(rehydrated.terminateWindowMs).toBeNull()
+  })
+
+  it("round-trips the economic clock, a null start included", () => {
+    const anchored = { ...config, economicEpochDurationSec: 360, economicStartTime: "2026-11-01T06:00:00" },
+      atHead = ClusterConfigSchemaCodec.deserialize(ClusterConfigSchemaCodec.serialize(config)),
+      past = ClusterConfigSchemaCodec.deserialize(ClusterConfigSchemaCodec.serialize(anchored))
+    expect(JSON.parse(ClusterConfigSchemaCodec.serialize(config))).toHaveProperty("economicStartTime", null)
+    expect(atHead.economicStartTime).toBeNull()
+    expect(past.economicEpochDurationSec).toBe(360)
+    expect(past.economicStartTime).toBe("2026-11-01T06:00:00")
+  })
+
+  it("requires the economic epoch duration", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.economicEpochDurationSec
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow()
   })
 })

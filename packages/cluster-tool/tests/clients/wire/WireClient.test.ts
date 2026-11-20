@@ -1795,3 +1795,47 @@ describe("WireClient.chainTimeMs", () => {
     expect(WireClient.chainTimeMs("not a time")).toBeNaN()
   })
 })
+
+describe("WireClient.toChainSeconds", () => {
+  it.each([
+    ["2026-09-30T00:00:01.500", "2026-09-30T00:00:01"],
+    ["2026-09-30T00:00:01Z", "2026-09-30T00:00:01"],
+    ["2026-09-30T00:00:01.999Z", "2026-09-30T00:00:01"]
+  ])("renders %s as the second it falls in", (stamp, expected) => {
+    expect(WireClient.toChainSeconds(stamp)).toBe(expected)
+  })
+
+  it("refuses a stamp that is not a time", () => {
+    expect(() => WireClient.toChainSeconds("not a time")).toThrow(
+      /unparseable timestamp/
+    )
+  })
+})
+
+describe("WireClient#chainHeadTimestamp", () => {
+  let config: WireClientConfig
+  beforeAll(async () => {
+    config = {
+      clusterPath: Os.tmpdir(),
+      binary: Path.join(Os.tmpdir(), "clio"),
+      nodeopUrl: toURL(
+        await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultBiosHttp
+        )
+      ),
+      kiodUrl: null
+    }
+  })
+
+  afterEach(() => jest.restoreAllMocks())
+
+  it("reads the head block time as a time_point_sec stamp", async () => {
+    const client = new WireClient(config)
+    jest
+      .spyOn(client, "getInfo")
+      .mockResolvedValue({ head_block_time: "2026-11-19T10:20:30.500" } as never)
+    await expect(client.chainHeadTimestamp()).resolves.toBe(
+      "2026-11-19T10:20:30"
+    )
+  })
+})

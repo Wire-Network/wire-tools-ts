@@ -185,6 +185,8 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 | `underwriterCount` | `0` | swap-underwriter daemons have been removed; any nonzero value is rejected |
 | `apiCount` | `0` **(cluster)** | non-producing API nodes serving the chain API + `/v1/query/execute` |
 | `epochDurationSec` | `300` | the depot's minimum epoch duration; a flow pins a shorter one |
+| `economicEpochDurationSec` | `epochDurationSec` | the economic clock's epoch duration (`sysio.epoch::seteconomy`) |
+| `economicStartTime` | chain head | start of economic epoch 1 (`sysio.epoch::seteconomy`) |
 | `EnvelopeLogRetentionEpochs` | `10` | `sysio.epoch::setconfig.epoch_retention_envelope_log_count` |
 
 ---
@@ -321,6 +323,11 @@ before the operator `createlink` calls in Stage 12.
     `batch_op_groups = min(3, batchOperatorCount)`, `operators_per_epoch = ceil(batchOperatorCount /
     batch_op_groups)`, `batch_operator_minimum_active = operators_per_epoch * batch_op_groups` (cluster
     `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` is `epochDurationSec` (default 300).
+    Then `sysio.epoch::seteconomy({epoch_duration_sec, start_time})` — `[sysio.epoch@active]` — configures the
+    economic clock emissions, collateral withdrawals and producer pay run on. `epoch_duration_sec` is
+    `economicEpochDurationSec` (default: `epochDurationSec`); `start_time` is `economicStartTime`, or the chain's
+    `head_block_time` when unset **(production: the approved economic start, which may lie in the past)**. A past
+    start is caught up one economic epoch per `tickeconomy` crank once Stage 12's genesis advance has run.
 
 21. `sysio.opreg::setconfig({...})` — `[sysio.opreg@active]`:
 
@@ -368,9 +375,9 @@ depot base units at precision 9. Production uses these values; the council can c
       and no node owner can claim — registration still succeeds, which is what makes the omission silent. Reads the
       emission config, so it must run after `setemitcfg`, and it is one-shot (a second call is rejected).
       **(cluster: the chain's `head_block_time`; production: the approved Distribution Commencement Date)**
-    - `sysio::initt5({start_time:"<chain head time, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` — `[sysio@active]` — seeds
-      the T5 state singleton (`start_time` = the chain's `head_block_time`, not wall clock). Must run after
-      `setemitcfg` and before Stage 12's `bootstrap`.
+    - `sysio::initt5({})` — `[sysio@active]` — seeds the T5 state singleton. Its start and epoch duration come from
+      the economic clock (`sysio.epoch::seteconomy`, item 20). Must run after `setemitcfg` and before Stage 12's
+      `bootstrap`.
 
     `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits). The `tN_allocation` fields are **per node
     owner**, not per tier: `addnodeowner` copies the tier's value verbatim into that one owner's `nodedist` row, so
@@ -777,5 +784,5 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   lead-in) run after the emergency-stop arming (Stage 10); the OPP debugging server + daemon artifacts are prepared just
   before Stage 12's provisioning; and the operator nodeop daemons start between `regoperator` and
   `schbatchgps`. The hard dependencies are
-  unchanged: ROA active before any `setsyscode`; `setemitcfg` before `initt5` before `bootstrap`; the outpost
+  unchanged: ROA active before any `setsyscode`; `seteconomy` and `setemitcfg` before `initt5` before `bootstrap`; the outpost
   deploy artifacts before the registry rows that embed their addresses.

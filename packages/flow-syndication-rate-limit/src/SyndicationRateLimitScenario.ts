@@ -12,6 +12,7 @@ import {
   WireSyndicationTool,
   pollUntil,
   verifyStep,
+  WireClient,
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
@@ -33,21 +34,53 @@ async function waitNewEpoch(ctx: ClusterBuildContext): Promise<void> {
   )
 }
 
-/** Verify tick_bucket's capped elapsed-epoch refill, less this crank's release. */
+/** Whole seconds between two bucket ticks — the span tick_bucket refills by. */
+function elapsedSeconds(
+  previous: SysioContracts.SysioSyndBucketRowType,
+  current: SysioContracts.SysioSyndBucketRowType
+): bigint {
+  return BigInt(
+    (WireClient.chainTimeMs(current.last_refill) -
+      WireClient.chainTimeMs(previous.last_refill)) /
+      ProtocolTiming.MsPerSecond
+  )
+}
+
+/** Verify tick_bucket's capped per-second refill, less this crank's release. */
 function assertBucketRefill(
   previous: SysioContracts.SysioSyndBucketRowType,
   current: SysioContracts.SysioSyndBucketRowType,
   released: bigint
 ): void {
-  const elapsed = BigInt(current.last_epoch - previous.last_epoch),
+  const elapsed = elapsedSeconds(previous, current),
     refilled = BigInt(previous.level) + Constants.Refill * elapsed,
     capacity = refilled < Constants.Burst ? refilled : Constants.Burst
-  Assert.ok(elapsed >= 0n, "bucket epoch must not regress")
+  Assert.ok(elapsed >= 0n, "bucket refill time must not regress")
   Assert.ok(released >= 0n && released <= capacity)
   Assert.strictEqual(BigInt(current.level), capacity - released)
 }
 
-/** Arrival-ordered tranches, same-epoch exhaustion, lazy refill and redemption refusal. */
+/** Wait until the chain head is `seconds` past a bucket's last tick, so the next crank refills them. */
+async function waitPastTick(
+  ctx: ClusterBuildContext,
+  bucket: SysioContracts.SysioSyndBucketRowType,
+  seconds: number,
+  timeoutMs: number
+): Promise<void> {
+  const target =
+    WireClient.chainTimeMs(bucket.last_refill) +
+    seconds * ProtocolTiming.MsPerSecond
+  await pollUntil(
+    `chain head ${seconds}s past the bucket's last tick`,
+    async () =>
+      WireClient.chainTimeMs((await ctx.wire.getInfo()).head_block_time) >=
+      target,
+    timeoutMs,
+    SyndicationScenario.PollMs
+  )
+}
+
+/** Arrival-ordered tranches, per-second lazy refill capped at the burst, and redemption refusal. */
 export class SyndicationRateLimitScenario extends SyndicationScenario {
   readonly name = "flow-syndication-rate-limit"
   readonly description =
@@ -168,15 +201,8 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
     ClusterBuildPhase.create(
       cluster,
       "InitialBurst",
-      "Consume B in arrival order, then prove no same-epoch refill"
+      "Release one full burst in arrival order"
     ).push(
-      verifyStep(
-        Actor.Sysio,
-        "align-cranks",
-        "start the crank pair at a new epoch",
-        waitNewEpoch,
-        SyndicationScenario.VerifyOptions
-      ),
       SyndicationScenario.planCrank(
         Actor.User,
         "first-crank",
@@ -212,70 +238,24 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
           )
           ctx.outputs.set(Constants.FirstBucket, bucket)
         }
-      ),
-      SyndicationScenario.planCrank(
-        Actor.User,
-        "same-epoch-crank",
-        "advance the syndication queue",
-        SyndicationScenario.WriteOptions
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "same-epoch-zero",
-        "the repeat crank really ran in the same epoch and released zero",
-        async ctx => {
-          const bucket = await WireSyndicationTool.readBucket(
-            ctx,
-            SyndicationScenario.Chain,
-            SyndicationScenario.Token,
-            SysioSyndBucketDirection.SYNDICATION
-          )
-          Assert.strictEqual(
-            bucket.last_epoch,
-            ctx.outputs.assert(Constants.FirstBucket).last_epoch
-          )
-          Assert.strictEqual(
-            await SyndicationScenario.readEpoch(ctx),
-            ctx.outputs.assert(Constants.FirstBucket).last_epoch
-          )
-          Assert.strictEqual(BigInt(bucket.level), 0n)
-          Assert.strictEqual(
-            BigInt(
-              (await SyndicationScenario.readEnvelope(ctx, Constants.Epoch))
-                .released
-            ),
-            Constants.Burst
-          )
-          Assert.strictEqual(
-            await SyndicationScenario.readBalance(ctx, Constants.UserA.account),
-            Constants.Burst
-          )
-          Assert.strictEqual(
-            await SyndicationScenario.readBalance(ctx, Constants.UserB.account),
-            0n
-          )
-        }
       )
     )
     ClusterBuildPhase.create(
       cluster,
       "Refill",
-      "Release min(kR,B) after the bucket lazily refills"
+      "Release min(R x elapsed seconds, B) after the bucket lazily refills"
     ).push(
       verifyStep(
         Actor.Sysio,
         "wait-refill",
-        "advance beyond the first bucket epoch",
-        async ctx => {
-          await pollUntil(
-            "refill epoch",
-            async () =>
-              (await SyndicationScenario.readEpoch(ctx)) >
-              ctx.outputs.assert(Constants.FirstBucket).last_epoch,
-            ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
-          )
-        },
+        "let at least one second pass since the first bucket tick",
+        async ctx =>
+          waitPastTick(
+            ctx,
+            ctx.outputs.assert(Constants.FirstBucket),
+            1,
+            ProtocolTiming.SingleHopBudgetMs
+          ),
         SyndicationScenario.VerifyOptions
       ),
       SyndicationScenario.planCrank(
@@ -287,7 +267,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "refill-exact",
-        "actual elapsed epochs determine the exact tranche and arrival-order balances",
+        "actual elapsed seconds determine the exact tranche and arrival-order balances",
         async ctx => {
           const bucket = await WireSyndicationTool.readBucket(
               ctx,
@@ -295,14 +275,14 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               SyndicationScenario.Token,
               SysioSyndBucketDirection.SYNDICATION
             ),
-            elapsed = BigInt(
-              bucket.last_epoch -
-                ctx.outputs.assert(Constants.FirstBucket).last_epoch
+            elapsed = elapsedSeconds(
+              ctx.outputs.assert(Constants.FirstBucket),
+              bucket
             ),
             available = elapsed * Constants.Refill,
             released =
               available < Constants.Burst ? available : Constants.Burst,
-            toA = released < Constants.Refill ? released : Constants.Refill
+            toA = released < Constants.Overflow ? released : Constants.Overflow
           Assert.ok(elapsed > 0n)
           Assert.strictEqual(
             BigInt(
@@ -331,18 +311,14 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "wait-full-refill",
-        "wait enough epochs to fill at most B",
-        async ctx => {
-          const epochs = Number(Constants.Burst / Constants.Refill)
-          await pollUntil(
-            "full refill",
-            async () =>
-              (await SyndicationScenario.readEpoch(ctx)) >=
-              ctx.outputs.assert(Constants.RefillBucket).last_epoch + epochs,
-            Constants.FullRefillBudgetMs,
-            SyndicationScenario.PollMs
-          )
-        },
+        "wait long enough to refill a whole burst",
+        async ctx =>
+          waitPastTick(
+            ctx,
+            ctx.outputs.assert(Constants.RefillBucket),
+            Constants.FullRefillSec,
+            Constants.FullRefillBudgetMs
+          ),
         {
           timeoutMs:
             Constants.FullRefillBudgetMs + ProtocolTiming.PollDeadlineBufferMs
