@@ -394,7 +394,7 @@ describe("createCreateBatchOperatorKeysCommand handler (end to end)", () => {
       stdoutAppend = jest
         .spyOn(StdoutAppender.prototype, "append")
         .mockImplementation(() => undefined),
-      consoleInfo = jest.spyOn(console, "info").mockImplementation(() => undefined),
+      consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined),
       adoptOrCreate = jest
         .spyOn(BatchOperatorKeyTool, "adoptOrCreate")
         .mockResolvedValue(operators)
@@ -423,8 +423,8 @@ describe("createCreateBatchOperatorKeysCommand handler (end to end)", () => {
     expect(dataRecords).toHaveLength(1)
     expect(dataRecords[0].message).toBe(JSON.stringify(listing, null, 2))
     expect(JSON.parse(dataRecords[0].message)).toEqual(listing)
-    // The completion line is a diagnostic, never on the data channel.
-    expect(consoleInfo).toHaveBeenCalledWith(
+    // The completion line is a diagnostic on stderr, never on the data channel.
+    expect(consoleError).toHaveBeenCalledWith(
       expect.stringContaining("3 keys ready for 1 batch operators")
     )
     expect(exitSpy).toHaveBeenCalledWith(0)

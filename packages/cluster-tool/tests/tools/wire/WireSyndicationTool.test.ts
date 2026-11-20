@@ -1,6 +1,6 @@
 import { SysioContracts } from "@wireio/sdk-core"
 
-import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -90,6 +90,15 @@ function newBuild(): ClusterBuild {
 }
 
 afterEach(() => jest.restoreAllMocks())
+
+describe("WireSyndicationTool — fee arithmetic", () => {
+  it("BasisPoints is the canonical Constants.BasisPoints, the denominator feeOf floors by", () => {
+    expect(WireSyndicationTool.BasisPoints).toBe(Constants.BasisPoints)
+    // 1 bps of one basis-point denominator is exactly 1; one base unit less floors to 0.
+    expect(WireSyndicationTool.feeOf(Constants.BasisPoints, 1)).toBe(1n)
+    expect(WireSyndicationTool.feeOf(Constants.BasisPoints - 1n, 1)).toBe(0n)
+  })
+})
 
 describe("WireSyndicationTool — sysio.synd reads", () => {
   it("derives a floored fee plus flat charge from the live pair, including a changed charge", async () => {
