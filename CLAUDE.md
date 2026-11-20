@@ -643,7 +643,7 @@ worktree developed against sibling WORKTREES points the hook at them —
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
-| `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
+| `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override for synthetic allocator/protocol fixtures; real socket tests share the host registry |
 | `RUST_LOG` | Passed through to `solana-test-validator`; when unset the harness enables agave's program-log target so on-chain `msg!()` reaches `<ledger>/validator.log` |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |
 
