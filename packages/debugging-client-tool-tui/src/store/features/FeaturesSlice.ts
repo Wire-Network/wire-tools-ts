@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import { SliceName } from "../StoreTypes.js"
 
 /** Lightweight view of a registered feature provider — suitable for UI display. */
@@ -25,7 +25,7 @@ export const featuresSlice = createSlice({
   reducers: {
     /** Append a provider to the registry if not already present. */
     registerFeature: (
-      state,
+      state: Draft<FeaturesSliceState>,
       action: PayloadAction<RegisteredFeatureProvider>
     ) => {
       if (!state.registered.some(f => f.id === action.payload.id)) {
@@ -33,7 +33,7 @@ export const featuresSlice = createSlice({
       }
     },
     /** Replace the active-ids list — called once during bootstrap. */
-    setActiveFeatures: (state, action: PayloadAction<string[]>) => {
+    setActiveFeatures: (state: Draft<FeaturesSliceState>, action: PayloadAction<string[]>) => {
       state.activeIds = action.payload
     }
   }

@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import { findTab, nextActive } from "../common/index.js"
 import { SliceName } from "../SliceName.js"
@@ -128,14 +128,14 @@ export const WorkspaceSlice = createSlice({
   initialState: createWorkspaceInitialState(),
   reducers: {
     /** Open a tab and focus it. */
-    tabAdded(state, action: PayloadAction<EditorTabSeed>) {
+    tabAdded(state: Draft<WorkspaceState>, action: PayloadAction<EditorTabSeed>) {
       const tab = Workspace.createTab(state.nextTabNumber, action.payload)
       state.tabs.push(tab)
       state.activeTabId = tab.id
       state.nextTabNumber += 1
     },
     /** Close a tab (the last tab is replaced by an empty one). */
-    tabClosed(state, action: PayloadAction<string>) {
+    tabClosed(state: Draft<WorkspaceState>, action: PayloadAction<string>) {
       const index = state.tabs.findIndex(tab => tab.id === action.payload)
       if (index < 0) return
       state.tabs.splice(index, 1)
@@ -146,21 +146,21 @@ export const WorkspaceSlice = createSlice({
       if (state.activeTabId === action.payload) state.activeTabId = nextActive(state.tabs, index)
     },
     /** Focus a tab. */
-    tabActivated(state, action: PayloadAction<string>) {
+    tabActivated(state: Draft<WorkspaceState>, action: PayloadAction<string>) {
       if (findTab(state.tabs, action.payload) != null) state.activeTabId = action.payload
     },
     /** The editor text changed. */
-    textChanged(state, action: PayloadAction<EditorTextChange>) {
+    textChanged(state: Draft<WorkspaceState>, action: PayloadAction<EditorTextChange>) {
       const tab = findTab(state.tabs, action.payload.id)
       if (tab != null) tab.text = action.payload.text
     },
     /** The editor selection changed. */
-    selectionChanged(state, action: PayloadAction<EditorSelectionChange>) {
+    selectionChanged(state: Draft<WorkspaceState>, action: PayloadAction<EditorSelectionChange>) {
       const tab = findTab(state.tabs, action.payload.id)
       if (tab != null) tab.selection = action.payload.selection
     },
     /** The tab was opened from / saved to a file. */
-    fileAssociated(state, action: PayloadAction<EditorFileAssociation>) {
+    fileAssociated(state: Draft<WorkspaceState>, action: PayloadAction<EditorFileAssociation>) {
       const tab = findTab(state.tabs, action.payload.id)
       if (tab == null) return
       tab.filePath = action.payload.filePath

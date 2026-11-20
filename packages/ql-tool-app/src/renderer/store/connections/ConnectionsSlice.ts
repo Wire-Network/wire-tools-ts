@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import { ConnectionProfilesDocument, type ConnectionProfile } from "@wireio/ql-shared"
 
@@ -47,16 +47,16 @@ export const ConnectionsSlice = createSlice({
   initialState: createConnectionsInitialState(),
   reducers: {
     /** profiles.json (re)loaded. */
-    profilesLoaded(state, action: PayloadAction<ConnectionProfilesDocument>) {
+    profilesLoaded(state: Draft<ConnectionsState>, action: PayloadAction<ConnectionProfilesDocument>) {
       state.document = action.payload
       state.activeProfileName = resolveActiveProfileName(action.payload, state.activeProfileName)
     },
     /** The user picked a profile. */
-    profileSelected(state, action: PayloadAction<string>) {
+    profileSelected(state: Draft<ConnectionsState>, action: PayloadAction<string>) {
       state.activeProfileName = action.payload
     },
     /** The query port changed state. */
-    portStatusChanged(state, action: PayloadAction<QueryPortStatus>) {
+    portStatusChanged(state: Draft<ConnectionsState>, action: PayloadAction<QueryPortStatus>) {
       state.portStatus = action.payload
     }
   }
