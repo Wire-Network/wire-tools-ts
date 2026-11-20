@@ -1,0 +1,8 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "include": [],
+  "references": [
+    { "path": "../cluster-tool/tsconfig.json" },
+    { "path": "./tsconfig.src.json" }
+  ]
+}

@@ -110,6 +110,51 @@ export namespace NodeopProcessSteps {
     })
   }
 
+  /** Input for stopping a node while preserving its chain data for a later start. */
+  export interface StopInput extends StepInput {
+    readonly kind: "NodeopProcessSteps.StopInput"
+    readonly nodeName: string
+  }
+
+  /**
+   * Stop and reap one node without deleting its data or keys.
+   * @param actor - Report actor.
+   * @param name - Step name.
+   * @param description - Report description.
+   * @param options - Step execution options.
+   * @param nodeName - Running node's name.
+   * @returns The stop step.
+   */
+  export function planStop<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    nodeName: string
+  ): ClusterBuildStep<C, StopInput> {
+    return ClusterBuildStep.create<C, StopInput>(
+      actor, name, description, options,
+      { kind: "NodeopProcessSteps.StopInput", nodeName }, runStop
+    )
+  }
+
+  /**
+   * Await shutdown before removing the process registration.
+   * @param ctx - Cluster process registry.
+   * @param input - Node to stop.
+   * @param signal - Step cancellation.
+   * @returns Completion after the child has been reaped.
+   */
+  export async function runStop<C extends ClusterBuildContext>(
+    ctx: C, input: StopInput, signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const running = ctx.processManager.get(input.nodeName)
+    Assert.ok(running != null, `nodeop stop: ${input.nodeName} is not running`)
+    await running.stop(signal)
+    ctx.processManager.remove(input.nodeName)
+  }
+
   /** Deadline for the sync gate — the node's local head catching the depot head. */
   export const SyncGateTimeoutMs = 120_000
   /** Poll gap for the sync gate. */

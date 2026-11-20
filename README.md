@@ -160,6 +160,7 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
 | `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
 | `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
+| `flow-syndication-plugin-underwriting-recovery` | The funded underwriter stops before intake, remains offline until Solana prunes the original digest from its ten-record window, then restarts and bonds the old request through a recent checkpoint |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
