@@ -160,6 +160,7 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
 | `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
 | `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
+| `flow-syndication-plugin-underwriting-recovery` | The funded underwriter stops before intake, remains offline until Solana prunes the original digest from its ten-record window, then restarts and bonds the old request through a recent checkpoint |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -278,7 +279,7 @@ failure:
 | 2 | `wql-types-check` | `./scripts/generate-wql-types.mjs --check` — WIRE QL grammar + engine schema drift | 2 min |
 | 3 | `ql-app-icons-check` | `./scripts/generate-ql-app-icons.mjs --check` — desktop app icon drift | 2 min |
 | 4 | `lint` | `pnpm lint` | 2 min |
-| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
+| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 30 min |
 
 This does not launch live flows. The hook uses the mise-pinned toolchain when
 available; Node 24.9 or newer is required.

@@ -137,7 +137,7 @@ const runningClients: ChildProcessWithoutNullStreams[] = []
  * @param env - The client's environment. Passed explicitly: jest gives each
  *   test file its own copy of `process.env`, and a spawn without `env`
  *   inherits the worker's real one, which lacks the sandboxed
- *   WIRE_BIND_REGISTRY_PATH set by jest.setup.ts.
+ *   WIRE_BIND_REGISTRY_PATH set by this suite's beforeAll.
  * @returns The client and its line promises.
  */
 function launchPythonClient(
@@ -231,6 +231,17 @@ function registrationFileOf(pid: number): string {
 }
 
 describe("bind registry — Python client interop", () => {
+  beforeAll(() => {
+    // Registry protocol fixtures publish synthetic ports, without binding them.
+    process.env[BindConfigProvider.RegistryPathEnvVar] = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "wire-bind-registry-python-test-")
+    )
+  })
+
+  afterAll(() => {
+    Fs.rmSync(BindConfigProvider.registryPath(), { recursive: true, force: true })
+  })
+
   afterEach(async () => {
     await Promise.all(
       runningClients.splice(0).map(child => {

@@ -33,8 +33,8 @@ import { ExitCode, RepoRoot, isEntryScript, parseArguments } from "./common/cli-
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Default stage deadline (build + every test fits well inside it on a loaded host). */
-const DefaultStageTimeoutMs = 15 * 60_000
+/** Full monorepo build/test ceiling, including Jest and every package's unit script. */
+const DefaultStageTimeoutMs = 30 * 60_000
 
 /** Deadline of a quick stage (a drift check or lint). */
 const QuickStageTimeoutMs = 120_000

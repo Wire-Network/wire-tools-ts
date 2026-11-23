@@ -17,11 +17,9 @@ const PackagePath = Path.resolve(import.meta.dirname, "..", ".."),
   TuiBin = Path.join(PackagePath, "bin", "wire-ql-tui"),
   Sandbox = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wql-bundle-test-"))
 
-// Sandbox the bind registry and the wql stores BEFORE cluster-tool loads. The
+// Sandbox the wql stores; real HTTP fixtures share the host bind registry. The
 // workspace / @wireio packages are loaded through require (their CommonJS builds;
 // the hybrid packages' ESM builds are not loadable by native ESM).
-process.env.WIRE_BIND_REGISTRY_PATH = Path.join(Sandbox, "bind-registry")
-Fs.mkdirSync(process.env.WIRE_BIND_REGISTRY_PATH, { recursive: true })
 const require = createRequire(import.meta.url),
   { BindConfigProvider, Localhost, toURL } = require("@wireio/cluster-tool"),
   { JsonRPCProtocol } = require("@wireio/cluster-tool-shared"),
