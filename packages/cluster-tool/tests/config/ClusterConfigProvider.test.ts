@@ -7,6 +7,7 @@ import {
   DefaultChainStateDbSizeMb,
   EthereumReadBlockTag,
   ExternalOutpostConfigSchemaCodec,
+  MaximumPort,
   NodeopReadMode,
   createUnsetEthereumReadConfirmationConfig,
   SignatureProviderKeyPolicy,
@@ -1434,8 +1435,10 @@ describe("ClusterConfigProvider", () => {
 
   describe("resolve --bind-config classify/merge", () => {
     let environment: ResolveEnvironment
+    let hostRegistryPath: string
 
     beforeEach(() => {
+      hostRegistryPath = BindConfigProvider.registryPath()
       environment = fixtureResolveEnvironment("bind-config-")
     })
     afterEach(() => {
@@ -1472,6 +1475,52 @@ describe("ClusterConfigProvider", () => {
       expect(config.bind.kiod.port).toBe(bind.kiod.port)
       expect(config.bind.nodeop.ports.bios.http).toBe(
         bind.nodeop.ports.bios.http
+      )
+    })
+
+    it("checks local Fetch compatibility of a COMPLETE bind config after CLI overrides", async () => {
+      process.env[BindConfigProvider.RegistryPathEnvVar] = hostRegistryPath
+      const bind = await BindConfigProvider.resolve(
+          {},
+          {
+            adHocCount: PersistedFixture.bind.nodeop.ports.adHoc.length,
+            apiCount: PersistedFixture.bind.nodeop.ports.api.length
+          }
+        ),
+        port = bind.kiod.port,
+        options = baseOptions(writeBindConfig(bind)),
+        { FetchBlockedPorts } = BindConfigProvider,
+        isBlocked = FetchBlockedPorts.has.bind(FetchBlockedPorts),
+        policy = jest
+          .spyOn(FetchBlockedPorts, "has")
+          .mockImplementation(
+            candidate => candidate === port || isBlocked(candidate)
+          )
+      try {
+        await expect(ClusterConfigProvider.resolve(options)).rejects.toThrow(
+          `--bind-config: locally bound ports blocked by Node Fetch: ${port}`
+        )
+        const replacement = await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultKiod
+        )
+        await expect(
+          ClusterConfigProvider.resolve({
+            ...options,
+            bind: { kiod: { port: replacement } }
+          })
+        ).resolves.toMatchObject({ bind: { kiod: { port: replacement } } })
+      } finally {
+        policy.mockRestore()
+      }
+    })
+
+    it("rejects an out-of-bounds Solana port window in a COMPLETE bind config", async () => {
+      const bind = structuredClone(PersistedFixture.bind)
+      bind.solana.ports.dynamicRange.last = MaximumPort + 1
+      await expect(
+        ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))
+      ).rejects.toThrow(
+        /invalid port range .* for --bind-config solana\.dynamicRange/
       )
     })
 

@@ -357,6 +357,23 @@ describe("ClusterManager.run", () => {
     Fs.rmSync(pinnedClusterRoot, { recursive: true, force: true })
   })
 
+  it("includes Node Fetch blocking in the resolved-port refusal message", async () => {
+    const config = fixtureConfig({
+      clusterPath: pinnedClusterRoot,
+      dataPath: Path.join(pinnedClusterRoot, "data")
+    })
+    Fs.mkdirSync(pinnedClusterRoot, { recursive: true })
+    ClusterState.saveKeys(config, { nodes: [], operators: [] })
+    jest.spyOn(BindConfigProvider, "claimResolved").mockResolvedValue(false)
+    const start = jest
+      .spyOn(Steps.processes.kiod, "runStart")
+      .mockRejectedValue(new Error("relaunch must stop before starting kiod"))
+    await expect(ClusterManager.run(config)).rejects.toThrow(
+      /blocked by Node Fetch/
+    )
+    expect(start).not.toHaveBeenCalled()
+  })
+
   it("starts API nodes after every producer and before production resumes, operators after it resumes", async () => {
     // External-outpost mode with the debugging server off narrows the relaunch
     // to its nodeop waves: no local anvil / validator, no epoch-advance gate.

@@ -350,7 +350,7 @@ export namespace ClusterManager {
     // port between the check and this process's registration.
     Assert.ok(
       await BindConfigProvider.claimResolved(config.bind),
-      `cluster ${config.clusterPath}: one or more resolved ports are reserved, held by another process or no longer bind — cannot relaunch (the "bind registry:" warning logged just before names the ports)`
+      `cluster ${config.clusterPath}: one or more resolved ports are reserved, blocked by Node Fetch, held by another process or no longer bind — cannot relaunch (the "bind registry:" warning logged just before names the ports)`
     )
 
     const controller = new AbortController(),
