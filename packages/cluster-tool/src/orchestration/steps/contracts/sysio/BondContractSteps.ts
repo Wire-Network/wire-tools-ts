@@ -13,14 +13,22 @@ const { SysioContractName, SysioContractAccount } = SysioContracts
 /**
  * Steps for `sysio.bond` actions — the depot's underwriting contract.
  *
- * `setconfig` requires the system account; the rulings (`rslvvalid`,
- * `rslvinvalid`) require the contract account. `accept` is signed by the
- * underwriter named in its data. `approve`, `claim`, `prune` and `sweepyield`
- * are permissionless: `signer` only foots the CPU and rides the step input.
- * The issuer actions (`request`, `hold`, `addbounty`) have no Step: `sysio.synd`
+ * `setconfig` is governance's: the contract requires the system account. The
+ * rulings (`rslvvalid`, `rslvinvalid`) declare their linked native permissions;
+ * the signer must satisfy the delegated authority configured during bootstrap
+ * (the judge account, or governance). `accept` is signed by the underwriter
+ * named in its data. `approve`, `claim`, `prune` and `sweepyield` are
+ * permissionless: `signer` only foots the CPU and rides the step input. The
+ * issuer actions (`request`, `hold`, `addbounty`) have no Step: `sysio.synd`
  * sends them for its envelopes.
  */
 export namespace BondContractSteps {
+  /** Native child permissions linked to the corresponding ruling. */
+  export enum Permission {
+    rslvvalid = "rslvvalid",
+    rslvinvalid = "rslvinvalid"
+  }
+
   /** Input for {@link planSetconfig} — the generated `sysio.bond::setconfig` data. */
   export interface SetconfigInput extends StepInput {
     readonly kind: "BondContractSteps.SetconfigInput"
@@ -156,7 +164,8 @@ export namespace BondContractSteps {
   }
 
   /**
-   * `sysio.bond::rslvvalid` — rule a request VALID through the contract's active authority.
+   * `sysio.bond::rslvvalid` — rule a request VALID. Authorized by the delegated
+   * rslvvalid permission.
    */
   export function planRslvvalid<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -175,7 +184,7 @@ export namespace BondContractSteps {
     )
   }
 
-  /** Named runner — `sysio.bond::rslvvalid`, declaring the contract's active authority. */
+  /** Named runner — `sysio.bond::rslvvalid`, declaring the linked rslvvalid permission. */
   export async function runRslvvalid<C extends ClusterBuildContext>(
     ctx: C,
     input: RslvvalidInput,
@@ -185,9 +194,12 @@ export namespace BondContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.bond)
       .actions.rslvvalid.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(
-          SysioContractAccount[SysioContractName.bond]
-        )
+        authorization: [
+          {
+            actor: SysioContractAccount[SysioContractName.bond],
+            permission: Permission.rslvvalid
+          }
+        ]
       })
   }
 
@@ -199,7 +211,7 @@ export namespace BondContractSteps {
 
   /**
    * `sysio.bond::rslvinvalid` — rule a request INVALID: its bonds become the
-   * issuer's forfeit. Declares the contract's active authority.
+   * issuer's forfeit. Authorized by the delegated rslvinvalid permission.
    */
   export function planRslvinvalid<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -218,7 +230,7 @@ export namespace BondContractSteps {
     )
   }
 
-  /** Named runner — `sysio.bond::rslvinvalid`, declaring the contract's active authority. */
+  /** Named runner — `sysio.bond::rslvinvalid`, declaring the linked rslvinvalid permission. */
   export async function runRslvinvalid<C extends ClusterBuildContext>(
     ctx: C,
     input: RslvinvalidInput,
@@ -228,9 +240,12 @@ export namespace BondContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.bond)
       .actions.rslvinvalid.invoke(input.data, {
-        authorization: WireClient.activeAuthorization(
-          SysioContractAccount[SysioContractName.bond]
-        )
+        authorization: [
+          {
+            actor: SysioContractAccount[SysioContractName.bond],
+            permission: Permission.rslvinvalid
+          }
+        ]
       })
   }
 

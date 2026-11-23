@@ -16,6 +16,8 @@ export interface WireUserOptions {
    * swap-to-WIRE recipient that only needs to exist).
    */
   fundWireAmount?: bigint
+  /** The public key on the account's `owner` and `active`; the dev K1 key when omitted. */
+  publicKey?: string
 }
 
 /** Result of {@link provisionWireUser}. */
@@ -39,8 +41,8 @@ export function formatWireAsset(rawAmount: bigint): string {
 
 /**
  * Provision a WIRE user account for a flow scenario: create the account
- * under the dev K1 key (idempotent across re-runs) and optionally fund it
- * with WIRE from the `sysio` treasury.
+ * under the dev K1 key, or the key `options.publicKey` names (idempotent
+ * across re-runs), and optionally fund it with WIRE from the `sysio` treasury.
  *
  * This is flow-layer provisioning (composed from a flow's `beforeAll`),
  * shared here because the WIRE-endpoint swap flows (to-WIRE recipient,
@@ -57,18 +59,13 @@ export async function provisionWireUser(
   account: string,
   options: WireUserOptions = {}
 ): Promise<WireUser> {
-  const { fundWireAmount = 0n } = options
+  const { fundWireAmount = 0n, publicKey = Constants.DEV_K1_PUBLIC_KEY } = options
 
   await wire.wallet.unlock()
 
   // Account creation — tolerate "already exists" so re-runs are idempotent.
   try {
-    await wire.createAccount(
-      "sysio",
-      account,
-      Constants.DEV_K1_PUBLIC_KEY,
-      Constants.DEV_K1_PUBLIC_KEY
-    )
+    await wire.createAccount("sysio", account, publicKey, publicKey)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     if (!message.includes(ClioRunner.ErrorFragment.AccountAlreadyExists)) {

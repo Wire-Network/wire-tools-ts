@@ -7,6 +7,7 @@ import {
   DefaultChainStateDbSizeMb,
   EthereumReadBlockTag,
   ExternalOutpostConfigSchemaCodec,
+  MaximumPort,
   NodeopReadMode,
   createUnsetEthereumReadConfirmationConfig,
   SignatureProviderKeyPolicy,
@@ -14,7 +15,8 @@ import {
   type ClusterSignatureProviderOptions
 } from "@wireio/cluster-tool-shared"
 import { LiqPoolSpec, TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, SlugName } from "@wireio/sdk-core"
+import { Base58, KeyType, PrivateKey, PublicKey, SlugName } from "@wireio/sdk-core"
+import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
@@ -29,11 +31,17 @@ import {
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
   ExternalOutpostChainId,
+  FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureExternalOutposts,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "./resolveEnvironmentFixture.js"
+import {
+  fixtureEthereumPublicKeySpellings,
+  fixtureWebAuthnPublicKey
+} from "../utils/publicKeyFixture.js"
 
 /**
  * PREFERRED kiod pin for the partial-bind-config merge test — one ABOVE the
@@ -51,6 +59,11 @@ import {
 const PartialMergeKiodPin = BindConfigProvider.DefaultKiod + 1
 
 describe("ClusterConfigProvider", () => {
+  // A resolve locks its ports, a 64-port validator window among them, in get-port's
+  // in-process cache for up to 30 s. Each test's registry is its own, so nothing needs
+  // those locks afterwards, and a fast run would otherwise run out of windows.
+  afterEach(() => BindConfigProvider.clearPortLocks())
+
   describe("resolve", () => {
     it("fails fast when buildPath is missing", async () => {
       await expect(
@@ -1422,8 +1435,10 @@ describe("ClusterConfigProvider", () => {
 
   describe("resolve --bind-config classify/merge", () => {
     let environment: ResolveEnvironment
+    let hostRegistryPath: string
 
     beforeEach(() => {
+      hostRegistryPath = BindConfigProvider.registryPath()
       environment = fixtureResolveEnvironment("bind-config-")
     })
     afterEach(() => {
@@ -1460,6 +1475,52 @@ describe("ClusterConfigProvider", () => {
       expect(config.bind.kiod.port).toBe(bind.kiod.port)
       expect(config.bind.nodeop.ports.bios.http).toBe(
         bind.nodeop.ports.bios.http
+      )
+    })
+
+    it("checks local Fetch compatibility of a COMPLETE bind config after CLI overrides", async () => {
+      process.env[BindConfigProvider.RegistryPathEnvVar] = hostRegistryPath
+      const bind = await BindConfigProvider.resolve(
+          {},
+          {
+            adHocCount: PersistedFixture.bind.nodeop.ports.adHoc.length,
+            apiCount: PersistedFixture.bind.nodeop.ports.api.length
+          }
+        ),
+        port = bind.kiod.port,
+        options = baseOptions(writeBindConfig(bind)),
+        { FetchBlockedPorts } = BindConfigProvider,
+        isBlocked = FetchBlockedPorts.has.bind(FetchBlockedPorts),
+        policy = jest
+          .spyOn(FetchBlockedPorts, "has")
+          .mockImplementation(
+            candidate => candidate === port || isBlocked(candidate)
+          )
+      try {
+        await expect(ClusterConfigProvider.resolve(options)).rejects.toThrow(
+          `--bind-config: locally bound ports blocked by Node Fetch: ${port}`
+        )
+        const replacement = await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultKiod
+        )
+        await expect(
+          ClusterConfigProvider.resolve({
+            ...options,
+            bind: { kiod: { port: replacement } }
+          })
+        ).resolves.toMatchObject({ bind: { kiod: { port: replacement } } })
+      } finally {
+        policy.mockRestore()
+      }
+    })
+
+    it("rejects an out-of-bounds Solana port window in a COMPLETE bind config", async () => {
+      const bind = structuredClone(PersistedFixture.bind)
+      bind.solana.ports.dynamicRange.last = MaximumPort + 1
+      await expect(
+        ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))
+      ).rejects.toThrow(
+        /invalid port range .* for --bind-config solana\.dynamicRange/
       )
     })
 
@@ -1559,6 +1620,8 @@ describe("ClusterConfigProvider", () => {
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
         externalOutpostConfig: externalConfigFile,
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey,
         ...extra
       }
     }
@@ -1621,7 +1684,9 @@ describe("ClusterConfigProvider", () => {
         buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
-        externalOutpostConfig: configFile
+        externalOutpostConfig: configFile,
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       })
       expect(config.externalOutposts).toEqual(outposts)
     })
@@ -1638,7 +1703,9 @@ describe("ClusterConfigProvider", () => {
           buildPath: environment.buildPath,
           ethereumPath: "/fake/eth",
           solanaPath: "/fake/sol",
-          externalOutpostConfig: configFile
+          externalOutpostConfig: configFile,
+          judgePublicKey: FixtureJudgePublicKey,
+          panicPublicKey: FixturePanicPublicKey
         })
       ).rejects.toThrow()
     })
@@ -1672,6 +1739,8 @@ describe("ClusterConfigProvider", () => {
     ): ClusterBuildOptions {
       return localOptions({
         externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey,
         ...extra
       })
     }
@@ -1729,6 +1798,202 @@ describe("ClusterConfigProvider", () => {
       expect(config.enableMockSyndicationImport).toBe(true)
     })
   })
+
+  describe.each([
+    {
+      delegate: "judge",
+      optionKey: "judgePublicKey",
+      publicKey: FixtureJudgePublicKey,
+      otherKeys: { panicPublicKey: FixturePanicPublicKey },
+      holds: /bond\.judge rules every sysio\.bond request/,
+      acts: /bond\.judge could never rule\./,
+      exposes: /anyone could rule a sysio\.bond request/
+    },
+    {
+      delegate: "panic",
+      optionKey: "panicPublicKey",
+      publicKey: FixturePanicPublicKey,
+      otherKeys: { judgePublicKey: FixtureJudgePublicKey },
+      holds: /andon\.panic pulls and clears the depot emergency stop/,
+      acts: /andon\.panic could never pull or clear the depot emergency stop\./,
+      exposes: /anyone could pull or clear the depot emergency stop/
+    }
+  ] as const)(
+    "the $delegate key",
+    ({ optionKey, publicKey, otherKeys, holds, acts, exposes }) => {
+      const ethereumKey = PrivateKey.generate(KeyType.EM).toPublic()
+      let environment: ResolveEnvironment
+
+      beforeEach(() => {
+        environment = fixtureResolveEnvironment(`${optionKey}-`)
+      })
+
+      afterEach(() => {
+        environment.cleanup()
+      })
+
+      /** Base options for a LOCAL-outpost resolve over the sandbox. */
+      function localOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+        return {
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          buildPath: environment.buildPath,
+          ethereumPath: "/fake/eth",
+          solanaPath: "/fake/sol",
+          ...extra
+        }
+      }
+
+      /** Base options for an EXTERNAL-outpost resolve that names the other delegate's key. */
+      function externalOptions(extra: ClusterBuildOptions = {}): ClusterBuildOptions {
+        return localOptions({
+          externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+          ...otherKeys,
+          ...extra
+        })
+      }
+
+      it("leaves the account on the cluster's initial key when a local build names none", async () => {
+        const config = await ClusterConfigProvider.resolve(localOptions())
+        expect(config[optionKey]).toBeNull()
+      })
+
+      it("persists the key a local build names", async () => {
+        const config = await ClusterConfigProvider.resolve(
+          localOptions({ [optionKey]: publicKey })
+        )
+        expect(config[optionKey]).toBe(publicKey)
+      })
+
+      it("lets a local build name the development key", async () => {
+        const config = await ClusterConfigProvider.resolve(
+          localOptions({ [optionKey]: Constants.DEV_K1_PUBLIC_KEY })
+        )
+        expect(config[optionKey]).toBe(
+          PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()
+        )
+      })
+
+      it.each([
+        ["legacy", (key: PublicKey) => key.toLegacyString()],
+        ["hex-payload", (key: PublicKey) => `PUB_K1_${Buffer.from(key.data.array).toString("hex")}`]
+      ])("persists a %s spelling in the canonical one clio parses", async (_case, spell) => {
+        const spelling = spell(PublicKey.from(publicKey))
+        expect(spelling).not.toBe(publicKey)
+        const config = await ClusterConfigProvider.resolve(
+          localOptions({ [optionKey]: spelling })
+        )
+        expect(config[optionKey]).toBe(publicKey)
+      })
+
+      it.each(fixtureEthereumPublicKeySpellings(ethereumKey))(
+        "persists an EM key spelled %s as its compressed point",
+        async (_case, spelling) => {
+          const config = await ClusterConfigProvider.resolve(
+            localOptions({ [optionKey]: spelling })
+          )
+          expect(config[optionKey]).toBe(ethereumKey.toString())
+        }
+      )
+
+      it("persists a WebAuthn key in the base58 spelling clio parses", async () => {
+        const key = fixtureWebAuthnPublicKey(),
+          spelling = `PUB_WA_${Base58.encodeRipemd160Check(key.data, KeyType.WA)}`
+        // sdk-core writes this key as hex, which clio refuses.
+        expect(key.toString()).not.toBe(spelling)
+        await Promise.all(
+          [spelling, key.toString()].map(async named => {
+            const config = await ClusterConfigProvider.resolve(
+              localOptions({ [optionKey]: named })
+            )
+            expect(config[optionKey]).toBe(spelling)
+          })
+        )
+      })
+
+      it("refuses a BLS key, which cannot sign a transaction", async () => {
+        const resolved = ClusterConfigProvider.resolve(
+          localOptions({
+            [optionKey]: PrivateKey.generate(KeyType.BLS).toPublic().toString()
+          })
+        )
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is a BLS key, which cannot sign a transaction`)
+        )
+        await expect(resolved).rejects.toThrow(acts)
+      })
+
+      it.each([KeyType.ED, KeyType.EM, KeyType.R1])(
+        "accepts a %s key, whose signatures the chain recovers",
+        async type => {
+          const named = PrivateKey.generate(type).toPublic().toString(),
+            config = await ClusterConfigProvider.resolve(
+              localOptions({ [optionKey]: named })
+            )
+          expect(config[optionKey]).toBe(named)
+        }
+      )
+
+      it("refuses an external build that names no key for it, before claiming a port", async () => {
+        // `buildPath` is asserted before `resolveBind`; omitting it fails there
+        // unless the key refusal runs first.
+        const resolved = ClusterConfigProvider.resolve({
+          clusterPath: Path.join(environment.rootPath, "cluster"),
+          externalOutpostConfig: fixtureExternalOutpostConfig(environment.rootPath),
+          ...otherKeys
+        })
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is required with externalOutpostConfig`)
+        )
+        await expect(resolved).rejects.toThrow(holds)
+      })
+
+      it("accepts an external build that names the key", async () => {
+        const config = await ClusterConfigProvider.resolve(
+          externalOptions({ [optionKey]: publicKey })
+        )
+        expect(config[optionKey]).toBe(publicKey)
+      })
+
+      it.each([
+        ["its legacy spelling", Constants.DEV_K1_PUBLIC_KEY],
+        ["its PUB_K1 spelling", PublicKey.from(Constants.DEV_K1_PUBLIC_KEY).toString()],
+        // The development private key signs for the same point as an EM key too.
+        ...fixtureEthereumPublicKeySpellings(
+          PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)
+        ).map(([spelling, key]) => [`an EM key on its point, ${spelling}`, key])
+      ])("refuses the development key against external outposts, in %s", async (_case, developmentKey) => {
+        const resolved = ClusterConfigProvider.resolve(
+          externalOptions({ [optionKey]: developmentKey })
+        )
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is the development key`)
+        )
+        await expect(resolved).rejects.toThrow(exposes)
+      })
+
+      it("refuses a 32-byte EM payload, which is no public key, instead of deriving one from it", async () => {
+        const truncated = `PUB_EM_${Buffer.from(ethereumKey.data.array).subarray(1).toString("hex")}`,
+          resolved = ClusterConfigProvider.resolve(
+            localOptions({ [optionKey]: truncated })
+          )
+        await expect(resolved).rejects.toBeInstanceOf(NestedError)
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is not a public key`)
+        )
+      })
+
+      it("refuses a value that is not a public key, keeping the parse error as its cause", async () => {
+        const resolved = ClusterConfigProvider.resolve(
+          localOptions({ [optionKey]: "not-a-key" })
+        )
+        await expect(resolved).rejects.toBeInstanceOf(NestedError)
+        await expect(resolved).rejects.toThrow(
+          new RegExp(`${optionKey} is not a public key`)
+        )
+        await expect(resolved).rejects.toHaveProperty("cause", expect.any(Error))
+      })
+    }
+  )
 
   describe("resolveWithBiosKeys", () => {
     let environment: ResolveEnvironment

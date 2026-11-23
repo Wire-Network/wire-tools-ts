@@ -4,6 +4,8 @@ import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { WireSysioContractTool } from "@wireio/cluster-tool/tools/wire"
 import {
+  FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -33,7 +35,7 @@ describe("ClusterBuildDefaults — governance authorities", () => {
       buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol",
-      ...(mode === "external" ? { externalOutpostConfig: externalConfigFile } : {})
+      ...(mode === "external" ? { externalOutpostConfig: externalConfigFile, judgePublicKey: FixtureJudgePublicKey, panicPublicKey: FixturePanicPublicKey } : {})
     }
   }
 

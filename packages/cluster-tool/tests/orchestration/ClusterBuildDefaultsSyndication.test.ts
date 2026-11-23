@@ -7,6 +7,8 @@ import {
   ClusterBuildPhaseGroup
 } from "@wireio/cluster-tool/orchestration"
 import {
+  FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
@@ -105,6 +107,32 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
     expect(steps.indexOf("link-andon-clear")).toBeLessThan(
       steps.indexOf("seed-registry")
     )
+    // No key named: the panic account takes the cluster's initial key, the development key here.
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "andon.panic",
+      fundWireAmount: 0n,
+      publicKey: cluster.context.config.initialKey
+    })
+    expect(cluster.context.config.initialKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+  })
+
+  it("creates the panic account under the key the caller names", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      panicPublicKey: FixturePanicPublicKey
+    })
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "andon.panic",
+      fundWireAmount: 0n,
+      publicKey: FixturePanicPublicKey
+    })
+    // The judge's key is its own option: unnamed, it stays on the initial key.
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toMatchObject({
+      account: "bond.judge",
+      publicKey: Constants.DEV_K1_PUBLIC_KEY
+    })
   })
 
   it("delegates only pull/clear and preserves owner/active authority", async () => {
@@ -162,6 +190,126 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
         data: {
           account: "sysio.andon",
           code: "sysio.andon",
+          type: permission,
+          requirement: permission
+        }
+      })
+    }
+  })
+
+  /** The phase named `name`, wherever the bootstrap registers it. */
+  function findPhase(
+    cluster: Awaited<ReturnType<typeof ClusterBuildDefaults.create>>,
+    name: string
+  ): ClusterBuildPhase {
+    const phase = cluster.children
+      .flatMap(child => (child instanceof ClusterBuildPhaseGroup ? child.children : [child]))
+      .find(child => child.name === name)
+    if (!(phase instanceof ClusterBuildPhase)) throw new Error(`missing phase ${name}`)
+    return phase
+  }
+
+  it("reserves the delegate name prefixes before either delegate account exists", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      names = collectPhaseNames(cluster.children),
+      phase = findPhase(cluster, "DelegateNamePrefixes")
+    expect([...Constants.DELEGATE_NAME_PREFIXES]).toEqual(["andon", "bond"])
+    expectInOrder(names, ["DelegateNamePrefixes", "PanicAccount", "JudgeAccount"])
+    expect(phase.steps.map(step => step.name)).toEqual(["reserve-andon", "reserve-bond"])
+    // Existing blocks a node-owner claim of the name; owned by sysio, with an active nothing satisfies.
+    phase.steps.forEach((step, index) =>
+      expect(step.input).toEqual({
+        kind: "AccountSteps.CreateSystemInput",
+        account: Constants.DELEGATE_NAME_PREFIXES[index],
+        active: {
+          threshold: 1,
+          keys: [],
+          accounts: [{ permission: { actor: "sysio.null", permission: "active" }, weight: 1 }]
+        }
+      })
+    )
+  })
+
+  it("creates the judge account, funds native permissions, then delegates and links both rulings", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      names = collectPhaseNames(cluster.children),
+      steps = collectStepNames(cluster.children)
+    expect(Constants.JUDGE_ACCOUNT).toBe("bond.judge")
+    expect(names.indexOf("JudgeAccount")).toBe(names.indexOf("EmergencyStop") + 1)
+    expect(names.indexOf("BondRulings")).toBe(names.indexOf("JudgeAccount") + 1)
+    expectInOrder(steps, [
+      "create-judge-account",
+      "fund-bond-permission-ram",
+      "delegate-bond-rslvvalid",
+      "link-bond-rslvvalid",
+      "delegate-bond-rslvinvalid",
+      "link-bond-rslvinvalid"
+    ])
+    // No key named: the judge takes the cluster's initial key, the development key here.
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "bond.judge",
+      fundWireAmount: 0n,
+      publicKey: cluster.context.config.initialKey
+    })
+    expect(cluster.context.config.initialKey).toBe(Constants.DEV_K1_PUBLIC_KEY)
+  })
+
+  it("creates the judge account under the key the caller names", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      judgePublicKey: FixtureJudgePublicKey
+    })
+    expect(findPhase(cluster, "JudgeAccount").steps[0].input).toEqual({
+      kind: "UserSteps.ProvisionWireInput",
+      account: "bond.judge",
+      fundWireAmount: 0n,
+      publicKey: FixtureJudgePublicKey
+    })
+    // The panic account's key is its own option: unnamed, it stays on the initial key.
+    expect(findPhase(cluster, "PanicAccount").steps[0].input).toMatchObject({
+      account: "andon.panic",
+      publicKey: Constants.DEV_K1_PUBLIC_KEY
+    })
+  })
+
+  it("funds sysio.bond, then delegates and links exactly rslvvalid and rslvinvalid", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      phase = findPhase(cluster, "BondRulings")
+    expect(phase.steps).toHaveLength(5)
+    expect(phase.steps[0].input).toEqual({
+      kind: "AccountSteps.RamGrantInput",
+      account: "sysio.bond",
+      ramBytes: 10_400
+    })
+    expect(
+      BigInt(Name.from(Constants.JUDGE_ACCOUNT).value.toString())
+    ).toBeLessThan(BigInt(Name.from("sysio").value.toString()))
+    for (const [index, permission] of ["rslvvalid", "rslvinvalid"].entries()) {
+      const authorization = [{ actor: "sysio.bond", permission: "active" }]
+      expect(phase.steps[1 + index * 2].input).toEqual({
+        kind: "SystemContractSteps.UpdateauthInput",
+        authorization,
+        data: {
+          account: "sysio.bond",
+          permission,
+          parent: "active",
+          auth: {
+            threshold: 1,
+            keys: [],
+            accounts: [
+              { permission: { actor: "bond.judge", permission: "active" }, weight: 1 },
+              { permission: { actor: "sysio", permission: "active" }, weight: 1 }
+            ]
+          }
+        }
+      })
+      expect(phase.steps[2 + index * 2].input).toEqual({
+        kind: "SystemContractSteps.LinkauthInput",
+        authorization,
+        data: {
+          account: "sysio.bond",
+          code: "sysio.bond",
           type: permission,
           requirement: permission
         }

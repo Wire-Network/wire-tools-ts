@@ -107,6 +107,8 @@ const stubConfig: ClusterConfig = {
   },
   awsClusterNodeConfig: null,
   externalOutposts: null,
+  judgePublicKey: null,
+  panicPublicKey: null,
   debuggingServerEnabled: true,
   enableMockLiqPools: false,
   enableMockSyndicationImport: false,

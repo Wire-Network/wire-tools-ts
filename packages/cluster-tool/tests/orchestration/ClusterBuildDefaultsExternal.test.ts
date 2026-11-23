@@ -2,6 +2,8 @@ import Path from "node:path"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
+  FixtureJudgePublicKey,
+  FixturePanicPublicKey,
   fixtureExternalOutpostConfig,
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -32,7 +34,9 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("omits the local outpost deploys + adds the liveness phase in external mode", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile
+      externalOutpostConfig: externalConfigFile,
+      judgePublicKey: FixtureJudgePublicKey,
+      panicPublicKey: FixturePanicPublicKey
     })
     const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MaterializeExternalOutposts")
@@ -44,7 +48,9 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("trusts the config: no endpoint probe, the artifacts built from source like local mode", async () => {
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
-        externalOutpostConfig: externalConfigFile
+        externalOutpostConfig: externalConfigFile,
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       steps = collectStepNames(cluster.children)
     expect(steps).toContain("materialize-external-outposts")
@@ -59,7 +65,9 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("starts the batch-operator nodes, then gates each on having synced — after the envelope gate", async () => {
     const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
-        externalOutpostConfig: externalConfigFile
+        externalOutpostConfig: externalConfigFile,
+        judgePublicKey: FixtureJudgePublicKey,
+        panicPublicKey: FixturePanicPublicKey
       }),
       phases = collectPhaseNames(cluster.children),
       steps = collectStepNames(cluster.children),

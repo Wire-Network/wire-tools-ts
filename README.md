@@ -160,6 +160,7 @@ and outbound queue entries are intermediate checks.
 | `flow-syndication-underwriting` | Actual bonds release each successful deposit, including the initially unlinked destination |
 | `flow-syndication-plugin-underwriting` | The same deliveries with every bond, crank, approval and claim made by the batch operators' `batch_operator_plugin` underwriter role, with no flow intervention |
 | `flow-syndication-plugin-underwriting-cap` | One funded operator's exposure cap holds the second request until its first bond is paid, then the same operator bonds, releases and claims it; parked credit is linked |
+| `flow-syndication-plugin-underwriting-recovery` | The funded underwriter stops before intake, remains offline until Solana prunes the original digest from its ten-record window, then restarts and bonds the old request through a recent checkpoint |
 | `flow-syndication-challenge` | Actual bond/challenge/INVALID accounting remains tested; the subsequent successful custody probe must reach the wallet |
 | `flow-syndication-rate-limit` | Actual bond and FIFO/bucket assertions; accepted redemption must reach the external wallet |
 | `flow-emergency-stop` | Actual bond/challenge and deferred payouts; repaired-custody probe deposits must also reach the wallet |
@@ -278,7 +279,7 @@ failure:
 | 2 | `wql-types-check` | `./scripts/generate-wql-types.mjs --check` — WIRE QL grammar + engine schema drift | 2 min |
 | 3 | `ql-app-icons-check` | `./scripts/generate-ql-app-icons.mjs --check` — desktop app icon drift | 2 min |
 | 4 | `lint` | `pnpm lint` | 2 min |
-| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 15 min |
+| 5 | `build and all unit tests` | `pnpm test` — the `scripts/tests` runner regressions, the TypeScript build, all 11 Jest projects (`cluster-tool-shared`, `cluster-tool`, `flow-batch-operator-slashing`, `debugging-shared`, `debugging-server`, `debugging-client-shared`, `debugging-client-tool`, `debugging-client-tool-tui`, `ql-shared`, `ql-tool-cli`, `ql-tool-app`), then every package `test:unit` script | 30 min |
 
 This does not launch live flows. The hook uses the mise-pinned toolchain when
 available; Node 24.9 or newer is required.
@@ -475,8 +476,11 @@ depot needs them too:
 | Phase | What it does |
 |---|---|
 | `OPPContracts` | deploys `sysio.andon` before the contracts that read its cord (`sysio.swap`, `sysio.liq`, `sysio.bond`, `sysio.synd`), and `sysio.bond` before `sysio.synd`, all privileged through `setsyscode`; `OPPCodeGrants` then grants `@sysio.code` to `sysio.bond` and `sysio.synd` (`sysio.andon` sends no inline action) |
-| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio` |
+| `DelegateNamePrefixes` | creates `andon` and `bond`, the names the delegate accounts sit under, so no node owner can register them (a claim of an existing account is rejected); their `active` is one nothing satisfies |
+| `PanicAccount` | creates `andon.panic`, the account that may pull and clear the cord besides `sysio`, under `--panic-public-key` (the cluster's initial key when omitted) |
 | `EmergencyStop` | funds and delegates native `pull`/`clear` permissions to `andon.panic` and `sysio`, then links each action before any liq token is registered |
+| `JudgeAccount` | creates `bond.judge`, the account that may rule a bond request besides `sysio`, under `--judge-public-key` (the cluster's initial key when omitted) |
+| `BondRulings` | funds and delegates native `rslvvalid`/`rslvinvalid` permissions on `sysio.bond` to `bond.judge` and `sysio`, then links each ruling |
 | `SyndicationConfig` | after `ShadowLiqTokens`: `sysio.bond::setconfig` (hold bond 1000 bps), one `sysio.synd::setconfig` per shadow pair (`ETHEREUM`/`LIQETH`, `SOLANA`/`LIQSOL`: free syndication and desyndication charged at floor(quantity × 5 / 10000) plus a pair-specific flat fee, buckets of one million tokens, a 60 s challenge window, a one-token challenge charge and flat fees / gross minima of 5,000,000 / 100,000,000 for LIQETH and 100,000 / 50,000,000 for LIQSOL (9 decimals; flat < minimum; both round-trip legs’ gas: Ethereum ≈507k gas, Solana 9k–104k lamports)), with custody shortfall allowance 100 bps for LIQETH and zero for LIQSOL; then verifies that each shadow is at the depot's 9 decimals and each pair is an active liq token with an active binding |
 
 Break-even sizing assumes a syndication of the pair's `min_desyndicate`.
@@ -559,6 +563,8 @@ command comes first).
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults). Give a remote outpost as an IP literal: `run` treats every host name as local, so it checks and registers a host name's ports on this host ([bind registry §6](docs/bind-registry/README.md#6-ports-a-client-must-never-take)) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file — the deployed addresses + public keys of REMOTE ETH+SOL outposts: bootstrap the depot against them without contacting them (no local anvil/validator, no outpost deploys, batch operators synced without their daemon); see "External outpost clusters" |
+| `--judge-public-key` | | the cluster's initial key | the public key on `bond.judge`'s `owner` and `active`: its holder can rule any `sysio.bond` request, also after the governance handoff. Required with `--external-outpost-config`, which refuses the development key |
+| `--panic-public-key` | | the cluster's initial key | the public key on `andon.panic`'s `owner` and `active`: its holder can pull and clear the depot emergency stop, also after the governance handoff. Required with `--external-outpost-config`, which refuses the development key |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
@@ -670,6 +676,15 @@ What `create` does with it:
   cluster instead gates on `sysio.epoch::current_epoch_index` passing the
   bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
   `--external-outpost-config` fails fast.
+- **Requires the judge's key.** `--judge-public-key` (or `judgePublicKey` in the
+  build-options document) names the key `bond.judge` is created under. Its holder
+  rules every `sysio.bond` request, also after `sysio` is handed to governance, so
+  `create` refuses to run without it and refuses the development key.
+- **Requires the panic account's key.** `--panic-public-key` (or `panicPublicKey` in
+  the build-options document) names the key `andon.panic` is created under. Its
+  holder pulls and clears the depot emergency stop, also after `sysio` is handed to
+  governance, so `create` refuses to run without it and refuses the development key.
+  The outposts' own panic accounts are separate identities this key does not touch.
 
 Swap-underwriter daemon counts default to zero in all deployment modes. Nonzero
 values are rejected. Manual syndication bond providers can submit actions directly;

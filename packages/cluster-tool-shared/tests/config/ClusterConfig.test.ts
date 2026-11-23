@@ -101,6 +101,8 @@ describe("ClusterConfig shape", () => {
     },
     awsClusterNodeConfig: null,
     externalOutposts: null,
+    judgePublicKey: null,
+    panicPublicKey: null,
     debuggingServerEnabled: true,
     enableMockLiqPools: false,
     enableMockSyndicationImport: false,
@@ -196,6 +198,23 @@ describe("ClusterConfig shape", () => {
       ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     ).toThrow()
   })
+
+  it.each(["judgePublicKey", "panicPublicKey"] as const)(
+    "defaults %s to null and round trips a named key",
+    delegateKey => {
+      const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+      delete parsed[delegateKey]
+      expect(
+        ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))[delegateKey]
+      ).toBeNull()
+      expect(
+        ClusterConfigSchemaCodec.deserialize(
+          ClusterConfigSchemaCodec.serialize({ ...config, [delegateKey]: "PUB_K1_named" })
+        )[delegateKey]
+      ).toBe("PUB_K1_named")
+      expect(ClusterConfigSchemaCodec.check({ ...config, [delegateKey]: 7 })).toBe(false)
+    }
+  )
 
   it("rejects an underwriting config with no exposure cap", () => {
     expect(

@@ -1,3 +1,4 @@
+import { Constants } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { provisionWireUser } from "../../tools/wire/WireUserTool.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -23,6 +24,8 @@ export namespace UserSteps {
     readonly account: string
     /** Raw 9-dec WIRE base units funded from the `sysio` treasury; `0n` creates the account unfunded. */
     readonly fundWireAmount: bigint
+    /** The public key on the account's `owner` and `active`. */
+    readonly publicKey: string
   }
 
   /**
@@ -35,6 +38,7 @@ export namespace UserSteps {
    * @param options - Step option overrides.
    * @param account - WIRE account name to provision.
    * @param fundWireAmount - Treasury funding in raw WIRE base units.
+   * @param publicKey - The key on the account's `owner` and `active`; the dev K1 key by default.
    * @returns The definition step.
    */
   export function planProvisionWire<
@@ -45,14 +49,15 @@ export namespace UserSteps {
     description: string,
     options: ClusterBuildStepOptions,
     account: string,
-    fundWireAmount: bigint
+    fundWireAmount: bigint,
+    publicKey: string = Constants.DEV_K1_PUBLIC_KEY
   ): ClusterBuildStep<C, ProvisionWireInput> {
     return ClusterBuildStep.create<C, ProvisionWireInput>(
       actor,
       name,
       description,
       options,
-      { kind: "UserSteps.ProvisionWireInput", account, fundWireAmount },
+      { kind: "UserSteps.ProvisionWireInput", account, fundWireAmount, publicKey },
       runProvisionWire
     )
   }
@@ -65,7 +70,8 @@ export namespace UserSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await provisionWireUser(ctx.wire, input.account, {
-      fundWireAmount: input.fundWireAmount
+      fundWireAmount: input.fundWireAmount,
+      publicKey: input.publicKey
     })
   }
 }

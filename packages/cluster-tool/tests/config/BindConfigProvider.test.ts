@@ -13,12 +13,14 @@ import {
   type BindConfig,
   type BindConfigPortRange
 } from "@wireio/cluster-tool-shared"
-import { Deferred, guard } from "@wireio/shared"
+import { Deferred, guard, Logger } from "@wireio/shared"
 import {
+  eachSeries,
   ListenAllAddress,
   Localhost,
   processCommandBasename,
-  sleep
+  sleep,
+  toURL
 } from "@wireio/cluster-tool/utils"
 import { NetworkInterfaceFixture } from "../fixtures/NetworkInterfaceFixture.js"
 
@@ -31,6 +33,14 @@ interface FakeGetPortOptions {
   host?: string
   exclude?: Iterable<number>
 }
+
+/** Node wraps both dispatch and bad-port failures as the cause of a Fetch error. */
+interface FetchProbeError extends Error {
+  cause?: Error
+}
+
+/** Node's rejection before dispatch for a Fetch-blocked port. */
+const FetchBadPortMessage = "bad port"
 
 /** Effective user id of root, which reads any file whatever its mode. */
 const RootUserId = 0
@@ -183,7 +193,16 @@ describe("BindConfigProvider", () => {
   let BindConfigProvider: typeof import("@wireio/cluster-tool/config").BindConfigProvider
 
   beforeAll(async () => {
+    // This suite mocks allocation and network probes; its synthetic claims must
+    // never enter the host registry used by real socket fixtures and clusters.
+    process.env.WIRE_BIND_REGISTRY_PATH = Fs.mkdtempSync(
+      Path.join(Os.tmpdir(), "wire-bind-registry-test-")
+    )
     ;({ BindConfigProvider } = await import("@wireio/cluster-tool/config"))
+  })
+
+  afterAll(() => {
+    Fs.rmSync(BindConfigProvider.registryPath(), { recursive: true, force: true })
   })
 
   beforeEach(() => {
@@ -200,7 +219,7 @@ describe("BindConfigProvider", () => {
     })
     // Fresh registry per test — resolve() registers its ports, and a leftover
     // registration would leak exclusions into the next test's outcome. The
-    // scratch dir itself is installed by tests/jest.setup.ts.
+    // scratch dir itself is installed by this suite's beforeAll.
     Fs.rmSync(BindConfigProvider.registryPath(), {
       recursive: true,
       force: true
@@ -209,6 +228,208 @@ describe("BindConfigProvider", () => {
 
   afterEach(() => {
     jest.restoreAllMocks()
+  })
+
+  describe("Node Fetch port compatibility", () => {
+    /**
+     * Replay a port issued before the Fetch policy existed. Obtain it through
+     * the provider while disabling only that policy, then restore the policy
+     * and release in-process locks before testing reuse of the issued port.
+     */
+    async function legacyFetchBlockedPort(
+      preferred = Math.max(...BindConfigProvider.FetchBlockedPorts)
+    ): Promise<number> {
+      const policy = jest
+        .spyOn(BindConfigProvider.FetchBlockedPorts, "has")
+        .mockReturnValue(false)
+      try {
+        return await BindConfigProvider.findAvailable(preferred)
+      } finally {
+        policy.mockRestore()
+        await BindConfigProvider.clearPortLocks()
+      }
+    }
+
+    it("reproduces Fetch refusing a formerly issued port before connecting", async () => {
+      const port = await legacyFetchBlockedPort()
+      await expect(fetch(toURL(port))).rejects.toMatchObject({
+        cause: { message: FetchBadPortMessage }
+      })
+    })
+
+    it("matches Node Fetch across the service port pool without connecting", async () => {
+      const { FetchBlockedPorts, ServicePortFirst } = BindConfigProvider,
+        allocate = allocator.allocate.bind(allocator),
+        policy = jest.spyOn(FetchBlockedPorts, "has").mockReturnValue(false)
+      let candidates: number[] = []
+      // Capture the provider's whole pool before applying either port policy.
+      mockAutomaticPortRanges.length = 0
+      jest.spyOn(allocator, "allocate").mockImplementationOnce(options => {
+        candidates = Array.from(options.port as Iterable<number>)
+        return allocate({ ...options, port: candidates })
+      })
+      try {
+        await BindConfigProvider.findAvailable(ServicePortFirst)
+      } finally {
+        policy.mockRestore()
+      }
+      expect(candidates).toHaveLength(MaximumPort - ServicePortFirst + 1)
+
+      const stopped = new Error("Fetch probe stopped before connecting"),
+        dispatcher: Pick<RequestInit["dispatcher"], "dispatch"> = {
+          dispatch(_options, handler) {
+            handler.onError(stopped)
+            return false
+          }
+        },
+        blocked: number[] = []
+      await eachSeries(candidates, async port => {
+        const cause = await fetch(toURL(port), {
+          // The test dispatcher implements the one method Fetch uses.
+          dispatcher: dispatcher as RequestInit["dispatcher"]
+        }).then(
+          () => {
+            throw new Error("Fetch policy probe must never receive a response")
+          },
+          (error: FetchProbeError) => error.cause
+        )
+        if (cause?.message === FetchBadPortMessage) {
+          blocked.push(port)
+        } else if (cause !== stopped) {
+          throw new Error(`Unexpected Fetch result for port ${port}`, { cause })
+        }
+      })
+      expect(blocked).toEqual(
+        [...FetchBlockedPorts].filter(port => port >= ServicePortFirst)
+      )
+    })
+
+    it("rejects every blocked port as a pin and in availability checks", async () => {
+      await eachSeries(
+        [...BindConfigProvider.FetchBlockedPorts],
+        async preferred => {
+          const port = await legacyFetchBlockedPort(preferred)
+          await expect(
+            BindConfigProvider.pickPort(
+              port,
+              null,
+              new Set(),
+              "Fetch policy test"
+            )
+          ).rejects.toThrow(/blocked by Node Fetch/)
+          expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+        }
+      )
+    })
+
+    it("redraws a blocked preference", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        port = await BindConfigProvider.findAvailable(blocked)
+      expect(port).not.toBe(blocked)
+      expect(BindConfigProvider.FetchBlockedPorts.has(port)).toBe(false)
+    })
+
+    it("skips the blocked first service candidate when a default is occupied", async () => {
+      const blocked = await legacyFetchBlockedPort()
+      mockAutomaticPortRanges.push({
+        first: BindConfigProvider.ServicePortFirst,
+        last: blocked - 1
+      })
+      allocator.markTaken(BindConfigProvider.DefaultKiod)
+      const config = await BindConfigProvider.resolve({}, {})
+      expect(config.kiod.port).toBe(blocked + 1)
+      expect(BindConfigProvider.allPorts(config)).not.toContain(blocked)
+    })
+
+    it("rejects a caller pin with a useful Fetch diagnostic", async () => {
+      const port = await legacyFetchBlockedPort()
+      await expect(
+        BindConfigProvider.resolve({ kiod: { port } }, {})
+      ).rejects.toThrow(/blocked by Node Fetch/)
+    })
+
+    it("reports a blocked port unavailable without probing it", async () => {
+      const port = await legacyFetchBlockedPort()
+      expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+      expect(allocator.locked.has(port)).toBe(false)
+    })
+
+    it("redraws an RPC pair whose WebSocket companion is Fetch-blocked", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        preferred = await BindConfigProvider.findAvailable(
+          blocked - BindConfigProvider.SolanaWsPortOffset
+        )
+      await BindConfigProvider.clearPortLocks()
+      const port = await BindConfigProvider.findAvailableSolanaRpc(preferred)
+      expect(port).not.toBe(preferred)
+      expect(BindConfigProvider.FetchBlockedPorts.has(port)).toBe(false)
+      expect(
+        BindConfigProvider.FetchBlockedPorts.has(
+          port + BindConfigProvider.SolanaWsPortOffset
+        )
+      ).toBe(false)
+    })
+
+    it("rejects a pinned RPC pair whose companion is Fetch-blocked", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        http = await BindConfigProvider.findAvailable(
+          blocked - BindConfigProvider.SolanaWsPortOffset
+        )
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.resolve({ solana: { ports: { http } } }, {})
+      ).rejects.toThrow(
+        `WebSocket companion ${blocked} is blocked by Node Fetch`
+      )
+    })
+
+    it("rejects a pinned dynamic window containing a blocked port", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        first = await BindConfigProvider.findAvailable(blocked - 1),
+        last = await BindConfigProvider.findAvailable(blocked + 1)
+      await BindConfigProvider.clearPortLocks()
+      await expect(
+        BindConfigProvider.pickPortRange(
+          { first, last },
+          new Set(),
+          "Fetch compatibility test"
+        )
+      ).rejects.toThrow(`includes ports blocked by Node Fetch: ${blocked}`)
+    })
+
+    it("refuses to reclaim a persisted local blocked binding without losing claims", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        config = await BindConfigProvider.resolve({}, {}),
+        logged = jest.spyOn(Logger.prototype, "log")
+      config.kiod.port = blocked
+      const before = Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")
+      expect(await BindConfigProvider.claimResolved(config)).toBe(false)
+      expect(logged).toHaveBeenCalledWith(
+        "warn",
+        `bind registry: ports blocked by Node Fetch: ${blocked}`
+      )
+      expect(Fs.readFileSync(BindConfigProvider.registryFile(), "utf8")).toBe(
+        before
+      )
+    })
+
+    it("preserves valid live registrations containing Fetch-blocked ports", async () => {
+      const blocked = await legacyFetchBlockedPort(),
+        file = BindConfigProvider.registryFile()
+      await BindConfigProvider.resolve({}, {})
+      Fs.mkdirSync(BindConfigProvider.registryPath(), { recursive: true })
+      Fs.writeFileSync(
+        file,
+        BindRegistrationSchemaCodec.serialize({
+          executable: processCommandBasename(process.pid),
+          ports: [blocked]
+        })
+      )
+      expect(BindConfigProvider.readRegistryPortExclusions().has(blocked)).toBe(
+        true
+      )
+      expect(Fs.existsSync(file)).toBe(true)
+    })
   })
 
   describe("resolve", () => {

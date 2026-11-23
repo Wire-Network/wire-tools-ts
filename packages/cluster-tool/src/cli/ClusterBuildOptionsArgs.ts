@@ -631,6 +631,14 @@ export function buildOptionShape(
       OptionLeafType.string,
       "path to an ExternalOutpostConfig JSON (ETH + SOL outposts already run on real chains)"
     ),
+    judgePublicKey: optionalLeaf(
+      OptionLeafType.string,
+      "public key on bond.judge's owner and active, whose holder rules sysio.bond requests (default: the cluster's initial key; required with --external-outpost-config, which refuses the development key)"
+    ),
+    panicPublicKey: optionalLeaf(
+      OptionLeafType.string,
+      "public key on andon.panic's owner and active, whose holder pulls and clears the depot emergency stop (default: the cluster's initial key; required with --external-outpost-config, which refuses the development key)"
+    ),
     // ── launch-data (LCO) import: each outpost's frozen pre-launch export ──
     ethereumBootstrapJsonFile: optionalLeaf(
       OptionLeafType.string,

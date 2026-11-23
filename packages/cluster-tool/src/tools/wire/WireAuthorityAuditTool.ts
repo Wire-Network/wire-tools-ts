@@ -8,6 +8,7 @@ import { WireClient } from "../../clients/wire/WireClient.js"
 import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { AndonContractSteps } from "../../orchestration/steps/contracts/sysio/AndonContractSteps.js"
+import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/BondContractSteps.js"
 import { GovernanceSteps } from "../../orchestration/steps/GovernanceSteps.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { WireNodeOwnerTool } from "./WireNodeOwnerTool.js"
@@ -19,6 +20,12 @@ const { SysioContractName, SysioContractAccount } = SysioContracts
 
 /** The emergency-stop contract, whose pull and clear permissions delegate to the panic account. */
 const AndonAccount = SysioContractAccount[SysioContractName.andon]
+/** The underwriting contract, whose ruling permissions delegate to the judge account. */
+const BondAccount = SysioContractAccount[SysioContractName.bond]
+/** What an exception's reason calls the account the Andon permissions delegate to. */
+const PanicRole = "panic"
+/** What an exception's reason calls the account the bond rulings delegate to. */
+const JudgeRole = "judge"
 
 /**
  * The authority audit to run before (and after) handing `sysio` to a
@@ -30,7 +37,9 @@ const AndonAccount = SysioContractAccount[SysioContractName.andon]
  * bootstrap `sysio` key) can satisfy on its own through the delegation graph.
  * A key or delegation it cannot classify, an authority that differs from the
  * one expected, or an action link it does not expect, fails the audit: a
- * retained key anywhere in the graph could bypass the handoff.
+ * retained key anywhere in the graph could bypass the handoff. So does a
+ * delegated permission that is absent or lacks the link to its action: its
+ * delegate could no longer act.
  *
  * Every call is a read; it never writes. {@link discoverSystemAccounts}
  * enumerates the accounts from the chain's own history, so the audit covers
@@ -85,6 +94,8 @@ export namespace WireAuthorityAuditTool {
     crossContractCode = "crossContractCode",
     /** A `sysio.andon` panic permission delegating to the panic account. */
     andonPanicDelegate = "andonPanicDelegate",
+    /** A `sysio.bond` ruling permission delegating to the judge account. */
+    bondJudgeDelegate = "bondJudgeDelegate",
     /** `sysio`'s own key on `owner` / `active` BEFORE a handoff: the authority a handoff replaces. */
     rootKey = "rootKey",
     /** `sysio@owner` / `@active` delegating to the governance authority it was handed to. */
@@ -96,6 +107,16 @@ export namespace WireAuthorityAuditTool {
     /** A `sysio.prods` permission naming a scheduled producer; the chain keeps it equal to the schedule. */
     producerAuthority = "producerAuthority"
   }
+
+  /**
+   * The classifications of a permission delegated to a keyed account outside
+   * `sysio.*`. Whoever holds that account's key satisfies the permission, a
+   * handoff of `sysio` notwithstanding.
+   */
+  export const DelegateClassifications: ReadonlyArray<Classification> = [
+    Classification.andonPanicDelegate,
+    Classification.bondJudgeDelegate
+  ]
 
   /** One `<grantee>@sysio.code` delegation on `<account>@<permission>`. */
   export interface CodeGrant {
@@ -160,6 +181,16 @@ export namespace WireAuthorityAuditTool {
     readonly action: string
   }
 
+  /** The action link a delegated permission must carry, absent on chain. */
+  export interface MissingLink {
+    /** The account holding the delegated permission. */
+    readonly account: string
+    /** The delegated permission. */
+    readonly permission: string
+    /** The action that must be linked to it, as `code::action`. */
+    readonly action: string
+  }
+
   /** A permission whose whole authority differs from the one it must hold. */
   export interface AuthorityMismatch {
     /** The account. */
@@ -168,7 +199,7 @@ export namespace WireAuthorityAuditTool {
     readonly permission: string
     /** The authority it must hold, or `null` when nothing names one. */
     readonly expected: SysioContracts.SysioSystemAuthorityType
-    /** The authority the chain holds. */
+    /** The authority the chain holds, or `null` when the permission does not exist. */
     readonly actual: SysioContracts.SysioSystemAuthorityType
     /** What the expected authority is. */
     readonly reason: string
@@ -206,6 +237,8 @@ export namespace WireAuthorityAuditTool {
     readonly accounts: ReadonlyArray<string>
     /** The account `sysio.andon`'s panic permissions delegate to. */
     readonly panicAccount: string
+    /** The account `sysio.bond`'s ruling permissions delegate to. */
+    readonly judgeAccount: string
     /** The keys whose reach the audit computes — the bootstrap `sysio` key(s), in any spelling. */
     readonly keys: ReadonlyArray<string>
     /** Whether `sysio` has been handed to a governance authority yet. */
@@ -234,6 +267,8 @@ export namespace WireAuthorityAuditTool {
     readonly mismatches: AuthorityMismatch[]
     /** Every action link the audit does not expect — each one fails the audit. */
     readonly unexpectedLinks: UnexpectedLink[]
+    /** Every delegated permission without the link to its action — each one fails the audit. */
+    readonly missingLinks: MissingLink[]
     /** Every audited permission each checked key reaches with positive weight. */
     readonly keyReach: KeyReach[]
   }
@@ -357,7 +392,7 @@ export namespace WireAuthorityAuditTool {
    * @param wire - The WIRE client.
    * @param options - What to audit.
    * @returns The findings; {@link assertClean} fails on any unclassified entry,
-   *   authority mismatch or unexpected link.
+   *   authority mismatch, unexpected link or missing link.
    * @throws When an after-handoff audit names no authority `sysio` was handed to.
    */
   export async function audit(
@@ -385,12 +420,20 @@ export namespace WireAuthorityAuditTool {
         )
       ).then(nested => nested.flat()),
       entries = permissions.flatMap(permission => permission.entries),
-      mismatches = responses.flatMap(response =>
-        response.permissions
-          .map(permission =>
-            authorityMismatch(context, String(response.account_name), permission)
-          )
-          .filter(mismatch => mismatch != null)
+      mismatches = [
+        ...responses.flatMap(response =>
+          response.permissions
+            .map(permission =>
+              authorityMismatch(context, String(response.account_name), permission)
+            )
+            .filter(mismatch => mismatch != null)
+        ),
+        ...responses.flatMap(response =>
+          missingDelegatedPermissions(options, response)
+        )
+      ],
+      missingLinks = responses.flatMap(response =>
+        missingDelegatedLinks(options, response)
       ),
       unexpectedLinks = responses.flatMap(response => {
         const account = String(response.account_name)
@@ -402,7 +445,15 @@ export namespace WireAuthorityAuditTool {
           })),
           ...response.permissions.flatMap(permission =>
             (permission.linked_actions ?? [])
-              .filter(link => !isAndonPanicLink(account, String(permission.perm_name), link))
+              .filter(
+                link =>
+                  !isDelegatedPermissionLink(
+                    options,
+                    account,
+                    String(permission.perm_name),
+                    link
+                  )
+              )
               .map(link => ({
                 account,
                 permission: String(permission.perm_name),
@@ -445,6 +496,7 @@ export namespace WireAuthorityAuditTool {
       unclassified: entries.filter(entry => entry.classification == null),
       mismatches,
       unexpectedLinks,
+      missingLinks,
       keyReach
     }
   }
@@ -473,25 +525,140 @@ export namespace WireAuthorityAuditTool {
     return `${link.account}::${link.action == null ? ContractWideAction : String(link.action)}`
   }
 
-  /** Whether `permission` is one of the panic permissions the bootstrap creates on `sysio.andon`. */
-  function isAndonPanicPermission(account: string, permission: string): boolean {
-    return (
-      account === AndonAccount &&
-      Object.values<string>(AndonContractSteps.Permission).includes(permission)
+  /**
+   * The native child permissions the bootstrap delegates on one system
+   * contract: each is named after, and linked to, one of the contract's own
+   * actions, and is satisfied by the delegate or by `sysio@active`.
+   */
+  interface DelegatedPermissions {
+    /** The contract account holding the permissions. */
+    readonly account: string
+    /** The permissions, each named after the action it is linked to. */
+    readonly permissions: ReadonlyArray<string>
+    /** The account they delegate to beside `sysio@active`. */
+    readonly delegate: string
+    /** How a delegation to {@link delegate} is classified. */
+    readonly classification: Classification
+    /** What a reason calls the delegate. */
+    readonly role: string
+  }
+
+  /** Every set of permissions the bootstrap delegates: the Andon panic permissions and the bond rulings. */
+  function delegatedPermissions(options: AuditOptions): DelegatedPermissions[] {
+    return [
+      {
+        account: AndonAccount,
+        permissions: Object.values<string>(AndonContractSteps.Permission),
+        delegate: options.panicAccount,
+        classification: Classification.andonPanicDelegate,
+        role: PanicRole
+      },
+      {
+        account: BondAccount,
+        permissions: Object.values<string>(BondContractSteps.Permission),
+        delegate: options.judgeAccount,
+        classification: Classification.bondJudgeDelegate,
+        role: JudgeRole
+      }
+    ]
+  }
+
+  /** The delegated set `account@permission` belongs to, or absent when the bootstrap delegates no such permission. */
+  function findDelegatedPermissions(
+    options: AuditOptions,
+    account: string,
+    permission: string
+  ): DelegatedPermissions {
+    return delegatedPermissions(options).find(
+      delegated =>
+        delegated.account === account && delegated.permissions.includes(permission)
     )
   }
 
-  /** Whether `link` is the one documented link of a `sysio.andon` panic permission: its own action. */
-  function isAndonPanicLink(
+  /** Whether `link` is the one documented link of a delegated permission: its contract's own action of the same name. */
+  function isDelegatedPermissionLink(
+    options: AuditOptions,
     account: string,
     permission: string,
     link: API.v1.AccountLinkedAction
   ): boolean {
     return (
-      isAndonPanicPermission(account, permission) &&
-      String(link.account) === AndonAccount &&
+      findDelegatedPermissions(options, account, permission) != null &&
+      String(link.account) === account &&
       String(link.action) === permission
     )
+  }
+
+  /** The delegated permissions `response`'s account must hold, by name; empty when the bootstrap delegates none on it. */
+  function delegatedPermissionNames(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): ReadonlyArray<string> {
+    const account = String(response.account_name)
+    return delegatedPermissions(options)
+      .filter(delegated => delegated.account === account)
+      .flatMap(delegated => delegated.permissions)
+  }
+
+  /** What a delegated permission must be, for a mismatch's reason: its parent and its authority. */
+  function delegatedAuthorityReason(
+    delegation: DelegatedPermissions,
+    permission: string
+  ): string {
+    return `${delegation.account}@${permission} must be a child of ${WireClient.ActivePermission} delegating to the ${delegation.role} account ${delegation.delegate}@${WireClient.ActivePermission} and ${Constants.SYSIO_ACCOUNT}@${WireClient.ActivePermission}, each alone`
+  }
+
+  /**
+   * The delegated permissions `response`'s account must hold and does not: each
+   * a mismatch against no authority. Without the permission its action falls
+   * back to the contract's `active`, which the delegate cannot satisfy.
+   */
+  function missingDelegatedPermissions(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): AuthorityMismatch[] {
+    const account = String(response.account_name)
+    return delegatedPermissionNames(options, response)
+      .filter(permission => findPermission(response, permission) == null)
+      .map(permission => {
+        const delegation = findDelegatedPermissions(options, account, permission)
+        return {
+          account,
+          permission,
+          expected: WireSysioContractTool.sysioActiveDelegateAuthority(
+            delegation.delegate
+          ),
+          actual: null,
+          reason: `${delegatedAuthorityReason(delegation, permission)}, and does not exist`
+        }
+      })
+  }
+
+  /**
+   * The delegated permissions of `response`'s account that exist without the
+   * link to their action. An unlinked action requires the contract's `active`,
+   * so a transaction declaring the delegated permission is rejected.
+   */
+  function missingDelegatedLinks(
+    options: AuditOptions,
+    response: API.v1.AccountObject
+  ): MissingLink[] {
+    const account = String(response.account_name)
+    return delegatedPermissionNames(options, response)
+      .filter(permission => {
+        const found = findPermission(response, permission)
+        return (
+          found != null &&
+          !(found.linked_actions ?? []).some(link =>
+            isDelegatedPermissionLink(options, account, permission, link)
+          )
+        )
+      })
+      .map(permission => ({
+        account,
+        permission,
+        action: `${account}::${permission}`
+      }))
   }
 
   /** Whether `permission` is one every account has (`owner`, `active`). */
@@ -599,6 +766,7 @@ export namespace WireAuthorityAuditTool {
         unclassifiedReason(account, permission, subject)
       ],
       isGovernanceActive = isGovernanceAuthorityActive(account, permission),
+      delegation = findDelegatedPermissions(options, account, permission),
       [classification, reason] = await match({ actor, delegated })
         .with(
           {
@@ -630,18 +798,17 @@ export namespace WireAuthorityAuditTool {
                   ]
               : unclassified
         )
+        // Only the delegate of THIS permission: a delegate account named anywhere else falls
+        // through, so one that is also a governance member or a producer is still classified.
         .with(
           {
-            actor: options.panicAccount,
+            actor: P.when((candidate: string) => delegation?.delegate === candidate),
             delegated: WireClient.ActivePermission
           },
-          async (): Promise<[Classification, string]> =>
-            isAndonPanicPermission(account, permission)
-              ? [
-                  Classification.andonPanicDelegate,
-                  `${AndonAccount}@${permission} delegates to the panic account ${subject}, held by ${await describeKeys(context.accounts, actor, delegated)}`
-                ]
-              : unclassified
+          async (): Promise<[Classification, string]> => [
+            delegation.classification,
+            `${account}@${permission} delegates to the ${delegation.role} account ${subject}, held by ${await describeKeys(context.accounts, actor, delegated)}`
+          ]
         )
         .with(
           {
@@ -716,8 +883,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * The mismatch, if any, between a permission and the WHOLE authority it must
-   * hold: `sysio@owner` / `@active` after a handoff, and a written governance
-   * authority's `active`. Every other permission is judged entry by entry.
+   * hold: `sysio@owner` / `@active` after a handoff, a written governance
+   * authority's `active`, and a delegated permission, which must also be a child
+   * of `active`. Every other permission is judged entry by entry.
    */
   function authorityMismatch(
     context: AuditContext,
@@ -727,10 +895,12 @@ export namespace WireAuthorityAuditTool {
     const name = String(permission.perm_name),
       actual = WireClient.toAuthorityType(permission.required_auth),
       { options } = context,
-      handedTo = options.phase === AuditPhase.afterHandoff && options.handedTo === account
+      handedTo = options.phase === AuditPhase.afterHandoff && options.handedTo === account,
+      delegation = findDelegatedPermissions(options, account, name)
     return match({
       root: options.phase === AuditPhase.afterHandoff && isRootPermission(account, name),
-      governance: isGovernanceAuthorityActive(account, name)
+      governance: isGovernanceAuthorityActive(account, name),
+      delegated: delegation != null
     })
       .with({ root: true }, (): AuthorityMismatch => {
         const expected = WireSysioContractTool.delegatedAuthority(options.handedTo)
@@ -773,6 +943,24 @@ export namespace WireAuthorityAuditTool {
                       : `${account}@${name} must be [${[...members].join(", ")}] at ${expected.threshold}`
                 }
           )
+      })
+      .with({ delegated: true }, (): AuthorityMismatch => {
+        const expected = WireSysioContractTool.sysioActiveDelegateAuthority(
+            delegation.delegate
+          ),
+          parent = String(permission.parent),
+          // Under any other parent the contract's `active` could not update or revoke it.
+          parented = parent === WireClient.ActivePermission,
+          reason = delegatedAuthorityReason(delegation, name)
+        return parented && isEqual(actual, expected)
+          ? null
+          : {
+              account,
+              permission: name,
+              expected,
+              actual,
+              reason: parented ? reason : `${reason}; its parent is ${parent}`
+            }
       })
       .otherwise((): AuthorityMismatch => null)
   }
@@ -877,8 +1065,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * Fail on any entry the audit could not classify, any authority that differs
-   * from the one it must hold, any unexpected action link, and any listed
-   * system account the chain never created.
+   * from the one it must hold, any unexpected action link, any delegated
+   * permission missing its link, and any listed system account the chain never
+   * created.
    *
    * @param result - The audit's findings.
    * @param inventory - The enumerated accounts, when the audit's accounts came from {@link discoverSystemAccounts}.
@@ -898,6 +1087,9 @@ export namespace WireAuthorityAuditTool {
       ...result.unexpectedLinks.map(
         link => `unexpected link of ${link.action} to ${link.account}@${link.permission}`
       ),
+      ...result.missingLinks.map(
+        link => `missing link of ${link.action} to ${link.account}@${link.permission}`
+      ),
       ...(inventory?.missing ?? []).map(
         account => `system account ${account} does not exist on chain`
       )
@@ -910,8 +1102,9 @@ export namespace WireAuthorityAuditTool {
 
   /**
    * Fail when `key` alone still satisfies any audited permission other than the
-   * `sysio.andon` panic permissions — the check after a handoff that the
-   * retired bootstrap key no longer reaches anything it should not.
+   * delegated ones (the `sysio.andon` panic permissions and the `sysio.bond`
+   * rulings) — the check after a handoff that the retired bootstrap key no
+   * longer reaches anything it should not.
    *
    * @param result - The audit's findings.
    * @param key - The retired key, in any spelling.
@@ -924,13 +1117,13 @@ export namespace WireAuthorityAuditTool {
       throw new Error(
         `the key ${normalized} was not audited (audited: ${result.keys.join(", ") || "none"}); its reach is unknown`
       )
-    const panicPermissions = result.exceptions
-        .filter(entry => entry.classification === Classification.andonPanicDelegate)
+    const delegated = result.exceptions
+        .filter(entry => DelegateClassifications.includes(entry.classification))
         .map(entry => `${entry.account}@${entry.permission}`),
       offenders = result.keyReach
         .filter(reach => reach.key === normalized && reach.satisfies)
         .map(reach => `${reach.account}@${reach.permission}`)
-        .filter(permission => !panicPermissions.includes(permission))
+        .filter(permission => !delegated.includes(permission))
     if (offenders.length > 0)
       throw new Error(
         `the retired key ${normalized} still satisfies ${offenders.join(", ")} on its own`

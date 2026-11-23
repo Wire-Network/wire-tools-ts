@@ -9,12 +9,15 @@ const { SysioContractName } = SysioContracts
 const CpuPayer = "cpu.payer"
 /** The system account, which signs the governance actions. */
 const SystemAccount = "sysio"
-/** The contract authority governance uses to rule a request. */
-const BondAccount = "sysio.bond"
 
 /** The `authorization` option a runner passes when `account@active` signs. */
 function signedBy(account: string) {
   return { authorization: [{ actor: account, permission: "active" }] }
+}
+
+/** The `authorization` option a ruling passes: `sysio.bond`'s linked native permission. */
+function declaring(permission: string) {
+  return { authorization: [{ actor: "sysio.bond", permission }] }
 }
 
 describe("Steps.contracts.sysio.bond", () => {
@@ -126,7 +129,14 @@ describe("Steps.contracts.sysio.bond", () => {
     expect(step.runner).toBe(Steps.contracts.sysio.bond.runRslvvalid)
   })
 
-  it("runRslvvalid declares the bond contract's active authority", async () => {
+  it("links each ruling to the native permission of the same name", () => {
+    expect(Object.values<string>(Steps.contracts.sysio.bond.Permission)).toEqual([
+      "rslvvalid",
+      "rslvinvalid"
+    ])
+  })
+
+  it("runRslvvalid pushes bond::rslvvalid declaring the linked rslvvalid permission", async () => {
     const { ctx, contract, getSysioContract } = bondContext(),
       invoke = jest.spyOn(contract.actions.rslvvalid, "invoke").mockResolvedValue(undefined),
       data: SysioContracts.SysioBondRslvvalidAction = { request_id: 7 }
@@ -136,22 +146,11 @@ describe("Steps.contracts.sysio.bond", () => {
       signal
     )
     expect(getSysioContract).toHaveBeenCalledWith(SysioContractName.bond)
-    expect(invoke).toHaveBeenCalledWith(data, signedBy(BondAccount))
-  })
-
-  it("runRslvvalid propagates a ruling authorization refusal", async () => {
-    const { ctx, contract } = bondContext(),
-      failure = new Error("ruling authority refused"),
-      invoke = jest.spyOn(contract.actions.rslvvalid, "invoke").mockRejectedValue(failure),
-      data: SysioContracts.SysioBondRslvvalidAction = { request_id: 7 }
-    await expect(
-      Steps.contracts.sysio.bond.runRslvvalid(
-        ctx,
-        { kind: "BondContractSteps.RslvvalidInput", data },
-        signal
-      )
-    ).rejects.toBe(failure)
-    expect(invoke).toHaveBeenCalledTimes(1)
+    // Never sysio@active: the contract requires its own account, through the linked permission.
+    expect(invoke).toHaveBeenCalledWith(
+      data,
+      declaring(Steps.contracts.sysio.bond.Permission.rslvvalid)
+    )
   })
 
   it("rslvinvalid carries the bond::rslvinvalid data and binds runRslvinvalid", () => {
@@ -168,7 +167,7 @@ describe("Steps.contracts.sysio.bond", () => {
     expect(step.runner).toBe(Steps.contracts.sysio.bond.runRslvinvalid)
   })
 
-  it("runRslvinvalid declares the bond contract's active authority", async () => {
+  it("runRslvinvalid pushes bond::rslvinvalid declaring the linked rslvinvalid permission", async () => {
     const { ctx, contract, getSysioContract } = bondContext(),
       invoke = jest.spyOn(contract.actions.rslvinvalid, "invoke").mockResolvedValue(undefined),
       data: SysioContracts.SysioBondRslvinvalidAction = { request_id: 7 }
@@ -178,22 +177,10 @@ describe("Steps.contracts.sysio.bond", () => {
       signal
     )
     expect(getSysioContract).toHaveBeenCalledWith(SysioContractName.bond)
-    expect(invoke).toHaveBeenCalledWith(data, signedBy(BondAccount))
-  })
-
-  it("runRslvinvalid propagates a ruling authorization refusal", async () => {
-    const { ctx, contract } = bondContext(),
-      failure = new Error("ruling authority refused"),
-      invoke = jest.spyOn(contract.actions.rslvinvalid, "invoke").mockRejectedValue(failure),
-      data: SysioContracts.SysioBondRslvinvalidAction = { request_id: 7 }
-    await expect(
-      Steps.contracts.sysio.bond.runRslvinvalid(
-        ctx,
-        { kind: "BondContractSteps.RslvinvalidInput", data },
-        signal
-      )
-    ).rejects.toBe(failure)
-    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith(
+      data,
+      declaring(Steps.contracts.sysio.bond.Permission.rslvinvalid)
+    )
   })
 
   it("claim carries the bond::claim data and binds runClaim", () => {

@@ -37,9 +37,10 @@ import {
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
-import { Level } from "@wireio/shared"
+import { Either } from "@3fv/prelude-ts"
+import { Level, NestedError } from "@wireio/shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
-import { KeyType, SlugName } from "@wireio/sdk-core"
+import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
 import {
   ListenAllAddress,
@@ -52,7 +53,12 @@ import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
-import { keyPairFromPrivate } from "../utils/keyPairUtils.js"
+import {
+  chainStringFromPublicKey,
+  isSameSigningKey,
+  keyPairFromPrivate,
+  publicKeyFromChainString
+} from "../utils/keyPairUtils.js"
 import type {
   KeyPair,
   WireFinalizerKeyPair,
@@ -426,7 +432,9 @@ export namespace ClusterConfigProvider {
     // means an illegal topology never claims a cluster's worth of ports (nor
     // holds the host-global bind lock) on its way to failing.
     assertExternalOutpostMockData(options)
-    const lcoImport = resolveLcoImport(options),
+    const judgePublicKey = resolveDelegatePublicKey(options, "judgePublicKey"),
+      panicPublicKey = resolveDelegatePublicKey(options, "panicPublicKey"),
+      lcoImport = resolveLcoImport(options),
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       queryEngine = QueryEngineConfigProvider.resolve(
@@ -499,6 +507,8 @@ export namespace ClusterConfigProvider {
       signatureProvider,
       awsClusterNodeConfig,
       externalOutposts,
+      judgePublicKey,
+      panicPublicKey,
       debuggingServerEnabled: true,
       enableMockLiqPools: options.enableMockLiqPools ?? false,
       enableMockSyndicationImport: options.enableMockSyndicationImport ?? false,
@@ -728,6 +738,84 @@ export namespace ClusterConfigProvider {
     )
   }
 
+  /** What a delegate account's key holder can do, as {@link resolveDelegatePublicKey}'s refusals word it. */
+  interface DelegateReach {
+    /** The delegate account. */
+    readonly account: string
+    /** What the account does — why a deployed cluster must name the key. */
+    readonly holds: string
+    /** What the account could never do under a key that cannot sign. */
+    readonly acts: string
+    /** What anyone could do on a deployed cluster under the development key. */
+    readonly exposes: string
+  }
+
+  /**
+   * The {@link ClusterBuildOptions} members naming the key a delegate account
+   * ({@link Constants.DELEGATE_ACCOUNTS}) is created under, each with its account's reach.
+   */
+  const DelegateReaches = {
+    judgePublicKey: {
+      account: Constants.JUDGE_ACCOUNT,
+      holds: "rules every sysio.bond request",
+      acts: "rule",
+      exposes: "rule a sysio.bond request"
+    },
+    panicPublicKey: {
+      account: Constants.PANIC_ACCOUNT,
+      holds: "pulls and clears the depot emergency stop",
+      acts: "pull or clear the depot emergency stop",
+      exposes: "pull or clear the depot emergency stop"
+    }
+  } as const satisfies Partial<Record<keyof ClusterBuildOptions, DelegateReach>>
+
+  /**
+   * The key a delegate account (`bond.judge`, `andon.panic`) is created under, or
+   * `null` for the cluster's initial key. Whoever holds it keeps the account's
+   * reach after `sysio` is handed to governance, so a build against EXTERNAL
+   * outposts must name it and may not name the well-known development key.
+   *
+   * @param options - The caller's options (the named key and `externalOutpostConfig`).
+   * @param optionKey - Which delegate's key to resolve.
+   * @returns The key in its canonical `PUB_` spelling, the one `clio create account`
+   *   parses whatever spelling the caller used, or `null` when none was named.
+   * @throws When the key is not a public key or is a BLS key, which cannot sign a
+   *   transaction, or when external mode names none or the development key, under
+   *   either type its private key signs for.
+   */
+  function resolveDelegatePublicKey(
+    options: ClusterBuildOptions,
+    optionKey: keyof typeof DelegateReaches
+  ): string {
+    const { [optionKey]: publicKey = null, externalOutpostConfig } = options,
+      { account, holds, acts, exposes } = DelegateReaches[optionKey]
+    if (publicKey == null) {
+      Assert.ok(
+        externalOutpostConfig == null,
+        `${optionKey} is required with externalOutpostConfig: ${account} ${holds}, so a deployed cluster must name the key that holds it.`
+      )
+      return null
+    }
+    const key = Either.try(() => publicKeyFromChainString(publicKey))
+      .ifLeft(error => {
+        throw new NestedError(`${optionKey} is not a public key`, {
+          cause: error,
+          context: { [optionKey]: publicKey }
+        })
+      })
+      .getOrThrow()
+    Assert.ok(
+      key.type !== KeyType.BLS,
+      `${optionKey} is a ${KeyType.BLS} key, which cannot sign a transaction: ${account} could never ${acts}.`
+    )
+    Assert.ok(
+      externalOutpostConfig == null ||
+        !isSameSigningKey(key, PublicKey.from(Constants.DEV_K1_PUBLIC_KEY)),
+      `${optionKey} is the development key, which externalOutpostConfig refuses: anyone could ${exposes} on the deployed cluster.`
+    )
+    return chainStringFromPublicKey(key)
+  }
+
   /**
    * Normalize + validate the caller's AWS placement: `null` when unset,
    * otherwise a config whose `regions` names at least one region (every secret
@@ -882,10 +970,10 @@ export namespace ClusterConfigProvider {
    * Resolve the cluster's network binding. Without `--bind-config` the resolver
    * picks free ports (current behavior). WITH `--bind-config`, the file is
    * classified via {@link BindConfigSchemaCodec}'s `check`:
-   * - COMPLETE `BindConfig` → cross-validated against the topology counts and
-   *   used VERBATIM (remote addresses taken as-is — no port probe / claim /
-   *   registry, since a remote endpoint's port is not this host's to reserve),
-   *   with any CLI `--bind-*` overrides layered on top (CLI > file).
+   * - COMPLETE `BindConfig` → cross-validated against the topology counts, with
+   *   any CLI `--bind-*` overrides layered on top (CLI > file). The Solana
+   *   port window must be valid and local ports must be compatible with Node
+   *   Fetch. No ports are probed or registered.
    * - PARTIAL override → validated via {@link BindOptionsSchema} and merged over
    *   the resolver's picked defaults (CLI > file > resolver).
    *
@@ -912,7 +1000,7 @@ export namespace ClusterConfigProvider {
     return bind
   }
 
-  /** Classify + merge a `--bind-config` file (complete → verbatim | partial → merged). */
+  /** Resolve a complete `--bind-config` or merge a partial file over defaults. */
   async function resolveBindFromFile(
     bindConfigFile: string,
     cliBind: BindOptions,
@@ -922,10 +1010,20 @@ export namespace ClusterConfigProvider {
       await Fsp.readFile(Path.resolve(bindConfigFile), "utf-8")
     )
     if (BindConfigSchemaCodec.check(parsed)) {
-      // COMPLETE: cross-validate cardinality, then use verbatim with the CLI
-      // `--bind-*` overrides layered on top — remote ports are NOT probed.
       assertBindCardinality(parsed, topology)
-      return defaultsDeep({ ...cliBind }, parsed) as BindConfig
+      const bind = defaultsDeep({ ...cliBind }, parsed) as BindConfig
+      BindConfigProvider.assertValidPortRange(
+        bind.solana.ports.dynamicRange,
+        "--bind-config solana.dynamicRange"
+      )
+      const fetchBlocked = BindConfigProvider.locallyBoundPorts(bind).filter(
+        port => BindConfigProvider.FetchBlockedPorts.has(port)
+      )
+      Assert.ok(
+        fetchBlocked.length === 0,
+        `--bind-config: locally bound ports blocked by Node Fetch: ${fetchBlocked.join(", ")}`
+      )
+      return bind
     }
     // PARTIAL: validate the override shape, then merge over resolver defaults.
     const fileBind = BindOptionsSchema.parse(parsed) as BindOptions

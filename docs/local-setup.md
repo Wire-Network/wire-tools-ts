@@ -168,7 +168,7 @@ stale CDT shows up as contract compile errors in wire-sysio.
 
 ```bash
 cd "$WIRE_ROOT/wire-sysio"
-git submodule update --init --recursive vcpkg libraries/appbase
+git submodule update --init vcpkg libraries/appbase libraries/sys-vm
 ./vcpkg/bootstrap-vcpkg.sh       # one-time
 
 export BUILD_DIR="$PWD/build/debug"
