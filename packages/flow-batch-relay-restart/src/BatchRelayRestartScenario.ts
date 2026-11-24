@@ -5,7 +5,6 @@ import {
   ClusterBuildPhase,
   EthereumRoundTripScenario,
   NodeConfig,
-  NodeRole,
   Report,
   Steps,
   SyndicationScenario,
@@ -90,9 +89,7 @@ export namespace BatchRelayRestartScenario {
    * @returns The sole planned relay node.
    */
   export function relayNode(ctx: ClusterBuildContext): NodeConfig {
-    const nodes = NodeConfig.plan(ctx.config).filter(
-      node => node.role === NodeRole.batch_operator
-    )
+    const nodes = NodeConfig.batchOperatorNodes(ctx.config)
     Assert.strictEqual(
       nodes.length,
       1,

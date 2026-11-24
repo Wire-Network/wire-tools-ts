@@ -8,7 +8,6 @@ import { getLogger } from "@wireio/shared"
 import {
   BatchOperatorUnderwritingSteps as UnderwritingSteps,
   NodeConfig,
-  NodeRole,
   SolanaClient,
   SolanaOutpostBootstrapper,
   SolanaOutpostProgramTool,
@@ -38,7 +37,7 @@ export namespace SyndicationPluginUnderwritingRecoverySteps {
    * @returns The one node whose absence prevents every possible bond.
    */
   export function fundedNode(ctx: ClusterBuildContext): NodeConfig {
-    const nodes = NodeConfig.plan(ctx.config).filter(node => node.role === NodeRole.batch_operator)
+    const nodes = NodeConfig.batchOperatorNodes(ctx.config)
     Assert.strictEqual(nodes.length, Constants.BatchOperatorCount)
     Assert.strictEqual(ctx.config.batchOperatorUnderwriting.fundedOperatorCount, Constants.FundedOperatorCount)
     return nodes[0]

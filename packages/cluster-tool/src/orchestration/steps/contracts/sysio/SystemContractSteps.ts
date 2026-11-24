@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
@@ -696,5 +697,115 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.setacctram.invoke(input.data)
+  }
+
+  /** Input for {@link planClaimpay} — the generated `system::claimpay` data. */
+  export interface ClaimpayInput extends StepInput {
+    readonly kind: "SystemContractSteps.ClaimpayInput"
+    readonly data: SysioContracts.SysioSystemClaimpayAction
+  }
+
+  /**
+   * `sysio.system::claimpay` — pull the account's whole `payclaims` row (the producer,
+   * standby and batch-operator epoch pay `payepoch` credited) in one transfer. Signed by the
+   * claiming account (`account_name@active`); refused when nothing is owed.
+   */
+  export function planClaimpay<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioSystemClaimpayAction
+  ): ClusterBuildStep<C, ClaimpayInput> {
+    return ClusterBuildStep.create<C, ClaimpayInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SystemContractSteps.ClaimpayInput", data },
+      runClaimpay
+    )
+  }
+
+  /** Named runner — `sysio.system::claimpay`, signed by the claiming account. */
+  export async function runClaimpay<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ClaimpayInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .actions.claimpay.invoke(input.data, {
+        authorization: WireClient.activeAuthorization(input.data.account_name)
+      })
+  }
+
+  // ── Reads (execute freely inside runners / verify steps) ─────────────────
+
+  /**
+   * The `sysio::emitcfg` singleton row — the emission curve, category splits and pay cadence.
+   *
+   * @param ctx - The build context.
+   * @returns The emission-config row.
+   * @throws When `setemitcfg` has not run.
+   */
+  export async function readEmissionConfig<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioSystemEmissionConfigType> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .tables.emitcfg.query()
+    Assert.ok(rows.length >= 1, "sysio::emitcfg singleton row missing")
+    return rows[0]
+  }
+
+  /**
+   * The `sysio::t5state` singleton row — the T5 treasury's pending period emission, the open
+   * pay period's first economic epoch and the last economic epoch's share.
+   *
+   * @param ctx - The build context.
+   * @returns The T5-state row.
+   * @throws When `initt5` has not run.
+   */
+  export async function readT5State<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioSystemT5StateType> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .tables.t5state.query()
+    Assert.ok(rows.length >= 1, "sysio::t5state singleton row missing")
+    return rows[0]
+  }
+
+  /**
+   * Every `sysio::epochlog` row, page by page — one per paid pay period, keyed by the
+   * economic epoch that paid it.
+   *
+   * @param ctx - The build context.
+   * @returns The rows, in economic-epoch order.
+   */
+  export async function readEpochLog<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioSystemEpochLogType[]> {
+    return ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .tables.epochlog.queryAll()
+  }
+
+  /**
+   * `sysio::payclaimtot.outstanding` — the epoch pay credited to `payclaims` and not yet
+   * claimed, which every gate that spends the treasury reserves.
+   *
+   * @param ctx - The build context.
+   * @returns The outstanding total in WIRE base units; `0n` before the first credit.
+   */
+  export async function readOutstandingPay<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<bigint> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .tables.payclaimtot.query()
+    return rows.length === 0 ? 0n : BigInt(rows[0].outstanding)
   }
 }

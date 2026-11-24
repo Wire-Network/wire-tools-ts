@@ -296,6 +296,19 @@ export namespace NodeConfig {
   }
 
   /**
+   * The cluster's planned batch-operator nodes — the relays — in plan order: one per
+   * `bind.nodeop.ports.batch` pair, each acting for `Constants.batchOperatorLabel(k)`.
+   *
+   * @param cluster - The resolved cluster config.
+   * @returns Every planned node whose role is {@link NodeRole.batch_operator}.
+   */
+  export function batchOperatorNodes(cluster: ClusterConfig): NodeConfig[] {
+    return NodeConfig.plan(cluster).filter(
+      node => node.role === NodeRole.batch_operator
+    )
+  }
+
+  /**
    * Whether this node's rendered nodeop config loads
    * `sysio::trace_api_plugin` — the ONE predicate the ini renderer, the argv
    * builder, and the `--trace-no-abis` probe all read, so the three surfaces

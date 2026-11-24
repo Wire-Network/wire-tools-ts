@@ -137,6 +137,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
+| `flow-economic-clock` | `@wireio/test-flow-economic-clock` | The economic clock beside consensus: economic epochs on their own grid pay emissions, a withdrawal matures only once both clocks pass, a held payout leaves OPP running and pays the whole period once funded, and the andon cord leaves emissions and `claimpay` working |
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
@@ -168,10 +169,10 @@ and outbound queue entries are intermediate checks.
 | `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
 | `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
 
-The other seven enabled flows (`flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, `flow-emissions-soak`, `flow-governance-handoff`,
-`flow-node-owner-nft`, `flow-operator-collateral-deposit`, `flow-producer-registration`)
-exercise their own paths. Imported
+The other eight enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-economic-clock`, `flow-emissions-soak`,
+`flow-governance-handoff`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
+`flow-producer-registration`) exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
