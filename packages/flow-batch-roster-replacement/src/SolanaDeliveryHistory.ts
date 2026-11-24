@@ -8,12 +8,17 @@ import {
 import { ethers } from "ethers"
 
 import {
+  getLogger,
+  readTransactionHistory,
   SolanaClient,
+  SolanaHistoryRpcError,
   SolanaOutpostBootstrapper,
   SolanaOutpostProgramTool
 } from "@wireio/cluster-tool"
 
 import type { BatchRosterReplacementScenario } from "./BatchRosterReplacementScenario.js"
+
+const log = getLogger(__filename)
 
 type Program = ReturnType<typeof SolanaOutpostProgramTool.loadReadOnlyProgram>
 interface Chunk {
@@ -24,6 +29,7 @@ interface Chunk {
   chunkData: Buffer
 }
 interface UploadInstruction {
+  signature: string
   slot: number
   chunk: Chunk
   logs: string[]
@@ -31,10 +37,8 @@ interface UploadInstruction {
 
 /** Durable proof of the replacement's canonical vote after settled-tally cleanup. */
 export namespace SolanaDeliveryHistory {
-  /** One bounded RPC page; a full page is incomplete evidence and fails closed. */
-  export const SignatureLimit = 1000
-  /** Program seed for the buffer scoped to one epoch and one signing operator. */
-  const ChunkBufferSeed = "envelope_chunks"
+  /** Allow a full first signature page while bounding an epoch poll to two pages. */
+  export const HistoryMaxPages = 2
   /** Phase-A program marker identifying calls that cannot mutate the buffer. */
   const LateNoopLogPrefix = "Program log: opp_outpost: epoch_in late no-op "
   /** Finalizer marker identifying a newly recorded vote rather than a retry. */
@@ -59,27 +63,31 @@ export namespace SolanaDeliveryHistory {
     accepted: BatchRosterReplacementScenario.EnvelopeRecord,
     signer: PublicKey
   ): Promise<boolean> {
-    const { buffer } = addresses(
-        program.programId,
-        accepted.epochIndex,
-        signer
-      ),
-      signatures = await connection.getSignaturesForAddress(
+    const { buffer } = addresses(program.programId, accepted.epochIndex, signer)
+    let transactions: VersionedTransactionResponse[]
+    try {
+      transactions = await readTransactionHistory(
+        connection,
         buffer,
-        { limit: SignatureLimit },
-        SolanaClient.ConfirmationStatus.finalized
-      ),
-      transactions: VersionedTransactionResponse[] = []
-    if (!signatures.length || signatures.length === SignatureLimit) return false
-    for (const { signature } of signatures.toReversed()) {
-      const transaction = await connection.getTransaction(signature, {
-        commitment: SolanaClient.ConfirmationStatus.finalized,
-        maxSupportedTransactionVersion: 0
-      })
-      // Pruned or missing transactions cannot establish a complete upload history.
-      if (!transaction?.meta) return false
-      transactions.push(transaction)
+        SolanaClient.ConfirmationStatus.finalized,
+        HistoryMaxPages
+      )
+    } catch (error) {
+      if (!(error instanceof SolanaHistoryRpcError)) throw error
+      log.warn(
+        `Solana delivery history RPC unavailable: epoch=${accepted.epochIndex} operator=${signer} ${error.message}`
+      )
+      return false
     }
+    // The shared reader logs the requested signature for missing transaction data.
+    if (!transactions) return false
+    if (!transactions.length)
+      return reject(
+        `no finalized buffer history: epoch=${accepted.epochIndex} operator=${signer} buffer=${buffer}`
+      )
+    log.debug(
+      `Checking finalized delivery history: epoch=${accepted.epochIndex} operator=${signer} buffer=${buffer} transactions=${transactions.length}`
+    )
     return provesDelivery(transactions, program, accepted, signer)
   }
 
@@ -105,8 +113,15 @@ export namespace SolanaDeliveryHistory {
       uploadInstructions: UploadInstruction[] = [],
       discardSlots = new Set<number>()
     for (const response of transactions) {
-      if (!response?.meta) return false
-      if (response.meta.err) continue
+      const signature = response?.transaction?.signatures?.[0]
+      if (!response?.meta)
+        return reject("transaction metadata unavailable", signature)
+      if (response.meta.err) {
+        log.debug(
+          `Ignoring failed delivery transaction: signature=${signature ?? "unavailable"}`
+        )
+        continue
+      }
       const { message } = response.transaction,
         keys = new MessageAccountKeys(
           message.staticAccountKeys,
@@ -128,14 +143,25 @@ export namespace SolanaDeliveryHistory {
           )
         )
       )
-        return false
+        return reject(
+          "indirect program invocation prevents log attribution",
+          signature
+        )
       if (!instructions.length) continue
-      if (instructions.length !== 1) return false
+      if (instructions.length !== 1)
+        return reject(
+          "multiple direct program instructions prevent log attribution",
+          signature
+        )
       const [instruction] = instructions,
         decoded = (program.coder.instruction as BorshInstructionCoder).decode(
           Buffer.from(instruction.data)
         )
-      if (!decoded) return false
+      if (!decoded)
+        return reject(
+          "instruction cannot be decoded by deployed IDL",
+          signature
+        )
       const accounts = program.idl.instructions.find(
           ix => ix.name === decoded.name
         )?.accounts,
@@ -154,7 +180,10 @@ export namespace SolanaDeliveryHistory {
           !Number.isSafeInteger(response.slot) ||
           response.slot < 0
         )
-          return false
+          return reject(
+            "discard uploader, signature, buffer, epoch or slot does not match",
+            signature
+          )
         discardSlots.add(response.slot)
         continue
       }
@@ -175,8 +204,11 @@ export namespace SolanaDeliveryHistory {
         !Number.isSafeInteger(chunk.totalChunks) ||
         chunk.totalChunks <= 0
       )
-        return false
-      uploadInstructions.push({ slot: response.slot, chunk, logs })
+        return reject(
+          "upload signer, PDA, epoch or chunk geometry does not match",
+          signature
+        )
+      uploadInstructions.push({ signature, slot: response.slot, chunk, logs })
     }
     const boundaries = [...discardSlots].sort((a, b) => a - b),
       uploads: UploadInstruction[][] = Array.from(
@@ -191,7 +223,10 @@ export namespace SolanaDeliveryHistory {
           instruction.slot < 0 ||
           discardSlots.has(instruction.slot))
       )
-        return false
+        return reject(
+          `upload slot is unavailable or shares discard slot ${instruction.slot}`,
+          instruction.signature
+        )
       uploads[
         boundaries.findLastIndex(slot => slot < instruction.slot) + 1
       ].push(instruction)
@@ -208,14 +243,16 @@ export namespace SolanaDeliveryHistory {
   ): boolean {
     const chunks = new Map<number, Buffer>()
     let geometry: Chunk,
-      finalized = false
-    for (const { chunk, logs } of instructions) {
+      finalized = false,
+      finalizerSignature: string
+    for (const instruction of instructions) {
+      const { chunk, logs, signature } = instruction
       if (
         geometry &&
         (chunk.totalChunks !== geometry.totalChunks ||
           chunk.totalBytes !== geometry.totalBytes)
       )
-        return false
+        return reject("chunk geometry changed within one upload", signature)
       geometry = chunk
       const writeLog = `Program log: opp_outpost: epoch_in chunk op=${signer} epoch=${chunk.epochIndex} chunk=${chunk.chunkIndex}/${chunk.totalChunks} bytes=${chunk.chunkData.length}`
       if (logs.includes(writeLog)) {
@@ -223,7 +260,10 @@ export namespace SolanaDeliveryHistory {
           chunks.has(chunk.chunkIndex) ||
           chunk.chunkIndex >= chunk.totalChunks
         )
-          return false
+          return reject(
+            `duplicate or out-of-range chunk index ${chunk.chunkIndex}`,
+            signature
+          )
         chunks.set(chunk.chunkIndex, Buffer.from(chunk.chunkData))
       }
       if (
@@ -239,21 +279,46 @@ export namespace SolanaDeliveryHistory {
           chunk.chunkIndex !== chunk.totalChunks ||
           chunk.chunkData.length !== 0
         )
-          return false
+          return reject("duplicate or malformed new-vote finalizer", signature)
         finalized = true
+        finalizerSignature = signature
       }
     }
-    const ordered = [...chunks.entries()].sort(([a], [b]) => a - b)
-    return (
-      finalized &&
-      chunks.size === geometry.totalChunks &&
-      ordered.every(([index], position) => index === position) &&
-      ordered.reduce((sum, [, data]) => sum + data.length, 0) ===
-        geometry.totalBytes &&
-      accepted.checksum.length === ethers.dataLength(ethers.ZeroHash) &&
-      ethers.keccak256(Buffer.concat(ordered.map(([, data]) => data))) ===
-        ethers.hexlify(Uint8Array.from(accepted.checksum))
+    const signature = finalizerSignature ?? instructions.at(-1)?.signature,
+      ordered = [...chunks.entries()].sort(([a], [b]) => a - b)
+    if (!finalized)
+      return reject(
+        "new-vote finalization marker absent (consensus_retry=false)",
+        signature
+      )
+    if (chunks.size !== geometry.totalChunks)
+      return reject("upload has missing chunks", signature)
+    if (!ordered.every(([index], position) => index === position))
+      return reject("chunk indexes are not contiguous", signature)
+    if (
+      ordered.reduce((sum, [, data]) => sum + data.length, 0) !==
+      geometry.totalBytes
     )
+      return reject(
+        "uploaded byte count differs from chunk geometry",
+        signature
+      )
+    if (accepted.checksum.length !== ethers.dataLength(ethers.ZeroHash))
+      return reject("canonical checksum is not 32 bytes", signature)
+    if (
+      ethers.keccak256(Buffer.concat(ordered.map(([, data]) => data))) !==
+      ethers.hexlify(Uint8Array.from(accepted.checksum))
+    )
+      return reject("canonical envelope checksum mismatch", signature)
+    return true
+  }
+
+  /** Keep rejection reasons and transaction provenance in the flow's debug log. */
+  function reject(reason: string, signature?: string): false {
+    log.debug(
+      `Solana delivery proof rejected: ${reason}; signature=${signature ?? "unavailable"}`
+    )
+    return false
   }
 
   /** Derive the protocol's epoch and operator-scoped evidence addresses. */
@@ -263,14 +328,13 @@ export namespace SolanaDeliveryHistory {
     return {
       buffer: SolanaOutpostProgramTool.derivePda(
         programId,
-        Buffer.from(ChunkBufferSeed),
+        Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EnvelopeChunks),
         index,
         signer.toBuffer()
       ),
       tally: SolanaOutpostProgramTool.derivePda(
         programId,
-        Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
-        index
+        ...SolanaOutpostBootstrapper.createEpochDeliveriesSeeds(epoch)
       )
     }
   }

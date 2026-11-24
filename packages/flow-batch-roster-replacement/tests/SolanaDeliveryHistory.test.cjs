@@ -2,7 +2,7 @@ const Assert = require("node:assert/strict")
 const Fs = require("node:fs")
 const Os = require("node:os")
 const Path = require("node:path")
-const { test, after } = require("node:test")
+const { test, after, afterEach, mock } = require("node:test")
 const {
   Keypair,
   PublicKey,
@@ -12,10 +12,16 @@ const {
   SystemProgram
 } = require("@solana/web3.js")
 const { ethers } = require("ethers")
-const { SolanaOutpostProgramTool } = require("@wireio/cluster-tool")
+const {
+  getLogger,
+  readSignaturesSince,
+  SolanaOutpostProgramTool
+} = require("@wireio/cluster-tool")
 const {
   SolanaDeliveryHistory: History
 } = require("../lib/SolanaDeliveryHistory.js")
+const log = getLogger(require.resolve("../lib/SolanaDeliveryHistory.js"))
+afterEach(() => mock.restoreAll())
 
 const root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-delivery-proof-")),
   programId = Keypair.generate().publicKey,
@@ -134,6 +140,7 @@ function transaction(index, overrides = {}) {
   return {
     slot: index + 1,
     transaction: {
+      signatures: [`signature-${index}`],
       message: compiled
     },
     meta: {
@@ -188,6 +195,7 @@ function discard(overrides = {}) {
   return {
     slot,
     transaction: {
+      signatures: ["discard-signature"],
       message:
         version === "legacy"
           ? message.compileToLegacyMessage()
@@ -432,34 +440,127 @@ test("multiple discarded attempts remain separate from a final canonical upload"
   )
 })
 
-test("bounded history reads finalized transactions serially in chronological order", async () => {
-  let active = 0
-  const records = history(),
-    requests = [],
+test("a complete canonical upload remains provable across a full signature page", async () => {
+  const dustMessage = new TransactionMessage({
+      payerKey: signer,
+      recentBlockhash: signer.toBase58(),
+      instructions: [
+        SystemProgram.transfer({
+          fromPubkey: signer,
+          toPubkey: buffer,
+          lamports: 1
+        })
+      ]
+    }).compileToV0Message(),
+    records = [
+      ...history(),
+      ...Array.from(
+        { length: readSignaturesSince.PageSize - 2 },
+        (_, index) => ({
+          slot: 10,
+          transaction: { message: dustMessage, signatures: [`dust-${index}`] },
+          meta: { err: null, logMessages: [] }
+        })
+      )
+    ],
+    newest = records.toReversed(),
     connection = {
-      getSignaturesForAddress: async (address, options, commitment) => {
-        Assert.ok(address.equals(buffer))
-        Assert.equal(options.limit, History.SignatureLimit)
-        Assert.equal(commitment, "finalized")
-        return [2, 1, 0].map(i => ({ signature: String(i) }))
+      getSignaturesForAddress: async (_address, options) => {
+        const start =
+          options.before == null
+            ? 0
+            : newest.findIndex(
+                record => record.transaction.signatures[0] === options.before
+              ) + 1
+        return newest
+          .slice(start, start + options.limit)
+          .map(record => ({ signature: record.transaction.signatures[0] }))
       },
-      getTransaction: async (signature, options) => {
-        Assert.equal(++active, 1)
-        Assert.equal(options.commitment, "finalized")
-        Assert.equal(options.maxSupportedTransactionVersion, 0)
-        requests.push(signature)
-        await Promise.resolve()
-        active--
-        return records[Number(signature)]
+      getTransaction: async signature =>
+        records.find(record => record.transaction.signatures[0] === signature)
+    }
+  Assert.equal(records.length, 1001)
+  Assert.equal(await History.read(connection, program, accepted, signer), true)
+})
+
+for (const operation of ["getSignaturesForAddress", "getTransaction"])
+  test(`a failed ${operation} RPC warns and retries successfully on the next read`, async () => {
+    const records = history(),
+      connection = {
+        getSignaturesForAddress: async () =>
+          records
+            .toReversed()
+            .map(record => ({ signature: record.transaction.signatures[0] })),
+        getTransaction: async signature =>
+          records.find(record => record.transaction.signatures[0] === signature)
+      },
+      original = connection[operation],
+      warning = mock.method(log, "warn", () => {})
+    connection[operation] = async () => {
+      throw new Error("connection reset")
+    }
+    Assert.equal(
+      await History.read(connection, program, accepted, signer),
+      false
+    )
+    Assert.match(warning.mock.calls[0].arguments[0], /connection reset/)
+    connection[operation] = original
+    Assert.equal(
+      await History.read(connection, program, accepted, signer),
+      true
+    )
+  })
+
+test("history limits and decoder errors stay visible instead of becoming RPC retries", async () => {
+  const warning = mock.method(log, "warn", () => {}),
+    connection = {
+      getSignaturesForAddress: async () =>
+        Array.from({ length: readSignaturesSince.PageSize }, (_, index) => ({
+          signature: String(index),
+          slot: 1
+        })),
+      getTransaction: async () => transaction(0)
+    }
+  await Assert.rejects(
+    History.read(connection, program, accepted, signer),
+    /runs past 2 pages/
+  )
+  connection.getSignaturesForAddress = async () => [
+    { signature: "signature-0" }
+  ]
+  const error = new Error("invalid deployed instruction coder"),
+    invalid = {
+      programId: program.programId,
+      idl: program.idl,
+      coder: {
+        instruction: {
+          decode: () => {
+            throw error
+          }
+        }
       }
     }
-  Assert.equal(await History.read(connection, program, accepted, signer), true)
-  Assert.deepEqual(requests, ["0", "1", "2"])
-  connection.getTransaction = async () => null
-  Assert.equal(await History.read(connection, program, accepted, signer), false)
-  connection.getSignaturesForAddress = async () =>
-    Array(History.SignatureLimit).fill({ signature: "0" })
-  Assert.equal(await History.read(connection, program, accepted, signer), false)
-  connection.getSignaturesForAddress = async () => []
-  Assert.equal(await History.read(connection, program, accepted, signer), false)
+  await Assert.rejects(
+    History.read(connection, invalid, accepted, signer),
+    candidate => candidate === error
+  )
+  Assert.equal(warning.mock.callCount(), 0)
+})
+
+test("structural and checksum rejections identify their reason and transaction signature", () => {
+  const debug = mock.method(log, "debug", () => {}),
+    wrong = [...checksum]
+  wrong[31] ^= 1
+  Assert.equal(proof(history(), { ...accepted, checksum: wrong }), false)
+  Assert.match(
+    debug.mock.calls.at(-1).arguments[0],
+    /checksum mismatch.*signature=signature-2/
+  )
+  const records = history()
+  records[0].meta = null
+  Assert.equal(proof(records), false)
+  Assert.match(
+    debug.mock.calls.at(-1).arguments[0],
+    /metadata unavailable.*signature=signature-0/
+  )
 })

@@ -447,12 +447,10 @@ export namespace BatchRosterReplacementScenario {
     ctx: ClusterBuildContext,
     epoch: number
   ): Promise<SolanaDeliveries> {
-    const index = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT)
-    index.writeUInt32LE(epoch)
-    const { program, account } = await readSolanaAccountInfo(ctx, [
-      Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
-      index
-    ])
+    const { program, account } = await readSolanaAccountInfo(
+      ctx,
+      SolanaOutpostBootstrapper.createEpochDeliveriesSeeds(epoch)
+    )
     if (
       !account ||
       (account.owner.equals(SystemProgram.programId) && account.data.length === 0)
