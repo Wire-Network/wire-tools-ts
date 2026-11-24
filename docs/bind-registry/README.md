@@ -188,6 +188,14 @@ A client that picks its own ports should likewise avoid the host's automatic cli
 host can receive one of those ports while the client is not yet listening on it. That is client
 policy, not a change to the registration protocol.
 
+Node also excludes Fetch-blocked ports (`BindConfigProvider.FetchBlockedPorts`),
+including **10080**, from every allocation, explicit pin, derived WebSocket port,
+and dynamic window. Its HTTP readiness probes cannot contact these ports even
+when the daemon is listening. Availability checks, reclaiming persisted local
+bindings, and the local ports in complete `--bind-config` files reject them too.
+The policy applies to Node tooling. Registry readers continue to honor every
+port in other clients' valid live registrations.
+
 Before writing a port into its file, a client should check that the port binds: TCP on the IPv4
 and IPv6 wildcards, and UDP as well for a port a UDP socket will use. That is what Node does.
 Ports a client chose in one session must also be distinct from each other.
