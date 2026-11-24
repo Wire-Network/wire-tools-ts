@@ -47,6 +47,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
+import type { OutputKey } from "../../orchestration/OutputStore.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
@@ -598,13 +599,14 @@ export namespace EthereumSyndicationTool {
    * @param signer - The signing wallet (connected).
    * @param request - The call to send.
    * @param label - What is being sent, for the failure message.
+   * @returns The successful transaction receipt.
    * @throws If the transaction reverts.
    */
   async function send(
     signer: ethers.Signer,
     request: ethers.TransactionRequest,
     label: string
-  ): Promise<void> {
+  ): Promise<ethers.TransactionReceipt> {
     const nonce = await resolveLatestNonce(signer),
       response = await signer.sendTransaction({ ...request, nonce }),
       receipt = await response.wait(Confirmations)
@@ -612,6 +614,7 @@ export namespace EthereumSyndicationTool {
       receipt?.status === 1,
       `${label}: reverted (status=${receipt?.status ?? "null"})`
     )
+    return receipt
   }
 
   // ── reads ────────────────────────────────────────────────────────────────
@@ -1310,6 +1313,8 @@ export namespace EthereumSyndicationTool {
      * presents another.
      */
     readonly compressedPubkey?: string
+    /** Where to record the pool's credited amount in depot units, when requested. */
+    readonly creditedAmount?: OutputKey<bigint>
   }
 
   /**
@@ -1328,6 +1333,7 @@ export namespace EthereumSyndicationTool {
    * @param walletName - Durable handle of the holder's persisted wallet.
    * @param amount - Wei to syndicate.
    * @param compressedPubkey - A compressed key to present instead of the holder's own.
+   * @param creditedAmount - Where to record the credited amount from the receipt.
    * @returns The definition step.
    */
   export function planSyndicate<
@@ -1339,7 +1345,8 @@ export namespace EthereumSyndicationTool {
     options: ClusterBuildStepOptions,
     walletName: string,
     amount: bigint,
-    compressedPubkey?: string
+    compressedPubkey?: string,
+    creditedAmount?: OutputKey<bigint>
   ): ClusterBuildStep<C, SyndicateInput> {
     return ClusterBuildStep.create<C, SyndicateInput>(
       actor,
@@ -1350,10 +1357,29 @@ export namespace EthereumSyndicationTool {
         kind: "EthereumSyndicationTool.SyndicateInput",
         walletName,
         amount,
-        ...(compressedPubkey != null ? { compressedPubkey } : {})
+        ...(compressedPubkey != null ? { compressedPubkey } : {}),
+        ...(creditedAmount != null ? { creditedAmount } : {})
       },
       runSyndicate
     )
+  }
+
+  /** Read the depot credit emitted by the pool for this transaction. */
+  function readCreditedAmount(
+    pool: ethers.BaseContract,
+    receipt: ethers.TransactionReceipt
+  ): bigint {
+    const poolAddress = String(pool.target).toLowerCase(),
+      events = receipt.logs
+        .filter(log => log.address.toLowerCase() === poolAddress)
+        .map(log => pool.interface.parseLog(log))
+        .filter(event => event?.name === PoolEvent.Syndicated)
+    Assert.strictEqual(
+      events.length,
+      1,
+      `Expected one ${PoolEvent.Syndicated} event in ${receipt.hash}`
+    )
+    return BigInt(events[0].args.depotAmount)
   }
 
   /** Named runner — ONE `SyndicationPool.syndicate`, signed by the holder. */
@@ -1373,16 +1399,16 @@ export namespace EthereumSyndicationTool {
           ctx,
           input.walletName
         )
-      } = input
-    await send(
-      holder,
-      syndicateRequest(
-        loadSyndicationPool(ctx, holder),
-        input.amount,
-        compressedPubkey
-      ),
-      "EthereumSyndicationTool.planSyndicate"
-    )
+      } = input,
+      pool = loadSyndicationPool(ctx, holder),
+      receipt = await send(
+        holder,
+        syndicateRequest(pool, input.amount, compressedPubkey),
+        "EthereumSyndicationTool.planSyndicate"
+      )
+    if (input.creditedAmount != null) {
+      ctx.outputs.set(input.creditedAmount, readCreditedAmount(pool, receipt))
+    }
   }
 
   // ── Step: donate liqETH to the pool (an ERC-20 transfer) ─────────────────

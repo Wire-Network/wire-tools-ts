@@ -5,7 +5,9 @@ import { ethers } from "ethers"
 import { EthereumWallet } from "@wireio/cluster-tool/clients/ethereum"
 import {
   EthereumOutpostBootstrapper,
-  Steps
+  OutputStore,
+  Steps,
+  outputKey
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import {
@@ -140,7 +142,8 @@ describe("EthereumSyndicationTool", () => {
   ): Parameters<typeof EthereumSyndicationTool.readPaused>[0] {
     return {
       config: { ethereumPath, dataPath },
-      ethereum: { provider: runner }
+      ethereum: { provider: runner },
+      outputs: new OutputStore()
     } as unknown as Parameters<typeof EthereumSyndicationTool.readPaused>[0]
   }
 
@@ -1295,7 +1298,8 @@ describe("EthereumSyndicationTool", () => {
   describe("runSyndicate — the holder's own key", () => {
     const signal = new AbortController().signal,
       /** A 33-byte compressed key a flow might present instead of the holder's. */
-      PresentedKey = `0x02${"ab".repeat(32)}`
+      PresentedKey = `0x02${"ab".repeat(32)}`,
+      creditedAmount = outputKey<bigint>("syndicate.credit", "depot credit")
 
     /**
      * A signer double satisfying the nonce helper — an address, a provider
@@ -1384,6 +1388,64 @@ describe("EthereumSyndicationTool", () => {
           signal
         )
       ).rejects.toThrow(/planSyndicate: reverted \(status=0\)/)
+    })
+
+    it.each([1_999_999_999n, 2_000_000_000n])(
+      "records the receipt's actual credit of %s depot units",
+      async depotAmount => {
+        const ctx = context(),
+          { sendTransaction } = fakeSigner(),
+          amount = 2n * ethers.WeiPerEther,
+          holderKey = EthereumFundingTool.compressedPubkey(
+            ctx,
+            HolderWalletName
+          ),
+          event = poolInterface.encodeEventLog(
+            EthereumSyndicationTool.PoolEvent.Syndicated,
+            [HolderPair.address, holderKey, amount, depotAmount, 1n]
+          )
+        sendTransaction.mockResolvedValue({
+          wait: async () => ({
+            status: 1,
+            logs: [{ ...event, address: PoolAddress }]
+          })
+        })
+
+        await EthereumSyndicationTool.runSyndicate(
+          ctx,
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount,
+            creditedAmount
+          },
+          signal
+        )
+
+        expect(ctx.outputs.assert(creditedAmount)).toBe(depotAmount)
+      }
+    )
+
+    it("fails to record credit when the successful receipt lacks the pool event", async () => {
+      const ctx = context(),
+        { sendTransaction } = fakeSigner()
+      sendTransaction.mockResolvedValue({
+        wait: async () => ({ status: 1, logs: [] })
+      })
+
+      await expect(
+        EthereumSyndicationTool.runSyndicate(
+          ctx,
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount: 5n,
+            creditedAmount
+          },
+          signal
+        )
+      ).rejects.toThrow("Expected one Syndicated event")
+      expect(ctx.outputs.has(creditedAmount)).toBe(false)
     })
   })
 

@@ -159,7 +159,7 @@ export class BatchOperatorPrefundingScenario extends FlowScenario {
         "ethereum-requested",
         "the Ethereum envelope gets its request from the operators' crank, without a flow crank",
         UnderwritingSteps.UnderwriterRequestIssuedOptions,
-        plan.amount,
+        Constants.CreditedAmount,
         null,
         plan.firstEpoch,
         plan.firstRequest,
