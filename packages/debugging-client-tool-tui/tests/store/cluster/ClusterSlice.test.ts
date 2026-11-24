@@ -10,7 +10,8 @@ import {
   createUnsetEthereumReadConfirmationConfig,
   createUnsetQueryEngineConfig,
   type ClusterConfig,
-  type ClusterState
+  type ClusterState,
+  createUniformOutpostEpochDurations
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import {
@@ -37,6 +38,7 @@ const stubConfig: ClusterConfig = {
   underwriterCount: 0,
   apiCount: 0,
   epochDurationSec: 60,
+  outpostEpochDurationSec: createUniformOutpostEpochDurations(60),
   economicEpochDurationSec: 60,
   economicStartTime: null,
   solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
@@ -47,6 +49,7 @@ const stubConfig: ClusterConfig = {
   cooldownEpochs: 0,
   terminateMaxConsecutiveMisses: null,
   terminateMaxPercentMisses24h: null,
+  terminateMinimumPercentSamples: null,
   terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",

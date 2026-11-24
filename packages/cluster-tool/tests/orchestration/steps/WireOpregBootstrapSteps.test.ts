@@ -2,12 +2,16 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, SysioContracts } from "@wireio/sdk-core"
+import { KeyType, SlugName, SysioContracts } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   ClusterFiles,
+  mapOutpostChains,
+  OutpostChainCodename,
+  OutpostChainCodenames,
   WireOpregBootstrapSchemaCodec,
-  type ClusterConfig
+  type ClusterConfig,
+  type PerOutpostChain
 } from "@wireio/cluster-tool-shared"
 import {
   Steps,
@@ -25,15 +29,6 @@ import {
 import { fixtureOperatorRow } from "./contracts/sysio/opregOperatorRowFixture.js"
 
 const { SysioOpregOperatortype, SysioOpregOperatorstatus } = SysioContracts
-
-/** The depot's `epochstate` query result, typed from the client that returns it. */
-type EpochStateQueryResult = Awaited<
-  ReturnType<ClusterBuildContext["wire"]["getEpochState"]>
->
-/** The depot's `epochcfg` query result, typed from the client that returns it. */
-type EpochConfigQueryResult = Awaited<
-  ReturnType<ClusterBuildContext["wire"]["getEpochConfig"]>
->
 
 /** Bootstrap batch operators: dot-free labels (they seed the K1 placeholder) + 12-char accounts. */
 const BatchOperators = [
@@ -61,24 +56,38 @@ function batchOperator(index: number): OperatorAccount {
   return fixtureOperatorAccount(label, OperatorType.BATCH, account)
 }
 
-/** The `epochstate` row right after `schbatchgps`. */
-function epochStateRow(): SysioContracts.SysioEpochEpochStateType {
+/** The window the Solana chain's `schbatchgps` builds in the fixture: Ethereum's, reversed, so a mix-up shows. */
+const SolanaWindow = [...Window].reverse()
+
+/** Each chain's window in the fixture. */
+const ChainWindows = {
+  [OutpostChainCodename.ETHEREUM]: Window,
+  [OutpostChainCodename.SOLANA]: SolanaWindow
+}
+
+/** One chain's `epochstate` row right after its `schbatchgps`. */
+function epochStateRow(
+  chain: OutpostChainCodename,
+  groups: string[][] = ChainWindows[chain]
+): SysioContracts.SysioEpochEpochStateType {
   return {
+    chain_code: SlugName.from(chain),
     current_epoch_index: 0,
     current_epoch_start: "2026-10-16T00:00:00.000",
     next_epoch_start: "2026-10-16T00:01:00.000",
     current_batch_op_group: 0,
-    batch_op_groups: Window,
-    last_consensus_hash: "",
+    batch_op_groups: groups,
     is_paused: false
   }
 }
 
-/** The `epochcfg` row carrying the cluster's epoch duration. */
+/** One chain's `epochcfg` row carrying its epoch duration. */
 function epochConfigRow(
+  chain: OutpostChainCodename,
   epochDurationSec: number
 ): SysioContracts.SysioEpochEpochConfigType {
   return {
+    chain_code: SlugName.from(chain),
     epoch_duration_sec: epochDurationSec,
     operators_per_epoch: 1,
     batch_operator_minimum_active: BatchOperators.length,
@@ -87,18 +96,30 @@ function epochConfigRow(
   }
 }
 
-/** Serve the epoch reads from stubbed rows (an absent row = an empty table). */
+/** Every chain's rows at the cluster's per-chain durations. */
+function chainRows(ctx: ClusterBuildContext) {
+  return mapOutpostChains(chain => ({
+    epochState: epochStateRow(chain),
+    epochConfig: epochConfigRow(chain, ctx.config.outpostEpochDurationSec[chain])
+  }))
+}
+
+/**
+ * Serve each chain's epoch reads from stubbed rows; a chain mapped to `undefined` has no row.
+ * The emit and verify read every chain's rows through the `sysio.epoch` palette's per-chain
+ * table reads, so those are the stubs.
+ */
 function serveEpoch(
   ctx: ClusterBuildContext,
-  epochState: SysioContracts.SysioEpochEpochStateType,
-  epochConfig: SysioContracts.SysioEpochEpochConfigType
+  epochStates: PerOutpostChain<SysioContracts.SysioEpochEpochStateType> = mapOutpostChains(
+    chain => epochStateRow(chain)
+  ),
+  epochConfigs: PerOutpostChain<SysioContracts.SysioEpochEpochConfigType> = mapOutpostChains(
+    chain => epochConfigRow(chain, ctx.config.outpostEpochDurationSec[chain])
+  )
 ): void {
-  jest
-    .spyOn(ctx.wire, "getEpochState")
-    .mockResolvedValue({ rows: epochState == null ? [] : [epochState] } as EpochStateQueryResult)
-  jest
-    .spyOn(ctx.wire, "getEpochConfig")
-    .mockResolvedValue({ rows: epochConfig == null ? [] : [epochConfig] } as EpochConfigQueryResult)
+  jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue(epochStates)
+  jest.spyOn(Steps.contracts.sysio.epoch, "readEpochConfigs").mockResolvedValue(epochConfigs)
 }
 
 /** Serve `rows` from the context's `sysio.opreg::operators` table. */
@@ -240,8 +261,7 @@ describe("Steps.wireOpregBootstrap", () => {
       const ctx = seededContext(),
         bootstrap = Steps.wireOpregBootstrap.resolveWireOpregBootstrap(
           ctx.keyStore.operators,
-          epochStateRow(),
-          epochConfigRow(ctx.config.epochDurationSec),
+          chainRows(ctx),
           ctx.config.awsClusterNodeConfig
         )
       expect(bootstrap.operators.map(operator => operator.accountName)).not.toContain("sysio")
@@ -252,8 +272,7 @@ describe("Steps.wireOpregBootstrap", () => {
       const ctx = seededContext(),
         { operators } = Steps.wireOpregBootstrap.resolveWireOpregBootstrap(
           [...ctx.keyStore.operators].reverse(),
-          epochStateRow(),
-          epochConfigRow(ctx.config.epochDurationSec),
+          chainRows(ctx),
           ctx.config.awsClusterNodeConfig
         ),
         producers = operators.filter(operator => operator.type === OperatorType.PRODUCER),
@@ -267,25 +286,40 @@ describe("Steps.wireOpregBootstrap", () => {
       )
     })
 
-    it("takes the schedule from epochstate and the epoch duration from epochcfg", () => {
+    it("takes each chain's schedule from its epochstate and its epoch duration from its epochcfg", () => {
       const ctx = seededContext(),
-        epochState = { ...epochStateRow(), current_batch_op_group: 2 },
+        rows = {
+          [OutpostChainCodename.ETHEREUM]: {
+            epochState: { ...epochStateRow(OutpostChainCodename.ETHEREUM), current_batch_op_group: 2 },
+            epochConfig: epochConfigRow(OutpostChainCodename.ETHEREUM, 90)
+          },
+          [OutpostChainCodename.SOLANA]: {
+            epochState: epochStateRow(OutpostChainCodename.SOLANA),
+            epochConfig: epochConfigRow(OutpostChainCodename.SOLANA, 150)
+          }
+        },
         bootstrap = Steps.wireOpregBootstrap.resolveWireOpregBootstrap(
           ctx.keyStore.operators,
-          epochState,
-          epochConfigRow(90),
+          rows,
           ctx.config.awsClusterNodeConfig
         )
-      expect(bootstrap.epochDurationSec).toBe(90)
-      expect(bootstrap.batchOperatorGroups).toEqual({ activeGroupIndex: 2, groups: Window })
+      expect(bootstrap.chains).toEqual({
+        [OutpostChainCodename.ETHEREUM]: {
+          epochDurationSec: 90,
+          batchOperatorGroups: { activeGroupIndex: 2, groups: Window }
+        },
+        [OutpostChainCodename.SOLANA]: {
+          epochDurationSec: 150,
+          batchOperatorGroups: { activeGroupIndex: 0, groups: SolanaWindow }
+        }
+      })
     })
 
     it("takes the AWS account from the cluster's placement and leaves the label null", () => {
       const ctx = seededContext(TestPlacement),
         bootstrap = Steps.wireOpregBootstrap.resolveWireOpregBootstrap(
           ctx.keyStore.operators,
-          epochStateRow(),
-          epochConfigRow(ctx.config.epochDurationSec),
+          chainRows(ctx),
           ctx.config.awsClusterNodeConfig
         )
       expect(bootstrap.awsAccount).toBe(AWSAccountName.test)
@@ -296,8 +330,7 @@ describe("Steps.wireOpregBootstrap", () => {
       const ctx = seededContext(),
         bootstrap = Steps.wireOpregBootstrap.resolveWireOpregBootstrap(
           ctx.keyStore.operators,
-          epochStateRow(),
-          epochConfigRow(ctx.config.epochDurationSec),
+          chainRows(ctx),
           ctx.config.awsClusterNodeConfig
         )
       expect(bootstrap.awsAccount).toBeNull()
@@ -307,14 +340,18 @@ describe("Steps.wireOpregBootstrap", () => {
   describe("runEmit", () => {
     it("writes a codec-valid wire-opreg-bootstrap.json into the cluster directory", async () => {
       const ctx = seededContext()
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec))
+      serveEpoch(ctx)
 
       await Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
 
       const file = Steps.wireOpregBootstrap.filePath(dir),
         bootstrap = WireOpregBootstrapSchemaCodec.deserialize(Fs.readFileSync(file))
-      expect(bootstrap.epochDurationSec).toBe(ctx.config.epochDurationSec)
-      expect(bootstrap.batchOperatorGroups).toEqual({ activeGroupIndex: 0, groups: Window })
+      OutpostChainCodenames.forEach(chain =>
+        expect(bootstrap.chains[chain]).toEqual({
+          epochDurationSec: ctx.config.outpostEpochDurationSec[chain],
+          batchOperatorGroups: { activeGroupIndex: 0, groups: ChainWindows[chain] }
+        })
+      )
       expect(bootstrap.operators.filter(operator => operator.type === OperatorType.BATCH)).toHaveLength(
         BatchOperators.length
       )
@@ -323,7 +360,7 @@ describe("Steps.wireOpregBootstrap", () => {
 
     it("writes the label and AWS account keys as explicit nulls when there is no placement", async () => {
       const ctx = seededContext()
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec))
+      serveEpoch(ctx)
 
       await Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
 
@@ -334,7 +371,7 @@ describe("Steps.wireOpregBootstrap", () => {
 
     it("writes the AWS account of the cluster's placement", async () => {
       const ctx = seededContext(TestPlacement)
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec))
+      serveEpoch(ctx)
 
       await Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
 
@@ -348,7 +385,7 @@ describe("Steps.wireOpregBootstrap", () => {
     it("records the written document as the step's Report artifact", async () => {
       const ctx = seededContext(),
         recorder = new StepExtraRecorder()
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec))
+      serveEpoch(ctx)
 
       await StepExtraRecorder.runWith(recorder, () =>
         Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
@@ -363,20 +400,34 @@ describe("Steps.wireOpregBootstrap", () => {
       })
     })
 
-    it("throws when the depot has no batch-operator schedule yet", async () => {
+    it("throws when a chain has no batch-operator schedule yet", async () => {
       const ctx = seededContext()
-      serveEpoch(ctx, { ...epochStateRow(), batch_op_groups: [] }, epochConfigRow(60))
+      serveEpoch(ctx, {
+        [OutpostChainCodename.ETHEREUM]: epochStateRow(OutpostChainCodename.ETHEREUM),
+        [OutpostChainCodename.SOLANA]: epochStateRow(OutpostChainCodename.SOLANA, [])
+      })
       await expect(Steps.wireOpregBootstrap.runEmit(ctx, null, signal)).rejects.toThrow(
-        /schbatchgps must precede it/
+        new RegExp(`no ${OutpostChainCodename.SOLANA} batch-operator schedule yet — its schbatchgps must precede it`)
       )
     })
 
-    it("throws when sysio.epoch::epochcfg has no row", async () => {
+    it("throws when a chain has no sysio.epoch::epochcfg row", async () => {
       const ctx = seededContext()
-      serveEpoch(ctx, epochStateRow(), null)
+      serveEpoch(ctx, undefined, {
+        [OutpostChainCodename.ETHEREUM]: undefined,
+        [OutpostChainCodename.SOLANA]: epochConfigRow(OutpostChainCodename.SOLANA, 60)
+      })
       await expect(Steps.wireOpregBootstrap.runEmit(ctx, null, signal)).rejects.toThrow(
-        /epochcfg has no row/
+        new RegExp(`epochcfg has no ${OutpostChainCodename.ETHEREUM} row`)
       )
+    })
+
+    it("readChainEpochRows reads each per-chain table once for every chain", async () => {
+      const ctx = seededContext()
+      serveEpoch(ctx)
+      await expect(Steps.wireOpregBootstrap.readChainEpochRows(ctx)).resolves.toEqual(chainRows(ctx))
+      expect(Steps.contracts.sysio.epoch.readEpochStates).toHaveBeenCalledTimes(1)
+      expect(Steps.contracts.sysio.epoch.readEpochConfigs).toHaveBeenCalledTimes(1)
     })
 
     it("short-circuits on an already-aborted signal — no file is written", async () => {
@@ -400,7 +451,7 @@ describe("Steps.wireOpregBootstrap", () => {
       awsClusterNodeConfig: ClusterConfig["awsClusterNodeConfig"] = null
     ): Promise<ClusterBuildContext> {
       const ctx = seededContext(awsClusterNodeConfig)
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec))
+      serveEpoch(ctx)
       await Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
       serveOperators(ctx, rows(ctx))
       return ctx
@@ -476,13 +527,36 @@ describe("Steps.wireOpregBootstrap", () => {
       await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).resolves.toBeUndefined()
     })
 
-    it("fails when the file's epoch duration is not the cluster's", async () => {
+    it("fails when a chain's epoch duration in the file is not the cluster's", async () => {
       const ctx = seededContext()
-      serveEpoch(ctx, epochStateRow(), epochConfigRow(ctx.config.epochDurationSec + 1))
+      serveEpoch(ctx, undefined, {
+        [OutpostChainCodename.ETHEREUM]: epochConfigRow(
+          OutpostChainCodename.ETHEREUM,
+          ctx.config.outpostEpochDurationSec[OutpostChainCodename.ETHEREUM]
+        ),
+        [OutpostChainCodename.SOLANA]: epochConfigRow(
+          OutpostChainCodename.SOLANA,
+          ctx.config.outpostEpochDurationSec[OutpostChainCodename.SOLANA] + 1
+        )
+      })
       await Steps.wireOpregBootstrap.runEmit(ctx, null, signal)
       serveOperators(ctx, depotRows(ctx))
       await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).rejects.toThrow(
-        /epoch duration is not the cluster's/
+        new RegExp(`file's ${OutpostChainCodename.SOLANA} epoch duration is not the cluster's`)
+      )
+    })
+
+    it("fails when a chain's epoch duration in the file is not its epochcfg duration", async () => {
+      const ctx = await emitted(depotRows)
+      serveEpoch(ctx, undefined, {
+        [OutpostChainCodename.ETHEREUM]: epochConfigRow(OutpostChainCodename.ETHEREUM, 999),
+        [OutpostChainCodename.SOLANA]: epochConfigRow(
+          OutpostChainCodename.SOLANA,
+          ctx.config.outpostEpochDurationSec[OutpostChainCodename.SOLANA]
+        )
+      })
+      await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).rejects.toThrow(
+        new RegExp(`file's ${OutpostChainCodename.ETHEREUM} epoch duration is not its epochcfg duration`)
       )
     })
 
@@ -515,13 +589,14 @@ describe("Steps.wireOpregBootstrap", () => {
       await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).resolves.toBeUndefined()
     })
 
-    it("fails when the file's schedule is not the depot's epochstate window", async () => {
+    it("fails when a chain's schedule in the file is not its epochstate window", async () => {
       const ctx = await emitted(depotRows)
-      jest.spyOn(ctx.wire, "getEpochState").mockResolvedValue({
-        rows: [{ ...epochStateRow(), batch_op_groups: [...Window].reverse() }]
-      } as EpochStateQueryResult)
+      serveEpoch(ctx, {
+        [OutpostChainCodename.ETHEREUM]: epochStateRow(OutpostChainCodename.ETHEREUM, SolanaWindow),
+        [OutpostChainCodename.SOLANA]: epochStateRow(OutpostChainCodename.SOLANA)
+      })
       await expect(Steps.wireOpregBootstrap.runVerify(ctx, signal)).rejects.toThrow(
-        /schedule is not the depot's epochstate window/
+        new RegExp(`${OutpostChainCodename.ETHEREUM} batch-operator schedule is not its epochstate window`)
       )
     })
 

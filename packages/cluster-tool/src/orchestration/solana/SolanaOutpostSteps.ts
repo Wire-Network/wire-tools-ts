@@ -5,6 +5,7 @@ import { PublicKey } from "@solana/web3.js"
 import { Name } from "@wireio/sdk-core"
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 
+import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
 import { WireState } from "../../tools/solana/SolanaAnchorEnumTool.js"
@@ -157,7 +158,7 @@ export namespace SolanaOutpostSteps {
    * until this runs, so it is sequenced AFTER the depot's `schbatchgps` has
    * materialized the epoch-1 batch-operator group and BEFORE the depot delivers
    * its first envelope. Input-less — the roster + group are resolved from
-   * `ctx.keyStore` and the depot's `sysio.epoch::epochstate`.
+   * `ctx.keyStore` and the Solana chain's `sysio.epoch::epochstate` row.
    */
   export function planOppBootstrap<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -177,7 +178,10 @@ export namespace SolanaOutpostSteps {
     )
   }
 
-  /** Named runner — `SolanaOutpostBootstrapper.oppBootstrap`. */
+  /**
+   * Named runner — `SolanaOutpostBootstrapper.oppBootstrap` over the Solana chain's active group
+   * and its `epochcfg` epoch duration.
+   */
   export async function runOppBootstrap<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -187,15 +191,18 @@ export namespace SolanaOutpostSteps {
 
     const batchOperators = ctx.keyStore.operatorsByType(OperatorType.BATCH)
 
-    // The SEED GROUP tracks the depot's epoch-1 batch-operator group (its size
-    // drives the outpost's consensus threshold): the depot materializes the
-    // schedule into `epochstate.batch_op_groups`, active at index
+    // The SEED GROUP tracks the depot's Solana epoch-1 batch-operator group (its
+    // size drives the outpost's consensus threshold): the depot materializes the
+    // chain's schedule into its `epochstate.batch_op_groups`, active at index
     // `current_batch_op_group`. `resolveOppBootstrapSeed` trims it to
     // `MaxOppBootstrapOperators` so the seed always fits one transaction.
-    const groupAccounts = await EpochContractSteps.activeBatchOperatorGroup(ctx)
+    const groupAccounts = await EpochContractSteps.activeBatchOperatorGroup(
+      ctx,
+      Constants.SOLANA_CHAIN_CODENAME
+    )
     Assert.ok(
       groupAccounts != null && groupAccounts.length > 0,
-      "runOppBootstrap: epoch-1 batch-operator group is empty"
+      `runOppBootstrap: the ${Constants.SOLANA_CHAIN_CODENAME} epoch-1 batch-operator group is empty`
     )
 
     await new SolanaOutpostBootstrapper({
@@ -204,7 +211,9 @@ export namespace SolanaOutpostSteps {
       clusterDataPath: ctx.config.dataPath
     }).oppBootstrap(
       resolveOppBootstrapSeed(batchOperators, groupAccounts),
-      ctx.config.epochDurationSec
+      // The chain's epochcfg row already exists (its setconfig precedes the schedule): the
+      // depot's duration, not the config's seed of it, is what the outpost must carry.
+      await EpochContractSteps.readEpochDurationSec(ctx, Constants.SOLANA_CHAIN_CODENAME)
     )
   }
 

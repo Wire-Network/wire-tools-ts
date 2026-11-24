@@ -91,7 +91,7 @@ describe("EthereumOutpostBootstrapper cluster RPC routing", () => {
           panicAccount,
           initialRoster: {
             groups: [[operator]],
-            epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+            epochDurationSec: ClusterConfigProvider.DefaultEthereumEpochDurationSec
           }
         }).bootstrap()
         expect(execFile).toHaveBeenCalledTimes(1)

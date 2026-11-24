@@ -36,10 +36,10 @@ Asserts:
    with no parked credit. Reported yield also reaches full release. This flow
    enables no mock import, bonder or pool; native tests compare its governance
    shortcut with actual provider settlement.
-4. **The depot keeps advancing.**
-   `sysio.epoch::epochstate.current_epoch_index` advances past the value
+4. **The depot keeps advancing.** Every outpost chain's
+   `sysio.epoch::epochstate.current_epoch_index` advances past its value
    snapshotted before the syndication — a depot that choked on either
-   attestation would stall the epoch instead.
+   attestation would stall that chain's epoch instead.
 
 5. **Solvency stays healthy.** The final verify Step requires a clear emergency
    cord and an empty `sysio.synd::mismatch` table.

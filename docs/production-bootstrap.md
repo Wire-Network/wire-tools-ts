@@ -184,8 +184,9 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 | `batchOperatorCount` | `3` **(cluster)** | labels and chain accounts `batchop.a/b/c` |
 | `underwriterCount` | `0` | swap-underwriter daemons have been removed; any nonzero value is rejected |
 | `apiCount` | `0` **(cluster)** | non-producing API nodes serving the chain API + `/v1/query/execute` |
-| `epochDurationSec` | `300` | the depot's minimum epoch duration; a flow pins a shorter one |
-| `economicEpochDurationSec` | `epochDurationSec` | the economic clock's epoch duration (`sysio.epoch::seteconomy`) |
+| `epochDurationSec` | unset (`null`) | one minimum consensus epoch duration for every outpost chain without its own `outpostEpochDurationSec`, and the economic default; unset, each chain takes its own default. Every flow pins it |
+| `outpostEpochDurationSec` | `ETHEREUM` `60`, `SOLANA` `30` | each outpost chain's own minimum consensus epoch duration, the `epoch_duration_sec` of its `sysio.epoch::setconfig`; a chain left unset takes `epochDurationSec`, else its default (`ClusterConfigProvider.DefaultOutpostEpochDurationSec`) **(production: Ethereum 60 s, Solana 30 s)** |
+| `economicEpochDurationSec` | `300` | the economic clock's epoch duration (`sysio.epoch::seteconomy`); `epochDurationSec` (at least the contract's 60 s floor) when that is set. No per-chain consensus default reaches it |
 | `economicStartTime` | chain head | start of economic epoch 1 (`sysio.epoch::seteconomy`) |
 | `EnvelopeLogRetentionEpochs` | `10` | `sysio.epoch::setconfig.epoch_retention_envelope_log_count` |
 
@@ -317,15 +318,20 @@ uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so t
 before the operator `createlink` calls in Stage 12.
 
 ## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, snapshot attestation, dclaim)
-20. `sysio.epoch::setconfig({epoch_duration_sec:300, operators_per_epoch:1,
+20. `sysio.epoch::setconfig({chain_code, epoch_duration_sec, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
-    `[sysio.epoch@active]`. Sizing is computed from the operator counts:
+    `[sysio.epoch@active]` — once per outpost chain (`ETHEREUM`, then `SOLANA`): each chain runs its own
+    consensus epoch, with its own `epochcfg` / `epochstate` row. Sizing is computed from the operator counts
+    and is the same on every chain, since every bootstrapped batch operator serves every chain:
     `batch_op_groups = min(3, batchOperatorCount)`, `operators_per_epoch = ceil(batchOperatorCount /
     batch_op_groups)`, `batch_operator_minimum_active = operators_per_epoch * batch_op_groups` (cluster
-    `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` is `epochDurationSec` (default 300).
+    `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` is the chain's `outpostEpochDurationSec`
+    (default `60` for `ETHEREUM` and `30` for `SOLANA`, or `epochDurationSec` when that is set; the contract's
+    floor is 10) **(production: Ethereum 60 s, Solana 30 s)**.
     Then `sysio.epoch::seteconomy({epoch_duration_sec, start_time})` — `[sysio.epoch@active]` — configures the
     economic clock emissions, collateral withdrawals and producer pay run on. `epoch_duration_sec` is
-    `economicEpochDurationSec` (default: `epochDurationSec`); `start_time` is `economicStartTime`, or the chain's
+    `economicEpochDurationSec` (default `300`, or `epochDurationSec` raised to the contract's 60 s floor when that
+    is set); `start_time` is `economicStartTime`, or the chain's
     `head_block_time` when unset **(production: the approved economic start, which may lie in the past)**. A past
     start is caught up one economic epoch per `tickeconomy` crank once Stage 12's genesis advance has run.
 
@@ -336,6 +342,7 @@ before the operator `createlink` calls in Stage 12.
 | `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
 | `terminate_max_consecutive_misses` | `5` | |
 | `terminate_max_pct_misses_24h` | `5` | |
+| `terminate_min_pct_samples` | `20` | duty epochs a chain membership holds before the percent rail applies; the consecutive rail applies from the first |
 | `terminate_window_ms` | `86400000` | 24 h |
 | `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
 | `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
@@ -577,8 +584,8 @@ contract/mint addresses via the same shapes.
 | Field | Value | Notes |
 |---|---|---|
 | `synd_fee_bps` / `desynd_fee_bps` | `0` / `5` | Syndication is always free. Desyndication takes floor(quantity × 5 / 10000) + desynd_fee_flat to recover external-chain gas for BOTH round-trip legs. A lone Ethereum round trip measured ≈507k gas; Solana measured 9k–104k lamports. Break-even sizing assumes a syndication of min_desyndicate. |
-| `synd_burst` / `synd_refill` | `1000000000000000` / `ceil(1000000000000000 / epochDurationSec)` | one million tokens at 9 decimals per bucket. `sysio.synd` adds the refill once per elapsed second, capped at the burst; the tooling derives it from the cluster's own consensus `epochDurationSec`, so one consensus epoch restores a full burst: `3333333333334` per second (≈3,333 tokens) at the default 300 s, `16666666666667` per second (≈16,667 tokens) at 60 s **(cluster)** |
-| `desynd_burst` / `desynd_refill` | `1000000000000000` / `ceil(1000000000000000 / epochDurationSec)` | likewise — the refill per second |
+| `synd_burst` / `synd_refill` | `1000000000000000` / `ceil(1000000000000000 / <chain's epoch duration>)` | one million tokens at 9 decimals per bucket. `sysio.synd` adds the refill once per elapsed second, capped at the burst; the tooling derives each pair's refill from the consensus epoch duration of the pair's chain (`outpostEpochDurationSec`), so one epoch of that chain restores a full burst: `16666666666667` per second (≈16,667 tokens) at the Ethereum default of 60 s, `33333333333334` per second (≈33,333 tokens) at the Solana default of 30 s **(cluster)** |
+| `desynd_burst` / `desynd_refill` | `1000000000000000` / `ceil(1000000000000000 / <chain's epoch duration>)` | likewise — the refill per second |
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |
@@ -688,20 +695,31 @@ capital requirements, deployed-node recovery, and verification.
       `keyPairUtils.solanaSigner`.
 40. `sysio.opreg::regoperator({account:<operator>, type, is_bootstrapped})` — `[sysio.opreg@active]`:
     - batch operators: `type:OPERATOR_TYPE_BATCH`, `is_bootstrapped:true` (skip collateral; immediately
-      AVAILABLE).
+      AVAILABLE). A batch operator's registration serves no chain yet.
+    Then, per batch operator, `sysio.opreg::joinchain({account:<operator>, chain_code})` —
+    `[<operator>@active]` — once per outpost chain (`ETHEREUM`, then `SOLANA`): the membership row in
+    `sysio.opreg::servchains` becomes `SERVING`, so that chain's schedule can seat the operator. It needs the
+    operator's `sysio.authex` link for the chain's kind (step 39). A chain's schedule seats only ACTIVE batch
+    operators SERVING it, and the batch operator plugin relays only the chains the operator serves.
 
 The OPP debugging server + daemon deploy artifacts (ETH ABIs with embedded addresses, SOL program id + IDL)
 are prepared just before the provisioning above; the operator nodeop daemons start here — chain-side
 infrastructure, before the first epoch.
 
-41. `sysio.epoch::schbatchgps({})` — `[sysio.epoch@active]` — initialize batch-operator groups from the
-    AVAILABLE (bootstrapped) batch ops. The tooling then writes `<cluster-path>/wire-opreg-bootstrap.json`
-    (not a depot action): the cluster's label and AWS account, the bootstrapped operator roster with public
-    keys, this schedule and the epoch duration — see [`outpost/README.md`](outpost/README.md). Local outposts are then seeded with that schedule before the first
-    envelope (chain-side, not depot actions): Ethereum `OPPInbound.installInitialRoster` replaces the
-    provisional roster, and Solana `opp_bootstrap` seeds the outpost's operator registry. External outposts
-    are seeded by their own operators.
-42. `sysio.msgch::bootstrap({})` — `[sysio.msgch@active]` — bootstrap the first epoch (index 0 → 1).
+41. `sysio.epoch::schbatchgps({chain_code})` — `[sysio.epoch@active]` — once per outpost chain: initialize
+    the chain's batch-operator groups from the ACTIVE batch operators SERVING it (the bootstrapped ones, all
+    joined in step 40). The tooling then writes `<cluster-path>/wire-opreg-bootstrap.json` (not a depot
+    action): the cluster's label and AWS account, the bootstrapped operator roster with public keys, and
+    each chain's schedule and epoch duration — see [`outpost/README.md`](outpost/README.md). Local outposts
+    are then seeded with their own chain's schedule before the first envelope (chain-side, not depot
+    actions): Ethereum `OPPInbound.installInitialRoster` replaces the provisional roster with the `ETHEREUM`
+    window, and Solana `opp_bootstrap` seeds the outpost's operator registry from the `SOLANA` window.
+    External outposts are seeded by their own operators.
+42. `sysio.msgch::bootstrap({})` — `[sysio.msgch@active]` — the network genesis: every active outpost
+    chain's genesis advance (its epoch 0 → 1), each chain starting its own consensus epoch 1. It runs after
+    every chain's `schbatchgps`, which a chain's genesis advance requires. An outpost activated after the
+    network genesis starts its epoch 1 with `sysio.msgch::bootchain({chain_code})` — `[sysio.msgch@active]` —
+    instead, once its own `setconfig` and `schbatchgps` have run.
 
 ---
 
@@ -782,7 +800,7 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   (`ClusterBuildDefaults.compose`). Process bring-up interleaves around them: kiod, the wallet + generated
   node keys, and the bios + producer nodeop processes precede Stage 1; the ETH/SOL outpost deploys (Stage 11
   lead-in) run after the emergency-stop arming (Stage 10); the OPP debugging server + daemon artifacts are prepared just
-  before Stage 12's provisioning; and the operator nodeop daemons start between `regoperator` and
+  before Stage 12's provisioning; and the operator nodeop daemons start between `joinchain` and
   `schbatchgps`. The hard dependencies are
   unchanged: ROA active before any `setsyscode`; `seteconomy` and `setemitcfg` before `initt5` before `bootstrap`; the outpost
   deploy artifacts before the registry rows that embed their addresses.

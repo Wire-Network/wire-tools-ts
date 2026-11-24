@@ -3,6 +3,7 @@ import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildContext,
+  ClusterBuildDefaults,
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   FlowScenario,
@@ -49,39 +50,56 @@ async function verifyElectorateRegistered(
   )
 }
 
-/** `chalg::opendispute` inline-called `epoch::pause` — the epoch is paused. */
+/**
+ * `chalg::opendispute` inline-called `epoch::pause(chain)` — the contested chain's epoch is
+ * paused, and the other outpost chain's is not: a dispute pauses only its own chain.
+ */
 async function verifyEpochPaused(ctx: ClusterBuildContext): Promise<void> {
   Assert.ok(
     await DisputeSteps.epochPaused(ctx),
-    "chalg::opendispute must inline-pause the epoch"
+    `chalg::opendispute must inline-pause the ${Constants.ContestedChain} epoch`
+  )
+  Assert.ok(
+    !(await DisputeSteps.epochPaused(ctx, Constants.RunningChain)),
+    `the ${Constants.ContestedChain} dispute must not pause the ${Constants.RunningChain} epoch`
   )
 }
 
-/** `resolvedisp` dispatched the winner; `chkdispute` unpauses the epoch. */
+/** `resolvedisp` dispatched the winner; `chkdispute` unpauses the contested chain's epoch. */
 async function verifyEpochUnpauses(ctx: ClusterBuildContext): Promise<void> {
   await pollUntil(
-    "epoch unpauses after resolution",
+    `the ${Constants.ContestedChain} epoch unpauses after resolution`,
     async () => (await DisputeSteps.epochPaused(ctx)) === false,
     Constants.unpauseDeadlineMs(),
     Constants.LongPollIntervalMs
   )
 }
 
-/** The 3 dispute operators are exactly the active batch-operator group. */
-async function verifySoleActiveGroup(ctx: ClusterBuildContext): Promise<void> {
-  await pollUntil(
-    "the 3 dispute operators are exactly the active batch-op group",
-    () => DisputeSteps.disputeOperatorsOwnGroup(ctx),
-    Constants.groupDeadlineMs(),
-    Constants.LongPollIntervalMs
-  )
-}
-
-/** The epoch settles (frozen) on the dispute-operators-owned post-swap epoch. */
+/** The contested chain's epoch settles (frozen) on the epoch the dispute operators own. */
 async function verifySettledDisputeEpoch(
   ctx: ClusterBuildContext
 ): Promise<void> {
   await DisputeSteps.settleOnDisputeEpoch(ctx)
+}
+
+/**
+ * No delivery is recorded for the contested (outpost, epoch) yet, so the divergent
+ * deliveries are the only candidates `sysio.msgch::evalcons` tallies for it.
+ */
+async function verifyContestedBucketEmpty(
+  ctx: ClusterBuildContext
+): Promise<void> {
+  const epoch = ctx.outputs.assert(DisputeSteps.ContestedEpochKey),
+    bucket = DisputeSteps.outpostEpochEnvelopes(
+      await DisputeSteps.readEnvelopes(ctx),
+      Constants.ContestedChain,
+      epoch
+    )
+  Assert.strictEqual(
+    bucket.length,
+    0,
+    `the ${Constants.ContestedChain} epoch ${epoch} already holds deliveries from ${JSON.stringify(bucket.map(row => row.batch_op_name))}`
+  )
 }
 
 /** The canonical deliverer must NOT be slashed (may be ACTIVE/UNKNOWN, never SLASHED). */
@@ -112,25 +130,28 @@ async function verifyCanonicalNotSlashed(
  * cluster):
  *
  * 1. Three batch operators deliver THREE DISTINCT envelope versions for one
- *    (outpost, epoch) with no majority, past the epoch boundary.
+ *    (outpost, epoch) with no majority, past the chain's epoch boundary.
  *    `sysio.msgch::evalcons` detects the 3-way split and inline-calls
- *    `sysio.chalg::opendispute`, which pauses the epoch.
+ *    `sysio.chalg::opendispute`, which pauses that chain's epoch only.
  *    While the dispute is open the economic clock keeps opening epochs — before
- *    and after every batch-operator relay is stopped and restarted — and
- *    consensus stays paused at the contested epoch.
+ *    and after every batch-operator relay is stopped and restarted — and the
+ *    contested chain's consensus stays paused at the contested epoch.
  * 2. Tier-1 node owners vote (`sysio.chalg::votedispute`) for the canonical
  *    checksum.
  * 3. A permissionless crank (`sysio.chalg::chkdispute`) tallies the votes;
  *    once a checksum reaches floor(N/2)+1 of the live Tier-1 count it wins.
  *    chkdispute records the winner, dispatches the winning envelope via
- *    `sysio.msgch::resolvedisp`, and unpauses the epoch.
- * 4. On the next `advance`, every operator that delivered a NON-canonical
+ *    `sysio.msgch::resolvedisp`, and unpauses the chain's epoch.
+ * 4. On the chain's next `advance`, every operator that delivered a NON-canonical
  *    checksum is slashed (`sysio.opreg::slash`, bond → LP, status SLASHED).
  *    The operator that delivered the canonical checksum is NOT slashed.
  *
- * To force a 3-way split, the three dispute operators are provisioned SBP-less
- * and made the sole active batch-op group, so their step-pushed deliveries are
- * the only ones the depot sees for the contested (outpost, epoch). Each
+ * To force a 3-way split, the three dispute operators are provisioned SBP-less,
+ * serving the contested chain only, and flipped ACTIVE; the chain's next natural
+ * advance seats them as its sole active batch-op group, so their step-pushed
+ * deliveries are the only ones the depot sees for the contested (outpost, epoch).
+ * The other chain's schedule keeps the bootstrapped operators, whose relays keep
+ * it advancing throughout. Each
  * divergent delivery carries a distinct, epoch-matching OPP Envelope built with
  * the `@wireio/opp-typescript-models` Envelope encoder, so the depot's
  * trustless `sha256(data)` yields three distinct candidate checksums and
@@ -147,10 +168,10 @@ export class SlashingScenario extends FlowScenario {
     // Enough bootstrapped batch ops to keep the rest of the network healthy
     // while the dispute operators drive the contested outpost.
     batchOperatorCount: Constants.BootstrapBatchOperatorCount,
-    // The dispute operators are the SOLE active group from the jump: bootstrap
-    // materializes ONE group of exactly DisputeOperators.length. Setting the
-    // group SIZE + COUNT here (never via a mid-run setconfig) is what makes the
-    // batch-op group shape correct from bootstrap — no mid-run reconfig.
+    // ONE group of exactly DisputeOperators.length per chain, set at bootstrap
+    // and never changed mid-run. With a one-group window every advance re-draws
+    // the whole group from the chain's pool, so the contested chain's advance
+    // after the dispute operators turn ACTIVE seats exactly them.
     operatorsPerEpoch: Constants.DisputeOperators.length,
     batchOpGroups: Constants.DisputeBatchOperatorGroupCount,
     // The dispute references the contested epoch's envelope log ~16 epochs later
@@ -158,11 +179,17 @@ export class SlashingScenario extends FlowScenario {
     epochRetentionEnvelopeLogCount: Constants.EpochRetentionEnvelopeLogCount,
     // Loosest VALID termination thresholds — see the constants' JSDoc.
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
-    terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h
+    terminateMaxPercentMisses24h: ClusterBuildDefaults.MaxTerminateMaxPercentMisses24h,
+    terminateMinimumPercentSamples: ClusterBuildDefaults.MaxTerminateMinimumPercentSamples
   }
 
   plan(cluster: ClusterBuild): void {
-    const activeStepOptions = {
+    const headroomStepOptions = {
+        timeoutMs:
+          Constants.activationHeadroomDeadlineMs() +
+          Constants.PollDeadlineBufferMs
+      },
+      activeStepOptions = {
         timeoutMs: Constants.activeDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       groupStepOptions = {
@@ -195,7 +222,7 @@ export class SlashingScenario extends FlowScenario {
     const setup = ClusterBuildPhaseGroup.create(
       cluster,
       "SetupDispute",
-      "Provision the Tier-1 electorate + the 3 SBP-less dispute operators; reshape to a single 3-operator group"
+      `Provision the Tier-1 electorate + the 3 SBP-less dispute operators; the ${Constants.ContestedChain} advance seats them as its single group`
     )
 
     ClusterBuildPhase.create(
@@ -240,42 +267,50 @@ export class SlashingScenario extends FlowScenario {
 
     // The 3 divergent-delivery operators, provisioned SBP-less (no daemon) and
     // non-bootstrapped via the ONE provisioning mechanism, so they never
-    // auto-deliver — the flow pushes their deliveries by hand. With
+    // auto-deliver — the flow pushes their deliveries by hand. They join the
+    // contested chain only, so the other chain never seats them. With
     // `req_batchop_collat` empty (this flow does not set it), processbatch can
     // flip them ACTIVE with no collateral deposits.
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       setup,
       "ProvisionDisputeOperators",
-      "Provision the 3 SBP-less non-bootstrapped dispute batch operators",
+      `Provision the 3 SBP-less non-bootstrapped dispute batch operators, serving ${Constants.ContestedChain} only`,
       {},
       Constants.DisputeOperators.map(label => ({
         label,
         type: OperatorType.BATCH,
-        isBootstrapped: false
+        isBootstrapped: false,
+        servedChains: [Constants.ContestedChain]
       }))
     )
 
-    // The epoch config ALREADY materialized ONE group of exactly
-    // DisputeOperators.length at BOOTSTRAP (via the scenario defaults —
-    // `operatorsPerEpoch` / `batchOpGroups`), so there is NO mid-run
-    // `setconfig`: the batch-op group SIZE + COUNT never change after bootstrap
-    // (the depot's #529 invariant forbids resizing a materialized rotation
-    // anyway). Here we only flip the 3 SBP-less dispute ops ACTIVE
-    // (`processbatch`, since `req_batchop_collat` is empty), then re-materialize
-    // the rotation with a fresh `schbatchgps` — the ONLY way to fold the
-    // now-active, non-bootstrapped dispute ops into the schedule (`advance()`
-    // rotates the already-materialized schedule; it does NOT re-select members).
-    // `schbatchgps` sorts non-bootstrapped ops first, then by name, so the three
-    // `dispop.*` fill the single group and the bootstrapped harness ops fall
-    // outside it. `deliver` is gated to the active group, so only these 3 can
-    // deliver — and being SBP-less, only when the flow injects an envelope.
-    // `sysio.epoch@active` resolves to `sysio@active` (the governance key in
-    // kiod), so the flow can sign `schbatchgps`.
+    // Nothing rebuilds a schedule mid-run. Every chain's window is ONE group
+    // (`batchOpGroups` 1), so each advance's `sysio.epoch::finishadv` re-draws
+    // it whole from the chain's pool: ACTIVE batch operators SERVING the chain,
+    // non-bootstrapped first, then by account. The dispute operators serve the
+    // contested chain from provisioning, so once `processbatch` flips them
+    // ACTIVE (`req_batchop_collat` is empty) its next natural advance, pushed
+    // by the bootstrapped relays after their consensus on the epoch then live,
+    // seats exactly the three of them. Their epoch opens with an empty envelope
+    // bucket, and `deliver` accepts only its active group, so only these 3 can
+    // deliver to it — being SBP-less, only when the flow injects an envelope.
+    // The other chain's pool never holds them.
+    //
+    // An advance between two flips would seat a mixed group whose dispute
+    // operators miss that epoch instead of owning it alone. An
+    // advance never lands before the boundary, so the flips start only with
+    // `activationHeadroomMs()` of chain time left before it.
     ClusterBuildPhase.create(
       setup,
       "ReshapeSchedule",
-      "One group of exactly the 3 dispute operators"
+      `The ${Constants.ContestedChain} advance after the 3 dispute operators turn ACTIVE seats them as its one group`
     ).push(
+      DisputeSteps.planAwaitActivationHeadroom(
+        Actor.Sysio,
+        "activation-headroom",
+        `the ${Constants.ContestedChain} chain clock is far enough short of its next boundary for every ACTIVE flip to land before it`,
+        headroomStepOptions
+      ),
       ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planProcessbatch(
           Actor.Sysio,
@@ -295,35 +330,29 @@ export class SlashingScenario extends FlowScenario {
           operator
         )
       ),
-      Steps.contracts.sysio.epoch.planSchbatchgps(
-        Actor.Sysio,
-        "rebuild-groups",
-        "rebuild the batch-operator groups around the ACTIVE dispute operators",
-        {}
-      ),
-      verifyStep(
+      DisputeSteps.planAwaitSoleActiveGroup(
         Actor.Sysio,
         "sole-active-group",
-        "the 3 dispute operators are exactly the active batch-operator group",
-        verifySoleActiveGroup,
+        `the next ${Constants.ContestedChain} advance seats the 3 dispute operators as exactly its active batch-operator group`,
         groupStepOptions
       )
     )
 
-    // Wait for the epoch to settle (freeze) on the first fully-post-swap epoch —
-    // only the SBP-less dispute ops are elected there, so its contested bucket
-    // is EMPTY of the bootstrap ops' pre-swap deliveries. Staging the divergent
-    // split there opens a genuine dispute instead of colliding with the
-    // bootstrap majority that pollutes the genesis epoch.
+    // The advance that seated the dispute operators opened their epoch with an
+    // empty envelope bucket, and with only them elected nothing delivers for
+    // it, so no consensus forms and the contested chain freezes there. Wait for
+    // the epoch index to hold while they own its group: the divergent split
+    // staged on that epoch is its only delivery, so it opens a genuine dispute
+    // instead of splitting an epoch whose consensus already formed.
     ClusterBuildPhase.create(
       setup,
       "SettleDisputeEpoch",
-      "The epoch settles (frozen) on the dispute-operators-owned epoch"
+      `The ${Constants.ContestedChain} epoch settles (frozen) on the dispute-operators-owned epoch`
     ).push(
       verifyStep(
         Actor.Sysio,
         "settle-frozen-epoch",
-        "epoch index freezes while the dispute operators own the active group",
+        `the ${Constants.ContestedChain} epoch index freezes while the dispute operators own its active group`,
         verifySettledDisputeEpoch,
         settleStepOptions
       )
@@ -333,60 +362,54 @@ export class SlashingScenario extends FlowScenario {
     const inject = ClusterBuildPhaseGroup.create(
       cluster,
       "InjectDivergent",
-      "3 batch operators each deliver the consensus SOLANA envelope + a distinct ETHEREUM envelope → 3-way checksum split"
+      `3 batch operators each deliver a distinct ${Constants.ContestedChain} envelope → 3-way checksum split`
     )
 
     // A dispute opens ONLY from deliver's inline evalcons, and only when that
-    // deliver lands with now >= next_epoch_start (chkcons does NOT open
-    // disputes) — so wait past the frozen epoch's boundary first, capturing the
-    // contested epoch index for every subsequent deliver / dispute read.
+    // deliver lands with now >= the chain's next_epoch_start (chkcons does NOT
+    // open disputes) — so wait past the frozen epoch's boundary first, capturing
+    // the contested epoch index, which the dispute operators must own, for every
+    // subsequent deliver / dispute read. Its envelope bucket must still be
+    // empty, so the three divergent deliveries are the only candidates.
     ClusterBuildPhase.create(
       inject,
       "StageContestedEpoch",
-      "Chain clock passes the frozen epoch's boundary; the contested epoch is captured"
+      `Chain clock passes the frozen ${Constants.ContestedChain} epoch's boundary; the contested epoch is captured with an empty envelope bucket`
     ).push(
       DisputeSteps.planStageContestedEpoch(
         Actor.Sysio,
         "stage-contested-epoch",
-        "chain head-block time passes next_epoch_start; capture the contested epoch",
+        `chain head-block time passes the ${Constants.ContestedChain} next_epoch_start; capture the contested epoch the dispute operators own`,
         stageStepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "contested-bucket-empty",
+        `no sysio.msgch::envelopes row exists for the contested ${Constants.ContestedChain} epoch before the divergent deliveries`,
+        verifyContestedBucketEmpty
       )
     )
 
-    // One phase per dispute operator (parallel), each holding two atomic
-    // deliver steps run in order: the IDENTICAL consensus envelope for the
-    // non-contested outpost (SOLANA — so it reaches Option-A consensus for the
-    // contested epoch; the post-resolution advance where the slash runs
-    // requires EVERY active outpost at epoch consensus), then the operator's
-    // DISTINCT divergent envelope for the contested outpost (ETHEREUM). Each
-    // operator's SOLANA deliver strictly precedes its ETHEREUM deliver, so all
-    // three consensus deliveries land before the 3rd divergent one can open the
-    // dispute — the same ordering the depot saw from the original flow.
+    // One phase per dispute operator (parallel), each delivering the operator's
+    // DISTINCT divergent envelope for the contested outpost. The contested chain
+    // runs its own consensus epoch, so no other outpost's consensus gates the
+    // post-resolution advance where the slash runs.
     const deliveries = ClusterBuildPhaseGroup.create(
       inject,
       "DivergentDeliveries",
-      "Each dispute operator delivers consensus SOLANA + its divergent ETHEREUM envelope",
+      `Each dispute operator delivers its divergent ${Constants.ContestedChain} envelope`,
       { parallel: true }
     )
     Constants.DisputeOperators.forEach((operator, index) => {
       ClusterBuildPhase.create(
         deliveries,
         `Deliver ${operator}`,
-        `${operator} delivers consensus SOLANA + divergent ETHEREUM`
+        `${operator} delivers its divergent ${Constants.ContestedChain} envelope`
       ).push(
         DisputeSteps.planDeliver(
           Actor.BatchOperator,
-          `${operator}-deliver-solana`,
-          `${operator} delivers the consensus SOLANA envelope`,
-          {},
-          operator,
-          Constants.NonContestedChainCode,
-          Constants.ConsensusEnvelopeTag
-        ),
-        DisputeSteps.planDeliver(
-          Actor.BatchOperator,
-          `${operator}-deliver-ethereum`,
-          `${operator} delivers its divergent ETHEREUM envelope (${Constants.EnvelopeTags[index]})`,
+          `${operator}-deliver-${Constants.ContestedChain.toLowerCase()}`,
+          `${operator} delivers its divergent ${Constants.ContestedChain} envelope (${Constants.EnvelopeTags[index]})`,
           {},
           operator,
           Constants.ContestedChainCode,
@@ -398,7 +421,7 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       inject,
       "DisputeOpens",
-      "The 3-way split opens a dispute and pauses the epoch"
+      `The 3-way split opens a dispute and pauses the ${Constants.ContestedChain} epoch only`
     ).push(
       DisputeSteps.planAwaitDisputeOpened(
         Actor.Sysio,
@@ -409,7 +432,7 @@ export class SlashingScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "epoch-paused",
-        "chalg::opendispute inline-paused the epoch",
+        `chalg::opendispute inline-paused the ${Constants.ContestedChain} epoch and not the ${Constants.RunningChain} epoch`,
         verifyEpochPaused
       )
     )
@@ -421,7 +444,7 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "VoteAndResolve",
-      "The 3 Tier-1 owners vote the canonical checksum; chkdispute resolves the dispute + unpauses"
+      `The 3 Tier-1 owners vote the canonical checksum; chkdispute resolves the dispute + unpauses the ${Constants.ContestedChain} epoch`
     ).push(
       // Every voter votes for the canonical checksum — 3 votes clears the live
       // quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the 3 voters + the
@@ -444,7 +467,7 @@ export class SlashingScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "epoch-unpauses",
-        "the epoch unpauses after resolution",
+        `the ${Constants.ContestedChain} epoch unpauses after resolution`,
         verifyEpochUnpauses,
         unpauseStepOptions
       )
@@ -475,11 +498,11 @@ export class SlashingScenario extends FlowScenario {
   }
 
   /**
-   * While the open dispute pauses consensus, the economic clock keeps opening epochs: once with
-   * the batch-operator relays that crank `tickeconomy` running, and again after every relay has
-   * been stopped and restarted against its retained data — consensus stays paused at the
-   * contested epoch throughout. The relays restart before the vote, so their `chkdispute` crank
-   * still resolves the dispute.
+   * While the open dispute pauses the contested chain's consensus, the economic clock keeps
+   * opening epochs: once with the batch-operator relays that crank `tickeconomy` running, and
+   * again after every relay has been stopped and restarted against its retained data — the
+   * contested chain's consensus stays paused at the contested epoch throughout. The relays
+   * restart before the vote, so their `chkdispute` crank still resolves the dispute.
    *
    * @param cluster - The cluster build.
    */
@@ -494,13 +517,13 @@ export class SlashingScenario extends FlowScenario {
       group = ClusterBuildPhaseGroup.create(
         cluster,
         "EconomicClockDuringDispute",
-        "The dispute pause holds consensus only: the economic clock keeps opening epochs, across a restart of every batch-operator relay"
+        `The dispute pause holds the ${Constants.ContestedChain} consensus only: the economic clock keeps opening epochs, across a restart of every batch-operator relay`
       )
 
     ClusterBuildPhase.create(
       group,
       "EconomicClockWhilePaused",
-      "An economic epoch opens while consensus is paused"
+      `An economic epoch opens while the ${Constants.ContestedChain} consensus is paused`
     ).push(
       WireEconomicClockTool.planAwaitEconomicEpochsOpened(
         Actor.BatchOperator,
@@ -513,8 +536,9 @@ export class SlashingScenario extends FlowScenario {
       WireEconomicClockTool.planVerifyConsensusHeld(
         Actor.Sysio,
         "consensus-frozen-while-paused",
-        "consensus stays paused at the contested epoch while the economic clock advances",
+        `the ${Constants.ContestedChain} consensus stays paused at the contested epoch while the economic clock advances`,
         {},
+        Constants.ContestedChain,
         [Constants.DisputePauseObservation]
       )
     )
@@ -554,7 +578,7 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       group,
       "EconomicClockAfterRelayRestart",
-      "The restarted relays catch the economic clock up and keep it opening epochs while consensus stays paused"
+      `The restarted relays catch the economic clock up and keep it opening epochs while the ${Constants.ContestedChain} consensus stays paused`
     ).push(
       WireEconomicClockTool.planAwaitEconomicEpochsOpened(
         Actor.BatchOperator,
@@ -567,8 +591,9 @@ export class SlashingScenario extends FlowScenario {
       WireEconomicClockTool.planVerifyConsensusHeld(
         Actor.Sysio,
         "consensus-frozen-across-relay-restart",
-        "consensus stayed paused at the same contested epoch across the restart while the economic index grew",
+        `the ${Constants.ContestedChain} consensus stayed paused at the same contested epoch across the restart while the economic index grew`,
         {},
+        Constants.ContestedChain,
         [Constants.DisputePauseObservation, Constants.RelayRestartObservation]
       )
     )

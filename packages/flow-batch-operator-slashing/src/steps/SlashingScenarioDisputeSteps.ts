@@ -9,6 +9,7 @@ import {
   Constants as TestClusterConstants,
   ethereumKeyPairFromWallet,
   isNotEmpty,
+  isPackedCode,
   matchesProtoEnum,
   outputKey,
   pollUntil,
@@ -116,22 +117,22 @@ export namespace SlashingScenarioDisputeSteps {
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
 
   /**
-   * The `sysio.epoch::epochstate` singleton row.
+   * The contested chain's `sysio.epoch::epochstate` row.
    *
    * @param ctx - The build context.
-   * @returns The epoch-state row.
+   * @returns The contested chain's epoch-state row.
    */
   export async function readEpochState(
     ctx: ClusterBuildContext
   ): Promise<SysioContracts.SysioEpochEpochStateType> {
-    return Steps.contracts.sysio.epoch.readEpochState(ctx)
+    return Steps.contracts.sysio.epoch.readEpochState(ctx, Constants.ContestedChain)
   }
 
   /**
-   * The depot's `current_epoch_index`.
+   * The contested chain's `current_epoch_index`.
    *
    * @param ctx - The build context.
-   * @returns The current epoch index.
+   * @returns The contested chain's current epoch index.
    */
   export async function currentEpoch(
     ctx: ClusterBuildContext
@@ -140,19 +141,42 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * Whether the depot epoch is paused (`epochstate.is_paused`).
+   * Whether an outpost chain's epoch is paused (its `epochstate.is_paused`).
    *
    * @param ctx - The build context.
-   * @returns The pause flag.
+   * @param chain - The outpost chain; the contested one unless named.
+   * @returns The chain's pause flag.
    */
   export async function epochPaused(
-    ctx: ClusterBuildContext
+    ctx: ClusterBuildContext,
+    chain: TestClusterConstants.OutpostChainCodename = Constants.ContestedChain
   ): Promise<boolean> {
-    return Boolean((await readEpochState(ctx)).is_paused)
+    return Boolean(
+      (await Steps.contracts.sysio.epoch.readEpochState(ctx, chain)).is_paused
+    )
   }
 
   /**
-   * Whether the ACTIVE batch-operator group is exactly the dispute operators.
+   * Whether a schedule group seats exactly `accounts`, in any order — pure over one
+   * `sysio.epoch::epochstate` group.
+   *
+   * @param group - The group's accounts (absent when the chain has no schedule).
+   * @param accounts - The accounts the group must seat, and nothing else.
+   * @returns `true` when the group is exactly `accounts`.
+   */
+  export function isExactGroup(
+    group: string[],
+    accounts: readonly string[]
+  ): boolean {
+    return (
+      group != null &&
+      group.length === accounts.length &&
+      accounts.every(account => group.includes(account))
+    )
+  }
+
+  /**
+   * Whether the contested chain's ACTIVE batch-operator group is exactly the dispute operators.
    *
    * @param ctx - The build context.
    * @returns `true` when the ACTIVE group matches {@link SlashingScenarioConstants.DisputeOperators}.
@@ -160,14 +184,60 @@ export namespace SlashingScenarioDisputeSteps {
   export async function disputeOperatorsOwnGroup(
     ctx: ClusterBuildContext
   ): Promise<boolean> {
-    const active =
-        (await Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx)) ?? [],
-      accounts = Constants.DisputeOperators.map(
-        label => ctx.keyStore.assertOperator(label).account
-      )
-    return (
-      active.length === accounts.length &&
-      accounts.every(account => active.includes(account))
+    return isExactGroup(
+      await Steps.contracts.sysio.epoch.activeBatchOperatorGroup(
+        ctx,
+        Constants.ContestedChain
+      ),
+      disputeOperatorAccounts(ctx)
+    )
+  }
+
+  /** The dispute operators' chain accounts, resolved from their durable handles via `ctx.keyStore`. */
+  function disputeOperatorAccounts(ctx: ClusterBuildContext): string[] {
+    return Constants.DisputeOperators.map(
+      label => ctx.keyStore.assertOperator(label).account
+    )
+  }
+
+  /**
+   * Every `sysio.msgch::envelopes` row: the inbound deliveries the depot still retains.
+   *
+   * @param ctx - The build context.
+   * @returns The rows.
+   * @throws If the read reports more rows than {@link SlashingScenarioConstants.EnvelopeTableReadLimit}.
+   */
+  export async function readEnvelopes(
+    ctx: ClusterBuildContext
+  ): Promise<SysioContracts.SysioMsgchEnvelopeEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.envelopes.query({ limit: Constants.EnvelopeTableReadLimit })
+    Assert.ok(
+      !more,
+      `sysio.msgch::envelopes holds more than ${Constants.EnvelopeTableReadLimit} rows; the read is truncated`
+    )
+    return rows
+  }
+
+  /**
+   * The deliveries of one (outpost, epoch) bucket: the rows of `rows` for `chain`'s
+   * `epochIndex`, the set `sysio.msgch::evalcons` tallies.
+   *
+   * @param rows - `sysio.msgch::envelopes` rows (see {@link readEnvelopes}).
+   * @param chain - The outpost chain.
+   * @param epochIndex - The chain's epoch.
+   * @returns The bucket's rows.
+   */
+  export function outpostEpochEnvelopes(
+    rows: SysioContracts.SysioMsgchEnvelopeEntryType[],
+    chain: TestClusterConstants.OutpostChainCodename,
+    epochIndex: number
+  ): SysioContracts.SysioMsgchEnvelopeEntryType[] {
+    return rows.filter(
+      row =>
+        isPackedCode(row.chain_code, chain) &&
+        Number(row.epoch_index) === epochIndex
     )
   }
 
@@ -206,11 +276,12 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * The OPEN dispute row for `epochIndex`, if any.
+   * The OPEN dispute row for the contested chain's `epochIndex`, if any. Each chain
+   * counts its own epochs, so the row is matched on the chain as well as the epoch.
    *
    * @param ctx - The build context.
-   * @param epochIndex - The contested epoch.
-   * @returns The row (absent when no dispute is open for the epoch).
+   * @param epochIndex - The contested chain's contested epoch.
+   * @returns The row (absent when no dispute is open for the chain's epoch).
    */
   export async function findOpenDispute(
     ctx: ClusterBuildContext,
@@ -218,6 +289,7 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<SysioContracts.SysioChalgDisputeEntryType> {
     return (await readDisputes(ctx)).find(
       row =>
+        isPackedCode(row.chain_code, Constants.ContestedChain) &&
         Number(row.epoch_index) === epochIndex &&
         matchesProtoEnum(
           row.status,
@@ -261,10 +333,11 @@ export namespace SlashingScenarioDisputeSteps {
   // ── Cranks (permissionless writes driven inside polls) ───────────────────
 
   /**
-   * Crank consensus: `sysio.msgch::chkcons` (permissionless, no args) re-runs
-   * `evalcons` for the current epoch's outposts and drives epoch advance. With
-   * the dispute operators SBP-less, nothing else cranks it, so the flow does —
-   * to drive the post-resolution `advance` where the slash runs. Tolerant of
+   * Crank the contested chain's consensus: `sysio.msgch::chkcons(chain)`
+   * (permissionless) re-runs `evalcons` for that chain's current epoch and drives
+   * its epoch advance. With the dispute operators SBP-less, nothing else cranks
+   * the contested chain, so the flow does — to drive the post-resolution
+   * `advance` where the slash runs. Tolerant of
    * transient errors (e.g. chkcons racing a concurrent advance / a forked-out
    * crank) so it is safe to call inside a poll — but NEVER silently: a
    * persistent crank failure (the original `tx_duplicate` bug) is only
@@ -278,7 +351,7 @@ export namespace SlashingScenarioDisputeSteps {
       await ctx.wire
         .getSysioContract(SysioContractName.msgch)
         .actions.chkcons.invoke(
-          {},
+          { chain_code: Constants.ContestedChainCode },
           {
             authorization: [
               {
@@ -306,8 +379,8 @@ export namespace SlashingScenarioDisputeSteps {
   // what resolves the dispute here.
 
   /**
-   * Wait until the CHAIN's head-block time is past the current epoch's
-   * `next_epoch_start` (plus a margin). A dispute opens only from a deliver
+   * Wait until the CHAIN's head-block time is past the contested chain's current
+   * epoch's `next_epoch_start` (plus a margin). A dispute opens only from a deliver
    * whose ON-CHAIN block time is ≥ `next_epoch_start` (`chkcons` can't open
    * one), and the SBP-less dispute group never reaches consensus so the epoch
    * stays put. Gating on the chain clock rather than the runner's wall clock
@@ -322,42 +395,51 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     await pollUntil(
       "chain head-block time passes next_epoch_start",
-      async () => {
-        const nextEpochStartMs = parseUtcMs(
-          String((await readEpochState(ctx)).next_epoch_start)
-        )
-        const headTimeMs = parseUtcMs(
-          String((await ctx.wire.getInfo()).head_block_time)
-        )
-        return (
-          Number.isFinite(nextEpochStartMs) &&
-          Number.isFinite(headTimeMs) &&
-          headTimeMs >= nextEpochStartMs + Constants.EpochBoundaryMarginMs
-        )
-      },
+      async () =>
+        (await readMsUntilEpochBoundary(ctx)) <=
+        -Constants.EpochBoundaryMarginMs,
       Constants.boundaryDeadlineMs(),
       Constants.BoundaryPollIntervalMs
     )
   }
 
   /**
-   * Settle onto the new, dispute-operators-owned epoch on which the dispute
-   * is staged.
+   * The chain-clock time left before an epoch boundary (ms): `nextEpochStart` minus the
+   * head-block time, negative once the boundary has passed. Chain timestamps are UTC and
+   * may omit the zone suffix.
    *
-   * The schedule reshape runs while the genesis epoch is live, whose envelope
-   * bucket already holds the bootstrap operators' consistent deliveries (pushed
-   * by their cranks before the group swap de-elected them). Those form an
-   * Option-B majority, so a 3-way divergent split injected at the genesis epoch
-   * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
-   * dispute. After the swap, the bootstrap operators finish driving the genesis
-   * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
-   * epoch — where only the SBP-less dispute operators are elected, so nothing
-   * auto-delivers and the epoch FREEZES. That frozen epoch's contested-outpost
-   * bucket is empty, which is exactly where the divergent split must land. So
-   * this just waits for the epoch index to stabilise while the dispute
-   * operators own the active group — crucially WITHOUT cranking, which would
-   * fight the freeze (an SBP-less group has no one to reach consensus, so an
-   * advance-off poll can never succeed).
+   * @param nextEpochStart - The chain's `epochstate.next_epoch_start`.
+   * @param headBlockTime - The chain's `get_info.head_block_time`.
+   * @returns The time left (ms); `NaN` when either timestamp does not parse, which passes
+   *   no comparison.
+   */
+  export function msUntilEpochBoundary(
+    nextEpochStart: string,
+    headBlockTime: string
+  ): number {
+    return parseUtcMs(nextEpochStart) - parseUtcMs(headBlockTime)
+  }
+
+  /** The contested chain's {@link msUntilEpochBoundary}, from its `epochstate` row and the chain head. */
+  async function readMsUntilEpochBoundary(
+    ctx: ClusterBuildContext
+  ): Promise<number> {
+    const nextEpochStart = String((await readEpochState(ctx)).next_epoch_start),
+      headBlockTime = String((await ctx.wire.getInfo()).head_block_time)
+    return msUntilEpochBoundary(nextEpochStart, headBlockTime)
+  }
+
+  /**
+   * Settle onto the dispute-operators-owned epoch on which the dispute is staged.
+   *
+   * The contested chain's advance that seated the dispute operators opened their epoch with
+   * an empty envelope bucket: the bootstrapped relays delivered for the epoch before it, whose
+   * consensus that advance closed, and `deliver` accepts only the current epoch from its
+   * active group. With only the SBP-less dispute operators elected, nothing delivers for the
+   * new epoch, no consensus forms and the chain FREEZES on it, which is exactly where the
+   * divergent split must land. So this waits for the epoch index to hold while the dispute
+   * operators own the active group, WITHOUT cranking: no `chkcons` can advance an epoch that
+   * no group member delivers to.
    *
    * @param ctx - The build context.
    * @returns The frozen, dispute-operators-owned `current_epoch_index`.
@@ -368,7 +450,7 @@ export namespace SlashingScenarioDisputeSteps {
     let previousEpoch = -1
     let stableChecks = 0
     await pollUntil(
-      "epoch settles (frozen) on the dispute-operators-owned post-swap epoch",
+      "epoch settles (frozen) on the dispute-operators-owned epoch",
       async () => {
         const epoch = await currentEpoch(ctx)
         stableChecks = epoch === previousEpoch ? stableChecks + 1 : 0
@@ -674,7 +756,9 @@ export namespace SlashingScenarioDisputeSteps {
   /**
    * Wait past the settled epoch's boundary ({@link waitPastEpochBoundary}) and
    * capture the contested epoch index into {@link ContestedEpochKey} — the
-   * epoch every subsequent deliver / dispute read keys on.
+   * epoch every subsequent deliver / dispute read keys on. The index and the
+   * active group are read from one `epochstate` row, and the epoch is captured
+   * only when the dispute operators alone own its group.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -700,7 +784,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — boundary wait, then store the contested epoch index. */
+  /** Named runner — boundary wait, then store the contested epoch index once the dispute operators own it. */
   export async function runStageContestedEpoch<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -708,9 +792,114 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await waitPastEpochBoundary(ctx)
-    const epoch = await currentEpoch(ctx)
+    const state = await readEpochState(ctx),
+      epoch = Number(state.current_epoch_index),
+      activeGroup = state.batch_op_groups?.[state.current_batch_op_group]
+    Assert.ok(
+      isExactGroup(activeGroup, disputeOperatorAccounts(ctx)),
+      `the ${Constants.ContestedChain} epoch ${epoch} is not owned by the dispute operators alone: its active group is ${JSON.stringify(activeGroup)}`
+    )
     ctx.outputs.set(ContestedEpochKey, epoch)
     log.info(`[slashing] contested epoch staged: ${epoch}`)
+  }
+
+  // ── Step: await headroom before the ACTIVE flips (chain-clock poll) ─────
+
+  /**
+   * Poll until the contested chain's clock is at least
+   * {@link SlashingScenarioConstants.activationHeadroomMs} short of its
+   * `next_epoch_start`. An advance never lands before the boundary, so the
+   * dispute operators' ACTIVE flips that follow all land before the same advance.
+   * An advance drawing the pool between two flips would seat a group mixing
+   * dispute and bootstrapped operators; its dispute operators, which deliver only
+   * when the flow injects, would miss that epoch instead of owning it alone.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @returns The definition step.
+   */
+  export function planAwaitActivationHeadroom<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runAwaitActivationHeadroom
+    )
+  }
+
+  /** Named runner — poll the contested chain's clock until the headroom before its boundary holds. */
+  export async function runAwaitActivationHeadroom<
+    C extends ClusterBuildContext
+  >(ctx: C, _input: null, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    const headroomMs = Constants.activationHeadroomMs()
+    await pollUntil(
+      `the ${Constants.ContestedChain} chain clock is at least ${headroomMs} ms short of next_epoch_start`,
+      async () => (await readMsUntilEpochBoundary(ctx)) >= headroomMs,
+      Constants.activationHeadroomDeadlineMs(),
+      Constants.BoundaryPollIntervalMs
+    )
+  }
+
+  // ── Step: await the natural advance seating the dispute operators ───────
+
+  /**
+   * Poll until the contested chain's ACTIVE group is exactly the dispute
+   * operators. Nothing rebuilds the schedule: the chain's window holds one
+   * group, and `sysio.epoch::finishadv` re-draws it on every advance from the
+   * chain's pool (ACTIVE batch operators SERVING the chain, non-bootstrapped
+   * first, then by account). Once the three serving dispute operators are
+   * ACTIVE, the next advance, pushed by the bootstrapped relays after their
+   * consensus on the epoch then live, seats exactly them.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @returns The definition step.
+   */
+  export function planAwaitSoleActiveGroup<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runAwaitSoleActiveGroup
+    )
+  }
+
+  /** Named runner — poll until the contested chain's ACTIVE group is exactly the dispute operators. */
+  export async function runAwaitSoleActiveGroup<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await pollUntil(
+      `the ${Constants.ContestedChain} advance seats the ${Constants.DisputeOperatorCount} dispute operators as its sole active group`,
+      () => disputeOperatorsOwnGroup(ctx),
+      Constants.groupDeadlineMs(),
+      Constants.LongPollIntervalMs
+    )
   }
 
   // ── Step: await the dispute opening (poll + capture the resolution target) ─

@@ -133,10 +133,7 @@ describe("EnvelopeCanonicalCodec", () => {
     const encode = (over: Partial<TaggedEnvelopeInput>): Envelope =>
       Envelope.fromBinary(encodeTaggedEnvelope({ ...baseInput, ...over }))
 
-    it.each([
-      SlashingScenarioConstants.ConsensusEnvelopeTag,
-      ...SlashingScenarioConstants.EnvelopeTags
-    ])("emits supported V1 for the live scenario tag %s", tag => {
+    it.each([...SlashingScenarioConstants.EnvelopeTags])("emits supported V1 for the live scenario tag %s", tag => {
       const env = encode({ tag })
       expect(env.messages[0].payload.version).toBe(1)
     })

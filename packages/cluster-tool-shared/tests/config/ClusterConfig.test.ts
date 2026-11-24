@@ -4,14 +4,17 @@ import {
   ClusterConfigReportFormat,
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
+  createUnsetEthereumReadConfirmationConfig,
+  createUnsetQueryEngineConfig,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   EthereumReadBlockTag,
   MaximumUint32,
+  OutpostChainCodename,
+  OutpostEpochDurationsSchema,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
-  createUnsetEthereumReadConfirmationConfig,
-  createUnsetQueryEngineConfig,
+  createUniformOutpostEpochDurations,
   type ClusterConfig,
   type EthereumReadConfirmationConfig
 } from "@wireio/cluster-tool-shared"
@@ -30,6 +33,7 @@ describe("ClusterConfig shape", () => {
     underwriterCount: 1,
     apiCount: 0,
     epochDurationSec: 60,
+    outpostEpochDurationSec: createUniformOutpostEpochDurations(60),
     economicEpochDurationSec: 60,
     economicStartTime: null,
     operatorsPerEpoch: null,
@@ -39,6 +43,7 @@ describe("ClusterConfig shape", () => {
     cooldownEpochs: 1,
     terminateMaxConsecutiveMisses: null,
     terminateMaxPercentMisses24h: null,
+    terminateMinimumPercentSamples: null,
     terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
@@ -359,6 +364,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.epochRetentionEnvelopeLogCount
     delete parsed.terminateMaxConsecutiveMisses
     delete parsed.terminateMaxPercentMisses24h
+    delete parsed.terminateMinimumPercentSamples
     delete parsed.terminateWindowMs
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
@@ -368,6 +374,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.epochRetentionEnvelopeLogCount).toBeNull()
     expect(rehydrated.terminateMaxConsecutiveMisses).toBeNull()
     expect(rehydrated.terminateMaxPercentMisses24h).toBeNull()
+    expect(rehydrated.terminateMinimumPercentSamples).toBeNull()
     expect(rehydrated.terminateWindowMs).toBeNull()
   })
 
@@ -397,6 +404,84 @@ describe("ClusterConfig shape", () => {
       epochDurationSec: 300,
       economicEpochDurationSec: 300,
       economicStartTime: null
+    })
+  })
+
+  it("decodes a config saved before per-chain epochs with every chain at its epoch duration", () => {
+    const saved = JSON.parse(
+      ClusterConfigSchemaCodec.serialize({ ...config, epochDurationSec: 300 })
+    )
+    delete saved.outpostEpochDurationSec
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))
+    expect(rehydrated.outpostEpochDurationSec).toEqual({
+      [OutpostChainCodename.ETHEREUM]: 300,
+      [OutpostChainCodename.SOLANA]: 300
+    })
+  })
+
+  it("round-trips a null epochDurationSec beside each chain's own duration", () => {
+    const chainDefaults = {
+        ...config,
+        epochDurationSec: null,
+        outpostEpochDurationSec: { [OutpostChainCodename.ETHEREUM]: 60, [OutpostChainCodename.SOLANA]: 15 }
+      },
+      text = ClusterConfigSchemaCodec.serialize(chainDefaults),
+      rehydrated = ClusterConfigSchemaCodec.deserialize(text)
+    expect(JSON.parse(text)).toHaveProperty("epochDurationSec", null)
+    expect(rehydrated.epochDurationSec).toBeNull()
+    expect(rehydrated.outpostEpochDurationSec).toEqual(chainDefaults.outpostEpochDurationSec)
+  })
+
+  it("refuses a null epochDurationSec with no per-chain durations to decode", () => {
+    const saved = JSON.parse(ClusterConfigSchemaCodec.serialize({ ...config, epochDurationSec: null }))
+    delete saved.outpostEpochDurationSec
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))).toThrow(
+      new RegExp(`outpostEpochDurationSec\\.${OutpostChainCodename.ETHEREUM}`)
+    )
+  })
+
+  it("refuses a missing epochDurationSec, which a saved config always carries", () => {
+    const saved = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete saved.epochDurationSec
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))).toThrow(/epochDurationSec/)
+  })
+
+  it("round-trips per-chain epoch durations that differ from each other and the default", () => {
+    const perChain = {
+        ...config,
+        outpostEpochDurationSec: { [OutpostChainCodename.ETHEREUM]: 60, [OutpostChainCodename.SOLANA]: 150 }
+      },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(ClusterConfigSchemaCodec.serialize(perChain))
+    expect(rehydrated.outpostEpochDurationSec).toEqual(perChain.outpostEpochDurationSec)
+    expect(rehydrated.epochDurationSec).toBe(config.epochDurationSec)
+  })
+
+  it("refuses per-chain durations that leave out an outpost chain", () => {
+    const saved = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete saved.outpostEpochDurationSec[OutpostChainCodename.SOLANA]
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))).toThrow(
+      new RegExp(OutpostChainCodename.SOLANA)
+    )
+    expect(OutpostEpochDurationsSchema.safeParse({ [OutpostChainCodename.ETHEREUM]: 60 }).success).toBe(false)
+  })
+
+  it.each([
+    ["zero", 0],
+    ["negative", -60],
+    ["fractional", 60.5]
+  ])("refuses a %s outpost chain duration — the uint32 of its setconfig", (_label, durationSec) => {
+    expect(
+      OutpostEpochDurationsSchema.safeParse({
+        [OutpostChainCodename.ETHEREUM]: 60,
+        [OutpostChainCodename.SOLANA]: durationSec
+      }).success
+    ).toBe(false)
+  })
+
+  it("createUniformOutpostEpochDurations puts every outpost chain at one duration", () => {
+    expect(createUniformOutpostEpochDurations(90)).toEqual({
+      [OutpostChainCodename.ETHEREUM]: 90,
+      [OutpostChainCodename.SOLANA]: 90
     })
   })
 

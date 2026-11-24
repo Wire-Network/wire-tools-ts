@@ -132,3 +132,33 @@ export function slugValue(raw: unknown): number {
       )
     })
 }
+
+/**
+ * Whether a `slug_name` cell names `codename` — the one comparison of a depot `slug_name`
+ * column (`servchains.chain_code`, `consensus_waits[].chain_code`, a token row's `code`)
+ * with a codename. The cell decodes through {@link slugValue}.
+ *
+ * @param cell - The `slug_name` cell as returned by a table query (the ABI renders it as a string).
+ * @param codename - The codename to compare with (`ETHEREUM`, `LIQSOL`).
+ * @returns True when the cell names the codename.
+ * @throws If the cell is not a slug carrier, or `codename` is not a valid slug.
+ */
+export function isCode(cell: string, codename: string): boolean {
+  return slugValue(cell) === SlugName.from(codename)
+}
+
+/**
+ * Whether a packed `uint64` code cell names `codename` — the twin of {@link isCode} for a
+ * code column DECLARED `uint64` (`epochstate.chain_code`, `epochcfg.chain_code`, an
+ * outbound envelope's `chain_code`), which renders as a number or a quoted decimal and
+ * decodes through {@link packedSlugValue}.
+ *
+ * @param cell - The packed `uint64` code cell as returned by a table query (a number, or a
+ *   quoted decimal past 2^32).
+ * @param codename - The codename to compare with (`ETHEREUM`).
+ * @returns True when the cell holds the codename's packed value.
+ * @throws If the cell is not a number or an unsigned decimal, or `codename` is not a valid slug.
+ */
+export function isPackedCode(cell: number | string, codename: string): boolean {
+  return packedSlugValue(cell) === SlugName.from(codename)
+}

@@ -1,7 +1,6 @@
 {
   "label": "testnet-epoch60",
   "awsAccount": "test",
-  "epochDurationSec": 60,
   "operators": [
     {
       "accountName": "defproducera",
@@ -79,18 +78,40 @@
       }
     }
   ],
-  "batchOperatorGroups": {
-    "activeGroupIndex": 0,
-    "groups": [
-      [
-        "batchop.a"
-      ],
-      [
-        "batchop.c"
-      ],
-      [
-        "batchop.b"
-      ]
-    ]
+  "chains": {
+    "ETHEREUM": {
+      "epochDurationSec": 60,
+      "batchOperatorGroups": {
+        "activeGroupIndex": 0,
+        "groups": [
+          [
+            "batchop.a"
+          ],
+          [
+            "batchop.c"
+          ],
+          [
+            "batchop.b"
+          ]
+        ]
+      }
+    },
+    "SOLANA": {
+      "epochDurationSec": 120,
+      "batchOperatorGroups": {
+        "activeGroupIndex": 0,
+        "groups": [
+          [
+            "batchop.b"
+          ],
+          [
+            "batchop.a"
+          ],
+          [
+            "batchop.c"
+          ]
+        ]
+      }
+    }
   }
 }

@@ -7,6 +7,7 @@ import {
   LIQYield
 } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import {
   ClusterBuildPhase,
   FlowScenario,
@@ -32,32 +33,10 @@ import {
 } from "@wireio/cluster-tool"
 import { LIQSyndicationScenarioConstants as Constants } from "./LIQSyndicationScenarioConstants.js"
 
-const { SysioContractName, SysioSyndItemKind, SysioSyndChainkind } =
-  SysioContracts
+const { SysioSyndItemKind, SysioSyndChainkind } = SysioContracts
 const { Actor } = Report
 
 // ── reads (execute freely inside verify steps) ──────────────────────────────
-
-/** The depot's `sysio.epoch::epochstate` singleton (a read, typed accessor). */
-async function readEpochState(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioEpochEpochStateType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.epoch)
-    .tables.epochstate.query({ limit: Constants.EpochStateQueryLimit })
-  Assert.ok(
-    rows.length >= 1,
-    "sysio.epoch::epochstate has no row — did the bootstrap's EpochBootstrap run?"
-  )
-  return rows[0]
-}
-
-/** `epochstate.current_epoch_index` (a read — the depot-liveness metric). */
-async function readCurrentEpochIndex(
-  ctx: ClusterBuildContext
-): Promise<number> {
-  return (await readEpochState(ctx)).current_epoch_index
-}
 
 /**
  * Every `LIQYield` the Solana outpost has published into an OUTPOST_SOLANA_DEPOT
@@ -105,32 +84,23 @@ export class LIQSyndicationScenario extends FlowScenario {
 
   plan(cluster: ClusterBuild): void {
     const writeStepOptions = { timeoutMs: Constants.OutpostWriteTimeoutMs },
-      circulationStepOptions = {
-        timeoutMs:
-          Constants.CirculationTimeoutMs + ProtocolTiming.PollDeadlineBufferMs
-      },
-      epochAdvanceStepOptions = {
-        timeoutMs:
-          Constants.epochAdvanceDeadlineMs() +
-          ProtocolTiming.PollDeadlineBufferMs
-      }
+      circulationStepOptions = ProtocolTiming.pollStepOptions(Constants.CirculationTimeoutMs),
+      epochAdvanceStepOptions = ProtocolTiming.pollStepOptions(
+        Steps.epochAdvance.everyChainAdvanceBudgetMs(cluster.context.config)
+      )
 
     // ── 1. Snapshot the depot's epoch index BEFORE the syndication ──
     ClusterBuildPhase.create(
       cluster,
       "SnapshotDepotEpoch",
-      "Record the depot's current_epoch_index before any liq attestation is produced"
+      "Record every outpost chain's current_epoch_index before any liq attestation is produced"
     ).push(
-      verifyStep(
+      Steps.epochAdvance.planRecordEpochIndices(
         Actor.Sysio,
         "snapshot-epoch-index",
-        "record sysio.epoch::epochstate.current_epoch_index",
-        async ctx => {
-          ctx.outputs.set(
-            LIQSyndicationScenario.EpochIndexBeforeKey,
-            await readCurrentEpochIndex(ctx)
-          )
-        }
+        "record each chain's sysio.epoch::epochstate.current_epoch_index",
+        {},
+        Constants.PreSyndicationEpochSnapshot
       )
     )
 
@@ -505,22 +475,12 @@ export class LIQSyndicationScenario extends FlowScenario {
       "DepotKeepsAdvancing",
       "The depot advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
     ).push(
-      verifyStep(
+      Steps.epochAdvance.planVerifyEpochIndicesAdvanced(
         Actor.Sysio,
         "epoch-index-advances",
-        "sysio.epoch::epochstate.current_epoch_index advances past the pre-syndication snapshot",
-        async ctx => {
-          const before = ctx.outputs.assert(
-            LIQSyndicationScenario.EpochIndexBeforeKey
-          )
-          await pollUntil(
-            `current_epoch_index advances past ${before}`,
-            async () => (await readCurrentEpochIndex(ctx)) > before,
-            Constants.epochAdvanceDeadlineMs(),
-            Constants.EpochAdvancePollMs
-          )
-        },
-        epochAdvanceStepOptions
+        "every outpost chain's sysio.epoch::epochstate.current_epoch_index advances past its pre-syndication snapshot",
+        epochAdvanceStepOptions,
+        Constants.PreSyndicationEpochSnapshot
       )
     )
     ClusterBuildPhase.create(
@@ -540,11 +500,6 @@ export class LIQSyndicationScenario extends FlowScenario {
 
 /** Typed cross-step output keys for the liq-syndication scenario. */
 export namespace LIQSyndicationScenario {
-  /** `epochstate.current_epoch_index` snapshotted before the syndication. */
-  export const EpochIndexBeforeKey = outputKey<number>(
-    "LIQSyndicationScenario.epochIndexBefore",
-    "the depot's current_epoch_index before any liq attestation was produced"
-  )
   /** `GlobalState`'s liq-yield accounting snapshotted before the bonus donation. */
   export const LiqYieldStateBeforeKey =
     outputKey<SolanaLiqSyndicationTool.LiqYieldState>(

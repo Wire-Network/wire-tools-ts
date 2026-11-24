@@ -89,9 +89,11 @@ the path flags.
 | `--producer-count` | `-p` | `1` | producer **accounts** registered on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; swap-underwriter daemons have been removed, so any nonzero value is rejected |
-| `--epoch-duration-sec` | | `300` | minimum epoch duration (60 is the depot floor) |
+| `--epoch-duration-sec` | | each chain's own | minimum consensus epoch duration of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>` (10 is the depot floor); also the economic default. Every flow pins it |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` / `15` | one outpost chain's own consensus epoch duration (its `sysio.epoch::setconfig`) |
+| `--economic-epoch-duration-sec` | | `--epoch-duration-sec` (at least `60`), else `300` | the economic clock's epoch duration (`sysio.epoch::seteconomy`) |
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
-| `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
+| `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-minimum-percent-samples` / `--terminate-window-ms` | | — | termination tuning |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the 2 mock shadow-liq yield pools (LIQETH, LIQSOL) on `sysio.swap` during epoch zero and fund outpost custody to back all outstanding shadow |
 | `--enable-mock-syndication-import` | | `false`; forced on by a local `create` | import the mock bonder's LIQSOL and LIQETH syndication positions during epoch zero, seal the import, and back all mock shadow in outpost custody |

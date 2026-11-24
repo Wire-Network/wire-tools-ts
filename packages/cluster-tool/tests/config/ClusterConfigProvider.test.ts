@@ -2051,11 +2051,56 @@ describe("ClusterConfigProvider", () => {
       expect(config.initialFinalizerKey).toBe(KeyGenerator.BiosBLSKey.publicKey)
     })
 
-    it("defaults the depot epoch to 300 seconds when the caller names none", async () => {
+    it("names each outpost chain's default consensus epoch and the economic default", () => {
+      expect(ClusterConfigProvider.DefaultEthereumEpochDurationSec).toBe(60)
+      expect(ClusterConfigProvider.DefaultSolanaEpochDurationSec).toBe(30)
+      expect(ClusterConfigProvider.DefaultOutpostEpochDurationSec).toEqual({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: ClusterConfigProvider.DefaultEthereumEpochDurationSec,
+        [Constants.SOLANA_CHAIN_CODENAME]: ClusterConfigProvider.DefaultSolanaEpochDurationSec
+      })
+      expect(ClusterConfigProvider.DefaultEconomicEpochDurationSec).toBe(300)
+      expect(ClusterConfigProvider.MinimumEconomicEpochDurationSec).toBe(60)
+    })
+
+    it("runs each outpost chain at its own default and the economic clock at its default when the caller names no duration", async () => {
       const { config } =
         await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
-      expect(ClusterConfigProvider.DefaultEpochDurationSec).toBe(300)
-      expect(config.epochDurationSec).toBe(300)
+      expect(config.epochDurationSec).toBeNull()
+      expect(config.outpostEpochDurationSec).toEqual(
+        ClusterConfigProvider.DefaultOutpostEpochDurationSec
+      )
+      expect(config.economicEpochDurationSec).toBe(
+        ClusterConfigProvider.DefaultEconomicEpochDurationSec
+      )
+    })
+
+    it("gives a chain the caller names no duration for its own default, beside a named chain", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        outpostEpochDurationSec: { [Constants.SOLANA_CHAIN_CODENAME]: 150 }
+      })
+      expect(config.epochDurationSec).toBeNull()
+      expect(config.outpostEpochDurationSec).toEqual({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: ClusterConfigProvider.DefaultEthereumEpochDurationSec,
+        [Constants.SOLANA_CHAIN_CODENAME]: 150
+      })
+      expect(config.economicEpochDurationSec).toBe(
+        ClusterConfigProvider.DefaultEconomicEpochDurationSec
+      )
+    })
+
+    it("persists the resolved durations, so a reload keeps each chain's default", async () => {
+      const config = await ClusterConfigProvider.resolve(keyModeOptions()),
+        reloaded = ClusterConfigProvider.deserialize(
+          ClusterConfigProvider.serialize(config)
+        )
+      expect(reloaded.epochDurationSec).toBeNull()
+      expect(reloaded.outpostEpochDurationSec).toEqual(
+        ClusterConfigProvider.DefaultOutpostEpochDurationSec
+      )
+      expect(reloaded.economicEpochDurationSec).toBe(
+        ClusterConfigProvider.DefaultEconomicEpochDurationSec
+      )
     })
 
     it("keeps a caller's epoch duration over the default", async () => {
@@ -2066,6 +2111,64 @@ describe("ClusterConfigProvider", () => {
       expect(config.epochDurationSec).toBe(60)
     })
 
+    it("gives every outpost chain the caller's epoch duration over its own default", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 60
+      })
+      expect(config.outpostEpochDurationSec).toEqual({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 60,
+        [Constants.SOLANA_CHAIN_CODENAME]: 60
+      })
+    })
+
+    it("keeps a caller's duration for one chain, the other at the epoch duration", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 60,
+        outpostEpochDurationSec: { [Constants.SOLANA_CHAIN_CODENAME]: 150 }
+      })
+      expect(config.epochDurationSec).toBe(60)
+      expect(config.outpostEpochDurationSec).toEqual({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 60,
+        [Constants.SOLANA_CHAIN_CODENAME]: 150
+      })
+    })
+
+    it("keeps a caller's duration for every chain, the default unused", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        outpostEpochDurationSec: {
+          [Constants.ETHEREUM_CHAIN_CODENAME]: 90,
+          [Constants.SOLANA_CHAIN_CODENAME]: 120
+        }
+      })
+      expect(config.epochDurationSec).toBeNull()
+      expect(config.outpostEpochDurationSec).toEqual({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 90,
+        [Constants.SOLANA_CHAIN_CODENAME]: 120
+      })
+      // Per-chain durations never reach the economic clock.
+      expect(config.economicEpochDurationSec).toBe(
+        ClusterConfigProvider.DefaultEconomicEpochDurationSec
+      )
+    })
+
+    it.each([
+      ["zero", 0],
+      ["negative", -60],
+      ["fractional", 60.5]
+    ])("refuses a %s chain duration", async (_label, durationSec) => {
+      await expect(
+        ClusterConfigProvider.resolveWithBiosKeys({
+          ...keyModeOptions(),
+          outpostEpochDurationSec: { [Constants.ETHEREUM_CHAIN_CODENAME]: durationSec }
+        })
+      ).rejects.toThrow(
+        new RegExp(`the ${Constants.ETHEREUM_CHAIN_CODENAME} consensus epoch duration must be a positive safe integer`)
+      )
+    })
+
     it("defaults the economic clock to the epoch duration, anchored at the chain head", async () => {
       const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
         ...keyModeOptions(),
@@ -2073,6 +2176,35 @@ describe("ClusterConfigProvider", () => {
       })
       expect(config.economicEpochDurationSec).toBe(60)
       expect(config.economicStartTime).toBeNull()
+    })
+
+    it.each([
+      ["below", 15],
+      ["just below", 59]
+    ])(
+      "raises an economic duration derived from an epoch duration %s the depot's economic floor to that floor",
+      async (_label, epochDurationSec) => {
+        const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+          ...keyModeOptions(),
+          epochDurationSec
+        })
+        expect(config.outpostEpochDurationSec).toEqual({
+          [Constants.ETHEREUM_CHAIN_CODENAME]: epochDurationSec,
+          [Constants.SOLANA_CHAIN_CODENAME]: epochDurationSec
+        })
+        expect(config.economicEpochDurationSec).toBe(
+          ClusterConfigProvider.MinimumEconomicEpochDurationSec
+        )
+      }
+    )
+
+    it("keeps a caller's economic duration as given, the floor applying only to the derived default", async () => {
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+        ...keyModeOptions(),
+        epochDurationSec: 15,
+        economicEpochDurationSec: 45
+      })
+      expect(config.economicEpochDurationSec).toBe(45)
     })
 
     it("keeps a caller's economic duration and past start", async () => {

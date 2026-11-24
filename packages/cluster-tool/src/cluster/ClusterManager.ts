@@ -8,7 +8,6 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
 import { getValue } from "@wireio/shared"
-import { ProtocolTiming } from "../Constants.js"
 import { BindConfigProvider } from "../config/BindConfigProvider.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
@@ -19,7 +18,6 @@ import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterBuildDefaults } from "../orchestration/ClusterBuildDefaults.js"
 import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
 import { Steps } from "../orchestration/steps/index.js"
-import { pollUntil } from "../orchestration/StepTools.js"
 import { Report } from "../report/Report.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { eachSeries } from "../utils/asyncUtils.js"
@@ -424,37 +422,17 @@ export namespace ClusterManager {
       return
     }
 
-    log.info("[cluster] verifying epoch-advance liveness")
-    const { rows: startRows } = await ctx.wire.getEpochState(),
-      startEpochIndex = startRows[0]?.current_epoch_index ?? 0,
-      budgetMs =
-        ProtocolTiming.EpochVerifyEpochCount *
-        ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
-        ProtocolTiming.MsPerSecond
+    log.info("[cluster] verifying every outpost chain's epoch-advance liveness")
+    const startIndices = await Steps.contracts.sysio.epoch.readCurrentEpochIndices(ctx)
     try {
-      await pollUntil(
-        `sysio.epoch current_epoch_index advances past ${startEpochIndex}`,
-        async () => {
-          try {
-            const { rows } = await ctx.wire.getEpochState()
-            return (rows[0]?.current_epoch_index ?? 0) > startEpochIndex
-          } catch (error) {
-            log.debug(
-              `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
-            )
-            return false
-          }
-        },
-        budgetMs,
-        ProtocolTiming.EpochVerifyPollIntervalMs
-      )
+      await Steps.epochAdvance.awaitEpochIndicesAdvanced(ctx, startIndices)
     } catch (error) {
       log.error(
         `[cluster] epoch-advance liveness check failed: ${error instanceof Error ? error.message : String(error)}`
       )
       throw error
     }
-    log.info("[cluster] epoch-advance liveness confirmed — cluster is live")
+    log.info("[cluster] every outpost chain's epoch advances — cluster is live")
   }
 
   /** Stop every managed process (graceful, or force-kill when `forceKill`). */

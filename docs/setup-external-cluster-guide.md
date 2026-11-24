@@ -155,8 +155,8 @@ Runs a five-stage pipeline (each stage a validated Report step):
    Base plugins (`net_plugin`, `chain_api_plugin`), the producer plugins, and the
    per-operator OPP plugins are unchanged from the local tree.
 4. **Emit** — write `external-cluster-config.json` (self-described: `bindings`,
-   `accounts` + per-key-type key providers, `wire.epochDurationSec`, and the
-   ethereum/solana outpost references).
+   `accounts` + per-key-type key providers, `wire.epochDurationSec`,
+   `wire.outpostEpochDurationSec`, and the ethereum/solana outpost references).
 5. **Verify** — scan the external tree for any leaked local-bind address/port +
    round-trip the emitted config through its codec.
 
@@ -243,8 +243,11 @@ The emitted, self-described payload:
   key type: wire/ethereum/solana, plus BLS with its proof-of-possession). KEY
   providers carry the material inline (testnet keys); SSM providers carry
   `awsSecretId` references (no plaintext).
-- `wire.epochDurationSec` — the global epoch duration (compile-time budgets can't
-  cross a remote boundary; this is the transport).
+- `wire.outpostEpochDurationSec` — each outpost chain's consensus epoch duration
+  (compile-time budgets can't cross a remote boundary; this is the transport).
+- `wire.epochDurationSec` — the source cluster's `epochDurationSec`: the one
+  duration its caller gave every chain without its own, or `null` when each
+  chain took its own default (Ethereum 60 s, Solana 30 s).
 - `ethereum` / `solana` — the deployed-outpost references (address file, ABI
   files, chain id / IDL file) as in-tree, self-described paths.
 

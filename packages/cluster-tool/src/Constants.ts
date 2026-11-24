@@ -6,9 +6,14 @@ import { range, uniq } from "lodash"
 import {
   EthereumNativeTokenCodename,
   NativeTokenDepotPrecision,
+  OutpostChainCodename as SharedOutpostChainCodename,
+  OutpostChainCodenames,
   SolanaNativeTokenCodename,
+  type OutpostEpochDurations,
   type QueryEngineLimitKey
 } from "@wireio/cluster-tool-shared"
+
+import type { ClusterBuildStepOptions } from "./orchestration/ClusterBuildStep.js"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
@@ -229,11 +234,12 @@ export namespace Constants {
 
   /**
    * The `sysio.chains` codename of the Ethereum outpost. The registry, the operator daemons'
-   * outpost client ids and every chain-keyed contract row use it.
+   * outpost client ids and every chain-keyed contract row use it — an ALIAS of the shared
+   * declaration the persisted config schema keys per-chain values by.
    */
-  export const ETHEREUM_CHAIN_CODENAME = "ETHEREUM"
+  export const ETHEREUM_CHAIN_CODENAME = SharedOutpostChainCodename.ETHEREUM
   /** The `sysio.chains` codename of the Solana outpost; see {@link ETHEREUM_CHAIN_CODENAME}. */
-  export const SOLANA_CHAIN_CODENAME = "SOLANA"
+  export const SOLANA_CHAIN_CODENAME = SharedOutpostChainCodename.SOLANA
 
   /**
    * The shadow liq symbols the bootstrap opens on `sysio.liq` — `[chainCodename,
@@ -287,8 +293,8 @@ export namespace Constants {
     [SOLANA_CHAIN_CODENAME, SOL_TOKEN_CODENAME]
   ] as const
 
-  /** An outpost chain's codename — derived from {@link NATIVE_TOKEN_PAIRS}, never re-spelled. */
-  export type OutpostChainCodename = (typeof NATIVE_TOKEN_PAIRS)[number][0]
+  /** An outpost chain's codename — an alias of the shared enum, never re-spelled. */
+  export import OutpostChainCodename = SharedOutpostChainCodename
 
   /**
    * The native asset codename of an outpost chain — its {@link NATIVE_TOKEN_PAIRS}
@@ -862,10 +868,11 @@ export namespace ProtocolTiming {
   export const OutpostWriteBudgetMs = 60_000
 
   /**
-   * The challenge window of every `sysio.synd` pair the bootstrap configures (s): one
-   * default 60 s epoch. A flow that bonds an envelope waits this long after the request
-   * is fully bonded before `sysio.bond::approve` succeeds, and a challenge must land
-   * within it. The contract refuses 0.
+   * The challenge window of every `sysio.synd` pair the bootstrap configures (s): a fixed
+   * span, not a count of the pair's chain's epochs (one epoch at the 60 s every syndication
+   * flow pins, two at the 30 s Solana default). A flow that bonds an envelope waits this
+   * long after the request is fully bonded before `sysio.bond::approve` succeeds, and a
+   * challenge must land within it. The contract refuses 0.
    */
   export const SyndicationChallengeWindowSec = 60
 
@@ -878,17 +885,44 @@ export namespace ProtocolTiming {
   export const PollDeadlineBufferMs = 30_000
 
   /**
-   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
-   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
-   * cluster can need to restart OPP circulation before `current_epoch_index`
-   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
+   * Epoch-advance liveness budget as a count of effective-epoch windows. At a
+   * 60s epoch this is 3 × (60 + 30)s = 270s — ≥ {@link OppCirculationRestartMs}.
+   * A healthy cluster still passes in ~1 epoch (the poll returns the
    * moment the index moves), so the larger ceiling adds no wall clock to a
    * healthy run — it only keeps a slow restart from failing a live cluster.
    *
-   * ONE envelope, two owners: `ClusterManager.run`'s post-relaunch liveness
-   * check and `ClusterBuildDefaults`' bootstrap epoch-advance gate.
+   * ONE envelope, every epoch-advance wait ({@link epochAdvanceBudgetMs}):
+   * `EpochAdvanceSteps` sizes the bootstrap's per-chain gate by each chain's
+   * duration and an every-chain wait (`ClusterManager.run`'s post-relaunch
+   * liveness check, a flow's advance past a snapshot) by the slowest chain's.
    */
   export const EpochVerifyEpochCount = 3
+
+  /**
+   * Wall clock a newly started or *resumed* cluster can need to (re)start OPP
+   * circulation before `current_epoch_index` advances (ms): about four minutes,
+   * whatever the chain's epoch duration — the start is daemon and delivery
+   * latency, not epochs. The floor of every epoch-advance budget, so a chain
+   * whose {@link EpochVerifyEpochCount} effective epochs are shorter (the 30 s
+   * Solana default: 3 × 60 s = 180 s) is not failed by its first close.
+   */
+  export const OppCirculationRestartMs = 240_000
+
+  /**
+   * The budget of a wait on one clock's consensus epoch advancing (ms):
+   * {@link EpochVerifyEpochCount} effective epochs of its duration, never less
+   * than {@link OppCirculationRestartMs}.
+   *
+   * @param epochDurationSec - The awaited chain's consensus epoch duration (s) —
+   *   for a wait on every chain, the slowest chain's.
+   * @returns The budget (ms).
+   */
+  export function epochAdvanceBudgetMs(epochDurationSec: number): number {
+    return Math.max(
+      effectiveEpochsMs(epochDurationSec, EpochVerifyEpochCount),
+      OppCirculationRestartMs
+    )
+  }
 
   /** Poll gap for the epoch-advance liveness verify (ms). */
   export const EpochVerifyPollIntervalMs = 1_000
@@ -940,6 +974,43 @@ export namespace ProtocolTiming {
    */
   export function effectiveEpochSec(epochDurationSec: number): number {
     return epochDurationSec + EpochExtensionMaxSec
+  }
+
+  /**
+   * A wait of `epochs` effective epochs of one clock (ms) — an outpost chain's consensus epoch
+   * or the economic epoch: {@link effectiveEpochSec} of its duration, per epoch. THE form of
+   * every N-epoch deadline.
+   *
+   * @param epochDurationSec - The clock's epoch duration (s).
+   * @param epochs - The epochs waited.
+   * @returns The wait (ms).
+   */
+  export function effectiveEpochsMs(epochDurationSec: number, epochs: number): number {
+    return effectiveEpochSec(epochDurationSec) * epochs * MsPerSecond
+  }
+
+  /**
+   * The options of a Step that wraps a poll of `pollMs` (ms): a `timeoutMs` of the poll's own
+   * deadline plus {@link PollDeadlineBufferMs}, so the Step's ceiling never races the poll.
+   *
+   * @param pollMs - The poll's deadline (ms).
+   * @returns The Step options.
+   */
+  export function pollStepOptions(pollMs: number): ClusterBuildStepOptions {
+    return { timeoutMs: pollMs + PollDeadlineBufferMs }
+  }
+
+  /**
+   * The longest outpost chain consensus epoch duration of a cluster (s) — the duration a
+   * budget waiting on EVERY chain's epoch (the relaunch's epoch-advance gate, a withdrawal
+   * waiting on each chain its operator serves) is sized by.
+   *
+   * @param durations - Each outpost chain's consensus epoch duration (s) — a config's
+   *   `outpostEpochDurationSec`.
+   * @returns The slowest chain's duration (s).
+   */
+  export function slowestOutpostEpochSec(durations: OutpostEpochDurations): number {
+    return Math.max(...OutpostChainCodenames.map(chain => durations[chain]))
   }
 
   /**

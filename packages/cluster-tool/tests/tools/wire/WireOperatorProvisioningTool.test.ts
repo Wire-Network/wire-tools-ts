@@ -25,6 +25,7 @@ import {
 import type { KeyPair, SolanaSigner } from "@wireio/cluster-tool/types"
 import {
   AWSAccountName,
+  OutpostChainCodenames,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ExternalOutpostConfig
@@ -83,7 +84,7 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
     expect(phase.steps.map(step => step.actor)).toEqual([Report.Actor.Producer])
   })
 
-  it("a bootstrap batch/uw Phase (no funding) creates the account, authex-links both chains, registers", () => {
+  it("a bootstrap batch Phase (no funding) creates the account, authex-links both chains, registers, then joins every chain", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
       { label: "batchopaaaa", type: OperatorType.BATCH, isBootstrapped: true }
     ])
@@ -93,8 +94,58 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
       "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
-      "WireOperatorProvisioningTool.RegistrationInput"
+      "WireOperatorProvisioningTool.RegistrationInput",
+      "WireOperatorProvisioningTool.ChainJoinInput",
+      "WireOperatorProvisioningTool.ChainJoinInput"
     ])
+    const joins = (group.children[0] as ClusterBuildPhase).steps.slice(-2)
+    expect(joins.map(step => step.input)).toEqual(
+      OutpostChainCodenames.map(chain => ({
+        kind: "WireOperatorProvisioningTool.ChainJoinInput",
+        label: "batchopaaaa",
+        chain
+      }))
+    )
+    expect(joins.map(step => step.name)).toEqual(
+      OutpostChainCodenames.map(chain => `batchopaaaa-join-${chain.toLowerCase()}`)
+    )
+    expect(joins.map(step => step.actor)).toEqual([
+      Report.Actor.BatchOperator,
+      Report.Actor.BatchOperator
+    ])
+  })
+
+  it("a batch Phase naming one served chain joins that chain alone", () => {
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
+      {
+        label: "batchopaaaa",
+        type: OperatorType.BATCH,
+        isBootstrapped: false,
+        servedChains: [Constants.SOLANA_CHAIN_CODENAME]
+      }
+    ])
+    const joins = (group.children[0] as ClusterBuildPhase).steps.filter(
+      step => (step.input as StepInput).kind === "WireOperatorProvisioningTool.ChainJoinInput"
+    )
+    expect(joins.map(step => step.input)).toEqual([
+      {
+        kind: "WireOperatorProvisioningTool.ChainJoinInput",
+        label: "batchopaaaa",
+        chain: Constants.SOLANA_CHAIN_CODENAME
+      }
+    ])
+  })
+
+  it("an underwriter Phase registers and joins no chain", () => {
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
+      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, isBootstrapped: true }
+    ])
+    expect(firstPhaseStepKinds(group)).not.toContain(
+      "WireOperatorProvisioningTool.ChainJoinInput"
+    )
+    expect(firstPhaseStepKinds(group).at(-1)).toBe(
+      "WireOperatorProvisioningTool.RegistrationInput"
+    )
   })
 
   it("a batch/uw Phase whose identity was materialized earlier plans NO materialization step", () => {
@@ -107,7 +158,9 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
       "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
-      "WireOperatorProvisioningTool.RegistrationInput"
+      "WireOperatorProvisioningTool.RegistrationInput",
+      "WireOperatorProvisioningTool.ChainJoinInput",
+      "WireOperatorProvisioningTool.ChainJoinInput"
     ])
   })
 
@@ -159,9 +212,12 @@ function fakeOperatorContext() {
       .mockResolvedValue(undefined),
     regoperatorInvoke = jest
       .spyOn(opreg.actions.regoperator, "invoke")
+      .mockResolvedValue(undefined),
+    joinchainInvoke = jest
+      .spyOn(opreg.actions.joinchain, "invoke")
       .mockResolvedValue(undefined)
   jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(opreg as never)
-  return { ctx, keyStore, createAccount, regoperatorInvoke }
+  return { ctx, keyStore, createAccount, regoperatorInvoke, joinchainInvoke }
 }
 
 describe("WireOperatorProvisioningTool.runAccountCreation", () => {
@@ -236,6 +292,227 @@ describe("WireOperatorProvisioningTool.runRegistration", () => {
     expect(data.account).toBe(OperatorHandle)
     expect(data.is_bootstrapped).toBe(true)
     expect(data.type).toBe(SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
+  })
+})
+
+describe("WireOperatorProvisioningTool.resolveServedChains", () => {
+  it("serves every outpost chain, in outpost order, when a batch operator names none", () => {
+    expect(
+      WireOperatorProvisioningTool.resolveServedChains({
+        label: OperatorHandle,
+        type: OperatorType.BATCH
+      })
+    ).toEqual(OutpostChainCodenames)
+  })
+
+  it("keeps a batch operator's named chains in outpost order, each once", () => {
+    expect(
+      WireOperatorProvisioningTool.resolveServedChains({
+        label: OperatorHandle,
+        type: OperatorType.BATCH,
+        servedChains: [
+          Constants.SOLANA_CHAIN_CODENAME,
+          Constants.ETHEREUM_CHAIN_CODENAME,
+          Constants.SOLANA_CHAIN_CODENAME
+        ]
+      })
+    ).toEqual([Constants.ETHEREUM_CHAIN_CODENAME, Constants.SOLANA_CHAIN_CODENAME])
+  })
+
+  it("serves no chain for an empty list", () => {
+    expect(
+      WireOperatorProvisioningTool.resolveServedChains({
+        label: OperatorHandle,
+        type: OperatorType.BATCH,
+        servedChains: []
+      })
+    ).toEqual([])
+  })
+
+  it("serves no chain for another operator type, and refuses one that names a chain", () => {
+    expect(
+      WireOperatorProvisioningTool.resolveServedChains({
+        label: "uwritaaaaaa",
+        type: OperatorType.UNDERWRITER
+      })
+    ).toEqual([])
+    expect(() =>
+      WireOperatorProvisioningTool.resolveServedChains({
+        label: "uwritaaaaaa",
+        type: OperatorType.UNDERWRITER,
+        servedChains: [Constants.ETHEREUM_CHAIN_CODENAME]
+      })
+    ).toThrow(/only a batch operator serves outpost chains/)
+  })
+})
+
+describe("WireOperatorProvisioningTool.runChainJoin", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  it("joins the chain for the operator's account, signed by the operator", async () => {
+    const { ctx, joinchainInvoke } = fakeOperatorContext()
+    await WireOperatorProvisioningTool.runChainJoin(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.ChainJoinInput",
+        label: OperatorHandle,
+        chain: Constants.SOLANA_CHAIN_CODENAME
+      },
+      new AbortController().signal
+    )
+    expect(joinchainInvoke).toHaveBeenCalledTimes(1)
+    expect(joinchainInvoke).toHaveBeenCalledWith(
+      { account: OperatorHandle, chain_code: Constants.SOLANA_CHAIN_CODENAME },
+      { authorization: [{ actor: OperatorHandle, permission: "active" }] }
+    )
+  })
+
+  it("refuses an operator that was never materialized, and an aborted signal, before any write", async () => {
+    const { ctx, joinchainInvoke } = fakeOperatorContext(),
+      input: WireOperatorProvisioningTool.ChainJoinInput = {
+        kind: "WireOperatorProvisioningTool.ChainJoinInput",
+        label: "missingop",
+        chain: Constants.ETHEREUM_CHAIN_CODENAME
+      },
+      aborted = new AbortController()
+    await expect(
+      WireOperatorProvisioningTool.runChainJoin(ctx, input, new AbortController().signal)
+    ).rejects.toThrow(/missingop/)
+    aborted.abort()
+    await expect(
+      WireOperatorProvisioningTool.runChainJoin(
+        ctx,
+        { ...input, label: OperatorHandle },
+        aborted.signal
+      )
+    ).rejects.toThrow()
+    expect(joinchainInvoke).not.toHaveBeenCalled()
+  })
+
+  it("propagates a refused joinchain", async () => {
+    const { ctx, joinchainInvoke } = fakeOperatorContext()
+    joinchainInvoke.mockRejectedValueOnce(new Error("operator has no authex link for the chain"))
+    await expect(
+      WireOperatorProvisioningTool.runChainJoin(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.ChainJoinInput",
+          label: OperatorHandle,
+          chain: Constants.ETHEREUM_CHAIN_CODENAME
+        },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/authex link/)
+  })
+
+  it("delegates its one write to OpregContractSteps.runJoinchain with the resolved account", async () => {
+    const { ctx } = fakeOperatorContext(),
+      delegate = jest.spyOn(Steps.contracts.sysio.opreg, "runJoinchain").mockResolvedValue(undefined),
+      signal = new AbortController().signal,
+      step = WireOperatorProvisioningTool.planChainJoin(
+        Report.Actor.BatchOperator,
+        "join",
+        "join",
+        {},
+        OperatorHandle,
+        Constants.SOLANA_CHAIN_CODENAME
+      )
+    expect(step.input).toEqual({
+      kind: "WireOperatorProvisioningTool.ChainJoinInput",
+      label: OperatorHandle,
+      chain: Constants.SOLANA_CHAIN_CODENAME
+    })
+    expect(step.runner).toBe(WireOperatorProvisioningTool.runChainJoin)
+    await step.runner(ctx, step.input, signal)
+    expect(delegate).toHaveBeenCalledWith(
+      ctx,
+      {
+        kind: "OpregContractSteps.JoinchainInput",
+        data: { account: OperatorHandle, chain_code: Constants.SOLANA_CHAIN_CODENAME }
+      },
+      signal
+    )
+  })
+})
+
+describe("WireOperatorProvisioningTool.planChainLeave", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** The fake context, with the opreg `leavechain` push spied on the memoized client. */
+  function leaveContext() {
+    const fake = fakeOperatorContext(),
+      opreg = fake.ctx.wire.getSysioContract(SysioContracts.SysioContractName.opreg),
+      leavechainInvoke = jest.spyOn(opreg.actions.leavechain, "invoke").mockResolvedValue(undefined)
+    return { ...fake, leavechainInvoke }
+  }
+
+  it("carries the operator's label and the chain to its named runner", () => {
+    const step = WireOperatorProvisioningTool.planChainLeave(
+      Report.Actor.BatchOperator,
+      "leave",
+      "leave",
+      {},
+      OperatorHandle,
+      Constants.ETHEREUM_CHAIN_CODENAME
+    )
+    expect(step.input).toEqual({
+      kind: "WireOperatorProvisioningTool.ChainLeaveInput",
+      label: OperatorHandle,
+      chain: Constants.ETHEREUM_CHAIN_CODENAME
+    })
+    expect(step.runner).toBe(WireOperatorProvisioningTool.runChainLeave)
+  })
+
+  it("leaves the chain for the operator's resolved account, signed by the operator", async () => {
+    const { ctx, leavechainInvoke } = leaveContext(),
+      delegate = jest.spyOn(Steps.contracts.sysio.opreg, "runLeavechain"),
+      signal = new AbortController().signal
+    await WireOperatorProvisioningTool.runChainLeave(
+      ctx,
+      {
+        kind: "WireOperatorProvisioningTool.ChainLeaveInput",
+        label: OperatorHandle,
+        chain: Constants.ETHEREUM_CHAIN_CODENAME
+      },
+      signal
+    )
+    expect(delegate).toHaveBeenCalledTimes(1)
+    expect(leavechainInvoke).toHaveBeenCalledWith(
+      { account: OperatorHandle, chain_code: Constants.ETHEREUM_CHAIN_CODENAME },
+      { authorization: [{ actor: OperatorHandle, permission: "active" }] }
+    )
+  })
+
+  it("refuses an operator that was never materialized, and an aborted signal, before any write", async () => {
+    const { ctx, leavechainInvoke } = leaveContext(),
+      input: WireOperatorProvisioningTool.ChainLeaveInput = {
+        kind: "WireOperatorProvisioningTool.ChainLeaveInput",
+        label: "missingop",
+        chain: Constants.ETHEREUM_CHAIN_CODENAME
+      }
+    await expect(
+      WireOperatorProvisioningTool.runChainLeave(ctx, input, new AbortController().signal)
+    ).rejects.toThrow(/missingop/)
+    await expect(
+      WireOperatorProvisioningTool.runChainLeave(ctx, { ...input, label: OperatorHandle }, AbortSignal.abort())
+    ).rejects.toThrow()
+    expect(leavechainInvoke).not.toHaveBeenCalled()
+  })
+
+  it("propagates a refused leavechain", async () => {
+    const { ctx, leavechainInvoke } = leaveContext()
+    leavechainInvoke.mockRejectedValueOnce(new Error("operator does not serve the chain"))
+    await expect(
+      WireOperatorProvisioningTool.runChainLeave(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.ChainLeaveInput",
+          label: OperatorHandle,
+          chain: Constants.ETHEREUM_CHAIN_CODENAME
+        },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/does not serve/)
   })
 })
 
@@ -971,7 +1248,9 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
       "WireOperatorProvisioningTool.CreateAccountInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
       "WireOperatorProvisioningTool.AuthexLinkInput",
-      "WireOperatorProvisioningTool.RegistrationInput"
+      "WireOperatorProvisioningTool.RegistrationInput",
+      "WireOperatorProvisioningTool.ChainJoinInput",
+      "WireOperatorProvisioningTool.ChainJoinInput"
     ])
     const publications = publicationInputs(steps)
     expect(publications.map(publication => publication.secretId)).toEqual([

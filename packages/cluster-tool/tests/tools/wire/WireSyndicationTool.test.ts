@@ -1,4 +1,5 @@
 import { SysioContracts } from "@wireio/sdk-core"
+import { createUniformOutpostEpochDurations } from "@wireio/cluster-tool-shared"
 
 import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import {
@@ -96,7 +97,7 @@ afterEach(() => jest.restoreAllMocks())
 describe("WireSyndicationTool — sysio.synd reads", () => {
   it("derives a floored fee plus flat charge from the live pair, including a changed charge", async () => {
     const { ctx, clients } = stubbedContext(),
-      config = Steps.registry.syndicationConfigRegistrations(EpochDurationSec).find(
+      config = Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec)).find(
         row => row.token_code === Liqsol
       )
     serve(clients.liq.tables.stat, [stat("2.000000001 LIQSOL")])
@@ -179,7 +180,7 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
   it("readLedger and readSyndicationConfig find the pair's row", async () => {
     const { ctx, clients } = stubbedContext(),
       config: SysioContracts.SysioSyndSyndConfigType = {
-        ...Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[1]
+        ...Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec))[1]
       }
     serve(clients.synd.tables.ledger, [
       {
@@ -191,7 +192,7 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
       }
     ])
     serve(clients.synd.tables.syndconfig, [
-      Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[0],
+      Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec))[0],
       config
     ])
     expect(

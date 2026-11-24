@@ -1,9 +1,18 @@
 import Assert from "node:assert"
+import { isDeepStrictEqual } from "node:util"
 
-import { match } from "ts-pattern"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
+import { match } from "ts-pattern"
+
+import {
+  describeOutpostChains,
+  mapOutpostChains,
+  OutpostChainCodenames,
+  type ClusterConfig,
+  type OutpostChainCodename,
+  type PerOutpostChain
+} from "@wireio/cluster-tool-shared"
 import {
   ClusterBuildStep,
   ProtocolTiming,
@@ -38,8 +47,7 @@ const {
   SysioContractAccount,
   SysioContractName,
   SysioEpochEmissionsblockreason,
-  SysioMsgchChainkind,
-  SysioOpregOperatorstatus
+  SysioMsgchChainkind
 } = SysioContracts
 
 /** The treasury account: `sysio`, whose WIRE balance funds every emissions payout. */
@@ -140,9 +148,17 @@ export namespace EconomicClockSteps {
   // ── Verify: the clocks are configured as the scenario needs ─────────────────
 
   /**
-   * Assert the depot runs the clocks the cluster was configured with: `economycfg` and `epochcfg`
-   * carry the resolved durations, the economic epoch is the longer one, every economic epoch is a
-   * pay epoch, and the T5 treasury starts where the economic grid does.
+   * Assert the depot runs the clocks the cluster was configured with: `economycfg` carries the
+   * economic epoch duration and each outpost chain's `epochcfg` row its own consensus epoch
+   * duration, the economic epoch is longer than every chain's, every economic epoch is a pay
+   * epoch, and the T5 treasury starts where the economic grid does
+   * ({@link runVerifyClockConfiguration}).
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @returns The verify step.
    */
   export function planVerifyClockConfiguration<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -162,33 +178,45 @@ export namespace EconomicClockSteps {
     )
   }
 
-  /** Named runner — read the four singletons and assert them against `ctx.config`. */
+  /**
+   * Named runner — read `economycfg`, every chain's `epochcfg` row, `emitcfg` and `t5state`, and
+   * assert them against `ctx.config`.
+   *
+   * @param ctx - The build context.
+   * @param _input - No input.
+   * @param signal - Abort signal.
+   * @throws When a row is missing, a duration differs from the cluster's, a chain's consensus epoch
+   *   is not shorter than the economic epoch, not every economic epoch pays, or `t5state` starts off
+   *   the economic grid.
+   */
   export async function runVerifyClockConfiguration<
     C extends ClusterBuildContext
   >(ctx: C, _input: null, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const [economy, consensus, emission, t5] = await Promise.all([
       Steps.contracts.sysio.epoch.readEconomyConfig(ctx),
-      Steps.contracts.sysio.epoch.readEpochConfig(ctx),
+      Steps.contracts.sysio.epoch.readEpochConfigs(ctx),
       Steps.contracts.sysio.system.readEmissionConfig(ctx),
       Steps.contracts.sysio.system.readT5State(ctx)
     ])
     Assert.ok(economy != null, "sysio.epoch::economycfg has no row")
-    Assert.ok(consensus != null, "sysio.epoch::epochcfg has no row")
     Assert.strictEqual(
       economy.epoch_duration_sec,
       ctx.config.economicEpochDurationSec,
       "economycfg.epoch_duration_sec is not the cluster's economic epoch duration"
     )
-    Assert.strictEqual(
-      consensus.epoch_duration_sec,
-      ctx.config.epochDurationSec,
-      "epochcfg.epoch_duration_sec is not the cluster's consensus epoch duration"
-    )
-    Assert.ok(
-      economy.epoch_duration_sec > consensus.epoch_duration_sec,
-      `the economic epoch (${economy.epoch_duration_sec} s) must be longer than the consensus epoch (${consensus.epoch_duration_sec} s)`
-    )
+    OutpostChainCodenames.forEach(chain => {
+      Assert.ok(consensus[chain] != null, `sysio.epoch::epochcfg has no ${chain} row`)
+      Assert.strictEqual(
+        consensus[chain].epoch_duration_sec,
+        ctx.config.outpostEpochDurationSec[chain],
+        `the ${chain} epochcfg.epoch_duration_sec is not the cluster's ${chain} consensus epoch duration`
+      )
+      Assert.ok(
+        economy.epoch_duration_sec > consensus[chain].epoch_duration_sec,
+        `the economic epoch (${economy.epoch_duration_sec} s) must be longer than the ${chain} consensus epoch (${consensus[chain].epoch_duration_sec} s)`
+      )
+    })
     Assert.strictEqual(
       emission.pay_cadence_epochs,
       Constants.PayCadenceEpochs,
@@ -295,12 +323,12 @@ export namespace EconomicClockSteps {
     return paid
   }
 
-  // ── Verify: consensus advances about twice per economic epoch ────────────
+  // ── Verify: each chain's consensus advances about twice per economic epoch ─
 
   /**
-   * Assert consensus advanced, between the observation's first and last economic epoch, at least
-   * as often as the consensus envelope requires and more often than the economic clock
-   * ({@link assertConsensusCadence}).
+   * Assert every outpost chain's consensus advanced, between the observation's first and last
+   * economic epoch, at least as often as its envelope requires and more often than the economic
+   * clock ({@link assertConsensusCadence}).
    */
   export function planVerifyConsensusCadence<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -330,42 +358,49 @@ export namespace EconomicClockSteps {
       ctx.outputs.assert(
         WireEconomicClockTool.observationKey(input.observationName)
       ),
-      ctx.config.epochDurationSec
+      ctx.config.outpostEpochDurationSec
     )
   }
 
   /**
-   * Assert the two clocks ran on separate grids: between the observation's first and last tick,
-   * consensus advanced unpaused at least `WireEconomicClockTool.consensusAdvanceLowerBound`
-   * epochs, and more than the economic epochs that opened.
+   * Assert the clocks ran on separate grids: between the observation's first and last tick, every
+   * outpost chain's consensus advanced unpaused at least
+   * `WireEconomicClockTool.consensusAdvanceLowerBound` epochs of its own duration, and more than
+   * the economic epochs that opened.
    *
    * @param observation - At least two economic epochs opening.
-   * @param consensusEpochDurationSec - The cluster's consensus epoch duration (s).
-   * @returns The consensus epochs advanced over the window.
-   * @throws When the observation is too short, or consensus fell behind either bound.
+   * @param outpostEpochDurationSec - Each outpost chain's consensus epoch duration (s).
+   * @returns Each chain's consensus epochs advanced over the window.
+   * @throws When the observation is too short, or a chain's consensus fell behind either bound.
    */
   export function assertConsensusCadence(
     observation: WireEconomicClockTool.Observation,
-    consensusEpochDurationSec: number
-  ): number {
+    outpostEpochDurationSec: ClusterConfig["outpostEpochDurationSec"]
+  ): PerOutpostChain<number> {
     Assert.ok(
       observation.ticks.length >= 2,
       "too few economic epochs to time consensus against"
     )
     const [first] = observation.ticks,
       last = observation.ticks.at(-1),
-      consensusAdvanced = WireEconomicClockTool.assertConsensusAdvanced(
-        first,
-        last,
-        consensusEpochDurationSec
-      ),
-      economicAdvanced = last.economicEpochIndex - first.economicEpochIndex
-    Assert.ok(
-      consensusAdvanced > economicAdvanced,
-      `consensus advanced ${consensusAdvanced} epoch(s) while the economic clock opened ${economicAdvanced}`
+      economicAdvanced = last.economicEpochIndex - first.economicEpochIndex,
+      consensusAdvanced = mapOutpostChains(chain =>
+        WireEconomicClockTool.assertConsensusAdvanced(
+          first,
+          last,
+          chain,
+          outpostEpochDurationSec[chain]
+        )
+      )
+    OutpostChainCodenames.forEach(chain =>
+      Assert.ok(
+        consensusAdvanced[chain] > economicAdvanced,
+        `the ${chain} consensus advanced ${consensusAdvanced[chain]} epoch(s) while the economic clock opened ${economicAdvanced}`
+      )
     )
     log.info(
-      `[economic-clock] ${consensusAdvanced} consensus epochs per ${economicAdvanced} economic epochs`
+      `[economic-clock] consensus epochs per ${economicAdvanced} economic epochs: ` +
+        describeOutpostChains(consensusAdvanced)
     )
     return consensusAdvanced
   }
@@ -511,53 +546,6 @@ export namespace EconomicClockSteps {
       .exhaustive()
   }
 
-  // ── Verify: an operator's status ─────────────────────────────────────────
-
-  /** Input of {@link planVerifyOperatorStatus}. */
-  export interface OperatorStatusInput extends StepInput {
-    readonly kind: "EconomicClockSteps.OperatorStatusInput"
-    /** The operator's durable label. */
-    readonly label: string
-    /** The status its `sysio.opreg::operators` row must carry. */
-    readonly status: SysioContracts.SysioOpregOperatorstatus
-  }
-
-  /** Assert the operator's `sysio.opreg` row carries `status`. */
-  export function planVerifyOperatorStatus<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    label: string,
-    status: SysioContracts.SysioOpregOperatorstatus
-  ): ClusterBuildStep<C, OperatorStatusInput> {
-    return ClusterBuildStep.create<C, OperatorStatusInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "EconomicClockSteps.OperatorStatusInput", label, status },
-      runVerifyOperatorStatus
-    )
-  }
-
-  /** Named runner — read the operator's row and compare its status. */
-  export async function runVerifyOperatorStatus<C extends ClusterBuildContext>(
-    ctx: C,
-    input: OperatorStatusInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const row = await WireCollateralTool.readOperatorRow(ctx, input.label)
-    Assert.ok(row != null, `${input.label} has no sysio.opreg::operators row`)
-    Assert.ok(
-      matchesProtoEnum(row.status, SysioOpregOperatorstatus, input.status),
-      `${input.label} is ${String(row.status)}, not ${SysioOpregOperatorstatus[input.status]}`
-    )
-  }
-
   // ── Withdrawals: eligibility, the two waits, maturity ─────────────────────
 
   /** Input of {@link planVerifyWithdrawalEligibility}. */
@@ -571,12 +559,15 @@ export namespace EconomicClockSteps {
     readonly observationName: string
     /** The name the verified request is stored under ({@link withdrawalKey}). */
     readonly withdrawalName: string
+    /** The outpost chains the request must wait on: the chains the operator serves. */
+    readonly chains: readonly OutpostChainCodename[]
   }
 
   /**
-   * Assert the operator's queued withdrawal carries both eligibility fields — the economic wait
-   * from the economic epoch of the request and the consensus guard from the consensus epoch of it
-   * ({@link assertWithdrawalEligibility}) — and store it for the Steps after.
+   * Assert the operator's queued withdrawal carries its waits — the economic wait from the
+   * economic epoch of the request, and a consensus guard per served chain from that chain's
+   * consensus epoch at the request ({@link assertWithdrawalEligibility}) — and store it for the
+   * Steps after.
    */
   export function planVerifyWithdrawalEligibility<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -588,7 +579,8 @@ export namespace EconomicClockSteps {
     label: string,
     amount: bigint,
     observationName: string,
-    withdrawalName: string
+    withdrawalName: string,
+    chains: readonly OutpostChainCodename[]
   ): ClusterBuildStep<C, WithdrawalEligibilityInput> {
     return ClusterBuildStep.create<C, WithdrawalEligibilityInput>(
       actor,
@@ -600,7 +592,8 @@ export namespace EconomicClockSteps {
         label,
         amount,
         observationName,
-        withdrawalName
+        withdrawalName,
+        chains
       },
       runVerifyWithdrawalEligibility
     )
@@ -629,35 +622,35 @@ export namespace EconomicClockSteps {
       `${account} must have exactly one queued withdrawal`
     )
     const [request] = requests
-    assertWithdrawalEligibility(request, input.amount, before, after)
+    assertWithdrawalEligibility(request, input.amount, input.chains, before, after)
     ctx.outputs.set(withdrawalKey(input.withdrawalName), request)
   }
 
   /**
    * Assert a queued withdrawal's eligibility: its amount, its economic wait of
    * {@link EconomicClockScenarioConstants.WithdrawWaitEconomicEpochs} counted from the economic
-   * epoch the request fell in (at most one boundary past the last tick read after it), and its
-   * consensus guard of {@link EconomicClockScenarioConstants.WithdrawWaitConsensusEpochs} counted
-   * from a consensus epoch between the two readings that bracket the request.
+   * epoch the request fell in (at most one boundary past the last tick read after it), and one
+   * consensus guard per served chain of `WireCollateralTool.WithdrawWaitConsensusEpochs` counted
+   * from a consensus epoch of that chain between the two readings that bracket the request
+   * (`WireCollateralTool.assertConsensusWaits`).
    *
    * @param request - The `wtdwqueue` row.
    * @param amount - The amount requested.
+   * @param chains - The chains the request must wait on, exactly.
    * @param before - Both clocks right before the request.
    * @param after - Both clocks right after it.
-   * @throws When either field does not follow from the clocks.
+   * @throws When a field does not follow from the clocks, or the request waits on other chains.
    */
   export function assertWithdrawalEligibility(
     request: SysioContracts.SysioOpregWithdrawRequestType,
     amount: bigint,
+    chains: readonly OutpostChainCodename[],
     before: WireEconomicClockTool.Reading,
     after: WireEconomicClockTool.Reading
   ): void {
     const requestedAt = request.requested_at_economic_epoch,
       latestRequestEpoch =
-        after.economicEpochIndex + Constants.UntickedEconomicBoundaries,
-      consensusAtRequest =
-        request.eligible_at_consensus_epoch -
-        Constants.WithdrawWaitConsensusEpochs
+        after.economicEpochIndex + Constants.UntickedEconomicBoundaries
     Assert.strictEqual(
       BigInt(request.amount),
       amount,
@@ -673,11 +666,24 @@ export namespace EconomicClockSteps {
       requestedAt + Constants.WithdrawWaitEconomicEpochs,
       "eligible_at_economic_epoch is not the economic wait after the request"
     )
-    Assert.ok(
-      consensusAtRequest >= before.consensusEpochIndex &&
-        consensusAtRequest <= after.consensusEpochIndex,
-      `eligible_at_consensus_epoch ${request.eligible_at_consensus_epoch} is not the consensus guard after a consensus epoch in ${before.consensusEpochIndex}..${after.consensusEpochIndex}`
+    WireCollateralTool.assertConsensusWaits(
+      request,
+      chains,
+      consensusEpochIndices(before),
+      consensusEpochIndices(after)
     )
+  }
+
+  /**
+   * Every outpost chain's consensus epoch index at one reading — pure.
+   *
+   * @param reading - Both clocks at one instant.
+   * @returns Each chain's `current_epoch_index` as read.
+   */
+  export function consensusEpochIndices(
+    reading: WireEconomicClockTool.Reading
+  ): PerOutpostChain<number> {
+    return mapOutpostChains(chain => reading.consensus[chain].epochIndex)
   }
 
   /** Input of {@link planAwaitWithdrawalWaitPassed}. */
@@ -693,7 +699,8 @@ export namespace EconomicClockSteps {
 
   /**
    * Poll until the withdrawal's `wait` has passed — the economic index reached
-   * `eligible_at_economic_epoch`, or the consensus index `eligible_at_consensus_epoch` — and store
+   * `eligible_at_economic_epoch`, or every waited-on chain's consensus index its
+   * `consensus_waits` epoch — and store
    * an {@link EconomicClockWithdrawalSnapshot} of that instant ({@link withdrawalSnapshotKey}).
    * Pair it with {@link withdrawalWaitStepTimeoutMs}.
    */
@@ -748,7 +755,7 @@ export namespace EconomicClockSteps {
       )
     log.info(
       `[economic-clock] withdrawal ${request.request_id}: ${input.wait} wait passed at economic epoch ` +
-        `${snapshot.reading.economicEpochIndex}, consensus epoch ${snapshot.reading.consensusEpochIndex}; ` +
+        `${snapshot.reading.economicEpochIndex}, consensus ${describeOutpostChains(snapshot.reading.consensus, WireEconomicClockTool.describeConsensusReading)}; ` +
         `${snapshot.queued ? "still queued" : "flushed"}`
     )
     ctx.outputs.set(
@@ -778,7 +785,7 @@ export namespace EconomicClockSteps {
       ),
       confirm = await WireEconomicClockTool.readReading(ctx)
     return confirm.economicEpochIndex === reading.economicEpochIndex &&
-      confirm.consensusEpochIndex === reading.consensusEpochIndex
+      isDeepStrictEqual(consensusEpochIndices(confirm), consensusEpochIndices(reading))
       ? { reading, queued, remitClaim }
       : null
   }
@@ -801,16 +808,19 @@ export namespace EconomicClockSteps {
         WithdrawalWait.economic,
         () => reading.economicEpochIndex >= request.eligible_at_economic_epoch
       )
-      .with(
-        WithdrawalWait.consensus,
-        () => reading.consensusEpochIndex >= request.eligible_at_consensus_epoch
+      .with(WithdrawalWait.consensus, () =>
+        WireCollateralTool.consensusWaitsPassed(
+          request,
+          consensusEpochIndices(reading)
+        )
       )
       .exhaustive()
   }
 
   /**
-   * The deadline of {@link planAwaitWithdrawalWaitPassed} (ms): the wait's epochs of its clock,
-   * plus {@link EconomicClockScenarioConstants.RequestEpochs} for the epoch the request fell in.
+   * The deadline of {@link planAwaitWithdrawalWaitPassed} (ms): the wait's epochs of its clock —
+   * for the consensus guard, of the slowest outpost chain — plus
+   * {@link EconomicClockScenarioConstants.RequestEpochs} for the epoch the request fell in.
    *
    * @param config - The resolved cluster config.
    * @param wait - The wait awaited.
@@ -832,9 +842,10 @@ export namespace EconomicClockSteps {
       .with(
         WithdrawalWait.consensus,
         () =>
-          (Constants.WithdrawWaitConsensusEpochs + Constants.RequestEpochs) *
-          ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
-          ProtocolTiming.MsPerSecond
+          ProtocolTiming.effectiveEpochsMs(
+            ProtocolTiming.slowestOutpostEpochSec(config.outpostEpochDurationSec),
+            WireCollateralTool.WithdrawWaitConsensusEpochs + Constants.RequestEpochs
+          )
       )
       .exhaustive()
   }
@@ -1578,7 +1589,7 @@ export namespace EconomicClockSteps {
       ),
       ledger,
       await Steps.contracts.sysio.system.readEpochLog(ctx),
-      ctx.config.epochDurationSec
+      ctx.config.outpostEpochDurationSec
     )
   }
 
@@ -1586,22 +1597,22 @@ export namespace EconomicClockSteps {
    * Assert a hold persisted across an observation: one open episode, the one first observed,
    * still `BALANCE_INSUFFICIENT` and covering every economic epoch from its first through the
    * latest the observation saw; the pending period total grew and equals what the gate now
-   * attempts; no held epoch paid; and consensus advanced unpaused from the hold to the latest
-   * reading (`WireEconomicClockTool.assertConsensusAdvanced`).
+   * attempts; no held epoch paid; and every outpost chain's consensus advanced unpaused from the
+   * hold to the latest reading (`WireEconomicClockTool.assertConsensusAdvanced`).
    *
    * @param hold - The hold as first observed.
    * @param observation - Economic epochs that opened since.
    * @param ledger - The emissions ledger now.
    * @param epochLog - Every `sysio::epochlog` row.
-   * @param consensusEpochDurationSec - The cluster's consensus epoch duration (s).
-   * @throws When the hold lapsed, an epoch paid, or either clock stood still.
+   * @param outpostEpochDurationSec - Each outpost chain's consensus epoch duration (s).
+   * @throws When the hold lapsed, an epoch paid, or a clock stood still.
    */
   export function assertEmissionsHeldAcross(
     hold: EconomicClockHoldSnapshot,
     observation: WireEconomicClockTool.Observation,
     ledger: EconomicClockEmissionsReading,
     epochLog: readonly SysioContracts.SysioSystemEpochLogType[],
-    consensusEpochDurationSec: number
+    outpostEpochDurationSec: ClusterConfig["outpostEpochDurationSec"]
   ): void {
     const latest = WireEconomicClockTool.latestReading(observation)
     Assert.strictEqual(
@@ -1643,10 +1654,13 @@ export namespace EconomicClockSteps {
       "the held period stopped accruing"
     )
     assertNothingPaidSince(epochLog, blockLog.epoch_index)
-    WireEconomicClockTool.assertConsensusAdvanced(
-      hold.reading,
-      latest,
-      consensusEpochDurationSec
+    OutpostChainCodenames.forEach(chain =>
+      WireEconomicClockTool.assertConsensusAdvanced(
+        hold.reading,
+        latest,
+        chain,
+        outpostEpochDurationSec[chain]
+      )
     )
   }
 

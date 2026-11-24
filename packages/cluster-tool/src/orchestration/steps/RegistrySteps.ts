@@ -2,7 +2,11 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import type {
+  ClusterConfig,
+  OutpostChainCodename,
+  OutpostEpochDurations
+} from "@wireio/cluster-tool-shared"
 import {
   KeyType,
   PrivateKey,
@@ -134,15 +138,15 @@ export namespace RegistrySteps {
   /**
    * The refill of each pair's syndication and desyndication buckets (shadow base units per
    * elapsed second — `sysio.synd` adds `refill × elapsed seconds`, capped at the burst): one
-   * {@link SyndicationBucketSize} per consensus epoch of the cluster, rounded up so one epoch
-   * of elapsed time restores a whole emptied bucket. 16,666,666,666,667 (about 16,667 tokens
-   * a second) at 60 s epochs.
+   * {@link SyndicationBucketSize} per consensus epoch of the pair's chain, rounded up so one
+   * epoch of elapsed time restores a whole emptied bucket. 16,666,666,666,667 (about 16,667
+   * tokens a second) at 60 s epochs.
    *
-   * @param epochDurationSec - The cluster's consensus epoch duration (s).
+   * @param epochDurationSec - The pair's chain's consensus epoch duration (s).
    * @returns The per-second refill.
    */
   export function syndicationRefillPerSecond(
-    epochDurationSec: ClusterConfig["epochDurationSec"]
+    epochDurationSec: OutpostEpochDurations[OutpostChainCodename]
   ): number {
     return Number(
       ceilDiv(BigInt(SyndicationBucketSize), BigInt(epochDurationSec))
@@ -744,23 +748,23 @@ export namespace RegistrySteps {
    * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
    * that phase (one Report step per row) and its unit test.
    *
-   * @param epochDurationSec - The cluster's consensus epoch duration (s), which sizes the
-   *   buckets' per-second refill ({@link syndicationRefillPerSecond}).
+   * @param outpostEpochDurationSec - Each outpost chain's consensus epoch duration (s): a
+   *   pair's chain's duration sizes its buckets' per-second refill
+   *   ({@link syndicationRefillPerSecond}).
    * @returns The rows, one per shadow pair.
    */
   export function syndicationConfigRegistrations(
-    epochDurationSec: ClusterConfig["epochDurationSec"]
+    outpostEpochDurationSec: ClusterConfig["outpostEpochDurationSec"]
   ): SysioContracts.SysioSyndSetconfigAction[] {
-    const refill = syndicationRefillPerSecond(epochDurationSec)
     return Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
       synd_fee_bps: SyndicationFeeBps,
       desynd_fee_bps: DesyndicationFeeBps,
       synd_burst: SyndicationBucketSize,
-      synd_refill: refill,
+      synd_refill: syndicationRefillPerSecond(outpostEpochDurationSec[chainCodename]),
       desynd_burst: SyndicationBucketSize,
-      desynd_refill: refill,
+      desynd_refill: syndicationRefillPerSecond(outpostEpochDurationSec[chainCodename]),
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
@@ -906,8 +910,8 @@ export namespace RegistrySteps {
    * @param name - Short phase name.
    * @param description - Human-readable phase description.
    * @param options - Step option overrides threaded to every step.
-   * @param epochDurationSec - The cluster's consensus epoch duration (s), which sizes the
-   *   buckets' per-second refill.
+   * @param outpostEpochDurationSec - Each outpost chain's consensus epoch duration (s),
+   *   which sizes the buckets' per-second refill of that chain's pairs.
    * @returns The self-registered configuration phase.
    */
   export function planSyndicationConfig<
@@ -917,7 +921,7 @@ export namespace RegistrySteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    epochDurationSec: ClusterConfig["epochDurationSec"]
+    outpostEpochDurationSec: ClusterConfig["outpostEpochDurationSec"]
   ): ClusterBuildPhase<C> {
     const steps: ClusterBuildStep.Any<C>[] = [
       BondContractSteps.planSetconfig<C>(
@@ -927,7 +931,7 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...syndicationConfigRegistrations(epochDurationSec).map(registration =>
+      ...syndicationConfigRegistrations(outpostEpochDurationSec).map(registration =>
         SyndContractSteps.planSetconfig<C>(
           Report.Actor.Sysio,
           `configure-syndication-${registration.chain_code.toLowerCase()}-${registration.token_code.toLowerCase()}`,

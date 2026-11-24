@@ -2,6 +2,7 @@ const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const {
   ClusterBuild,
+  Constants: HarnessConstants,
   OutputStore,
   ProducerTier,
   ProducerTierShift,
@@ -30,7 +31,15 @@ function steps(node) {
 function plannedBuild() {
   const build = ClusterBuild.forContext({
     outputs: new OutputStore(),
-    config: { epochDurationSec: Constants.EpochDurationSec }
+    config: {
+      epochDurationSec: Constants.EpochDurationSec,
+      outpostEpochDurationSec: Object.fromEntries(
+        Object.values(HarnessConstants.OutpostChainCodename).map(chain => [
+          chain,
+          Constants.EpochDurationSec
+        ])
+      )
+    }
   })
   new ProducerRegistrationScenario().plan(build)
   return build

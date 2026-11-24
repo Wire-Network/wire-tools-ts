@@ -11,7 +11,7 @@ import { Constants, NodeOwnerTier, ProtocolTiming } from "@wireio/cluster-tool"
  * flow needs the depositor key again.
  */
 export namespace NodeOwnerNftScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
 
   /** Producer nodes stood up by the bootstrap (from the validated flow run). */

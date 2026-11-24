@@ -3,6 +3,8 @@ import { KeyType } from "@wireio/sdk-core"
 import {
   AWSAccountName,
   ClusterFiles,
+  OutpostChainCodename,
+  OutpostChainCodenames,
   SchemaCodec,
   WireOpregBootstrap,
   WireOpregBootstrapSchema,
@@ -18,6 +20,10 @@ const Label = "testnet-epoch60"
 const ProducerAccount = "defproducera"
 /** Batch-operator accounts in the fixture roster. */
 const BatchAccounts = ["acct.a1b2c", "acct.d3e4f", "acct.g5h1i"] as const
+/** The Ethereum chain's consensus epoch duration in the fixture (s). */
+const EthereumEpochDurationSec = 60
+/** The Solana chain's consensus epoch duration in the fixture (s) — distinct from Ethereum's. */
+const SolanaEpochDurationSec = 120
 
 /** A fixture producer: K1 account key + BLS finality key. */
 function producer(accountName: string): WireOpregBootstrapOperator {
@@ -56,16 +62,27 @@ function batchOperator(accountName: string): WireOpregBootstrapOperator {
   }
 }
 
-/** A valid document: one producer, three batch operators in three single-member groups. */
+/** A valid document: one producer, three batch operators in three single-member groups on each chain. */
 function fixtureDocument(): WireOpregBootstrapDocument {
   return {
     label: Label,
     awsAccount: AWSAccountName.test,
-    epochDurationSec: 60,
     operators: [producer(ProducerAccount), ...BatchAccounts.map(batchOperator)],
-    batchOperatorGroups: {
-      activeGroupIndex: 0,
-      groups: BatchAccounts.map(account => [account])
+    chains: {
+      [OutpostChainCodename.ETHEREUM]: {
+        epochDurationSec: EthereumEpochDurationSec,
+        batchOperatorGroups: {
+          activeGroupIndex: 0,
+          groups: BatchAccounts.map(account => [account])
+        }
+      },
+      [OutpostChainCodename.SOLANA]: {
+        epochDurationSec: SolanaEpochDurationSec,
+        batchOperatorGroups: {
+          activeGroupIndex: 0,
+          groups: [...BatchAccounts].reverse().map(account => [account])
+        }
+      }
     }
   }
 }
@@ -132,7 +149,7 @@ describe("WireOpregBootstrap", () => {
 
     it("refuses to encode a document that breaks a consistency rule", () => {
       const document = fixtureDocument()
-      document.batchOperatorGroups.activeGroupIndex = 3
+      document.chains[OutpostChainCodename.SOLANA].batchOperatorGroups.activeGroupIndex = 3
       expect(() => WireOpregBootstrapSchemaCodec.serialize(document)).toThrow()
     })
 
@@ -192,10 +209,14 @@ describe("WireOpregBootstrap", () => {
     it("requires at least one operator, one group, and one member per group", () => {
       const json = wireForm(fixtureDocument())
       json.operators = []
-      json.batchOperatorGroups.groups = [[]]
+      json.chains[OutpostChainCodename.ETHEREUM].batchOperatorGroups.groups = [[]]
       const issues = issuesOf(json)
       expect(issues.some(issue => issue.startsWith("operators:"))).toBe(true)
-      expect(issues.some(issue => issue.startsWith("batchOperatorGroups.groups.0"))).toBe(true)
+      expect(
+        issues.some(issue =>
+          issue.startsWith(`chains.${OutpostChainCodename.ETHEREUM}.batchOperatorGroups.groups.0`)
+        )
+      ).toBe(true)
     })
 
     it("admits a null label and a null AWS account", () => {
@@ -226,10 +247,31 @@ describe("WireOpregBootstrap", () => {
       expect(issues.some(issue => issue.startsWith("awsAccount"))).toBe(true)
     })
 
-    it("requires a positive integer epoch duration", () => {
+    it("requires a positive integer epoch duration on every chain", () => {
       const json = wireForm(fixtureDocument())
-      json.epochDurationSec = 0
-      expect(issuesOf(json).some(issue => issue.startsWith("epochDurationSec"))).toBe(true)
+      json.chains[OutpostChainCodename.ETHEREUM].epochDurationSec = 0
+      json.chains[OutpostChainCodename.SOLANA].epochDurationSec = 1.5
+      const issues = issuesOf(json)
+      OutpostChainCodenames.forEach(chain =>
+        expect(issues.some(issue => issue.startsWith(`chains.${chain}.epochDurationSec`))).toBe(true)
+      )
+    })
+
+    it("carries each chain's own epoch duration and schedule", () => {
+      const document = WireOpregBootstrapSchemaCodec.deserialize(
+        WireOpregBootstrapSchemaCodec.serialize(fixtureDocument())
+      )
+      expect(document.chains[OutpostChainCodename.ETHEREUM].epochDurationSec).toBe(EthereumEpochDurationSec)
+      expect(document.chains[OutpostChainCodename.SOLANA].epochDurationSec).toBe(SolanaEpochDurationSec)
+      expect(document.chains[OutpostChainCodename.SOLANA].batchOperatorGroups.groups[0]).toEqual([
+        BatchAccounts[BatchAccounts.length - 1]
+      ])
+    })
+
+    it("requires every outpost chain", () => {
+      const json = wireForm(fixtureDocument())
+      delete json.chains[OutpostChainCodename.SOLANA]
+      expect(issuesOf(json).some(issue => issue.startsWith(`chains.${OutpostChainCodename.SOLANA}`))).toBe(true)
     })
   })
 
@@ -242,38 +284,38 @@ describe("WireOpregBootstrap", () => {
       )
     })
 
-    it("rejects an activeGroupIndex past the last group", () => {
+    it("rejects an activeGroupIndex past the chain's last group", () => {
       const json = wireForm(fixtureDocument())
-      json.batchOperatorGroups.activeGroupIndex = BatchAccounts.length
+      json.chains[OutpostChainCodename.ETHEREUM].batchOperatorGroups.activeGroupIndex = BatchAccounts.length
       expect(issuesOf(json)).toContain(
-        `batchOperatorGroups.activeGroupIndex: activeGroupIndex ${BatchAccounts.length} is out of range for ${BatchAccounts.length} group(s)`
+        `chains.${OutpostChainCodename.ETHEREUM}.batchOperatorGroups.activeGroupIndex: ${OutpostChainCodename.ETHEREUM} activeGroupIndex ${BatchAccounts.length} is out of range for ${BatchAccounts.length} group(s)`
       )
     })
 
-    it("rejects the same account twice within one group", () => {
+    it("rejects the same account twice within one group of a chain", () => {
       const json = wireForm(fixtureDocument())
-      json.batchOperatorGroups.groups[0] = [BatchAccounts[0], BatchAccounts[0]]
+      json.chains[OutpostChainCodename.SOLANA].batchOperatorGroups.groups[0] = [BatchAccounts[0], BatchAccounts[0]]
       expect(issuesOf(json)).toContain(
-        `batchOperatorGroups.groups.0.1: ${BatchAccounts[0]} appears more than once in group 0`
+        `chains.${OutpostChainCodename.SOLANA}.batchOperatorGroups.groups.0.1: ${BatchAccounts[0]} appears more than once in ${OutpostChainCodename.SOLANA} group 0`
       )
     })
 
     it("accepts one operator in several groups (cross-group membership is the depot's concern)", () => {
       const json = wireForm(fixtureDocument())
-      json.batchOperatorGroups.groups[1] = [BatchAccounts[0]]
+      json.chains[OutpostChainCodename.ETHEREUM].batchOperatorGroups.groups[1] = [BatchAccounts[0]]
       expect(WireOpregBootstrapSchemaCodec.check(json)).toBe(true)
     })
 
     it("rejects a group member that is not a BATCH operator in operators", () => {
       const json = wireForm(fixtureDocument())
-      json.batchOperatorGroups.groups[0] = [ProducerAccount]
-      json.batchOperatorGroups.groups[1] = ["acct.zzzzz"]
+      json.chains[OutpostChainCodename.ETHEREUM].batchOperatorGroups.groups[0] = [ProducerAccount]
+      json.chains[OutpostChainCodename.SOLANA].batchOperatorGroups.groups[1] = ["acct.zzzzz"]
       const issues = issuesOf(json)
       expect(issues).toContain(
-        `batchOperatorGroups.groups.0.0: group member ${ProducerAccount} is not a BATCH operator in operators`
+        `chains.${OutpostChainCodename.ETHEREUM}.batchOperatorGroups.groups.0.0: ${OutpostChainCodename.ETHEREUM} group member ${ProducerAccount} is not a BATCH operator in operators`
       )
       expect(issues).toContain(
-        "batchOperatorGroups.groups.1.0: group member acct.zzzzz is not a BATCH operator in operators"
+        `chains.${OutpostChainCodename.SOLANA}.batchOperatorGroups.groups.1.0: ${OutpostChainCodename.SOLANA} group member acct.zzzzz is not a BATCH operator in operators`
       )
     })
 
@@ -312,13 +354,10 @@ describe("WireOpregBootstrap", () => {
       const schema = WireOpregBootstrapSchemaCodec.toJSONSchema()
       expect(schema.title).toBe(WireOpregBootstrap.Title)
       expect(schema.description).toBe(WireOpregBootstrap.Description)
-      expect(schema.required).toEqual([
-        "label",
-        "awsAccount",
-        "epochDurationSec",
-        "operators",
-        "batchOperatorGroups"
-      ])
+      expect(schema.required).toEqual(["label", "awsAccount", "operators", "chains"])
+      expect(schema).toMatchObject({
+        properties: { chains: { required: [...OutpostChainCodenames] } }
+      })
     })
 
     it("carries one operator variant per type, each with exactly its key slots and pinned curves", () => {

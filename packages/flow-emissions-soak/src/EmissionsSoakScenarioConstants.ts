@@ -38,7 +38,7 @@ export namespace EmissionsSoakScenarioConstants {
 
   // ── Cluster topology (the old suite's `beforeAll` FlowTestContext options) ──
 
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = envInteger("EPOCH_DURATION_SEC", 60)
   /** Producers in the bootstrap roster. */
   export const ProducerCount = 3

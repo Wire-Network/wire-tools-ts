@@ -840,6 +840,28 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
 
   afterEach(() => Fs.rmSync(root, { recursive: true, force: true }))
 
+  it("emits each outpost chain's own consensus epoch duration in the wire section", async () => {
+    const durations = {
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 60,
+        [Constants.SOLANA_CHAIN_CODENAME]: 150
+      },
+      ctx = runContext(externalBindFile, PersistedFixture.signatureProvider, undefined, null, {
+        outpostEpochDurationSec: durations
+      })
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    await External.runEmit(ctx, null, signal)
+
+    const text = Fs.readFileSync(externalConfigFile(), "utf-8")
+    // Written explicitly, never left for the decode default to fill.
+    expect(JSON.parse(text).wire.outpostEpochDurationSec).toEqual(durations)
+    expect(ExternalClusterConfigSchemaCodec.deserialize(text).wire).toMatchObject({
+      epochDurationSec: ctx.config.epochDurationSec,
+      outpostEpochDurationSec: durations
+    })
+  })
+
   it("clones + rebinds + emits + verifies a self-described external config", async () => {
     const ctx = runContext()
     await External.runLoadExternalBind(ctx, null, signal)

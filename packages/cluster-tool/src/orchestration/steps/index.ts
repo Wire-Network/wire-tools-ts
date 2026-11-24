@@ -4,6 +4,7 @@ import { ClusterStateSteps } from "./ClusterStateSteps.js"
 import { ConsensusSteps } from "./ConsensusSteps.js"
 import { ContractSteps } from "./ContractSteps.js"
 import { DebuggingServerBundleSteps } from "./DebuggingServerBundleSteps.js"
+import { EpochAdvanceSteps } from "./EpochAdvanceSteps.js"
 import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { GovernanceSteps } from "./GovernanceSteps.js"
@@ -45,6 +46,8 @@ export namespace Steps {
   export import clusterState = ClusterStateSteps
   export import consensus = ConsensusSteps
   export import contract = ContractSteps
+  /** Every outpost chain's consensus epoch advancing: the bootstrap gate, a snapshot, and its verify. */
+  export import epochAdvance = EpochAdvanceSteps
   export import ethereumOutpost = EthereumOutpostSteps
   /** External-outpost artifact publishing (external-outpost clusters). */
   export import externalOutpost = ExternalOutpostSteps

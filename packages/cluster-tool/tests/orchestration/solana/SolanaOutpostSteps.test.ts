@@ -1,5 +1,6 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { SysioContracts } from "@wireio/sdk-core"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import {
   ClusterBuild,
@@ -130,6 +131,69 @@ describe("Steps.solanaOutpost.launch", () => {
 })
 
 describe("Steps.solanaOutpost.oppBootstrap", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  it("seeds the outpost from the SOLANA chain's active group at its epochcfg duration, not the config's seed", async () => {
+    const ctx = new ClusterBuildContext(
+        fixtureConfig({
+          epochDurationSec: 45,
+          outpostEpochDurationSec: {
+            [Constants.ETHEREUM_CHAIN_CODENAME]: 60,
+            [Constants.SOLANA_CHAIN_CODENAME]: 999
+          }
+        }),
+        getLogger("solana-outpost-test")
+      ),
+      operators = [batchOperator("batch-op-00", "batchopa"), batchOperator("batch-op-01", "batchopb")]
+    operators.forEach(operator => ctx.keyStore.setOperator(operator))
+    const group = jest
+        .spyOn(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup")
+        .mockResolvedValue(["batchopb"]),
+      duration = jest
+        .spyOn(Steps.contracts.sysio.epoch, "readEpochDurationSec")
+        .mockResolvedValue(150),
+      seed = jest
+        .spyOn(SolanaOutpostBootstrapper.prototype, "oppBootstrap")
+        .mockResolvedValue(undefined)
+    await Steps.solanaOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    expect(group).toHaveBeenCalledWith(ctx, Constants.SOLANA_CHAIN_CODENAME)
+    expect(duration).toHaveBeenCalledWith(ctx, Constants.SOLANA_CHAIN_CODENAME)
+    expect(seed).toHaveBeenCalledTimes(1)
+    const [roster, durationSec] = seed.mock.calls[0]
+    expect(durationSec).toBe(150)
+    expect(roster.groupMembers.map(member => member.toBase58())).toEqual([
+      solanaNativePublicKey(operators[1].solana)
+    ])
+  })
+
+  it("refuses to seed before the SOLANA chain's setconfig wrote its epochcfg row", async () => {
+    const ctx = new ClusterBuildContext(fixtureConfig(), getLogger("solana-outpost-test")),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+    ctx.keyStore.setOperator(batchOperator("batch-op-00", "batchopa"))
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    jest.spyOn(contract.tables.epochcfg, "query").mockResolvedValue({ rows: [], more: false })
+    jest.spyOn(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup").mockResolvedValue(["batchopa"])
+    const seed = jest
+      .spyOn(SolanaOutpostBootstrapper.prototype, "oppBootstrap")
+      .mockResolvedValue(undefined)
+    await expect(
+      Steps.solanaOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    ).rejects.toThrow(new RegExp(`epochcfg has no ${Constants.SOLANA_CHAIN_CODENAME} row`))
+    expect(seed).not.toHaveBeenCalled()
+  })
+
+  it("refuses to seed before the SOLANA chain has an active group", async () => {
+    const ctx = new ClusterBuildContext(fixtureConfig(), getLogger("solana-outpost-test"))
+    jest.spyOn(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup").mockResolvedValue([])
+    const seed = jest
+      .spyOn(SolanaOutpostBootstrapper.prototype, "oppBootstrap")
+      .mockResolvedValue(undefined)
+    await expect(
+      Steps.solanaOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    ).rejects.toThrow(new RegExp(`${Constants.SOLANA_CHAIN_CODENAME} epoch-1 batch-operator group is empty`))
+    expect(seed).not.toHaveBeenCalled()
+  })
+
   it("builds an input-less opp_bootstrap step with a runner", () => {
     const step = Steps.solanaOutpost.planOppBootstrap(
       Report.Actor.SolanaOutpost,

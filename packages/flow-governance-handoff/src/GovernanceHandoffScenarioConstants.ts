@@ -5,7 +5,7 @@ import { Constants, formatWireAsset, ProtocolTiming } from "@wireio/cluster-tool
  * proposals it raises, and the probe transfer each executed proposal pays.
  */
 export namespace GovernanceHandoffScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
   /** Producer nodes stood up by the bootstrap. */
   export const ProducerCount = 3

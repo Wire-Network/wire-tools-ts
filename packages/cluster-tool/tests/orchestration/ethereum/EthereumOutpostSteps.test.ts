@@ -4,10 +4,12 @@ import Path from "node:path"
 import { ethers } from "ethers"
 import { getLogger } from "@wireio/shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool"
 import { EthereumWallet } from "@wireio/cluster-tool/clients/ethereum"
 import {
   ClusterBuildContext,
+  EthereumOutpostBootstrapper,
   EthereumOutpostSteps,
   Steps
 } from "@wireio/cluster-tool/orchestration"
@@ -86,11 +88,17 @@ describe("Steps.ethereumOutpost.deploy", () => {
 })
 
 describe("EthereumOutpostSteps.resolveInitialRoster", () => {
-  it("carries the depot's epoch duration", () => {
-    const ctx = context({ epochDurationSec: 45 })
+  it("carries the Ethereum chain's own consensus epoch duration, not the default or Solana's", () => {
+    const ctx = context({
+      epochDurationSec: 45,
+      outpostEpochDurationSec: {
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 75,
+        [Constants.SOLANA_CHAIN_CODENAME]: 150
+      }
+    })
     seedBatchOperators(ctx)
     expect(EthereumOutpostSteps.resolveInitialRoster(ctx).epochDurationSec).toBe(
-      45
+      75
     )
   })
 
@@ -246,6 +254,75 @@ describe("EthereumOutpostSteps.partitionLikeDepot", () => {
     const groups = EthereumOutpostSteps.partitionLikeDepot(pool(3), 3, 3, 3)
     expect(groups.every(group => group.length > 0)).toBe(true)
     expect(groups.flat()).toHaveLength(3)
+  })
+})
+
+describe("Steps.ethereumOutpost.runOppBootstrap", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** A context with two batch operators and its wallet loads stubbed: the runner's own inputs. */
+  function bootstrapContext(): ClusterBuildContext {
+    const ctx = context({
+        outpostEpochDurationSec: {
+          [Constants.ETHEREUM_CHAIN_CODENAME]: 999,
+          [Constants.SOLANA_CHAIN_CODENAME]: 150
+        }
+      }),
+      wallet = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
+    ctx.keyStore.setOperator(batchOperator("batchop.a", "acct.aaaaa"))
+    ctx.keyStore.setOperator(batchOperator("batchop.b", "acct.bbbbb"))
+    jest.spyOn(EthereumWallet, "loadKeyPair").mockReturnValue(wallet)
+    return ctx
+  }
+
+  /** The Ethereum chain's `epochstate` row: a two-slot window at cursor 1. */
+  function epochState() {
+    return {
+      chain_code: 0,
+      current_epoch_index: 0,
+      current_epoch_start: "2026-11-24T00:00:00.000",
+      next_epoch_start: "2026-11-24T00:01:00.000",
+      current_batch_op_group: 1,
+      batch_op_groups: [["acct.aaaaa"], ["acct.bbbbb"]],
+      is_paused: false
+    }
+  }
+
+  it("seeds the roster at the Ethereum chain's epochcfg duration, not the config's seed of it", async () => {
+    const ctx = bootstrapContext(),
+      state = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochState").mockResolvedValue(epochState()),
+      duration = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochDurationSec").mockResolvedValue(75),
+      seed = jest.spyOn(EthereumOutpostBootstrapper.prototype, "oppBootstrap").mockResolvedValue(undefined)
+    await Steps.ethereumOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    expect(state).toHaveBeenCalledWith(ctx, Constants.ETHEREUM_CHAIN_CODENAME)
+    expect(duration).toHaveBeenCalledWith(ctx, Constants.ETHEREUM_CHAIN_CODENAME)
+    expect(seed).toHaveBeenCalledTimes(1)
+    const [seeded] = seed.mock.calls[0]
+    expect(seeded.window.epochDurationSec).toBe(75)
+    expect(seeded.activeGroupIndex).toBe(1)
+  })
+
+  it("refuses to seed before the Ethereum chain's setconfig wrote its epochcfg row", async () => {
+    const ctx = bootstrapContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    jest.spyOn(contract.tables.epochcfg, "query").mockResolvedValue({ rows: [], more: false })
+    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochState").mockResolvedValue(epochState())
+    const seed = jest.spyOn(EthereumOutpostBootstrapper.prototype, "oppBootstrap").mockResolvedValue(undefined)
+    await expect(
+      Steps.ethereumOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    ).rejects.toThrow(new RegExp(`epochcfg has no ${Constants.ETHEREUM_CHAIN_CODENAME} row`))
+    expect(seed).not.toHaveBeenCalled()
+  })
+
+  it("refuses to seed before the Ethereum chain has a schedule", async () => {
+    const ctx = bootstrapContext()
+    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochState").mockResolvedValue(undefined)
+    const seed = jest.spyOn(EthereumOutpostBootstrapper.prototype, "oppBootstrap").mockResolvedValue(undefined)
+    await expect(
+      Steps.ethereumOutpost.runOppBootstrap(ctx, null, new AbortController().signal)
+    ).rejects.toThrow(/schbatchgps must precede the roster seed/)
+    expect(seed).not.toHaveBeenCalled()
   })
 })
 

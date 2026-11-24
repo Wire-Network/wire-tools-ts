@@ -1,143 +1,91 @@
 import Assert from "node:assert"
-import type { PublicKey } from "@solana/web3.js"
+
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import {
-  AttestationType,
-  BatchOperatorGroups,
-  Envelope,
-  OperatorType
-} from "@wireio/opp-typescript-models"
+  describeOutpostChains,
+  mapOutpostChains,
+  OutpostChainCodenames
+} from "@wireio/cluster-tool-shared"
 import {
   BatchOperatorSchedule,
   ClusterBuildPhase,
-  OperatorDaemonArtifactsKey,
+  Constants as HarnessConstants,
   FlowScenario,
+  OperatorDaemonArtifactsKey,
   ProtocolTiming,
   Report,
-  SolanaOutpostBootstrapper,
-  SolanaOutpostProgramTool,
   Steps,
   WireCollateralTool,
   WireOperatorProvisioningTool,
-  Constants as DepotConstants,
   getLogger,
-  loadOutpostContract,
-  matchesProtoEnum,
-  packedSlugValue,
   pollUntil,
   verifyStep,
   type ClusterBuild,
-  type ClusterBuildContext,
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
+
 import { TerminationScenarioConstants as Constants } from "./TerminationScenarioConstants.js"
+import { TerminationSteps } from "./steps/index.js"
 
 const log = getLogger(__filename)
 
-const { SysioOpregActiontype, SysioOpregOperatorstatus } = SysioContracts
+const { SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
-/** The doomed operator's WIRE account, resolved from the key store by its label. */
-function doomedOperatorAccount(ctx: ClusterBuildContext): string {
-  return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
-}
-
 /**
- * The sliding-window schedule groups from the `sysio.epoch::epochstate`
- * singleton (a read) — the WHOLE window, not just the active group: this
- * scenario asserts the doomed operator rides into ANY upcoming group.
- */
-async function readScheduleGroups(
-  ctx: ClusterBuildContext
-): Promise<string[][]> {
-  return Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
-}
-
-/**
- * Chain codes (slug numerics) of the doomed operator's success-true
- * WITHDRAW_REMIT audit entries (a read). Termination credits each remitted
- * balance to the operator's claim row and appends a PERMANENT entry to its
- * `recent_actions` ring buffer, so the ring buffer is the audit trail here.
- */
-async function readWithdrawRemitChainCodes(
-  ctx: ClusterBuildContext
-): Promise<Set<number>> {
-  const operator = await WireCollateralTool.readOperatorRow(
-    ctx,
-    Constants.DoomedOperatorLabel
-  )
-  const remits = (operator?.recent_actions ?? []).filter(
-    entry =>
-      matchesProtoEnum(
-        entry.action?.action_type,
-        SysioOpregActiontype,
-        SysioOpregActiontype.ACTION_TYPE_WITHDRAW_REMIT
-      ) &&
-      // ABI-deserialised `success` arrives as numeric 1/0 (bool-as-uint8), not
-      // a JS boolean — compare truthiness to match either form.
-      Boolean(entry.success)
-  )
-  return new Set(remits.map(entry => packedSlugValue(entry.action.chain_code)))
-}
-
-/** Anchor account-client surface for the runtime-loaded outpost IDL. */
-interface SolanaAccountClient {
-  fetch(address: PublicKey): Promise<unknown>
-}
-
-/** The Ethereum inbound cursor advances only after an envelope is accepted. */
-interface EthereumInboundView {
-  nextEpochIndex(): Promise<bigint>
-}
-
-/** The Solana outpost configuration's accepted inbound epoch cursor. */
-interface SolanaOutpostConfigAccount {
-  nextEpochIndex: number
-}
-
-/**
- * Batch Operator Termination via Delivery Underperformance — verifies the full
- * protocol promise that a non-bootstrapped operator becomes ACTIVE only once its
- * depot-native bond meets the required minimum, and that on termination the
- * whole bond is credited back to it and paid out on `claimremit`:
+ * Batch Operator Eviction via Delivery Underperformance — verifies that a
+ * non-bootstrapped operator becomes ACTIVE only once its depot-native bond meets
+ * the required minimum, that missing its seats on the chain it serves evicts it
+ * from THAT chain alone (its status and bond untouched), and that governance's
+ * global `terminate` is what credits the whole bond back for `claimremit`:
  *
  * 1. **ChainHealth** — WIRE produces blocks; anvil's `OPP` has
  *    code; the SOL test-validator answers.
  * 2. **ProvisionOperator** — the ONE provisioning mechanism creates the doomed
  *    operator (unique WIRE key, ETH + SOL identities, authex links,
- *    `regoperator(is_bootstrapped=false)`). Bootstrapped operators bypass the
- *    termination machinery, so non-bootstrapped is the point.
+ *    `regoperator(is_bootstrapped=false)`) and joins it to the missed chain
+ *    only. Bootstrapped operators bypass the miss rails, so non-bootstrapped is
+ *    the point.
  * 3. **VerifyRegistration** — the row exists, non-bootstrapped, status UNKNOWN
- *    (no deposits yet — every `available(...)` in `meets_role_min` is 0).
+ *    (no deposits yet — every `available(...)` in `meets_role_min` is 0); it
+ *    SERVES the missed chain and has no membership of the other.
  * 4. **DepositBelowMinimum** — `sysio` funds the operator and it bonds half the
  *    `(WIRE, WIRE)` minimum through `opreg::deposit`; the balance row holds it
  *    and the status STAYS UNKNOWN.
  * 5. **DepositToMinimum** — the rest of the bond crosses the minimum and the
  *    operator flips ACTIVE in the same transaction.
- * 6. **AccumulateMisses** — `advance`'s new-tail computation folds the operator
- *    into `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never
- *    started, so every scheduled epoch records `recorddel(delivered=false)`.
- * 7. **Terminate** — after ≥ `terminateMaxConsecutiveMisses` consecutive missed
- *    epochs, `termcheck` flips TERMINATED with `terminated_at > 0` and a
- *    populated `status_reason`.
- * 8. **ClaimBond** — termination remits the whole bond inside `termcheck`: a
- *    success-true WITHDRAW_REMIT audit entry lands for the WIRE chain, the
- *    balance row is emptied, and `remitclaims{operator, WIRE}` holds exactly the
- *    bond. `opreg::claimremit` then pays it out: the operator's liquid WIRE
- *    rises by exactly the bond and the claim row is gone.
- * 9. **ContinuedRotation** — with sufficient standing operators, ordinary
- *    rotation fills every duty seat, excludes the terminated operator from
- *    published windows, and both outposts accept another complete rotation.
+ * 6. **AccumulateMisses** — the missed chain's `advance` folds the operator into
+ *    its `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never started,
+ *    so every scheduled epoch of the chain records `recorddel(delivered=false)`.
+ * 7. **EvictFromChain** — once its first `terminateMinimumPercentSamples` duty
+ *    epochs are all missed (a 100 % miss rate the moment the percent rail
+ *    applies), `termcheck(account, chain)` flips the chain membership
+ *    EVICTED with a populated `status_reason`, while the operator stays ACTIVE
+ *    with `terminated_at` 0, its bond still in the balance row, no remit, and no
+ *    membership of the other chain.
+ * 8. **ContinuedRotation** — with sufficient standing operators, ordinary
+ *    rotation fills every duty seat, excludes the evicted operator from every
+ *    published window, and both outposts accept another complete rotation of
+ *    their own chain.
+ * 9. **GovernanceTermination** — `sysio.opreg::terminate` (governance) flips the
+ *    operator TERMINATED with `terminated_at > 0` and its reason, remits the whole
+ *    bond (a success-true WITHDRAW_REMIT for the WIRE chain, the balance row
+ *    emptied, `remitclaims{operator, WIRE}` holding exactly the bond), and
+ *    `opreg::claimremit` pays it: the operator's liquid WIRE rises by exactly the
+ *    bond and the claim row is gone.
  */
 export class TerminationScenario extends FlowScenario {
   readonly name = "flow-batch-operator-termination"
   readonly description =
-    "Batch operator bonds WIRE on the depot, is terminated for missed deliveries, claims its bond, and standing operators keep both outposts advancing"
+    "Batch operator bonds WIRE on the depot, is evicted from the chain it misses while staying ACTIVE with its bond, standing operators keep both outposts advancing, and governance termination pays the bond back"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
     batchOperatorCount: Constants.BatchOperatorCount,
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
+    terminateMinimumPercentSamples: Constants.TerminateMinimumPercentSamples,
     // Without a requirement `meets_role_min` refuses every non-bootstrapped
     // batch operator, so the UNKNOWN → ACTIVE assertions are meaningful only
     // against a minimum the flow installs.
@@ -147,30 +95,21 @@ export class TerminationScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    const quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
-      scheduleWindowStepOptions = {
-        timeoutMs:
-          Constants.scheduleWindowDeadlineMs() +
-          ProtocolTiming.PollDeadlineBufferMs
-      },
-      terminationStepOptions = {
-        timeoutMs:
-          Constants.terminationDeadlineMs() +
-          ProtocolTiming.PollDeadlineBufferMs
-      },
+    const { config } = cluster.context,
+      quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
+      scheduleWindowStepOptions = ProtocolTiming.pollStepOptions(Constants.scheduleWindowDeadlineMs()),
+      terminationStepOptions = ProtocolTiming.pollStepOptions(Constants.terminationDeadlineMs()),
       // The same config the claim verify's runner reads (`ctx.config`).
       remitClaimStepOptions = {
-        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
-          cluster.context.config
-        )
+        timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(config)
       },
-      rotationStepOptions = {
-        timeoutMs:
-          Constants.rotationDeadlineMs(
-            cluster.context.config.epochDurationSec,
-            BatchOperatorSchedule.resolve(cluster.context.config).batchOpGroups
-          ) + ProtocolTiming.PollDeadlineBufferMs
-      }
+      // Each chain's window holds the configured group count (`epochcfg.batch_op_groups`).
+      rotationStepOptions = ProtocolTiming.pollStepOptions(
+        TerminationSteps.rotationDeadlineMs(
+          config,
+          mapOutpostChains(() => BatchOperatorSchedule.resolve(config).batchOpGroups)
+        )
+      )
 
     // ── 1. Substrate health (WIRE / ETH outpost / SOL validator) ──
     ClusterBuildPhase.create(
@@ -227,13 +166,14 @@ export class TerminationScenario extends FlowScenario {
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       cluster,
       "ProvisionOperator",
-      "Provision the doomed non-bootstrapped batch operator (no daemon — it must miss)",
+      `Provision the doomed non-bootstrapped batch operator serving ${Constants.MissedChain} (no daemon — it must miss)`,
       {},
       [
         {
           label: Constants.DoomedOperatorLabel,
           type: OperatorType.BATCH,
-          isBootstrapped: false
+          isBootstrapped: false,
+          servedChains: [Constants.MissedChain]
         }
       ]
     )
@@ -248,28 +188,21 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "registered-status-unknown",
         "operator registered non-bootstrapped with status UNKNOWN (no deposits yet)",
-        async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(
-            ctx,
-            Constants.DoomedOperatorLabel
-          )
-          Assert.ok(
-            operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
-          )
-          Assert.ok(
-            !operator.is_bootstrapped,
-            `${Constants.DoomedOperatorLabel} registered bootstrapped — it would bypass termination`
-          )
-          Assert.ok(
-            matchesProtoEnum(
-              operator.status,
-              SysioOpregOperatorstatus,
-              SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
-            ),
-            `${Constants.DoomedOperatorLabel} status not UNKNOWN (got ${operator.status})`
-          )
-        },
+        async ctx =>
+          TerminationSteps.assertRegisteredUnbootstrapped(
+            await WireCollateralTool.readOperatorRow(ctx, Constants.DoomedOperatorLabel)
+          ),
+        quickStepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "serves-missed-chain-only",
+        `the operator SERVES ${Constants.MissedChain} and has no ${Constants.UnservedChain} membership`,
+        async ctx =>
+          TerminationSteps.assertServesMissedChainOnly(
+            await TerminationSteps.readDoomedMembership(ctx, Constants.MissedChain),
+            await TerminationSteps.readDoomedMembership(ctx, Constants.UnservedChain)
+          ),
         quickStepOptions
       )
     )
@@ -296,26 +229,13 @@ export class TerminationScenario extends FlowScenario {
         Constants.DoomedOperatorLabel,
         WireCollateralTool.createWireCollateral(Constants.FirstDepositAmount)
       ),
-      verifyStep(
+      WireCollateralTool.planVerifyOperatorStatus(
         Actor.Sysio,
         "below-minimum-stays-unknown",
         "status stays UNKNOWN while the bond is under the minimum",
-        async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(
-            ctx,
-            Constants.DoomedOperatorLabel
-          )
-          Assert.ok(
-            operator != null &&
-              matchesProtoEnum(
-                operator.status,
-                SysioOpregOperatorstatus,
-                SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
-              ),
-            `${Constants.DoomedOperatorLabel} flipped past UNKNOWN below the minimum (got ${operator?.status})`
-          )
-        },
-        quickStepOptions
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
       )
     )
 
@@ -341,27 +261,14 @@ export class TerminationScenario extends FlowScenario {
         Constants.DoomedOperatorLabel,
         WireCollateralTool.createWireCollateral(Constants.BondAmount)
       ),
-      verifyStep(
+      // `deposit` re-evaluates eligibility inline, so one read after its Step is final.
+      WireCollateralTool.planVerifyOperatorStatus(
         Actor.Sysio,
         "depot-status-active",
         "the bond meets the minimum → status is OPERATOR_STATUS_ACTIVE",
-        async ctx => {
-          // `deposit` re-evaluates eligibility inline, so one read after its Step is final.
-          const operator = await WireCollateralTool.readOperatorRow(
-            ctx,
-            Constants.DoomedOperatorLabel
-          )
-          Assert.ok(
-            operator != null &&
-              matchesProtoEnum(
-                operator.status,
-                SysioOpregOperatorstatus,
-                SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-              ),
-            `${Constants.DoomedOperatorLabel} is not ACTIVE with the minimum bonded (got ${operator?.status})`
-          )
-        },
-        quickStepOptions
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
       )
     )
 
@@ -369,21 +276,20 @@ export class TerminationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "AccumulateMisses",
-      "Operator scheduled but silent (no daemon) — consecutive misses accrue"
+      `Operator scheduled on ${Constants.MissedChain} but silent (no daemon) — consecutive misses accrue`
     ).push(
       verifyStep(
         Actor.Sysio,
         "enters-schedule-window",
-        "operator rides into epochstate.batch_op_groups via advance's new-tail computation",
+        `operator rides into the ${Constants.MissedChain} epochstate.batch_op_groups via advance's new-tail computation`,
         async ctx => {
           await pollUntil(
-            `${Constants.DoomedOperatorLabel} appears in epochstate.batch_op_groups`,
+            `${Constants.DoomedOperatorLabel} appears in the ${Constants.MissedChain} epochstate.batch_op_groups`,
             async () => {
               try {
-                const account = doomedOperatorAccount(ctx),
-                  groups = await readScheduleGroups(ctx)
-                return groups.some(
-                  members => Array.isArray(members) && members.includes(account)
+                return Steps.contracts.sysio.epoch.isSeated(
+                  await Steps.contracts.sysio.epoch.readEpochState(ctx, Constants.MissedChain),
+                  TerminationSteps.doomedOperatorAccount(ctx)
                 )
               } catch (error) {
                 // Transient RPC failure mid-advance — log it and keep polling.
@@ -401,33 +307,23 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 7. termcheck fires → TERMINATED with audit fields populated ──
+    // ── 7. termcheck evicts the operator from the missed chain only ──
     ClusterBuildPhase.create(
       cluster,
-      "Terminate",
-      "After the miss window, termcheck flips status to TERMINATED"
+      "EvictFromChain",
+      `After the miss window, termcheck evicts the operator from ${Constants.MissedChain} alone; it stays ACTIVE with its bond`
     ).push(
       verifyStep(
         Actor.Sysio,
-        "status-terminated",
-        `status flips TERMINATED after ≥${Constants.TerminateMaxConsecutiveMisses} consecutive missed scheduled epochs`,
+        "membership-evicted",
+        `the ${Constants.MissedChain} membership flips EVICTED once its first ${Constants.TerminateMinimumPercentSamples} scheduled epochs are all missed`,
         async ctx => {
           await pollUntil(
-            `${Constants.DoomedOperatorLabel} status flips to TERMINATED`,
-            async () => {
-              const operator = await WireCollateralTool.readOperatorRow(
-                ctx,
-                Constants.DoomedOperatorLabel
-              )
-              return (
-                operator != null &&
-                matchesProtoEnum(
-                  operator.status,
-                  SysioOpregOperatorstatus,
-                  SysioOpregOperatorstatus.OPERATOR_STATUS_TERMINATED
-                )
-              )
-            },
+            `${Constants.DoomedOperatorLabel}'s ${Constants.MissedChain} membership flips to EVICTED`,
+            async () =>
+              TerminationSteps.isEvicted(
+                await TerminationSteps.readDoomedMembership(ctx, Constants.MissedChain)
+              ),
             Constants.terminationDeadlineMs(),
             Constants.PollIntervalMs
           )
@@ -436,53 +332,121 @@ export class TerminationScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "termination-row-populated",
-        "terminated_at > 0 and status_reason non-empty on the operator row",
+        "eviction-reason-recorded",
+        `the EVICTED ${Constants.MissedChain} membership carries its rail's status_reason; no ${Constants.UnservedChain} membership appeared`,
+        async ctx =>
+          TerminationSteps.assertEvictionRecorded(
+            await TerminationSteps.readDoomedMembership(ctx, Constants.MissedChain),
+            await TerminationSteps.readDoomedMembership(ctx, Constants.UnservedChain)
+          ),
+        quickStepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "evicted-operator-stays-active",
+        "the operator row stays ACTIVE, not terminated, with no WITHDRAW_REMIT",
         async ctx => {
-          const operator = await WireCollateralTool.readOperatorRow(
-            ctx,
-            Constants.DoomedOperatorLabel
-          )
-          Assert.ok(
-            operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
-          )
-          Assert.ok(
-            matchesProtoEnum(
-              operator.status,
-              SysioOpregOperatorstatus,
-              SysioOpregOperatorstatus.OPERATOR_STATUS_TERMINATED
-            ),
-            `${Constants.DoomedOperatorLabel} status not TERMINATED (got ${operator.status})`
-          )
-          Assert.ok(
-            Number(operator.terminated_at) > 0,
-            `terminated_at not populated (got ${operator.terminated_at})`
-          )
-          Assert.ok(
-            typeof operator.status_reason === "string" &&
-              operator.status_reason.length > 0,
-            `status_reason not populated (got ${JSON.stringify(operator.status_reason)})`
+          const operator = await TerminationSteps.readDoomedOperator(ctx)
+          TerminationSteps.assertEvictedOperatorStaysActive(
+            operator,
+            TerminationSteps.withdrawRemitChainCodes(operator)
           )
         },
         quickStepOptions
+      ),
+      WireCollateralTool.planVerifyBalanceRow(
+        Actor.Sysio,
+        "evicted-operator-keeps-bond",
+        `the (WIRE, WIRE) balance row still holds exactly the ${Constants.BondAmount} bond`,
+        quickStepOptions,
+        Constants.DoomedOperatorLabel,
+        WireCollateralTool.createWireCollateral(Constants.BondAmount)
       )
     )
 
-    // ── 8. Termination credited the whole bond to the WIRE claim; claimremit pays it ──
+    // ── 8. Ordinary rotation keeps delivering with sufficient standing operators ──
     ClusterBuildPhase.create(
       cluster,
-      "ClaimBond",
-      "Termination credits the bond to remitclaims; claimremit pays it to the operator"
+      "ContinuedRotation",
+      "Standing operators fill the rotation and both outposts accept another full window of their own chain"
     ).push(
+      verifyStep(
+        Actor.Sysio,
+        "post-eviction-rotation",
+        "published groups exclude the evicted operator and both outposts advance through a full window of their own chain",
+        async ctx => {
+          const evicted = TerminationSteps.doomedOperatorAccount(ctx),
+            standing = TerminationSteps.standingOperators(ctx.keyStore.operators, evicted),
+            groupSize = BatchOperatorSchedule.resolve(ctx.config).operatorsPerEpoch,
+            // Each chain counts its own epochs and runs its own window, so each outpost is held
+            // to a full window of its own chain past its own start.
+            targets = TerminationSteps.rotationTargets(
+              await Steps.contracts.sysio.epoch.readEpochStates(ctx),
+              await TerminationSteps.readInboundCursors(ctx)
+            )
+          await pollUntil(
+            `both outposts accept post-eviction epochs through ${describeOutpostChains(targets, target => String(target.targetEpoch))}`,
+            async () => {
+              const { rows } = await ctx.wire.getOutboundEnvelopes()
+              OutpostChainCodenames.forEach(chain =>
+                TerminationSteps.publishedWindows(rows, chain).forEach(groups =>
+                  TerminationSteps.assertPublishedGroups(
+                    chain,
+                    groups,
+                    targets[chain].groupCount,
+                    groupSize,
+                    evicted,
+                    standing
+                  )
+                )
+              )
+              const cursors = await TerminationSteps.readInboundCursors(ctx)
+              log.info(
+                `[${this.name}] post-eviction next epochs ` +
+                  describeOutpostChains(cursors, (cursor, chain) => `${cursor} (target>${targets[chain].targetEpoch})`)
+              )
+              return OutpostChainCodenames.every(chain => cursors[chain] > targets[chain].targetEpoch)
+            },
+            TerminationSteps.rotationDeadlineMs(
+              ctx.config,
+              mapOutpostChains(chain => targets[chain].groupCount)
+            ),
+            Constants.PollIntervalMs
+          )
+        },
+        rotationStepOptions
+      )
+    )
+
+    // ── 9. Governance terminates globally; the remitted bond is claimed ──
+    ClusterBuildPhase.create(
+      cluster,
+      "GovernanceTermination",
+      "Governance terminates the operator globally: the bond is credited to remitclaims and claimremit pays it"
+    ).push(
+      TerminationSteps.planTermination(
+        Actor.Sysio,
+        "governance-terminate",
+        `governance terminates ${Constants.DoomedOperatorLabel} through sysio.opreg::terminate`,
+        {},
+        Constants.DoomedOperatorLabel,
+        Constants.GovernanceTerminationReason
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "termination-row-populated",
+        "status TERMINATED, terminated_at > 0 and the governance reason on the operator row",
+        async ctx => TerminationSteps.assertTerminationRecorded(await TerminationSteps.readDoomedOperator(ctx)),
+        quickStepOptions
+      ),
       verifyStep(
         Actor.Sysio,
         "depot-records-withdraw-remit",
         "recent_actions carries a success-true WITHDRAW_REMIT audit entry for the WIRE chain",
         async ctx => {
-          const chainCodes = await readWithdrawRemitChainCodes(ctx)
+          const chainCodes = TerminationSteps.withdrawRemitChainCodes(await TerminationSteps.readDoomedOperator(ctx))
           Assert.ok(
-            chainCodes.has(DepotConstants.WireChainCode),
+            chainCodes.has(HarnessConstants.WireChainCode),
             `${Constants.DoomedOperatorLabel} has no success-true WITHDRAW_REMIT for the WIRE chain`
           )
         },
@@ -534,150 +498,6 @@ export class TerminationScenario extends FlowScenario {
         remitClaimStepOptions,
         Constants.DoomedOperatorLabel,
         WireCollateralTool.createWireClaim(0n)
-      )
-    )
-
-    // ── 9. Ordinary rotation keeps delivering with sufficient standing operators ──
-    ClusterBuildPhase.create(
-      cluster,
-      "ContinuedRotation",
-      "Standing operators fill the rotation and both outposts accept another full window"
-    ).push(
-      verifyStep(
-        Actor.Sysio,
-        "post-remit-rotation",
-        "published groups exclude the terminated operator and both outposts advance through a full window",
-        async ctx => {
-          const operator = ctx.keyStore.assertOperator(
-              Constants.DoomedOperatorLabel
-            ),
-            addresses = ctx.outputs.assert(
-              OperatorDaemonArtifactsKey
-            ).ethereumAddresses,
-            ethereum = loadOutpostContract<EthereumInboundView>(
-              ctx.config.ethereumPath,
-              addresses,
-              "OPPInbound",
-              ["outpost"],
-              ctx.ethereum.provider
-            ),
-            program = SolanaOutpostProgramTool.loadReadOnlyProgram(
-              ctx.solana.connection,
-              ctx.config.solanaPath
-            ),
-            configAddress = SolanaOutpostProgramTool.derivePda(
-              program.programId,
-              Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OutpostConfig)
-            ),
-            accounts: Record<string, SolanaAccountClient> = program.account,
-            readCursors = async () => {
-              const [ethereumNext, solanaConfig] = await Promise.all([
-                ethereum.nextEpochIndex(),
-                accounts.outpostConfig.fetch(configAddress)
-              ])
-              return [
-                Number(ethereumNext),
-                Number(
-                  (solanaConfig as SolanaOutpostConfigAccount).nextEpochIndex
-                )
-              ]
-            },
-            baseline = await readCursors(),
-            start = await Steps.contracts.sysio.epoch.readEpochState(ctx),
-            standing = new Set(
-              ctx.keyStore.operators
-                .filter(
-                  entry =>
-                    entry.type === OperatorType.BATCH &&
-                    entry.account !== operator.account
-                )
-                .map(entry => entry.account)
-            ),
-            groupCount = start.batch_op_groups.length,
-            groupSize = BatchOperatorSchedule.resolve(
-              ctx.config
-            ).operatorsPerEpoch,
-            targetEpoch =
-              Math.max(Number(start.current_epoch_index), ...baseline) +
-              groupCount,
-            chains = [Constants.EthereumChainCode, Constants.SolanaChainCode]
-
-          Assert.ok(
-            groupCount > 1,
-            "termination regression requires multiple duty groups"
-          )
-          await pollUntil(
-            `both outposts accept post-remit epochs through ${targetEpoch}`,
-            async () => {
-              const { rows } = await ctx.wire.getOutboundEnvelopes()
-              for (const chain of chains) {
-                const row = rows.find(
-                  entry => packedSlugValue(entry.chain_code) === chain
-                )
-                Assert.ok(
-                  row != null,
-                  `missing outbound envelope for chain ${chain}`
-                )
-                const envelope = Envelope.fromBinary(
-                    Buffer.from(row.raw_envelope, "hex")
-                  ),
-                  announcements = envelope.messages.flatMap(message =>
-                    (message.payload?.attestations ?? [])
-                      .filter(
-                        entry =>
-                          entry.type === AttestationType.BATCH_OPERATOR_GROUPS
-                      )
-                      .map(entry => BatchOperatorGroups.fromBinary(entry.data))
-                  )
-                Assert.ok(
-                  announcements.length > 0,
-                  `no published group window at epoch ${row.epoch_index}`
-                )
-                for (const announcement of announcements) {
-                  const groups = announcement.groups.map(group =>
-                      group.operators.map(member =>
-                        Buffer.from(member.address).toString("utf8")
-                      )
-                    ),
-                    members = groups.flat()
-                  Assert.equal(
-                    groups.length,
-                    groupCount,
-                    "published window lost a group"
-                  )
-                  Assert.ok(
-                    groups.every(group => group.length === groupSize),
-                    "standing operators did not fill every seat"
-                  )
-                  Assert.ok(
-                    !members.includes(operator.account),
-                    "terminated operator re-entered a published group"
-                  )
-                  Assert.equal(
-                    new Set(members).size,
-                    groupCount * groupSize,
-                    "published groups repeat an operator"
-                  )
-                  Assert.ok(
-                    members.every(account => standing.has(account)),
-                    "replacement is not a standing operator"
-                  )
-                }
-              }
-              const cursors = await readCursors()
-              log.info(
-                `[${this.name}] post-remit ETH/SOL next epochs=${cursors.join("/")}; target>${targetEpoch}`
-              )
-              return cursors.every(epoch => epoch > targetEpoch)
-            },
-            Constants.rotationDeadlineMs(
-              ctx.config.epochDurationSec,
-              groupCount
-            ),
-            Constants.PollIntervalMs
-          )
-        },
-        rotationStepOptions
       )
     )
   }

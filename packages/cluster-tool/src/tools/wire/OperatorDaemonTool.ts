@@ -47,7 +47,6 @@ import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 import { toDialAddress, toURL } from "../../utils/netUtils.js"
 
 export namespace OperatorDaemonTool {
@@ -141,8 +140,6 @@ export namespace OperatorDaemonTool {
    * while nothing is in play can wait this long for one.
    */
   export const UnderwriterIdleCrankIntervalMs = 300_000
-  /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
-  export const BatchDeliveryTimeoutMs = 30_000
   /**
    * Outpost RPC client ids ARE the chain codes.
    *
@@ -483,10 +480,6 @@ export namespace OperatorDaemonTool {
       ...pair("--batch-operator-account", operator.account),
       ...underwriterArgs(operator, underwriting),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
-      ...pair(
-        "--batch-delivery-timeout-ms",
-        String(scaleTimeoutMs(BatchDeliveryTimeoutMs))
-      ),
       ...(network.debuggingServerEnabled
         ? pair("--ext-debugging-server", network.debuggingServerUrl)
         : []),

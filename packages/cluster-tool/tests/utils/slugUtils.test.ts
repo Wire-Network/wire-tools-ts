@@ -1,6 +1,8 @@
 import { SlugName } from "@wireio/sdk-core"
 
 import {
+  isCode,
+  isPackedCode,
   packedSlugValue,
   slugValue,
   slugNameToLittleEndianBuffer
@@ -121,6 +123,33 @@ describe("slugUtils", () => {
       expect(() => slugValue(null)).toThrow(/unrecognised slug carrier/)
       expect(() => slugValue({ other: 1 })).toThrow(/unrecognised slug carrier/)
       expect(() => slugValue([1])).toThrow(/unrecognised slug carrier/)
+    })
+  })
+
+  describe("isCode", () => {
+    it("matches a slug_name cell against a codename", () => {
+      expect(isCode("SOLANA", "SOLANA")).toBe(true)
+      expect(isCode("LIQSOL", "LIQSOL")).toBe(true)
+      expect(isCode("SOLANA", "ETHEREUM")).toBe(false)
+    })
+    it("never reads a slug spelling as a packed decimal", () => {
+      // A slug cell is a spelling: the packed value of SOLANA, spelled as digits, is not
+      // a valid slug, so it can never match the codename.
+      expect(() => isCode(String(SlugName.from("SOLANA")), "SOLANA")).toThrow()
+    })
+    it("throws on a cell that is no slug rather than matching nothing", () => {
+      expect(() => isCode("not a slug!", "SOLANA")).toThrow()
+    })
+  })
+
+  describe("isPackedCode", () => {
+    it("matches a packed uint64 cell, numeric or quoted, against a codename", () => {
+      expect(isPackedCode(SlugName.from("ETHEREUM"), "ETHEREUM")).toBe(true)
+      expect(isPackedCode(String(SlugName.from("ETHEREUM")), "ETHEREUM")).toBe(true)
+      expect(isPackedCode(SlugName.from("ETHEREUM"), "SOLANA")).toBe(false)
+    })
+    it("refuses a slug spelling rather than misreading it as a packed value", () => {
+      expect(() => isPackedCode("ETHEREUM", "ETHEREUM")).toThrow(/unsigned decimal/)
     })
   })
 })

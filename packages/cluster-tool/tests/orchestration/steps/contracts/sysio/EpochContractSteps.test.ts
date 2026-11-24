@@ -1,46 +1,74 @@
-import {
-  Steps,
-  type ClusterBuildContext
-} from "@wireio/cluster-tool/orchestration"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
+
+import { Constants } from "@wireio/cluster-tool"
+import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { SysioContracts } from "@wireio/sdk-core"
 import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 
-/** The depot's `epochstate` query result, typed from the client that returns it. */
-type EpochStateQueryResult = Awaited<
-  ReturnType<ClusterBuildContext["wire"]["getEpochState"]>
->
-
-/** The depot's `epochcfg` query result, typed from the client that returns it. */
-type EpochConfigQueryResult = Awaited<
-  ReturnType<ClusterBuildContext["wire"]["getEpochConfig"]>
->
-
-/** A `epochstate` singleton read stubbed onto a REAL context's memoized client. */
-function contextWithEpochState(
-  ...rows: SysioContracts.SysioEpochEpochStateType[]
-): ClusterBuildContext {
-  const ctx = fixtureContext()
-  jest
-    .spyOn(ctx.wire, "getEpochState")
-    .mockResolvedValue({ rows } as EpochStateQueryResult)
-  return ctx
+/** The packed `uint64` code an `epochstate` / `epochcfg` row carries for a chain. */
+function packedCode(chain: Constants.OutpostChainCodename): number {
+  return SlugName.from(chain)
 }
 
-/** The schedule window + its rotation cursor — the only fields these reads touch. */
+/** A real context whose `sysio.epoch` client is memoized, with its per-chain tables stubbed. */
+function contextWithChainRows(
+  epochStates: SysioContracts.SysioEpochEpochStateType[],
+  epochConfigs: SysioContracts.SysioEpochEpochConfigType[] = []
+) {
+  const ctx = fixtureContext(),
+    contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+  jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+  const stateQuery = jest
+      .spyOn(contract.tables.epochstate, "query")
+      .mockResolvedValue({ rows: epochStates, more: false }),
+    configQuery = jest
+      .spyOn(contract.tables.epochcfg, "query")
+      .mockResolvedValue({ rows: epochConfigs, more: false })
+  return { ctx, contract, stateQuery, configQuery }
+}
+
+/** One chain's whole `epochstate` row: its index, window and rotation cursor. */
 function epochStateRow(
+  chain: Constants.OutpostChainCodename,
+  currentEpochIndex: number,
   currentBatchOpGroup: number,
-  batchOperatorGroups: string[][]
+  batchOperatorGroups: string[][],
+  isPaused = false
 ): SysioContracts.SysioEpochEpochStateType {
   return {
+    chain_code: packedCode(chain),
+    current_epoch_index: currentEpochIndex,
+    current_epoch_start: "2026-11-24T00:00:00.000",
+    next_epoch_start: "2026-11-24T00:01:00.000",
     current_batch_op_group: currentBatchOpGroup,
-    batch_op_groups: batchOperatorGroups
-  } as SysioContracts.SysioEpochEpochStateType
+    batch_op_groups: batchOperatorGroups,
+    is_paused: isPaused
+  }
 }
 
+/** One chain's whole `epochcfg` row. */
+function epochConfigRow(
+  chain: Constants.OutpostChainCodename,
+  epochDurationSec: number
+): SysioContracts.SysioEpochEpochConfigType {
+  return {
+    chain_code: packedCode(chain),
+    epoch_duration_sec: epochDurationSec,
+    operators_per_epoch: 3,
+    batch_operator_minimum_active: 9,
+    batch_op_groups: 3,
+    epoch_retention_envelope_log_count: 10
+  }
+}
+
+const { ETHEREUM_CHAIN_CODENAME: Ethereum, SOLANA_CHAIN_CODENAME: Solana } = Constants
+
 describe("Steps.contracts.sysio.epoch", () => {
-  it("setconfig carries the epoch::setconfig data", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  it("setconfig carries the epoch::setconfig data, chain included", () => {
     const data: SysioContracts.SysioEpochSetconfigAction = {
+      chain_code: Ethereum,
       epoch_duration_sec: 60,
       operators_per_epoch: 3,
       batch_operator_minimum_active: 9,
@@ -49,8 +77,8 @@ describe("Steps.contracts.sysio.epoch", () => {
     }
     const step = Steps.contracts.sysio.epoch.planSetconfig(
       Report.Actor.Sysio,
-      "configure-epoch",
-      "set the global epoch config",
+      "configure-epoch-ethereum",
+      "set the ETHEREUM consensus epoch config",
       {},
       data
     )
@@ -78,8 +106,6 @@ describe("Steps.contracts.sysio.epoch", () => {
   })
 
   describe("runSeteconomy", () => {
-    afterEach(() => jest.restoreAllMocks())
-
     /** A real context whose epoch contract client is memoized for spying. */
     function epochContext() {
       const ctx = fixtureContext(),
@@ -163,68 +189,186 @@ describe("Steps.contracts.sysio.epoch", () => {
     })
   })
 
-  it.each(["planSchbatchgps", "planAdvance"] as const)(
-    "%s builds an input-less step with a runner",
-    action => {
-      const factory = Steps.contracts.sysio.epoch[action]
-      const step = factory(Report.Actor.Sysio, action, `crank ${action}`, {})
-      expect(step.input).toBeNull()
-      expect(typeof step.runner).toBe("function")
-    }
-  )
+  it("planSchbatchgps carries its chain and runSchbatchgps pushes it", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.schbatchgps, "invoke").mockResolvedValue(undefined),
+      data = { chain_code: Solana },
+      step = Steps.contracts.sysio.epoch.planSchbatchgps(Report.Actor.Sysio, "schbatchgps", "schbatchgps", {}, data)
+    expect(step.input).toEqual({ kind: "EpochContractSteps.SchbatchgpsInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runSchbatchgps)
+    await Steps.contracts.sysio.epoch.runSchbatchgps(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data)
+  })
+
+  it("planAdvance carries its chain and runAdvance signs it as sysio.epoch", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.advance, "invoke").mockResolvedValue(undefined),
+      data = { chain_code: Solana },
+      step = Steps.contracts.sysio.epoch.planAdvance(Report.Actor.Sysio, "advance", "advance", {}, data)
+    expect(Steps.contracts.sysio.epoch.AdvanceAccount).toBe("sysio.epoch")
+    expect(step.input).toEqual({ kind: "EpochContractSteps.AdvanceInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runAdvance)
+    await Steps.contracts.sysio.epoch.runAdvance(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "sysio.epoch", permission: "active" }]
+    })
+  })
+
+  it("an aborted schbatchgps step pushes nothing", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.schbatchgps, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planSchbatchgps(Report.Actor.Sysio, "schbatchgps", "schbatchgps", {}, {
+        chain_code: Solana
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("an aborted advance step pushes nothing", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.advance, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planAdvance(Report.Actor.Sysio, "advance", "advance", {}, {
+        chain_code: Solana
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
 })
 
-describe("Steps.contracts.sysio.epoch epochstate reads", () => {
-  const groups = [["opa", "opb"], ["opc", "opd"], ["ope", "opf"]]
+describe("Steps.contracts.sysio.epoch per-chain epochstate / epochcfg reads", () => {
+  afterEach(() => jest.restoreAllMocks())
 
-  it("readEpochState unwraps the singleton row", async () => {
-    const row = epochStateRow(0, groups)
-    await expect(
-      Steps.contracts.sysio.epoch.readEpochState(contextWithEpochState(row))
-    ).resolves.toBe(row)
+  const ethereumGroups = [["opa", "opb"], ["opc", "opd"], ["ope", "opf"]],
+    solanaGroups = [["opf", "ope"], ["opd", "opc"], ["opb", "opa"]],
+    rows = [
+      epochStateRow(Ethereum, 7, 2, ethereumGroups),
+      epochStateRow(Solana, 3, 0, solanaGroups, true)
+    ]
+
+  it("isChainRow matches a row's packed code, numeric or quoted", () => {
+    expect(Steps.contracts.sysio.epoch.isChainRow(packedCode(Solana), Solana)).toBe(true)
+    expect(Steps.contracts.sysio.epoch.isChainRow(String(packedCode(Solana)), Solana)).toBe(true)
+    expect(Steps.contracts.sysio.epoch.isChainRow(packedCode(Solana), Ethereum)).toBe(false)
   })
 
-  it("batchOperatorGroups returns the WHOLE sliding window", async () => {
-    await expect(
-      Steps.contracts.sysio.epoch.batchOperatorGroups(
-        contextWithEpochState(epochStateRow(1, groups))
-      )
-    ).resolves.toEqual(groups)
+  it("isChainRow refuses a slug spelling rather than misreading it as a code", () => {
+    expect(() => Steps.contracts.sysio.epoch.isChainRow(Solana, Solana)).toThrow(/unsigned decimal/)
   })
 
-  it("activeBatchOperatorGroup indexes by the rotation cursor, never [0]", async () => {
+  it("findChainRow picks the chain's own row, whatever the row order, and nothing for a missing chain", () => {
+    expect(Steps.contracts.sysio.epoch.findChainRow(rows, Solana)).toBe(rows[1])
+    expect(Steps.contracts.sysio.epoch.findChainRow([...rows].reverse(), Ethereum)).toBe(rows[0])
+    expect(Steps.contracts.sysio.epoch.findChainRow([rows[0]], Solana)).toBeUndefined()
+  })
+
+  it("readEpochStates keys every chain's row from one bounded read", async () => {
+    const { ctx, stateQuery } = contextWithChainRows([...rows].reverse())
+    await expect(Steps.contracts.sysio.epoch.readEpochStates(ctx)).resolves.toEqual({
+      [Ethereum]: rows[0],
+      [Solana]: rows[1]
+    })
+    expect(stateQuery).toHaveBeenCalledWith({ limit: Steps.contracts.sysio.epoch.ChainRowLimit })
+  })
+
+  it("readEpochStates leaves a chain without a row absent", async () => {
+    const { ctx } = contextWithChainRows([rows[0]])
+    await expect(Steps.contracts.sysio.epoch.readEpochStates(ctx)).resolves.toEqual({
+      [Ethereum]: rows[0],
+      [Solana]: undefined
+    })
+  })
+
+  it("readEpochStates refuses a truncated read", async () => {
+    const { ctx, stateQuery } = contextWithChainRows(rows)
+    stateQuery.mockResolvedValue({ rows, more: true })
+    await expect(Steps.contracts.sysio.epoch.readEpochStates(ctx)).rejects.toThrow(/truncated/)
+  })
+
+  it("readEpochState picks the chain's own row", async () => {
+    const { ctx } = contextWithChainRows(rows)
+    await expect(Steps.contracts.sysio.epoch.readEpochState(ctx, Solana)).resolves.toBe(rows[1])
+    await expect(Steps.contracts.sysio.epoch.readEpochState(ctx, Ethereum)).resolves.toBe(rows[0])
+  })
+
+  it("readCurrentEpochIndex / readCurrentEpochIndices read each chain's own index, 0 before its row", async () => {
+    const { ctx } = contextWithChainRows([rows[0]])
+    await expect(Steps.contracts.sysio.epoch.readCurrentEpochIndex(ctx, Ethereum)).resolves.toBe(7)
+    await expect(Steps.contracts.sysio.epoch.readCurrentEpochIndex(ctx, Solana)).resolves.toBe(0)
+    await expect(Steps.contracts.sysio.epoch.readCurrentEpochIndices(ctx)).resolves.toEqual({
+      [Ethereum]: 7,
+      [Solana]: 0
+    })
+  })
+
+  it("everyChainAdvancedPast holds only once EVERY chain is past its index", () => {
+    const before = { [Ethereum]: 4, [Solana]: 2 }
+    expect(Steps.contracts.sysio.epoch.everyChainAdvancedPast({ [Ethereum]: 5, [Solana]: 3 }, before)).toBe(true)
+    expect(Steps.contracts.sysio.epoch.everyChainAdvancedPast({ [Ethereum]: 9, [Solana]: 2 }, before)).toBe(false)
+    expect(Steps.contracts.sysio.epoch.everyChainAdvancedPast({ [Ethereum]: 4, [Solana]: 9 }, before)).toBe(false)
+    expect(Steps.contracts.sysio.epoch.everyChainAdvancedPast(before, before)).toBe(false)
+  })
+
+  it("isSeated finds an account in any group of the chain's window, current or ahead", () => {
+    expect(Steps.contracts.sysio.epoch.isSeated(rows[0], "opa")).toBe(true)
+    expect(Steps.contracts.sysio.epoch.isSeated(rows[0], "opf")).toBe(true)
+    expect(Steps.contracts.sysio.epoch.isSeated(rows[0], "opz")).toBe(false)
+  })
+
+  it("isSeated seats nobody on a chain without a schedule", () => {
+    expect(Steps.contracts.sysio.epoch.isSeated(undefined, "opa")).toBe(false)
+    expect(Steps.contracts.sysio.epoch.isSeated(epochStateRow(Ethereum, 0, 0, []), "opa")).toBe(false)
+  })
+
+  it("batchOperatorGroups returns the chain's WHOLE sliding window", async () => {
+    const { ctx } = contextWithChainRows(rows)
+    await expect(Steps.contracts.sysio.epoch.batchOperatorGroups(ctx, Solana)).resolves.toEqual(
+      solanaGroups
+    )
+  })
+
+  it("activeBatchOperatorGroup indexes the chain's window by its rotation cursor, never [0]", async () => {
     // The window rotates: at cursor 2 the ACTIVE group is the third one. A
     // hardcoded `[0]` would return the expired group and silently pass.
+    const { ctx } = contextWithChainRows(rows)
     await expect(
-      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(
-        contextWithEpochState(epochStateRow(2, groups))
-      )
-    ).resolves.toEqual(groups[2])
+      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx, Ethereum)
+    ).resolves.toEqual(ethereumGroups[2])
+    await expect(
+      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx, Solana)
+    ).resolves.toEqual(solanaGroups[0])
   })
 
-  it("readEpochConfig unwraps the epochcfg singleton row, absent when the table is empty", async () => {
-    const row: SysioContracts.SysioEpochEpochConfigType = {
-        epoch_duration_sec: 60,
-        operators_per_epoch: 3,
-        batch_operator_minimum_active: 9,
-        batch_op_groups: 3,
-        epoch_retention_envelope_log_count: 10
-      },
-      ctx = fixtureContext(),
-      configQuery = jest.spyOn(ctx.wire, "getEpochConfig")
-    configQuery.mockResolvedValueOnce({ rows: [row] } as EpochConfigQueryResult)
-    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx)).resolves.toBe(row)
-    configQuery.mockResolvedValueOnce({ rows: [] } as EpochConfigQueryResult)
-    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx)).resolves.toBeUndefined()
+  it("readEpochConfigs / readEpochConfig key each chain's epochcfg row, absent before its setconfig", async () => {
+    const ethereum = epochConfigRow(Ethereum, 60),
+      { ctx, configQuery } = contextWithChainRows([], [ethereum])
+    await expect(Steps.contracts.sysio.epoch.readEpochConfigs(ctx)).resolves.toEqual({
+      [Ethereum]: ethereum,
+      [Solana]: undefined
+    })
+    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx, Ethereum)).resolves.toBe(ethereum)
+    await expect(Steps.contracts.sysio.epoch.readEpochConfig(ctx, Solana)).resolves.toBeUndefined()
+    configQuery.mockResolvedValue({ rows: [ethereum], more: true })
+    await expect(Steps.contracts.sysio.epoch.readEpochConfigs(ctx)).rejects.toThrow(/truncated/)
   })
 
-  it("tolerates an epoch state that has no row yet", async () => {
-    const ctx = contextWithEpochState()
+  it("readEpochDurationSec reads the chain's epochcfg duration", async () => {
+    const { ctx } = contextWithChainRows([], [epochConfigRow(Ethereum, 60), epochConfigRow(Solana, 150)])
+    await expect(Steps.contracts.sysio.epoch.readEpochDurationSec(ctx, Solana)).resolves.toBe(150)
+    await expect(Steps.contracts.sysio.epoch.readEpochDurationSec(ctx, Ethereum)).resolves.toBe(60)
+  })
+
+  it("readEpochDurationSec refuses a chain whose setconfig has not run", async () => {
+    const { ctx } = contextWithChainRows([], [epochConfigRow(Ethereum, 60)])
+    await expect(Steps.contracts.sysio.epoch.readEpochDurationSec(ctx, Solana)).rejects.toThrow(
+      new RegExp(`epochcfg has no ${Solana} row`)
+    )
+  })
+
+  it("tolerates a chain that has no epoch state yet", async () => {
+    const { ctx } = contextWithChainRows([])
+    await expect(Steps.contracts.sysio.epoch.batchOperatorGroups(ctx, Ethereum)).resolves.toEqual([])
     await expect(
-      Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
-    ).resolves.toEqual([])
-    await expect(
-      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx)
+      Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx, Ethereum)
     ).resolves.toBeUndefined()
   })
 })
@@ -244,31 +388,50 @@ describe("Steps.contracts.sysio.epoch pause / unpause", () => {
     expect(Steps.contracts.sysio.epoch.PauseAccount).toBe("sysio.chalg")
   })
 
-  it.each([
-    ["planPause", "runPause", "pause"],
-    ["planUnpause", "runUnpause", "unpause"]
-  ] as const)("%s pushes an empty %s signed sysio.chalg@active", async (factory, runner, action) => {
+  it("planPause pushes one chain's pause signed sysio.chalg@active", async () => {
     const { ctx, contract } = epochContext(),
-      invoke = jest.spyOn(contract.actions[action], "invoke").mockResolvedValue(undefined),
-      step = Steps.contracts.sysio.epoch[factory](Report.Actor.Sysio, action, action, {})
-    expect(step.input).toBeNull()
-    expect(step.runner).toBe(Steps.contracts.sysio.epoch[runner])
-    await step.runner(ctx, null, new AbortController().signal)
-    expect(invoke).toHaveBeenCalledWith(
-      {},
-      { authorization: [{ actor: "sysio.chalg", permission: "active" }] }
-    )
+      invoke = jest.spyOn(contract.actions.pause, "invoke").mockResolvedValue(undefined),
+      data = { chain_code: Ethereum },
+      step = Steps.contracts.sysio.epoch.planPause(Report.Actor.Sysio, "pause", "pause", {}, data)
+    expect(step.input).toEqual({ kind: "EpochContractSteps.PauseInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runPause)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "sysio.chalg", permission: "active" }]
+    })
   })
 
-  it.each(["runPause", "runUnpause"] as const)("an aborted %s pushes nothing", async runner => {
+  it("planUnpause pushes one chain's unpause signed sysio.chalg@active", async () => {
     const { ctx, contract } = epochContext(),
-      pause = jest.spyOn(contract.actions.pause, "invoke").mockResolvedValue(undefined),
-      unpause = jest.spyOn(contract.actions.unpause, "invoke").mockResolvedValue(undefined)
-    await expect(
-      Steps.contracts.sysio.epoch[runner](ctx, null, AbortSignal.abort())
-    ).rejects.toThrow()
-    expect(pause).not.toHaveBeenCalled()
-    expect(unpause).not.toHaveBeenCalled()
+      invoke = jest.spyOn(contract.actions.unpause, "invoke").mockResolvedValue(undefined),
+      data = { chain_code: Ethereum },
+      step = Steps.contracts.sysio.epoch.planUnpause(Report.Actor.Sysio, "unpause", "unpause", {}, data)
+    expect(step.input).toEqual({ kind: "EpochContractSteps.UnpauseInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runUnpause)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "sysio.chalg", permission: "active" }]
+    })
+  })
+
+  it("an aborted pause step pushes nothing", async () => {
+    const { ctx, contract } = epochContext(),
+      invoke = jest.spyOn(contract.actions.pause, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planPause(Report.Actor.Sysio, "pause", "pause", {}, {
+        chain_code: Ethereum
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("an aborted unpause step pushes nothing", async () => {
+    const { ctx, contract } = epochContext(),
+      invoke = jest.spyOn(contract.actions.unpause, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planUnpause(Report.Actor.Sysio, "unpause", "unpause", {}, {
+        chain_code: Ethereum
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
   })
 })
 
@@ -312,7 +475,17 @@ describe("Steps.contracts.sysio.epoch economic clock reads", () => {
 
   it("readBlockLog returns the open episode, bounded by BlockLogRowLimit", async () => {
     const { ctx, contract } = epochContract(),
-      row = { epoch_index: 7 } as SysioContracts.SysioEpochBlocklogEntryType,
+      row: SysioContracts.SysioEpochBlocklogEntryType = {
+        epoch_index: 7,
+        last_epoch_index: 7,
+        reason: SysioContracts.SysioEpochEmissionsblockreason.EMISSIONS_BLOCK_REASON_BALANCE_INSUFFICIENT,
+        attempted_emission: 1,
+        treasury_remaining: 1,
+        sysio_balance: 0,
+        first_blocked_at: 0,
+        last_blocked_at: 0,
+        blocked_epochs: 1
+      },
       query = jest
         .spyOn(contract.tables.blocklog, "query")
         .mockResolvedValue({ rows: [row], more: false })

@@ -26,6 +26,7 @@
     { "path": "./packages/flow-governance-handoff/tsconfig.json" },
     { "path": "./packages/flow-emissions-soak/tsconfig.json" },
     { "path": "./packages/flow-economic-clock/tsconfig.json" },
+    { "path": "./packages/flow-per-chain-epochs/tsconfig.json" },
     { "path": "./packages/flow-liq-syndication/tsconfig.json" },
     { "path": "./packages/flow-lco-import/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-prefunding/tsconfig.json" },

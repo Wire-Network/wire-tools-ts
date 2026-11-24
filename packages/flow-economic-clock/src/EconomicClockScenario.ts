@@ -1,5 +1,7 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
+import { describeOutpostChains } from "@wireio/cluster-tool-shared"
 import {
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
@@ -22,9 +24,10 @@ const { Actor } = Report,
   { SysioOpregOperatorstatus } = SysioContracts
 
 /**
- * The economic clock beside the consensus epoch. `sysio.epoch` runs two clocks: the consensus
- * epoch advances on outpost consensus and stops while paused, and the economic clock opens epochs
- * on its own wall-clock grid through the batch operators' `tickeconomy` crank. Emissions accrue
+ * The economic clock beside the consensus epochs. `sysio.epoch` runs a consensus epoch per outpost
+ * chain, which advances on that outpost's consensus and stops while the chain is paused, and one
+ * economic clock, which opens epochs on its own wall-clock grid through the batch operators'
+ * `tickeconomy` crank. Emissions accrue
  * and pay, and collateral withdrawals mature, on the economic clock. With the economic epoch at
  * twice the consensus epoch, the flow runs four phase groups, each independent of the others'
  * outcome so a failure names its phase:
@@ -33,11 +36,13 @@ const { Actor } = Report,
  *    their grid while consensus advances more often (the envelope guarantees it), every economic
  *    epoch pays one period into `epochlog`, and the producer's credited `payclaims` pays out
  *    through `claimpay`.
- * 2. **WithdrawalWaitsOnBothClocks** — a non-bootstrapped operator bonds WIRE and withdraws
- *    twice. The first request's consensus guard passes first and it stays queued until its
- *    economic wait passes; for the second, governance pauses consensus (as a dispute would), the
- *    economic wait passes and it stays queued until consensus resumes and its guard passes. Each
- *    matures into the operator's remit claim only once both have passed.
+ * 2. **WithdrawalWaitsOnBothClocks** — a non-bootstrapped operator serving every outpost chain
+ *    bonds WIRE and withdraws twice; each request waits on the economic clock and on every
+ *    chain's consensus. The first request's consensus guards pass first and it stays queued
+ *    until its economic wait passes; for the second, governance pauses one chain's consensus (as
+ *    a dispute on it would), the economic wait passes and it stays queued until that chain
+ *    resumes and its guard passes. Each matures into the operator's remit claim only once every
+ *    wait has passed.
  * 3. **HeldEmissions** — `sysio`'s spendable WIRE moves to a holder, so the readiness gate holds
  *    the next pay epoch (`BALANCE_INSUFFICIENT` in `blocklog`) while it still accrues. Both clocks
  *    keep running and an envelope round trip with each outpost completes during the hold. The
@@ -80,7 +85,7 @@ export class EconomicClockScenario extends FlowScenario {
       EconomicClockSteps.planVerifyClockConfiguration(
         Actor.Sysio,
         "clock-configuration",
-        `economycfg runs ${economicEpochDurationSec} s economic epochs beside ${cluster.context.config.epochDurationSec} s consensus epochs; every economic epoch pays; t5state starts on the economic grid`,
+        `economycfg runs ${economicEpochDurationSec} s economic epochs beside each chain's epochcfg consensus epochs (${describeOutpostChains(cluster.context.config.outpostEpochDurationSec, durationSec => `${durationSec} s`)}); every economic epoch pays; t5state starts on the economic grid`,
         {}
       )
     )
@@ -113,7 +118,7 @@ export class EconomicClockScenario extends FlowScenario {
       EconomicClockSteps.planVerifyConsensusCadence(
         Actor.Sysio,
         "consensus-cadence",
-        "consensus advanced at least as often as its envelope requires, and more often than the economic clock",
+        "every chain's consensus advanced at least as often as its envelope requires, and more often than the economic clock",
         {},
         Constants.ClockObservation
       ),
@@ -159,7 +164,14 @@ export class EconomicClockScenario extends FlowScenario {
       "ProvisionWithdrawer",
       "Provision the non-bootstrapped withdrawing batch operator",
       {},
-      [{ label, type: OperatorType.BATCH, isBootstrapped: false }]
+      [
+        {
+          label,
+          type: OperatorType.BATCH,
+          isBootstrapped: false,
+          servedChains: Constants.WithdrawerServedChains
+        }
+      ]
     )
 
     ClusterBuildPhase.create(
@@ -183,7 +195,7 @@ export class EconomicClockScenario extends FlowScenario {
         label,
         WireCollateralTool.createWireCollateral(Constants.BondAmount)
       ),
-      EconomicClockSteps.planVerifyOperatorStatus(
+      WireCollateralTool.planVerifyOperatorStatus(
         Actor.Sysio,
         "withdrawer-unscheduled",
         "with no collateral minimum configured the withdrawer stays OPERATOR_STATUS_UNKNOWN, so no schedule seats it",
@@ -217,17 +229,18 @@ export class EconomicClockScenario extends FlowScenario {
       EconomicClockSteps.planVerifyWithdrawalEligibility(
         Actor.Sysio,
         "consensus-first-eligibility",
-        "the request is eligible two economic epochs and two consensus epochs after it",
+        "the request is eligible two economic epochs after it, and two consensus epochs of every chain it serves",
         {},
         label,
         Constants.WithdrawAmount,
         Constants.ConsensusFirstObservation,
-        Constants.ConsensusFirstWithdrawal
+        Constants.ConsensusFirstWithdrawal,
+        Constants.WithdrawerServedChains
       ),
       EconomicClockSteps.planAwaitWithdrawalWaitPassed(
         Actor.Sysio,
         "consensus-guard-passes",
-        "consensus reaches the request's eligible_at_consensus_epoch",
+        "every served chain's consensus reaches the request's consensus_waits epoch for it",
         {
           timeoutMs: EconomicClockSteps.withdrawalWaitStepTimeoutMs(
             config,
@@ -268,13 +281,14 @@ export class EconomicClockScenario extends FlowScenario {
     ClusterBuildPhase.create(
       group,
       "EconomicWaitPassesFirst",
-      "With consensus paused, a withdrawal's economic wait passes first and it waits for its consensus guard"
+      `With the ${Constants.PausedChain} consensus paused, a withdrawal's economic wait passes first and it waits for that chain's consensus guard`
     ).push(
       Steps.contracts.sysio.epoch.planPause(
         Actor.Sysio,
         "pause-consensus",
-        "governance pauses the consensus epoch through sysio.chalg@active, as an open dispute does",
-        SyndicationScenario.WriteOptions
+        `governance pauses the ${Constants.PausedChain} consensus epoch through sysio.chalg@active, as an open dispute on it does`,
+        SyndicationScenario.WriteOptions,
+        { chain_code: Constants.PausedChain }
       ),
       WireEconomicClockTool.planRecordClockReading(
         Actor.Sysio,
@@ -294,12 +308,13 @@ export class EconomicClockScenario extends FlowScenario {
       EconomicClockSteps.planVerifyWithdrawalEligibility(
         Actor.Sysio,
         "economic-first-eligibility",
-        "the request is eligible two economic epochs and two consensus epochs after it",
+        "the request is eligible two economic epochs after it, and two consensus epochs of every chain it serves",
         {},
         label,
         Constants.WithdrawAmount,
         Constants.EconomicFirstObservation,
-        Constants.EconomicFirstWithdrawal
+        Constants.EconomicFirstWithdrawal,
+        Constants.WithdrawerServedChains
       ),
       EconomicClockSteps.planAwaitWithdrawalWaitPassed(
         Actor.BatchOperator,
@@ -318,7 +333,7 @@ export class EconomicClockScenario extends FlowScenario {
       EconomicClockSteps.planVerifyWithdrawalHeld(
         Actor.Sysio,
         "held-by-consensus-guard",
-        "with only its economic wait passed the request is still queued and the claim holds only the first withdrawal",
+        `with only its economic wait passed the request is still queued, held by the paused ${Constants.PausedChain} guard, and the claim holds only the first withdrawal`,
         {},
         Constants.EconomicFirstWithdrawal,
         WithdrawalWait.economic,
@@ -327,8 +342,9 @@ export class EconomicClockScenario extends FlowScenario {
       Steps.contracts.sysio.epoch.planUnpause(
         Actor.Sysio,
         "unpause-consensus",
-        "governance clears the consensus pause",
-        SyndicationScenario.WriteOptions
+        `governance clears the ${Constants.PausedChain} consensus pause`,
+        SyndicationScenario.WriteOptions,
+        { chain_code: Constants.PausedChain }
       ),
       WireCollateralTool.planVerifyRemitClaim(
         Actor.Sysio,

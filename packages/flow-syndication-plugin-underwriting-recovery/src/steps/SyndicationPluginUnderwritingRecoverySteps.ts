@@ -160,7 +160,7 @@ export namespace SyndicationPluginUnderwritingRecoverySteps {
   export async function verifyPruned(ctx: ClusterBuildContext): Promise<void> {
     const checkpoint = await pollFor("old source digest pruned; newer accepted checkpoint authenticated",
       () => readPrunedCheckpoint(ctx),
-      Constants.pruningBudgetMs(ctx.config.epochDurationSec), Constants.PruningPollMs)
+      Constants.pruningBudgetMs(ctx.config.outpostEpochDurationSec[SyndicationScenario.Chain]), Constants.PruningPollMs)
     ctx.outputs.set(PrunedCheckpoint, checkpoint)
     await assertStillUnbonded(ctx)
   }

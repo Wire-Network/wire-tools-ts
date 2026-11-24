@@ -1,7 +1,8 @@
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 
+import { describeOutpostChains, type PerOutpostChain } from "@wireio/cluster-tool-shared"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
-import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import {
   Steps,
   type ClusterBuildContext
@@ -20,7 +21,11 @@ const GridStartMs = Date.UTC(2026, 10, 23, 0, 0, 0),
   ConsensusDurationSec = 60,
   /** Seconds a tick lands after its boundary in the fixture readings. */
   CrankLagMs = 5_000,
-  signal = new AbortController().signal
+  signal = new AbortController().signal,
+  /** The chain the fixtures pause and hold. */
+  Held = Constants.ETHEREUM_CHAIN_CODENAME,
+  /** The chain the fixtures keep running beside it. */
+  Running = Constants.SOLANA_CHAIN_CODENAME
 
 /** A chain stamp (zone-less UTC, millisecond precision) for epoch ms. */
 function stamp(ms: number): string {
@@ -32,19 +37,39 @@ function boundaryMs(index: number): number {
   return GridStartMs + (index - 1) * EconomicDurationMs
 }
 
-/** A reading of economic epoch `index` on the grid, read `CrankLagMs` after it opened. */
+/** One chain's consensus reading at `index`, on the fixture rows' boundaries ({@link chainRow}). */
+function consensusReading(
+  index: number,
+  paused: boolean
+): WireEconomicClockTool.ConsensusReading {
+  return {
+    epochIndex: index,
+    epochStartMs: GridStartMs,
+    nextEpochStartMs: GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+    paused
+  }
+}
+
+/**
+ * A reading of economic epoch `index` on the grid, read `CrankLagMs` after it opened: the held
+ * chain at `consensusEpochIndex` (paused when `consensusPaused`), the running chain at
+ * `runningEpochIndex` and never paused.
+ */
 function reading(
   index: number,
   consensusEpochIndex: number,
   consensusPaused = false,
-  headBlockTimeMs = boundaryMs(index) + CrankLagMs
+  headBlockTimeMs = boundaryMs(index) + CrankLagMs,
+  runningEpochIndex = consensusEpochIndex
 ): Reading {
   return {
     economicEpochIndex: index,
     economicEpochStartMs: boundaryMs(index),
     economicNextEpochStartMs: boundaryMs(index + 1),
-    consensusEpochIndex,
-    consensusPaused,
+    consensus: {
+      [Held]: consensusReading(consensusEpochIndex, consensusPaused),
+      [Running]: consensusReading(runningEpochIndex, false)
+    },
     headBlockTimeMs
   }
 }
@@ -64,15 +89,29 @@ function economyRow(index: number): SysioContracts.SysioEpochEconomicStateType {
   }
 }
 
-/** An `epochstate` row at consensus epoch `index`. */
+/** One chain's whole `epochstate` row at consensus epoch `index`. */
+function chainRow(
+  chain: Constants.OutpostChainCodename,
+  index: number,
+  paused: boolean
+): SysioContracts.SysioEpochEpochStateType {
+  return {
+    chain_code: SlugName.from(chain),
+    current_epoch_index: index,
+    current_epoch_start: stamp(GridStartMs),
+    next_epoch_start: stamp(GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond),
+    current_batch_op_group: 0,
+    batch_op_groups: [],
+    is_paused: paused
+  }
+}
+
+/** Every chain's `epochstate` row: the held chain at `index` (paused when `paused`), the running one at `index`. */
 function consensusRow(
   index: number,
   paused = false
-): SysioContracts.SysioEpochEpochStateType {
-  return {
-    current_epoch_index: index,
-    is_paused: paused
-  } as SysioContracts.SysioEpochEpochStateType
+): PerOutpostChain<SysioContracts.SysioEpochEpochStateType> {
+  return { [Held]: chainRow(Held, index, paused), [Running]: chainRow(Running, index, false) }
 }
 
 /** The chain head the fixture reads report. */
@@ -80,19 +119,19 @@ type GetInfoResponse = Awaited<
   ReturnType<ClusterBuildContext["wire"]["getInfo"]>
 >
 
-/** A real context whose clock reads serve `economy`, `consensus` and `headMs`, one triple per read. */
+/** A real context whose clock reads serve `economy`, every chain's `consensus` and `headMs`, one triple per read. */
 function clockContext(
   reads: ReadonlyArray<
     [
       SysioContracts.SysioEpochEconomicStateType,
-      SysioContracts.SysioEpochEpochStateType,
+      PerOutpostChain<SysioContracts.SysioEpochEpochStateType>,
       number
     ]
   >
 ): ClusterBuildContext {
   const ctx = fixtureContext({ economicEpochDurationSec: EconomicDurationSec }),
     economy = jest.spyOn(Steps.contracts.sysio.epoch, "readEconomyState"),
-    consensus = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochState"),
+    consensus = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates"),
     info = jest.spyOn(ctx.wire, "getInfo")
   reads.forEach(([economyState, consensusState, headMs]) => {
     economy.mockResolvedValueOnce(economyState)
@@ -124,8 +163,10 @@ describe("WireEconomicClockTool", () => {
         economicEpochIndex: 4,
         economicEpochStartMs: boundaryMs(4),
         economicNextEpochStartMs: boundaryMs(5),
-        consensusEpochIndex: 9,
-        consensusPaused: true,
+        consensus: {
+          [Held]: consensusReading(9, true),
+          [Running]: consensusReading(9, false)
+        },
         headBlockTimeMs: headMs
       })
     })
@@ -144,11 +185,58 @@ describe("WireEconomicClockTool", () => {
       expect(WireEconomicClockTool.isCaughtUp(first)).toBe(false)
     })
 
-    it("refuses a depot with no consensus epoch state", async () => {
-      const ctx = clockContext([[economyRow(1), undefined, GridStartMs]])
+    it("refuses a depot missing a chain's consensus epoch state", async () => {
+      const ctx = clockContext([
+        [economyRow(1), { [Held]: chainRow(Held, 1, false), [Running]: undefined }, GridStartMs]
+      ])
       await expect(WireEconomicClockTool.readReading(ctx)).rejects.toThrow(
-        /epochstate has no row/
+        new RegExp(`epochstate has no ${Running} row`)
       )
+    })
+
+    it("reads each chain's consensus from its own row: index, boundaries and pause", () => {
+      const solanaStartMs = GridStartMs + 7 * ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+        running = {
+          ...chainRow(Running, 3, false),
+          current_epoch_start: stamp(solanaStartMs),
+          next_epoch_start: stamp(solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond)
+        }
+      expect(
+        WireEconomicClockTool.toConsensusReadings({
+          [Held]: chainRow(Held, 8, true),
+          [Running]: running
+        })
+      ).toEqual({
+        [Held]: consensusReading(8, true),
+        [Running]: {
+          epochIndex: 3,
+          epochStartMs: solanaStartMs,
+          nextEpochStartMs: solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+          paused: false
+        }
+      })
+    })
+
+    it("toConsensusReadings refuses a chain without an epochstate row", () => {
+      expect(() =>
+        WireEconomicClockTool.toConsensusReadings({
+          [Held]: undefined,
+          [Running]: chainRow(Running, 3, false)
+        })
+      ).toThrow(new RegExp(`epochstate has no ${Held} row`))
+    })
+
+    it("describes one chain's consensus for the log, marking a paused chain", () => {
+      expect(WireEconomicClockTool.describeConsensusReading(consensusReading(8, true))).toBe(
+        `8${WireEconomicClockTool.PausedMark}`
+      )
+      expect(WireEconomicClockTool.describeConsensusReading(consensusReading(3, false))).toBe("3")
+      expect(
+        describeOutpostChains(
+          reading(1, 8, true, undefined, 3).consensus,
+          WireEconomicClockTool.describeConsensusReading
+        )
+      ).toBe(`${Held} 8 (paused), ${Running} 3`)
     })
 
     it("refuses an economic clock that was never configured", async () => {
@@ -417,40 +505,57 @@ describe("WireEconomicClockTool", () => {
 
     it("accepts one paused consensus epoch while the economic index grows", () => {
       expect(() =>
-        WireEconomicClockTool.assertConsensusHeld([paused, restarted])
+        WireEconomicClockTool.assertConsensusHeld([paused, restarted], Held)
       ).not.toThrow()
+    })
+
+    it("holds only the named chain: the other chain may advance meanwhile", () => {
+      expect(() =>
+        WireEconomicClockTool.assertConsensusHeld(
+          [
+            { start: reading(3, 9, true, undefined, 4), ticks: [reading(4, 9, true, undefined, 6)] }
+          ],
+          Held
+        )
+      ).not.toThrow()
+      expect(() =>
+        WireEconomicClockTool.assertConsensusHeld([paused, restarted], Running)
+      ).toThrow(new RegExp(`the ${Running} consensus was not paused`))
     })
 
     it("refuses a reading with consensus unpaused", () => {
       expect(() =>
-        WireEconomicClockTool.assertConsensusHeld([
-          paused,
-          { start: reading(6, 9, true), ticks: [reading(7, 9)] }
-        ])
+        WireEconomicClockTool.assertConsensusHeld(
+          [paused, { start: reading(6, 9, true), ticks: [reading(7, 9)] }],
+          Held
+        )
       ).toThrow(/was not paused/)
     })
 
     it("refuses consensus that moved", () => {
       expect(() =>
-        WireEconomicClockTool.assertConsensusHeld([
-          paused,
-          { start: reading(6, 10, true), ticks: [reading(7, 10, true)] }
-        ])
+        WireEconomicClockTool.assertConsensusHeld(
+          [paused, { start: reading(6, 10, true), ticks: [reading(7, 10, true)] }],
+          Held
+        )
       ).toThrow(/consensus moved from epoch 9/)
     })
 
     it("refuses an economic clock that opened no epoch", () => {
       expect(() =>
-        WireEconomicClockTool.assertConsensusHeld([
-          { start: reading(3, 9, true), ticks: [] },
-          { start: reading(3, 9, true), ticks: [] }
-        ])
+        WireEconomicClockTool.assertConsensusHeld(
+          [
+            { start: reading(3, 9, true), ticks: [] },
+            { start: reading(3, 9, true), ticks: [] }
+          ],
+          Held
+        )
       ).toThrow(/opened no epoch/)
     })
 
     it("refuses an economic index that moved back", () => {
       expect(() =>
-        WireEconomicClockTool.assertConsensusHeld([restarted, paused])
+        WireEconomicClockTool.assertConsensusHeld([restarted, paused], Held)
       ).toThrow(/moved back/)
     })
 
@@ -461,12 +566,14 @@ describe("WireEconomicClockTool", () => {
           "held",
           "held",
           {},
+          Held,
           ["paused", "restarted"]
         )
       ctx.outputs
         .set(WireEconomicClockTool.observationKey("paused"), paused)
         .set(WireEconomicClockTool.observationKey("restarted"), restarted)
       expect(step.input.observationNames).toEqual(["paused", "restarted"])
+      expect(step.input.chain).toBe(Held)
       await expect(
         step.runner(ctx, step.input, signal)
       ).resolves.toBeUndefined()
@@ -485,6 +592,7 @@ describe("WireEconomicClockTool", () => {
         "held",
         "held",
         {},
+        Held,
         ["missing"]
       )
       await expect(
@@ -524,6 +632,7 @@ describe("WireEconomicClockTool", () => {
         WireEconomicClockTool.assertConsensusAdvanced(
           reading(1, 2),
           reading(5, 10),
+          Held,
           ConsensusDurationSec
         )
       ).toBe(8)
@@ -534,25 +643,23 @@ describe("WireEconomicClockTool", () => {
         WireEconomicClockTool.assertConsensusAdvanced(
           reading(1, 2),
           reading(5, 10, true),
+          Held,
           ConsensusDurationSec
         )
-      ).toThrow(/was paused/)
+      ).toThrow(new RegExp(`the ${Held} consensus was paused`))
     })
 
     it("refuses a window shorter than one effective consensus epoch", () => {
       const from = reading(1, 2),
-        to = {
-          ...from,
-          consensusEpochIndex: 3,
-          headBlockTimeMs: from.headBlockTimeMs + effectiveMs - 1
-        }
+        to = reading(1, 3, false, from.headBlockTimeMs + effectiveMs - 1)
       expect(() =>
         WireEconomicClockTool.assertConsensusAdvanced(
           from,
           to,
+          Held,
           ConsensusDurationSec
         )
-      ).toThrow(/spans no whole 90 s consensus epoch/)
+      ).toThrow(new RegExp(`spans no whole 90 s ${Held} consensus epoch`))
     })
 
     it("refuses consensus advancing fewer epochs than the bound", () => {
@@ -560,9 +667,55 @@ describe("WireEconomicClockTool", () => {
         WireEconomicClockTool.assertConsensusAdvanced(
           reading(1, 2),
           reading(5, 6),
+          Held,
           ConsensusDurationSec
         )
       ).toThrow(/so at least 5/)
+    })
+
+    it("measures each chain against its own duration", () => {
+      // The running chain advanced 2 over 480 s: enough at 150 s epochs, too few at 60 s.
+      const from = reading(1, 2, false, undefined, 1),
+        to = reading(5, 10, false, undefined, 3)
+      expect(WireEconomicClockTool.assertConsensusAdvanced(from, to, Running, 150)).toBe(2)
+      expect(() =>
+        WireEconomicClockTool.assertConsensusAdvanced(from, to, Running, ConsensusDurationSec)
+      ).toThrow(new RegExp(`the ${Running} consensus advanced 2 epoch`))
+    })
+
+    it("planVerifyConsensusAdvanced asserts a chain between two observations against its epochcfg duration", async () => {
+      const ctx = fixtureContext(),
+        step = WireEconomicClockTool.planVerifyConsensusAdvanced(
+          Report.Actor.Sysio,
+          "advanced",
+          "advanced",
+          {},
+          Running,
+          "before",
+          "after"
+        ),
+        config = jest
+          .spyOn(Steps.contracts.sysio.epoch, "readEpochDurationSec")
+          .mockResolvedValue(ConsensusDurationSec)
+      ctx.outputs
+        .set(WireEconomicClockTool.observationKey("before"), { start: reading(1, 2, true), ticks: [] })
+        .set(WireEconomicClockTool.observationKey("after"), {
+          start: reading(5, 2, true, undefined, 10),
+          ticks: []
+        })
+      expect(step.input).toEqual({
+        kind: "WireEconomicClockTool.VerifyConsensusAdvancedInput",
+        chain: Running,
+        fromObservationName: "before",
+        toObservationName: "after"
+      })
+      await expect(step.runner(ctx, step.input, signal)).resolves.toBeUndefined()
+      expect(config).toHaveBeenCalledWith(ctx, Running)
+      const held: WireEconomicClockTool.VerifyConsensusAdvancedInput = {
+        ...step.input,
+        chain: Held
+      }
+      await expect(step.runner(ctx, held, signal)).rejects.toThrow(/was paused/)
     })
   })
 })

@@ -3,6 +3,10 @@ const { test } = require("node:test")
 
 const { SysioContracts } = require("@wireio/sdk-core")
 const {
+  createUniformOutpostEpochDurations,
+  OutpostChainCodenames
+} = require("@wireio/cluster-tool-shared")
+const {
   ClusterBuild,
   OutputStore,
   Steps,
@@ -21,7 +25,11 @@ const { WithdrawalWait } = EconomicClockSteps
 /** The scenario's plan over its own defaults, resolved the way the provider fills them. */
 function planned() {
   const scenario = new EconomicClockScenario(),
-    config = { ...scenario.defaults, economicStartTime: null },
+    config = {
+      ...scenario.defaults,
+      outpostEpochDurationSec: createUniformOutpostEpochDurations(scenario.defaults.epochDurationSec),
+      economicStartTime: null
+    },
     build = ClusterBuild.forContext({ outputs: new OutputStore(), config })
   scenario.plan(build)
   return { scenario, config, build }
@@ -147,6 +155,9 @@ test("the second withdrawal is requested under a consensus pause and held by its
     matures = step(phase, "economic-first-matures")
   Assert.equal(pause.runner, Steps.contracts.sysio.epoch.runPause)
   Assert.equal(unpause.runner, Steps.contracts.sysio.epoch.runUnpause)
+  Assert.deepEqual(pause.input.data, { chain_code: Constants.PausedChain })
+  Assert.deepEqual(unpause.input.data, { chain_code: Constants.PausedChain })
+  Assert.deepEqual(step(phase, "economic-first-eligibility").input.chains, Constants.WithdrawerServedChains)
   Assert.ok(names.indexOf("pause-consensus") < names.indexOf("withdraw-economic-first"))
   Assert.ok(names.indexOf("held-by-consensus-guard") < names.indexOf("unpause-consensus"))
   Assert.ok(names.indexOf("unpause-consensus") < names.indexOf("economic-first-matures"))
@@ -160,9 +171,10 @@ test("the withdrawer bonds and is verified unscheduled before it withdraws", () 
   const { build } = planned(),
     bond = child(child(build, "WithdrawalWaitsOnBothClocks"), "BondWithdrawer"),
     unscheduled = step(bond, "withdrawer-unscheduled")
+  Assert.equal(unscheduled.runner, WireCollateralTool.runVerifyOperatorStatus)
   Assert.deepEqual(unscheduled.input, {
-    kind: "EconomicClockSteps.OperatorStatusInput",
-    label: Constants.WithdrawerLabel,
+    kind: "WireCollateralTool.VerifyOperatorStatusInput",
+    operatorLabel: Constants.WithdrawerLabel,
     status: SysioContracts.SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
   })
 })
@@ -244,4 +256,17 @@ test("every observation, withdrawal, snapshot, hold and release is written befor
     reads.forEach(name => Assert.ok(written.has(name), `${entry.name} reads ${name} before any step writes it`))
     writes.forEach(name => written.add(name))
   }
+})
+
+test("the withdrawer serves every outpost chain, so each request waits on every chain's guard", () => {
+  const { build } = planned(),
+    joins = stepsOf(child(child(build, "WithdrawalWaitsOnBothClocks"), "ProvisionWithdrawer")).filter(
+      entry => entry.input?.kind === "WireOperatorProvisioningTool.ChainJoinInput"
+    )
+  Assert.deepEqual(
+    joins.map(entry => entry.input.chain),
+    [...OutpostChainCodenames]
+  )
+  Assert.deepEqual([...Constants.WithdrawerServedChains], [...OutpostChainCodenames])
+  Assert.ok(Constants.WithdrawerServedChains.includes(Constants.PausedChain))
 })

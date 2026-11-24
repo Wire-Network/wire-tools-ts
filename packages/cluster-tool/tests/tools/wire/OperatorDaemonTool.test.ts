@@ -373,9 +373,6 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--batch-epoch-poll-ms")).toEqual([
         String(OperatorDaemonTool.BatchEpochPollMs)
       ])
-      expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([
-        String(OperatorDaemonTool.BatchDeliveryTimeoutMs)
-      ])
       expect(valuesOf(args, "--ext-debugging-server")).toEqual([
         network.debuggingServerUrl
       ])
@@ -449,6 +446,12 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--batch-enabled")).toEqual([])
       expect(valuesOf(args, "--batch-outpost")).toEqual([])
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual([])
+    })
+
+    it("emits no delivery-timeout flag (nodeop rejects it)", () => {
+      // The plugin derives each delivery deadline from the chain's on-chain
+      // epoch duration.
+      expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([])
     })
 
     it("rejects a non-batch operator", () => {

@@ -481,7 +481,9 @@ describe("WireClient", () => {
     })
 
     it("prepare() builds an ActionPayload with the contract account + default auth", () => {
-      const payload = epochClient().actions.advance.prepare({})
+      const payload = epochClient().actions.advance.prepare({
+        chain_code: Constants.ETHEREUM_CHAIN_CODENAME
+      })
       expect(payload.account).toBe("sysio.epoch")
       expect(payload.name).toBe("advance")
       expect(payload.authorization).toEqual([

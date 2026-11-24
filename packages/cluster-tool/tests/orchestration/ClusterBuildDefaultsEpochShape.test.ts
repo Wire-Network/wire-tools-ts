@@ -1,4 +1,8 @@
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  OutpostChainCodename,
+  OutpostChainCodenames,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
@@ -23,17 +27,38 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
     [9, 3],
     [21, 7]
   ])("emits the resolved shape for a roster of %i → %i per group", (batchOperatorCount, expectedOperatorsPerEpoch) => {
-    const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount }))
+    const data = ClusterBuildDefaults.epochConfig(
+      config({ batchOperatorCount }),
+      OutpostChainCodename.ETHEREUM
+    )
     expect(data.operators_per_epoch).toBe(expectedOperatorsPerEpoch)
     expect(data.batch_op_groups).toBe(3)
     expect(data.batch_operator_minimum_active).toBe(batchOperatorCount)
   })
 
-  it("carries the global epoch duration through unchanged", () => {
-    const data = ClusterBuildDefaults.epochConfig(
-      config({ batchOperatorCount: 21, epochDurationSec: 90 })
-    )
-    expect(data.epoch_duration_sec).toBe(90)
+  it("names the chain and carries that chain's own epoch duration", () => {
+    const perChain = config({
+      batchOperatorCount: 21,
+      epochDurationSec: 90,
+      outpostEpochDurationSec: { [OutpostChainCodename.ETHEREUM]: 60, [OutpostChainCodename.SOLANA]: 150 }
+    })
+    expect(ClusterBuildDefaults.epochConfig(perChain, OutpostChainCodename.ETHEREUM)).toMatchObject({
+      chain_code: OutpostChainCodename.ETHEREUM,
+      epoch_duration_sec: 60
+    })
+    expect(ClusterBuildDefaults.epochConfig(perChain, OutpostChainCodename.SOLANA)).toMatchObject({
+      chain_code: OutpostChainCodename.SOLANA,
+      epoch_duration_sec: 150
+    })
+  })
+
+  it("sizes every chain's schedule the same from the batch-operator topology", () => {
+    const shapes = OutpostChainCodenames.map(chain => {
+      const { chain_code: _chain, epoch_duration_sec: _duration, ...shape } =
+        ClusterBuildDefaults.epochConfig(config({ batchOperatorCount: 9 }), chain)
+      return shape
+    })
+    expect(shapes[1]).toEqual(shapes[0])
   })
 
   it("honors explicit group SIZE + COUNT overrides", () => {
@@ -42,7 +67,8 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
         batchOperatorCount: 21,
         operatorsPerEpoch: 3,
         batchOpGroups: 3
-      })
+      }),
+      OutpostChainCodename.ETHEREUM
     )
     expect(data.operators_per_epoch).toBe(3)
     expect(data.batch_op_groups).toBe(3)
@@ -52,7 +78,8 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
   it("keeps the group size ODD when a group-COUNT override is off the lattice", () => {
     // 21 / 5 = 4.2 → floor 4 → rounded DOWN to 3: still odd, and 3 × 5 = 15 ≤ 21.
     const data = ClusterBuildDefaults.epochConfig(
-      config({ batchOperatorCount: 21, batchOpGroups: 5 })
+      config({ batchOperatorCount: 21, batchOpGroups: 5 }),
+      OutpostChainCodename.ETHEREUM
     )
     expect(data.operators_per_epoch).toBe(3)
     expect(data.batch_operator_minimum_active).toBe(15)
@@ -61,7 +88,8 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
   it("rejects an EVEN group-size override — the spec's assert(group_size % 2 == 1)", () => {
     expect(() =>
       ClusterBuildDefaults.epochConfig(
-        config({ batchOperatorCount: 21, operatorsPerEpoch: 4 })
+        config({ batchOperatorCount: 21, operatorsPerEpoch: 4 }),
+        OutpostChainCodename.ETHEREUM
       )
     ).toThrow(/group SIZE must be ODD/)
   })
@@ -75,7 +103,8 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
           batchOperatorCount: 21,
           operatorsPerEpoch: 7,
           batchOpGroups: 5
-        })
+        }),
+        OutpostChainCodename.ETHEREUM
       )
     ).toThrow(/needs 35 ACTIVE batch operators.*batch-operator-count is 21/s)
   })

@@ -18,7 +18,7 @@ const { SysioContractAccount, SysioContractName } = SysioContracts
  * syndicated position plus pretoken yield) and one purchaser (pretokens only).
  */
 export namespace LcoImportScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
 
   /** The package's committed export templates. */

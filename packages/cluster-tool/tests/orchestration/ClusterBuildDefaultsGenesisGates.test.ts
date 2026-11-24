@@ -1,9 +1,13 @@
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, SysioContracts } from "@wireio/sdk-core"
+import {
+  OutpostChainCodename,
+  OutpostChainCodenames
+} from "@wireio/cluster-tool-shared"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { NodeConfig } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider, NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
@@ -92,15 +96,53 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       expect(names).not.toContain("EpochAdvance")
     })
 
-    it("epochAdvanceBudgetMs reuses ProtocolTiming's epoch-liveness envelope", async () => {
+    it("the gate's budget reuses ProtocolTiming's epoch-liveness envelope with each chain's duration", async () => {
       const cluster = await ClusterBuildDefaults.create({
         ...baseOptions(),
-        epochDurationSec: 60
+        epochDurationSec: 60,
+        outpostEpochDurationSec: { [OutpostChainCodename.SOLANA]: 150 }
       })
-      expect(ClusterBuildDefaults.epochAdvanceBudgetMs(cluster.config)).toBe(
+      expect(Steps.epochAdvance.epochAdvanceBudgetMs(cluster.config, OutpostChainCodename.ETHEREUM)).toBe(
         ProtocolTiming.EpochVerifyEpochCount *
           ProtocolTiming.effectiveEpochSec(60) *
           ProtocolTiming.MsPerSecond
+      )
+      expect(Steps.epochAdvance.epochAdvanceBudgetMs(cluster.config, OutpostChainCodename.SOLANA)).toBe(
+        ProtocolTiming.EpochVerifyEpochCount *
+          ProtocolTiming.effectiveEpochSec(150) *
+          ProtocolTiming.MsPerSecond
+      )
+    })
+
+    it("gives a default-duration cluster's Solana gate the OPP circulation restart, its Ethereum gate three epochs", async () => {
+      const cluster = await ClusterBuildDefaults.create(baseOptions())
+      expect(cluster.config.outpostEpochDurationSec).toEqual(
+        ClusterConfigProvider.DefaultOutpostEpochDurationSec
+      )
+      expect(Steps.epochAdvance.epochAdvanceBudgetMs(cluster.config, OutpostChainCodename.ETHEREUM)).toBe(
+        ProtocolTiming.EpochVerifyEpochCount *
+          ProtocolTiming.effectiveEpochSec(ClusterConfigProvider.DefaultEthereumEpochDurationSec) *
+          ProtocolTiming.MsPerSecond
+      )
+      expect(Steps.epochAdvance.epochAdvanceBudgetMs(cluster.config, OutpostChainCodename.SOLANA)).toBe(
+        ProtocolTiming.OppCirculationRestartMs
+      )
+    })
+
+    it("gates on every outpost chain's own epoch advance, one verify per chain", async () => {
+      const cluster = await ClusterBuildDefaults.create(baseOptions()),
+        gate = findPhase(cluster.children, "EpochAdvance")
+      expect(gate.steps.map(step => step.name)).toEqual(
+        OutpostChainCodenames.map(chain => `verify-epoch-advance-${chain.toLowerCase()}`)
+      )
+      expect(gate.steps.map(step => step.description)).toEqual(
+        OutpostChainCodenames.map(
+          chain =>
+            `the ${chain} current_epoch_index reaches ${Steps.epochAdvance.BootstrapAdvanceTargetIndex}`
+        )
+      )
+      expect(gate.steps.map(step => step.input)).toEqual(
+        OutpostChainCodenames.map(chain => ({ kind: "EpochAdvanceSteps.AwaitEpochAdvancedInput", chain }))
       )
     })
   })
@@ -114,7 +156,9 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
           ),
           names = collectStepNames(cluster.children),
           economy = names.indexOf("configure-economy")
-        expect(economy).toBeGreaterThan(names.indexOf("configure-epoch"))
+        OutpostChainCodenames.forEach(chain =>
+          expect(economy).toBeGreaterThan(names.indexOf(`configure-epoch-${chain.toLowerCase()}`))
+        )
         expect(names.indexOf("init-t5")).toBeGreaterThan(economy)
         expect(names.indexOf("bootstrap-epoch")).toBeGreaterThan(economy)
         expect(names.filter(name => name === "configure-economy")).toHaveLength(1)

@@ -7,6 +7,7 @@ import {
   ClusterFiles,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
+  OutpostChainCodename,
   ProcessSignalName,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -14,7 +15,7 @@ import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
 import { ClusterManager, ClusterState } from "@wireio/cluster-tool"
 import { WireWallet } from "@wireio/cluster-tool/clients/wire"
-import { NodeopProcess } from "@wireio/cluster-tool/cluster/processes"
+import { AnvilProcess, NodeopProcess } from "@wireio/cluster-tool/cluster/processes"
 import {
   BindConfigProvider,
   ClusterConfigProvider,
@@ -441,5 +442,108 @@ describe("ClusterManager.run", () => {
     expect(Math.min(...operatorStarts)).toBeGreaterThan(
       order.lastIndexOf(ResumeProductionEvent)
     )
+  })
+})
+
+describe("ClusterManager.run epoch-advance liveness gate", () => {
+  /** The indices the gate reads once the operator nodes have started. */
+  const StartIndices = {
+      [OutpostChainCodename.ETHEREUM]: 4,
+      [OutpostChainCodename.SOLANA]: 2
+    },
+    /** Ethereum advanced, Solana still at its start index: the gate must keep waiting. */
+    OneChainAdvanced = {
+      [OutpostChainCodename.ETHEREUM]: 5,
+      [OutpostChainCodename.SOLANA]: 2
+    },
+    /** Both chains past their start indices: the cluster is live. */
+    BothChainsAdvanced = {
+      [OutpostChainCodename.ETHEREUM]: 5,
+      [OutpostChainCodename.SOLANA]: 3
+    }
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  afterAll(() => {
+    Fs.rmSync(pinnedClusterRoot, { recursive: true, force: true })
+  })
+
+  /**
+   * Stub every seam of a LOCAL relaunch up to the gate — node starts, production resume, the
+   * outpost chain daemons and the operator artifacts — so `run` reaches the epoch-advance gate
+   * without spawning a daemon or dialing a chain.
+   *
+   * @returns The relaunched cluster's config.
+   */
+  function stubLocalRelaunch(): ClusterConfig {
+    const config = fixtureConfig({
+      clusterPath: pinnedClusterRoot,
+      dataPath: Path.join(pinnedClusterRoot, "data"),
+      debuggingServerEnabled: false
+    })
+    Fs.mkdirSync(pinnedClusterRoot, { recursive: true })
+    ClusterState.saveKeys(config, { nodes: [], operators: [] })
+    jest.spyOn(BindConfigProvider, "claimResolved").mockResolvedValue(true)
+    jest.spyOn(Steps.processes.kiod, "runStart").mockResolvedValue(undefined)
+    jest.spyOn(WireWallet.prototype, "unlock").mockResolvedValue(undefined)
+    jest.spyOn(Steps.processes.nodeop, "resolveOperators").mockReturnValue([])
+    jest
+      .spyOn(Steps.processes.nodeop, "resolveOperatorDaemonArgs")
+      .mockReturnValue([])
+    // strictNullChecks is off — `run` never reads the resolved process.
+    jest.spyOn(NodeopProcess, "startWithRecovery").mockResolvedValue(undefined)
+    jest.spyOn(NodeopProcess, "resumeProduction").mockResolvedValue(undefined)
+    jest
+      .spyOn(Steps.externalOutpost, "runHeadBlockAdvance")
+      .mockResolvedValue(undefined)
+    jest
+      .spyOn(AnvilProcess, "create")
+      .mockResolvedValue({ start: async () => undefined } as unknown as AnvilProcess)
+    jest
+      .spyOn(Steps.processes.solanaValidator, "runStart")
+      .mockResolvedValue(undefined)
+    jest
+      .spyOn(OperatorDaemonTool, "runArtifactPreparation")
+      .mockResolvedValue(undefined)
+    return config
+  }
+
+  it("waits for EVERY chain to advance past the indices it read: one chain alone does not satisfy it", async () => {
+    const config = stubLocalRelaunch(),
+      reads = jest
+        .spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
+        .mockResolvedValueOnce(StartIndices)
+        .mockResolvedValueOnce(OneChainAdvanced)
+        .mockResolvedValueOnce(BothChainsAdvanced),
+      gate = jest.spyOn(Steps.epochAdvance, "awaitEpochIndicesAdvanced")
+    await expect(ClusterManager.run(config)).resolves.toBeUndefined()
+    expect(gate).toHaveBeenCalledTimes(1)
+    expect(gate.mock.calls[0][1]).toEqual(StartIndices)
+    // The start read, the one-chain read the gate kept waiting through, the both-chains read.
+    expect(reads).toHaveBeenCalledTimes(3)
+  })
+
+  it("fails the relaunch with the gate's timeout when a chain never advances", async () => {
+    const config = stubLocalRelaunch(),
+      timeout = new Error(
+        "Timed out waiting for: every outpost chain's current_epoch_index advances past ETHEREUM 4, SOLANA 2"
+      )
+    jest
+      .spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
+      .mockResolvedValue(StartIndices)
+    jest.spyOn(Steps.epochAdvance, "awaitEpochIndicesAdvanced").mockRejectedValue(timeout)
+    await expect(ClusterManager.run(config)).rejects.toBe(timeout)
+  })
+
+  it("skips the gate in external-outpost mode, where no local chain advances", async () => {
+    const config = {
+        ...stubLocalRelaunch(),
+        externalOutposts: fixtureExternalOutposts()
+      },
+      reads = jest.spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
+    await expect(ClusterManager.run(config)).resolves.toBeUndefined()
+    expect(reads).not.toHaveBeenCalled()
   })
 })

@@ -174,7 +174,7 @@ function growthResults(beats: HeartbeatFixture[], options: GrowthOptions = {}) {
           current_epoch_start: beat.currentStart === undefined ? process.argv[4] : beat.currentStart,
           next_epoch_start: beat.nextStart
         }, duration, configured);
-        const reason = oppGrowthBailReason(beat.epoch, beat.total - previousTotal, beat.total,
+        const reason = oppGrowthBailReason(beat.epoch >= 1, beat.total - previousTotal, beat.total,
           Number(process.argv[5]) + beat.elapsedMs, deadline, options.expectEpochFreeze);
         previousTotal = beat.total;
         return { reason, deadline };

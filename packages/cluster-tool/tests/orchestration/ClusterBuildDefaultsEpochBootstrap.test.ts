@@ -1,4 +1,6 @@
 import Path from "node:path"
+import { OutpostChainCodenames } from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
@@ -10,8 +12,12 @@ import {
 
 import { collectStepNames } from "./clusterBuildFixture.js"
 
-/** The EpochBootstrap steps, in the order the depot requires them. */
-const ScheduleBatchGroupsStep = "schedule-batch-groups"
+/** The EpochBootstrap steps, in the order the depot requires them: one schedule per outpost chain. */
+const ScheduleBatchGroupsSteps = OutpostChainCodenames.map(
+  chain => `schedule-batch-groups-${chain.toLowerCase()}`
+)
+/** The last chain's schedule step — the emit follows it. */
+const LastScheduleBatchGroupsStep = ScheduleBatchGroupsSteps[ScheduleBatchGroupsSteps.length - 1]
 const EmitWireOpregBootstrapStep = "emit-wire-opreg-bootstrap"
 const VerifyWireOpregBootstrapStep = "verify-wire-opreg-bootstrap"
 const SeedEthereumRosterStep = "seed-ethereum-roster"
@@ -87,11 +93,27 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
         names = collectStepNames(cluster.children)
       expect(names.filter(name => name === EmitWireOpregBootstrapStep)).toHaveLength(1)
       expect(names.indexOf(EmitWireOpregBootstrapStep)).toBe(
-        names.indexOf(ScheduleBatchGroupsStep) + 1
+        names.indexOf(LastScheduleBatchGroupsStep) + 1
       )
       expect(names.indexOf(VerifyWireOpregBootstrapStep)).toBe(
         names.indexOf(EmitWireOpregBootstrapStep) + 1
       )
     }
   )
+
+  it("schedules every outpost chain, in outpost order, after every batch operator joined every chain", async () => {
+    const cluster = await ClusterBuildDefaults.create(baseOptions()),
+      names = collectStepNames(cluster.children),
+      firstSchedule = names.indexOf(ScheduleBatchGroupsSteps[0]),
+      joins = Constants.batchOperatorLabels(3).flatMap(label =>
+        OutpostChainCodenames.map(chain => `${label}-join-${chain.toLowerCase()}`)
+      )
+    ScheduleBatchGroupsSteps.forEach((step, index) =>
+      expect(names.indexOf(step)).toBe(firstSchedule + index)
+    )
+    joins.forEach(join => {
+      expect(names).toContain(join)
+      expect(names.indexOf(join)).toBeLessThan(firstSchedule)
+    })
+  })
 })

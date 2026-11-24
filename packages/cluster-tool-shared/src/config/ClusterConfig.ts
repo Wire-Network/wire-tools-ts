@@ -5,6 +5,7 @@ import { Level } from "@wireio/shared"
 
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
+import { mapOutpostChains } from "../types/outpostChainCodenames.js"
 import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
 import { BatchOperatorUnderwritingConfigSchema } from "./BatchOperatorUnderwritingConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
@@ -84,6 +85,40 @@ export const CollateralRequirementSchema = z.object({
 })
 /** Per-(chain,token) collateral minimum — the shape of {@link CollateralRequirementSchema}. */
 export type CollateralRequirement = z.infer<typeof CollateralRequirementSchema>
+
+/**
+ * Each outpost chain's consensus epoch duration, seconds, keyed by its depot codename: the
+ * `epoch_duration_sec` the bootstrap writes to that chain's `sysio.epoch::epochcfg` row
+ * through its `setconfig`. The depot row is the source of truth once written; this is the
+ * value the bootstrap seeds it with.
+ */
+export const OutpostEpochDurationsSchema = z
+  .object(
+    mapOutpostChains(chain =>
+      z
+        .number()
+        .int()
+        .positive()
+        .describe(`The ${chain} outpost chain's consensus epoch duration, seconds`)
+    )
+  )
+  .describe("Each outpost chain's consensus epoch duration, seconds, keyed by its depot codename")
+/** Each outpost chain's consensus epoch duration — the shape of {@link OutpostEpochDurationsSchema}. */
+export type OutpostEpochDurations = z.infer<typeof OutpostEpochDurationsSchema>
+
+/**
+ * Every outpost chain at one consensus epoch duration — the durations a config saved without
+ * per-chain durations decodes with, and the ones a caller's `epochDurationSec` gives every
+ * chain it names no duration of its own for.
+ *
+ * @param epochDurationSec - The duration every chain takes, seconds.
+ * @returns Each outpost chain's duration.
+ */
+export function createUniformOutpostEpochDurations(
+  epochDurationSec: number
+): OutpostEpochDurations {
+  return mapOutpostChains(() => epochDurationSec)
+}
 
 /** Absolute paths of the resolved binaries a cluster runs. */
 export const ClusterExecutablePathsSchema = z.object({
@@ -182,13 +217,24 @@ const ClusterConfigShape = z.object({
    * producing set's p2p mesh.
    */
   apiCount: z.number(),
-  /** Depot epoch duration, seconds (global — see the epoch-duration rule). */
-  epochDurationSec: z.number(),
+  /**
+   * The consensus epoch duration, seconds, the caller gave every outpost chain it named no
+   * duration of its own for in `outpostEpochDurationSec`, or `null` when it gave none and each
+   * such chain took its own default (`ClusterConfigProvider.DefaultOutpostEpochDurationSec`).
+   * A config saved before per-chain epochs carries the one duration every chain ran at.
+   * `null` (not absence) so the slot round-trips through JSON persistence.
+   */
+  epochDurationSec: z.number().nullable(),
+  /**
+   * Each outpost chain's consensus epoch duration, seconds — the `epoch_duration_sec` of
+   * its `sysio.epoch::setconfig` (see the epoch-duration-per-chain rule). A config saved
+   * without it decodes with every chain at `epochDurationSec`.
+   */
+  outpostEpochDurationSec: OutpostEpochDurationsSchema,
   /**
    * Economic epoch duration, seconds — the `sysio.epoch` clock emissions, collateral
    * withdrawals and producer pay run on, independent of consensus. A config saved without
-   * it decodes with `epochDurationSec`, the value `ClusterConfigProvider.resolve` writes
-   * when the caller sets none.
+   * it decodes with `epochDurationSec`, the duration its bootstrap gave the economic clock.
    */
   economicEpochDurationSec: z.number(),
   /**
@@ -229,6 +275,11 @@ const ClusterConfigShape = z.object({
    * `null` (not absence) so the slot round-trips through JSON persistence.
    */
   terminateMaxPercentMisses24h: z.number().nullable().default(null),
+  /**
+   * `terminate_min_pct_samples` override, or `null` for the dev default.
+   * `null` (not absence) so the slot round-trips through JSON persistence.
+   */
+  terminateMinimumPercentSamples: z.number().nullable().default(null),
   /**
    * `terminate_window_ms` override, or `null` for the dev default (24h).
    * `null` (not absence) so the slot round-trips through JSON persistence.
@@ -380,14 +431,20 @@ const ClusterConfigShape = z.object({
 
 /**
  * The members of a persisted config that {@link ClusterConfigSchema} reads before
- * {@link ClusterConfigShape} validates the rest: the consensus epoch duration, and the
- * economic one it stands in for when absent. Every other member passes through untouched.
+ * {@link ClusterConfigShape} validates the rest: the caller's consensus epoch duration, and
+ * the economic and per-chain durations it stands in for when absent. Every other member
+ * passes through untouched.
  */
 const ClusterConfigEpochDurationsSchema = z.looseObject({
-  /** Depot epoch duration, seconds — the default of a missing economic duration. */
-  epochDurationSec: z.number(),
+  /**
+   * The caller's consensus epoch duration, seconds, or `null` — the default of a missing
+   * economic or per-chain duration, which only a config saved before per-chain epochs lacks.
+   */
+  epochDurationSec: z.number().nullable(),
   /** Economic epoch duration, seconds — absent in a config saved before the economic clock. */
-  economicEpochDurationSec: z.number().optional()
+  economicEpochDurationSec: z.number().optional(),
+  /** Each outpost chain's consensus epoch duration — absent in a config saved before per-chain epochs. */
+  outpostEpochDurationSec: OutpostEpochDurationsSchema.optional()
 })
 
 /**
@@ -397,9 +454,14 @@ const ClusterConfigEpochDurationsSchema = z.looseObject({
  * loads, and saves it (via {@link ClusterConfigSchemaCodec}); the debugging
  * server, TUI, and flows consume it read-only.
  *
- * Decoding defaults a missing `economicEpochDurationSec` to the saved
- * `epochDurationSec` — a field default cannot read a sibling, so the codec fills it
- * before {@link ClusterConfigShape} validates. Encoding writes the config as it is.
+ * Decoding defaults a missing `economicEpochDurationSec`, and a missing
+ * `outpostEpochDurationSec` for every outpost chain, to the saved `epochDurationSec` — a
+ * field default cannot read a sibling, so the codec fills them before
+ * {@link ClusterConfigShape} validates. Only a config saved before those members existed
+ * lacks them, and its bootstrap ran every chain and the economic clock at that one duration,
+ * so the decode reads back what its depot holds. A config missing them with a `null`
+ * `epochDurationSec` has no duration to decode and is refused. Encoding writes the config
+ * as it is.
  */
 export const ClusterConfigSchema = z.codec(
   ClusterConfigEpochDurationsSchema,
@@ -409,7 +471,10 @@ export const ClusterConfigSchema = z.codec(
       ({
         ...persisted,
         economicEpochDurationSec:
-          persisted.economicEpochDurationSec ?? persisted.epochDurationSec
+          persisted.economicEpochDurationSec ?? persisted.epochDurationSec,
+        outpostEpochDurationSec:
+          persisted.outpostEpochDurationSec ??
+          createUniformOutpostEpochDurations(persisted.epochDurationSec)
       }) as z.input<typeof ClusterConfigShape>,
     encode: identity
   }

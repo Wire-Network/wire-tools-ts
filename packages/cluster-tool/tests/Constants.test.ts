@@ -1,3 +1,4 @@
+import { OutpostChainCodename, OutpostChainCodenames } from "@wireio/cluster-tool-shared"
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 
 describe("Constants", () => {
@@ -11,6 +12,31 @@ describe("Constants", () => {
       expect(Constants.LIQ_TOKEN_PRECISION).toBe(9)
       expect(Constants.liqSymbol("LIQSOL")).toBe("9,LIQSOL")
       expect(Constants.liqSymbol("LIQETHP")).toBe("9,LIQETHP")
+    })
+  })
+  describe("outpost chain codenames", () => {
+    it("lists every outpost chain once, Ethereum first, under its sysio.chains code", () => {
+      expect(OutpostChainCodenames).toEqual([
+        Constants.ETHEREUM_CHAIN_CODENAME,
+        Constants.SOLANA_CHAIN_CODENAME
+      ])
+      expect(Constants.ETHEREUM_CHAIN_CODENAME).toBe("ETHEREUM")
+      expect(Constants.SOLANA_CHAIN_CODENAME).toBe("SOLANA")
+    })
+
+    it("aliases the shared enum rather than re-declaring it", () => {
+      expect(Constants.OutpostChainCodename).toBe(OutpostChainCodename)
+      expect(Constants.ETHEREUM_CHAIN_CODENAME).toBe(OutpostChainCodename.ETHEREUM)
+      expect(Constants.SOLANA_CHAIN_CODENAME).toBe(OutpostChainCodename.SOLANA)
+    })
+
+    it("names the same chains the native and shadow liq pairs key by", () => {
+      expect(Constants.NATIVE_TOKEN_PAIRS.map(([chain]) => chain)).toEqual([
+        ...OutpostChainCodenames
+      ])
+      expect(Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chain]) => chain)).toEqual([
+        ...OutpostChainCodenames
+      ])
     })
   })
   describe("shadow liq pairs", () => {
@@ -444,6 +470,74 @@ describe("ProtocolTiming", () => {
     expect(ProtocolTiming.effectiveSlowerEpochSec(60, 60)).toBe(90)
     expect(ProtocolTiming.effectiveSlowerEpochSec(60, 360)).toBe(390)
     expect(ProtocolTiming.effectiveSlowerEpochSec(300, 60)).toBe(330)
+  })
+
+  it("slowestOutpostEpochSec picks the slowest outpost chain's consensus epoch", () => {
+    expect(
+      ProtocolTiming.slowestOutpostEpochSec({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 60,
+        [Constants.SOLANA_CHAIN_CODENAME]: 150
+      })
+    ).toBe(150)
+    expect(
+      ProtocolTiming.slowestOutpostEpochSec({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 300,
+        [Constants.SOLANA_CHAIN_CODENAME]: 60
+      })
+    ).toBe(300)
+    expect(
+      ProtocolTiming.slowestOutpostEpochSec({
+        [Constants.ETHEREUM_CHAIN_CODENAME]: 90,
+        [Constants.SOLANA_CHAIN_CODENAME]: 90
+      })
+    ).toBe(90)
+  })
+
+  it("effectiveEpochsMs spans N extension-inclusive epochs of one clock", () => {
+    expect(ProtocolTiming.effectiveEpochsMs(60, 3)).toBe(3 * (60 + ProtocolTiming.EpochExtensionMaxSec) * 1_000)
+    expect(ProtocolTiming.effectiveEpochsMs(150, 1)).toBe(
+      ProtocolTiming.effectiveEpochSec(150) * ProtocolTiming.MsPerSecond
+    )
+    expect(ProtocolTiming.effectiveEpochsMs(60, 0)).toBe(0)
+  })
+
+  describe("epochAdvanceBudgetMs", () => {
+    it("pins the OPP circulation restart floor at four minutes", () => {
+      expect(ProtocolTiming.OppCirculationRestartMs).toBe(240_000)
+    })
+
+    it("spans EpochVerifyEpochCount effective epochs of a chain long enough to clear the floor", () => {
+      ;[60, 150, 300].forEach(epochDurationSec =>
+        expect(ProtocolTiming.epochAdvanceBudgetMs(epochDurationSec)).toBe(
+          ProtocolTiming.effectiveEpochsMs(epochDurationSec, ProtocolTiming.EpochVerifyEpochCount)
+        )
+      )
+    })
+
+    it("never drops below the OPP circulation restart for a short epoch", () => {
+      // The 30 s Solana default: 3 × 60 s = 180 s of epochs, under the restart a first close can need.
+      expect(
+        ProtocolTiming.effectiveEpochsMs(30, ProtocolTiming.EpochVerifyEpochCount)
+      ).toBeLessThan(ProtocolTiming.OppCirculationRestartMs)
+      ;[10, 15, 30, 49].forEach(epochDurationSec =>
+        expect(ProtocolTiming.epochAdvanceBudgetMs(epochDurationSec)).toBe(
+          ProtocolTiming.OppCirculationRestartMs
+        )
+      )
+    })
+
+    it("meets the floor exactly where the epochs reach it", () => {
+      // 3 × (50 + 30) s = 240 s.
+      expect(ProtocolTiming.epochAdvanceBudgetMs(50)).toBe(ProtocolTiming.OppCirculationRestartMs)
+      expect(ProtocolTiming.epochAdvanceBudgetMs(51)).toBeGreaterThan(ProtocolTiming.OppCirculationRestartMs)
+    })
+  })
+
+  it("pollStepOptions sits the Step's ceiling one poll buffer above the poll", () => {
+    expect(ProtocolTiming.pollStepOptions(90_000)).toEqual({
+      timeoutMs: 90_000 + ProtocolTiming.PollDeadlineBufferMs
+    })
+    expect(ProtocolTiming.pollStepOptions(0).timeoutMs).toBe(ProtocolTiming.PollDeadlineBufferMs)
   })
 
   describe("irreversibilityBudgetMs", () => {

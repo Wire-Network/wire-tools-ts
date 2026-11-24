@@ -1,19 +1,21 @@
 import { SysioContracts } from "@wireio/sdk-core"
-import { outputKey, ProtocolTiming, producerName } from "@wireio/cluster-tool"
+
+import { OutpostChainCodenames } from "@wireio/cluster-tool-shared"
+import { Constants, outputKey, ProtocolTiming, producerName } from "@wireio/cluster-tool"
 
 /**
- * Constants for the economic-clock flow. The cluster runs the consensus epoch at its 60 s floor
- * and the economic clock at twice that, so the two clocks tick on visibly different grids while
+ * Constants for the economic-clock flow. The cluster runs every outpost chain's consensus epoch at
+ * 60 s and the economic clock at twice that, so the two clocks tick on visibly different grids while
  * every phase stays a few economic epochs long. Every wait derives from the two durations through
  * `ProtocolTiming`.
  */
 export namespace EconomicClockScenarioConstants {
-  /** Consensus epoch duration (s) — the `sysio.epoch::setconfig` floor. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
 
   /**
    * Economic epoch duration (s): twice the consensus epoch. The shortest whole multiple of the
-   * consensus floor that is longer than it, so consensus advances about twice per economic epoch
+   * consensus epoch that is longer than it, so consensus advances about twice per economic epoch
    * and a withdrawal's two-epoch economic wait (240 s) outlasts its two-epoch consensus guard
    * (120 s) by a full economic epoch. Raising it lengthens every phase by the same factor.
    */
@@ -47,12 +49,6 @@ export namespace EconomicClockScenarioConstants {
   export const WithdrawWaitEconomicEpochs = 2
 
   /**
-   * `sysio.opreg::WITHDRAW_WAIT_EPOCHS` — consensus epochs that must also close after the
-   * request (the consensus guard).
-   */
-  export const WithdrawWaitConsensusEpochs = 2
-
-  /**
    * Epochs a withdrawal wait spends in the epoch its request fell in, which the wait does not
    * count: its await allows them on top of the wait itself.
    */
@@ -71,6 +67,18 @@ export namespace EconomicClockScenarioConstants {
    * schedule never seats it, so it needs no relay daemon, and `withdraw` still accepts it.
    */
   export const WithdrawerLabel = "withdrawer"
+
+  /**
+   * The outpost chains the withdrawer serves: every one, so each request waits on every chain's
+   * consensus guard. Joining needs no ACTIVE status, and an UNKNOWN operator is never seated.
+   */
+  export const WithdrawerServedChains = OutpostChainCodenames
+
+  /**
+   * The outpost chain governance pauses for the second withdrawal: that chain's consensus guard
+   * holds the request after its economic wait passes, while the other chain keeps advancing.
+   */
+  export const PausedChain = Constants.ETHEREUM_CHAIN_CODENAME
 
   /** WIRE the withdrawer bonds — 2 WIRE. */
   export const BondAmount = 2_000_000_000n

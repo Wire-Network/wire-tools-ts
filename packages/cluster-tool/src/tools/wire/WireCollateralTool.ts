@@ -11,8 +11,8 @@ import { Constants } from "../../Constants.js"
  * when these are constructed — and delegates the write to the matching
  * `Steps.contracts.sysio` runner, so each action has one invoke body.
  *
- * {@link WireCollateralTool.planVerifyBalanceRow} and
- * {@link WireCollateralTool.planVerifyRemitClaim} are the verify Steps; their reads go
+ * {@link WireCollateralTool.planVerifyBalanceRow}, {@link WireCollateralTool.planVerifyRemitClaim}
+ * and {@link WireCollateralTool.planVerifyOperatorStatus} are the verify Steps; their reads go
  * through the typed `operators` / `remitclaims` table accessors.
  * {@link WireCollateralTool.planRecordWireBalance} and
  * {@link WireCollateralTool.planVerifyWireBalanceIncrease} bracket a payout: the first
@@ -23,10 +23,12 @@ import Assert from "node:assert"
 
 import { asOption } from "@3fv/prelude-ts"
 
-import type {
-  ChainTokenAmount,
-  ClusterConfig,
-  CollateralRequirement
+import {
+  OutpostChainCodenames,
+  type ChainTokenAmount,
+  type ClusterConfig,
+  type CollateralRequirement,
+  type PerOutpostChain
 } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
@@ -45,12 +47,13 @@ import { pollUntil } from "../../orchestration/StepTools.js"
 import { OpregContractSteps } from "../../orchestration/steps/contracts/sysio/OpregContractSteps.js"
 import { TokenContractSteps } from "../../orchestration/steps/contracts/sysio/TokenContractSteps.js"
 import { Report } from "../../report/Report.js"
-import { slugValue } from "../../utils/slugUtils.js"
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
+import { isCode, slugValue } from "../../utils/slugUtils.js"
 import { formatWireAsset } from "./WireUserTool.js"
 
 const log = getLogger(__filename)
 
-const { SysioContractName } = SysioContracts
+const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 
 /** Depot-native collateral on `sysio.opreg` — fund, bond, withdraw, claim, and verify Steps. */
 export namespace WireCollateralTool {
@@ -72,6 +75,13 @@ export namespace WireCollateralTool {
    * never read as absent.
    */
   export const TableRowLimit = 100
+
+  /**
+   * `sysio.opreg`'s `WITHDRAW_WAIT_EPOCHS`: the consensus epochs each chain a withdrawal waits
+   * on must close after the request — a request at a chain's epoch N is guarded until N + this.
+   * It mirrors the contract; changing it without the contract makes every guard check fail.
+   */
+  export const WithdrawWaitConsensusEpochs = 2
 
   /**
    * Epochs of the slower clock a remit claim may take to appear once the economic clock
@@ -336,6 +346,99 @@ export namespace WireCollateralTool {
       .tables.wtdwqueue.query({ limit: TableRowLimit })
     assertCompleteRead(result.more, WithdrawQueueTable)
     return result.rows.filter(row => row.account === account)
+  }
+
+  /**
+   * The outpost chain one consensus wait of a withdrawal names — pure.
+   *
+   * @param wait - One `withdraw_request.consensus_waits` entry.
+   * @returns The chain's codename.
+   * @throws When the wait names a chain that is not an outpost chain.
+   */
+  export function consensusWaitChain(
+    wait: SysioContracts.SysioOpregConsensusWaitType
+  ): Constants.OutpostChainCodename {
+    const chain = OutpostChainCodenames.find(candidate =>
+      isCode(wait.chain_code, candidate)
+    )
+    Assert.ok(
+      chain != null,
+      `WireCollateralTool: a consensus wait names ${wait.chain_code}, which is not an outpost chain`
+    )
+    return chain
+  }
+
+  /**
+   * Each outpost chain a withdrawal waits on, with the consensus epoch index it waits for — pure.
+   * A chain absent from the result is one the request does not wait on.
+   *
+   * @param request - The `wtdwqueue` row.
+   * @returns The `eligible_at_epoch` of every waited-on chain, by codename.
+   */
+  export function consensusWaitEpochs(
+    request: SysioContracts.SysioOpregWithdrawRequestType
+  ): Partial<PerOutpostChain<number>> {
+    return Object.fromEntries(
+      request.consensus_waits.map(wait => [consensusWaitChain(wait), wait.eligible_at_epoch])
+    )
+  }
+
+  /**
+   * Whether every consensus wait of a withdrawal has passed: each waited-on chain's consensus
+   * epoch index has reached the request's `eligible_at_epoch` for it — pure.
+   *
+   * @param request - The `wtdwqueue` row.
+   * @param epochIndices - Each outpost chain's current consensus epoch index.
+   * @returns `true` once no chain holds the request (always, for a request that waits on none).
+   */
+  export function consensusWaitsPassed(
+    request: SysioContracts.SysioOpregWithdrawRequestType,
+    epochIndices: Readonly<PerOutpostChain<number>>
+  ): boolean {
+    return request.consensus_waits.every(
+      wait => epochIndices[consensusWaitChain(wait)] >= wait.eligible_at_epoch
+    )
+  }
+
+  /**
+   * Assert a queued withdrawal's consensus guards — pure. It waits on exactly `chains`, once
+   * each, and each chain's `eligible_at_epoch` is {@link WithdrawWaitConsensusEpochs} past a
+   * consensus epoch of that chain between `before` and `after`: the request landed between
+   * the two readings, so the epoch it was guarded from lies between their indices.
+   *
+   * @param request - The `wtdwqueue` row.
+   * @param chains - The outpost chains the request must wait on: the chains its operator serves.
+   * @param before - Each outpost chain's consensus epoch index right before the request.
+   * @param after - Each outpost chain's consensus epoch index right after it.
+   * @throws When the request waits on another set of chains, on a chain twice, or a chain's
+   *   guard is not the wait past an epoch of `before`..`after`.
+   */
+  export function assertConsensusWaits(
+    request: SysioContracts.SysioOpregWithdrawRequestType,
+    chains: readonly Constants.OutpostChainCodename[],
+    before: Readonly<PerOutpostChain<number>>,
+    after: Readonly<PerOutpostChain<number>>
+  ): void {
+    const waits = consensusWaitEpochs(request),
+      waitedChains = Object.keys(waits)
+    Assert.strictEqual(
+      request.consensus_waits.length,
+      waitedChains.length,
+      `withdrawal ${request.request_id} waits on a chain more than once`
+    )
+    Assert.deepStrictEqual(
+      [...waitedChains].sort(),
+      [...chains].sort(),
+      `withdrawal ${request.request_id} waits on ${waitedChains.join(", ") || "no chain"}, not on ${chains.join(", ") || "no chain"}`
+    )
+    chains.forEach(chain => {
+      const guardedFrom = waits[chain] - WithdrawWaitConsensusEpochs
+      Assert.ok(
+        guardedFrom >= before[chain] && guardedFrom <= after[chain],
+        `withdrawal ${request.request_id} waits for ${chain} epoch ${waits[chain]}, not ` +
+          `${WithdrawWaitConsensusEpochs} past a ${chain} consensus epoch in ${before[chain]}..${after[chain]}`
+      )
+    })
   }
 
   /**
@@ -648,6 +751,67 @@ export namespace WireCollateralTool {
     )
   }
 
+  // ── Verify: the operator's `operators` row status ────────────────────────
+
+  /** Input for {@link planVerifyOperatorStatus}. */
+  export interface VerifyOperatorStatusInput extends StepInput {
+    readonly kind: "WireCollateralTool.VerifyOperatorStatusInput"
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
+    readonly operatorLabel: string
+    /** The status its `sysio.opreg::operators` row must carry. */
+    readonly status: SysioContracts.SysioOpregOperatorstatus
+  }
+
+  /**
+   * Assert the operator's `sysio.opreg::operators` row carries `status` ({@link readOperatorRow};
+   * the row's status compared by the ABI enum's value or spelling).
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param operatorLabel - The operator's durable label.
+   * @param status - The status its row must carry.
+   * @returns The verify step.
+   */
+  export function planVerifyOperatorStatus<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    operatorLabel: string,
+    status: SysioContracts.SysioOpregOperatorstatus
+  ): ClusterBuildStep<C, VerifyOperatorStatusInput> {
+    return ClusterBuildStep.create<C, VerifyOperatorStatusInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "WireCollateralTool.VerifyOperatorStatusInput", operatorLabel, status },
+      runVerifyOperatorStatus
+    )
+  }
+
+  /** Named runner — read the operator's `operators` row and compare its status. */
+  export async function runVerifyOperatorStatus<C extends ClusterBuildContext>(
+    ctx: C,
+    input: VerifyOperatorStatusInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const row = await readOperatorRow(ctx, input.operatorLabel)
+    Assert.ok(
+      row != null,
+      `WireCollateralTool: ${input.operatorLabel} has no sysio.opreg::operators row`
+    )
+    Assert.ok(
+      matchesProtoEnum(row.status, SysioOpregOperatorstatus, input.status),
+      `WireCollateralTool: ${input.operatorLabel} is ${String(row.status)}, not ${SysioOpregOperatorstatus[input.status]}`
+    )
+  }
+
   // ── Verify: the `remitclaims{account, token}` row ────────────────────────
 
   /** Input for {@link planVerifyRemitClaim}. */
@@ -755,10 +919,11 @@ export namespace WireCollateralTool {
   /**
    * The {@link planVerifyRemitClaim} deadline for a cluster (ms): the wait for its first
    * economic tick ({@link economicStartDelayMs}), then {@link RemitClaimEpochCount} effective
-   * epochs of its slower clock.
+   * epochs of its slower clock: the economic clock, or the slowest outpost chain's consensus
+   * epoch a withdrawal can wait on.
    *
-   * @param config - The resolved cluster config (its consensus and economic durations, and
-   *   its economic start).
+   * @param config - The resolved cluster config (its per-chain consensus and economic
+   *   durations, and its economic start).
    * @param nowMs - The instant the wait starts (epoch ms); defaults to now.
    */
   export function remitClaimDeadlineMs(
@@ -769,7 +934,9 @@ export namespace WireCollateralTool {
       economicStartDelayMs(config.economicStartTime, nowMs) +
       RemitClaimEpochCount *
         ProtocolTiming.effectiveSlowerEpochSec(
-          config.epochDurationSec,
+          ProtocolTiming.slowestOutpostEpochSec(
+            config.outpostEpochDurationSec
+          ),
           config.economicEpochDurationSec
         ) *
         ProtocolTiming.MsPerSecond

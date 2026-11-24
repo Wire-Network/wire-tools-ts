@@ -13,7 +13,7 @@ const { SysioContractAccount, SysioContractName } = SysioContracts
  * base units (WIRE and LIQ both have 9 decimals on the depot).
  */
 export namespace LIQKickerScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
   /** Producer nodes stood up by the bootstrap. */
   export const ProducerCount = 3
