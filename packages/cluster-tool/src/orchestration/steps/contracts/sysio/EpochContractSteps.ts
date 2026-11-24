@@ -60,9 +60,10 @@ export namespace EpochContractSteps {
     /** Economic epoch length (s). */
     readonly epochDurationSec: SysioContracts.SysioEpochSeteconomyAction["epoch_duration_sec"]
     /**
-     * Start of economic epoch 1 (ISO-8601, read as UTC), or `null` to anchor it at the
-     * chain head when the step runs. A past start is caught up one epoch per tick once
-     * the consensus genesis advance has run.
+     * Start of economic epoch 1 — an ISO-8601 stamp, zone-less (read as UTC) or with a zone
+     * designator, as `ClusterConfigProvider.resolve` persists it already normalized — or
+     * `null` to anchor it at the chain head when the step runs. A past start is caught up
+     * one epoch per tick once the consensus genesis advance has run.
      */
     readonly startTime: SysioContracts.SysioEpochSeteconomyAction["start_time"]
   }
@@ -90,7 +91,11 @@ export namespace EpochContractSteps {
     )
   }
 
-  /** Named runner — `sysio.epoch::seteconomy`, a `null` start read from the chain head. */
+  /**
+   * Named runner — `sysio.epoch::seteconomy`, a `null` start read from the chain head. A
+   * configured start goes through `WireClient.toChainSeconds`, the parser
+   * `ClusterConfigProvider.resolve` normalized it with, so the pushed stamp is the persisted one.
+   */
   export async function runSeteconomy<C extends ClusterBuildContext>(
     ctx: C,
     input: SeteconomyInput,

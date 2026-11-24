@@ -4,7 +4,8 @@ import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   ClusterBuildDefaults,
   ClusterBuildPhase,
-  ClusterBuildPhaseGroup
+  ClusterBuildPhaseGroup,
+  Steps
 } from "@wireio/cluster-tool/orchestration"
 import {
   FixtureJudgePublicKey,
@@ -81,6 +82,29 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       "deploy-synd"
     ])
   })
+
+  it.each([60, 300])(
+    "refills each pair's buckets per second, one burst per %is consensus epoch of the cluster",
+    async epochDurationSec => {
+      const cluster = await ClusterBuildDefaults.create({ ...baseOptions(), epochDurationSec }),
+        pairs = findPhase(cluster, "SyndicationConfig").steps.filter(step =>
+          step.name.startsWith("configure-syndication-")
+        ),
+        refill = Steps.registry.syndicationRefillPerSecond(epochDurationSec)
+      expect(pairs).toHaveLength(2)
+      pairs.forEach((step, index) =>
+        expect(step.input).toEqual({
+          kind: "SyndContractSteps.SetconfigInput",
+          data: Steps.registry.syndicationConfigRegistrations(epochDurationSec)[index]
+        })
+      )
+      pairs.forEach(step =>
+        expect(step.input).toMatchObject({
+          data: { synd_refill: refill, desynd_refill: refill }
+        })
+      )
+    }
+  )
 
   it("grants @sysio.code to sysio.bond and sysio.synd, and never to sysio.andon", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions()),

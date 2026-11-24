@@ -50,6 +50,7 @@ import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/Ethere
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
+import { ceilDiv } from "../../utils/bigintUtils.js"
 import {
   loadOutpostContract,
   resolveLatestNonce
@@ -979,11 +980,6 @@ export namespace EthereumSyndicationTool {
       `EthereumSyndicationTool: no share count yields balance ${balance} at index ${index}/${unit}`
     )
     return ((shares + ceilDiv(value * unit, index)) * index) / unit
-  }
-
-  /** `ceil(numerator / denominator)` for non-negative bigints. */
-  function ceilDiv(numerator: bigint, denominator: bigint): bigint {
-    return (numerator + denominator - 1n) / denominator
   }
 
   /**

@@ -34,8 +34,15 @@ export namespace SyndicationRateLimitScenarioConstants {
   export const Overflow = 250_000_000n
   /** A's arrival exceeds the initial burst by {@link Overflow}. */
   export const AmountA = Burst + Overflow
-  /** B's arrival makes the total exactly twice the burst. */
-  export const AmountB = Burst - Overflow
+  /**
+   * B's arrival leaves one burst and one second of refill queued after the initial release.
+   * A crank releases at most one burst, so the first refill crank, however late it lands,
+   * releases only part of that and leaves at least one second's refill for the final crank,
+   * which a full refill later drains the rest.
+   */
+  export const AmountB = Burst - Overflow + Refill
+  /** Both arrivals: two bursts and one second of refill. */
+  export const Intake = AmountA + AmountB
   /** Desyndication burst, less than A's released balance. */
   export const DesyndicationBurst = 500_000_000n
   /** Accepted payout within the desyndication budget. */

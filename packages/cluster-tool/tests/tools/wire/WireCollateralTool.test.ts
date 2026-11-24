@@ -3,6 +3,7 @@ import { OperatorType, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Logger } from "@wireio/shared"
 
+import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { Steps, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
@@ -32,8 +33,10 @@ interface OperatorContext {
 }
 
 /** A fixture context with the underwriter `uwa` provisioned; returns its on-chain account. */
-function operatorContext(): OperatorContext {
-  const ctx = fixtureContext(),
+function operatorContext(
+  overrides: Parameters<typeof fixtureContext>[0] = {}
+): OperatorContext {
+  const ctx = fixtureContext(overrides),
     operator = fixtureOperatorAccount(OperatorLabel, OperatorType.UNDERWRITER)
   ctx.keyStore.setOperator(operator)
   return { ctx, account: operator.account }
@@ -920,6 +923,92 @@ describe("WireCollateralTool", () => {
       )
       expect(WireCollateralTool.remitClaimStepTimeoutMs(clocks(60, 120))).toBeGreaterThan(
         WireCollateralTool.remitClaimStepTimeoutMs(clocks(60, 60))
+      )
+    })
+
+    /** The instant the economic-start tests measure from. */
+    const PlannedAtMs = Date.UTC(2026, 10, 20, 12, 0, 0),
+      TenMinutesMs = 10 * 60_000
+
+    /** A config of 60 s clocks whose economic epoch 1 opens at `startMs`. */
+    function startingAt(startMs: number) {
+      return {
+        ...clocks(60, 60),
+        economicStartTime: WireClient.toChainSeconds(new Date(startMs).toISOString())
+      }
+    }
+
+    it("economicStartDelayMs is the time left until a future economic start", () => {
+      expect(
+        WireCollateralTool.economicStartDelayMs(
+          startingAt(PlannedAtMs + TenMinutesMs).economicStartTime,
+          PlannedAtMs
+        )
+      ).toBe(TenMinutesMs)
+    })
+
+    it("economicStartDelayMs adds nothing for a past start or one anchored at the chain head", () => {
+      expect(
+        WireCollateralTool.economicStartDelayMs(
+          startingAt(PlannedAtMs - TenMinutesMs).economicStartTime,
+          PlannedAtMs
+        )
+      ).toBe(0)
+      expect(
+        WireCollateralTool.economicStartDelayMs(
+          startingAt(PlannedAtMs).economicStartTime,
+          PlannedAtMs
+        )
+      ).toBe(0)
+      expect(WireCollateralTool.economicStartDelayMs(null, PlannedAtMs)).toBe(0)
+    })
+
+    it("remitClaimDeadlineMs waits for a future first economic tick before counting epochs", () => {
+      const epochsMs = WireCollateralTool.remitClaimDeadlineMs(clocks(60, 60), PlannedAtMs)
+      // 60 s clocks: six minutes of epochs, which a withdrawal queued ten minutes before the
+      // start waits for only after those ten.
+      expect(epochsMs).toBe(6 * 60_000)
+      expect(
+        WireCollateralTool.remitClaimDeadlineMs(startingAt(PlannedAtMs + TenMinutesMs), PlannedAtMs)
+      ).toBe(TenMinutesMs + epochsMs)
+      expect(
+        WireCollateralTool.remitClaimDeadlineMs(startingAt(PlannedAtMs - TenMinutesMs), PlannedAtMs)
+      ).toBe(epochsMs)
+    })
+
+    it("remitClaimStepTimeoutMs carries the same lead, so the Step never races its poll", () => {
+      const config = startingAt(PlannedAtMs + TenMinutesMs)
+      expect(WireCollateralTool.remitClaimStepTimeoutMs(config, PlannedAtMs)).toBe(
+        WireCollateralTool.remitClaimDeadlineMs(config, PlannedAtMs) +
+          ProtocolTiming.PollDeadlineBufferMs
+      )
+      // Planned before the runner starts, the ceiling's lead is never the shorter one.
+      expect(WireCollateralTool.remitClaimStepTimeoutMs(config, PlannedAtMs)).toBeGreaterThan(
+        WireCollateralTool.remitClaimDeadlineMs(config, PlannedAtMs + 60_000)
+      )
+    })
+
+    it("keeps polling past the epoch budget while the economic clock has not started", async () => {
+      jest.useFakeTimers()
+      const { ctx, account } = operatorContext(startingAt(Date.now() + TenMinutesMs))
+      serveRemitClaims(ctx, [{ account, token_code: "WIRE", balance: "1" }])
+      const leadMs = WireCollateralTool.economicStartDelayMs(ctx.config.economicStartTime, Date.now()),
+        epochsMs = WireCollateralTool.remitClaimDeadlineMs(clocks(60, 60), Date.now()),
+        rejection = jest.fn(),
+        verified = WireCollateralTool.runVerifyRemitClaim(
+          ctx,
+          { kind: "WireCollateralTool.VerifyRemitClaimInput", operatorLabel: OperatorLabel, claim },
+          signal
+        ).catch(rejection)
+      // The six-minute epoch budget alone has passed: still waiting on the first tick.
+      await jest.advanceTimersByTimeAsync(epochsMs + WireCollateralTool.RemitClaimPollIntervalMs)
+      expect(rejection).not.toHaveBeenCalled()
+      await jest.advanceTimersByTimeAsync(leadMs)
+      await verified
+      expect(rejection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Timed out waiting for: .*remitclaims\(WIRE\)/)
+        })
       )
     })
   })

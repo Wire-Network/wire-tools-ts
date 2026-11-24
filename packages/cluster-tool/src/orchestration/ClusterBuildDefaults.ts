@@ -1191,12 +1191,13 @@ export namespace ClusterBuildDefaults {
     // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
     // sysio.synd rules, and the verify of the syndication preconditions. A pair with
     // no syndconfig row releases nothing, so a real depot configures it too —
-    // unconditional.
+    // unconditional. The buckets refill one burst per consensus epoch of THIS cluster.
     Steps.registry.planSyndicationConfig<C>(
       prerequisites,
       "SyndicationConfig",
       "Configure sysio.bond + each shadow pair on sysio.synd",
-      {}
+      {},
+      config.epochDurationSec
     )
     // The launch-data import of each outpost's frozen export: positions, WIRE claims and the
     // LCO pool. Epoch-zero only (importsynd, regliqpool) and the first mint of each imported

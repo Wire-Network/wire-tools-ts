@@ -1316,25 +1316,39 @@ export namespace WireClient {
   }
 
   /**
-   * A chain timestamp (`head_block_time`, a table's `time_point` cell) in epoch ms. Chain
+   * A trailing ISO-8601 zone designator in the forms `Date.parse` reads: `Z`, or a
+   * `±HH:MM` offset.
+   */
+  export const ZoneDesignatorPattern = /(?:Z|[+-]\d{2}:\d{2})$/
+
+  /** The zone designator {@link chainTimeMs} appends to a zone-less stamp so it parses as UTC. */
+  export const UtcDesignator = "Z"
+
+  /**
+   * A timestamp in epoch ms — THE parser of every stamp the harness reads from the chain or
+   * hands it (`head_block_time`, a table's `time_point` cell, a configured start time). Chain
    * times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would read a bare stamp as
-   * LOCAL time, so the `Z` is appended explicitly.
+   * LOCAL time, so a stamp without a zone designator is read as UTC. A stamp with one (`Z`,
+   * `+00:00`, `-05:00`) keeps it.
    *
-   * @param stamp - The chain's ISO-8601 stamp, with or without a trailing `Z`.
+   * @param stamp - An ISO-8601 stamp, zone-less (read as UTC) or with a zone designator.
    * @returns The instant in epoch ms (`NaN` for an unparseable stamp).
    */
   export function chainTimeMs(stamp: string): number {
-    return Date.parse(`${stamp.replace(/Z$/, "")}Z`)
+    return Date.parse(
+      ZoneDesignatorPattern.test(stamp) ? stamp : `${stamp}${UtcDesignator}`
+    )
   }
 
   /** Chars of an ISO-8601 timestamp up to whole seconds (`YYYY-MM-DDTHH:MM:SS`). */
   export const IsoSecondsLength = 19
 
   /**
-   * A timestamp as the zone-less, second-precision stamp a `time_point_sec` action field
-   * takes. Sub-second digits are dropped, as the contract drops them.
+   * A timestamp as the zone-less, second-precision UTC stamp a `time_point_sec` action field
+   * takes, parsed by {@link chainTimeMs}. Sub-second digits are dropped, as the contract drops
+   * them; an offset is converted to UTC.
    *
-   * @param stamp - An ISO-8601 stamp, read as UTC with or without a trailing `Z`.
+   * @param stamp - An ISO-8601 stamp, zone-less (read as UTC) or with a zone designator.
    * @returns `YYYY-MM-DDTHH:MM:SS`.
    * @throws If `stamp` does not parse.
    */

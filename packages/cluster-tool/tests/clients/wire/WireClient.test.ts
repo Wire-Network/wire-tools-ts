@@ -1794,13 +1794,35 @@ describe("WireClient.chainTimeMs", () => {
   it("answers NaN for a stamp that is not a time", () => {
     expect(WireClient.chainTimeMs("not a time")).toBeNaN()
   })
+
+  it("keeps a +00:00 offset as UTC rather than appending a second zone", () => {
+    expect(WireClient.chainTimeMs("2026-11-20T12:34:56+00:00")).toBe(
+      Date.UTC(2026, 10, 20, 12, 34, 56)
+    )
+  })
+
+  it("applies a non-UTC offset", () => {
+    expect(WireClient.chainTimeMs("2026-11-20T07:34:56-05:00")).toBe(
+      Date.UTC(2026, 10, 20, 12, 34, 56)
+    )
+  })
+
+  it("matches only a trailing Z or ±HH:MM as a zone designator", () => {
+    expect(WireClient.ZoneDesignatorPattern.test("2026-11-20T12:34:56Z")).toBe(true)
+    expect(WireClient.ZoneDesignatorPattern.test("2026-11-20T12:34:56+02:00")).toBe(true)
+    expect(WireClient.ZoneDesignatorPattern.test("2026-11-20T12:34:56.750")).toBe(false)
+    expect(WireClient.ZoneDesignatorPattern.test("2026-11-20")).toBe(false)
+  })
 })
 
 describe("WireClient.toChainSeconds", () => {
   it.each([
     ["2026-09-30T00:00:01.500", "2026-09-30T00:00:01"],
     ["2026-09-30T00:00:01Z", "2026-09-30T00:00:01"],
-    ["2026-09-30T00:00:01.999Z", "2026-09-30T00:00:01"]
+    ["2026-09-30T00:00:01.999Z", "2026-09-30T00:00:01"],
+    ["2026-09-30T00:00:01+00:00", "2026-09-30T00:00:01"],
+    ["2026-09-30T00:00:01.250+00:00", "2026-09-30T00:00:01"],
+    ["2026-09-30T02:00:01+02:00", "2026-09-30T00:00:01"]
   ])("renders %s as the second it falls in", (stamp, expected) => {
     expect(WireClient.toChainSeconds(stamp)).toBe(expected)
   })

@@ -29,3 +29,21 @@ export function isqrt(value: bigint): bigint {
   }
   return value < 2n ? value : step(value)
 }
+
+/**
+ * `ceil(numerator / denominator)` for bigints: the least `q` with `q * denominator >= numerator`.
+ * bigint division truncates, so a rounded-up quotient needs this.
+ *
+ * @param numerator - A non-negative value.
+ * @param denominator - A positive value.
+ * @return The quotient, rounded up.
+ * @throws When `numerator` is negative or `denominator` is not positive.
+ */
+export function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (numerator < 0n || denominator <= 0n) {
+    throw new RangeError(
+      `ceilDiv: ${numerator} / ${denominator} needs a non-negative numerator and a positive denominator`
+    )
+  }
+  return (numerator + denominator - 1n) / denominator
+}

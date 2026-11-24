@@ -110,6 +110,48 @@ export function sleep(ms: number): Promise<void> {
   return Deferred.delay(ms)
 }
 
+/**
+ * The longest delay one native `setTimeout` honours (ms): a signed 32-bit integer. Node
+ * fires a longer one after 1 ms (with a `TimeoutOverflowWarning`), so
+ * {@link setLongTimeout} never arms more than this at once.
+ */
+export const MaxTimerDelayMs = 2_147_483_647
+
+/** A {@link setLongTimeout} timer, cancelled like a native one. */
+export interface LongTimeout {
+  /** Cancel the timer; a no-op once it has fired or been cleared. */
+  clear(): void
+}
+
+/**
+ * `setTimeout` for a delay of any length: arms native timers of at most
+ * {@link MaxTimerDelayMs} back to back until `delayMs` has elapsed, so a delay past the
+ * native limit fires on time instead of after 1 ms. Every deadline longer than ~24.8 days
+ * (a step ceiling over a long economic epoch, say) is armed through this.
+ *
+ * @param callback - Runs once, when `delayMs` has elapsed.
+ * @param delayMs - The delay (ms); any non-negative length.
+ * @returns The handle that cancels the timer.
+ */
+export function setLongTimeout(
+  callback: () => void,
+  delayMs: number
+): LongTimeout {
+  let handle: ReturnType<typeof setTimeout>
+  const arm = (remainingMs: number): void => {
+    const intervalMs = Math.min(remainingMs, MaxTimerDelayMs)
+    handle = setTimeout(
+      () =>
+        remainingMs > intervalMs ? arm(remainingMs - intervalMs) : callback(),
+      intervalMs
+    )
+  }
+  arm(delayMs)
+  return {
+    clear: () => clearTimeout(handle)
+  }
+}
+
 /** Per-key tail of the serialization chain (see {@link serialize}). */
 const serialQueues = new Map<string, Promise<unknown>>()
 

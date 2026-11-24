@@ -99,7 +99,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
     ClusterBuildPhase.create(
       cluster,
       "BurstIntake",
-      "Two sequential arrivals in one envelope total twice the burst"
+      "Two sequential arrivals in one envelope total two bursts and one second of refill"
     ).push(
       Steps.contracts.sysio.synd.planSetconfig(
         Actor.Sysio,
@@ -154,7 +154,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "shared-envelope",
-        "both ordered items share one request covering exactly 2B",
+        "both ordered items share one request covering exactly the intake",
         async ctx => {
           Assert.strictEqual(
             ctx.outputs.assert(Constants.Epoch),
@@ -174,7 +174,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               SyndicationScenario.Token,
               ctx.outputs.assert(Constants.Epoch)
             )
-          Assert.strictEqual(BigInt(envelope.synd_total), Constants.Burst * 2n)
+          Assert.strictEqual(BigInt(envelope.synd_total), Constants.Intake)
           Assert.strictEqual(items.length, 2)
           Assert.strictEqual(
             items[0].pubkey,
@@ -284,6 +284,10 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               available < Constants.Burst ? available : Constants.Burst,
             toA = released < Constants.Overflow ? released : Constants.Overflow
           Assert.ok(elapsed > 0n)
+          Assert.ok(
+            Constants.Burst + released < Constants.Intake,
+            "the refill crank must leave work for the final crank"
+          )
           Assert.strictEqual(
             BigInt(
               (await SyndicationScenario.readEnvelope(ctx, Constants.Epoch))
@@ -333,8 +337,15 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "burst-drained",
-        "both users have their full amounts and the bucket has its exact remaining capacity",
+        "the final crank releases a positive tranche at a later bucket tick, completing both users",
         async ctx => {
+          const previous = ctx.outputs.assert(Constants.RefillBucket),
+            tranche =
+              Constants.Intake - ctx.outputs.assert(Constants.RefillReleased)
+          Assert.ok(
+            tranche > 0n,
+            "the final crank must release a positive tranche"
+          )
           Assert.strictEqual(
             await SyndicationScenario.readBalance(ctx, Constants.UserA.account),
             Constants.AmountA
@@ -348,7 +359,7 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
               (await SyndicationScenario.readEnvelope(ctx, Constants.Epoch))
                 .released
             ),
-            Constants.Burst * 2n
+            Constants.Intake
           )
           const bucket = await WireSyndicationTool.readBucket(
             ctx,
@@ -356,11 +367,11 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
             SyndicationScenario.Token,
             SysioSyndBucketDirection.SYNDICATION
           )
-          assertBucketRefill(
-            ctx.outputs.assert(Constants.RefillBucket),
-            bucket,
-            Constants.Burst * 2n - ctx.outputs.assert(Constants.RefillReleased)
+          Assert.ok(
+            elapsedSeconds(previous, bucket) > 0n,
+            "the final crank must advance the bucket's last refill"
           )
+          assertBucketRefill(previous, bucket, tranche)
         }
       )
     )

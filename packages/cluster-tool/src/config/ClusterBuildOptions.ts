@@ -54,8 +54,9 @@ export interface ClusterBuildOptions {
   /** Economic epoch duration (s) — omit to match `epochDurationSec`. */
   economicEpochDurationSec?: number
   /**
-   * Start of economic epoch 1 (ISO-8601, UTC) — omit to anchor it at the chain head. A past
-   * start makes the clock catch up from it after the consensus genesis advance.
+   * Start of economic epoch 1 (ISO-8601; a stamp without `Z` or a `±HH:MM` offset is read as
+   * UTC) — omit to anchor it at the chain head. A past start makes the clock catch up from it
+   * after the consensus genesis advance.
    */
   economicStartTime?: string
   /** `operators_per_epoch` (batch-op group SIZE) — omit to derive from `batchOperatorCount`. */

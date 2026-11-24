@@ -1,6 +1,7 @@
 import {
   FlowTimeoutScaleEnvVar,
   MaxFlowTimeoutScale,
+  MaxTimerDelayMs,
   MinFlowTimeoutScale,
   eachSeries,
   flowTimeoutScale,
@@ -8,6 +9,7 @@ import {
   retry,
   scaleTimeoutMs,
   serialize,
+  setLongTimeout,
   sleep,
   toURL,
   waitForEndpoint
@@ -109,6 +111,69 @@ describe("asyncUtils", () => {
         waitForEndpoint(url, { timeoutMs: 20, intervalMs: 5 })
       ).rejects.toThrow(/did not become ready/)
     })
+  })
+})
+
+describe("setLongTimeout", () => {
+  /** A seven-day economic epoch's remit Step ceiling — past Node's 32-bit timer limit. */
+  const LongDelayMs = 2_419_350_000
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it("is Node's signed 32-bit timer limit", () => {
+    expect(MaxTimerDelayMs).toBe(2 ** 31 - 1)
+    expect(LongDelayMs).toBeGreaterThan(MaxTimerDelayMs)
+  })
+
+  it("fires a delay past the native limit on time, not after 1 ms", async () => {
+    jest.useFakeTimers()
+    const fired = jest.fn()
+    setLongTimeout(fired, LongDelayMs)
+    // A native setTimeout of this length overflows and fires here.
+    await jest.advanceTimersByTimeAsync(1_000)
+    expect(fired).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(MaxTimerDelayMs)
+    expect(fired).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(LongDelayMs - MaxTimerDelayMs - 1_001)
+    expect(fired).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(1)
+    expect(fired).toHaveBeenCalledTimes(1)
+  })
+
+  it("never arms a native timer above the limit", () => {
+    jest.useFakeTimers()
+    const armed = jest.spyOn(global, "setTimeout")
+    setLongTimeout(jest.fn(), 3 * MaxTimerDelayMs).clear()
+    armed.mock.calls.forEach(([, delayMs]) =>
+      expect(delayMs).toBeLessThanOrEqual(MaxTimerDelayMs)
+    )
+  })
+
+  it("fires a short delay once, like setTimeout", async () => {
+    jest.useFakeTimers()
+    const fired = jest.fn()
+    setLongTimeout(fired, 50)
+    await jest.advanceTimersByTimeAsync(49)
+    expect(fired).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(1)
+    expect(fired).toHaveBeenCalledTimes(1)
+    await jest.advanceTimersByTimeAsync(LongDelayMs)
+    expect(fired).toHaveBeenCalledTimes(1)
+  })
+
+  it("clear cancels the timer in any interval, including a later one", async () => {
+    jest.useFakeTimers()
+    const first = jest.fn(),
+      later = jest.fn()
+    setLongTimeout(first, LongDelayMs).clear()
+    const timeout = setLongTimeout(later, LongDelayMs)
+    await jest.advanceTimersByTimeAsync(MaxTimerDelayMs + 1_000)
+    timeout.clear()
+    await jest.advanceTimersByTimeAsync(LongDelayMs)
+    expect(first).not.toHaveBeenCalled()
+    expect(later).not.toHaveBeenCalled()
   })
 })
 

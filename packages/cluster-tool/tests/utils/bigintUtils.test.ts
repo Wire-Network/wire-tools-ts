@@ -1,4 +1,4 @@
-import { compareBigInt, isqrt } from "@wireio/cluster-tool/utils"
+import { ceilDiv, compareBigInt, isqrt } from "@wireio/cluster-tool/utils"
 
 describe("compareBigInt", () => {
   it("orders bigints, including ones no number can hold", () => {
@@ -33,5 +33,24 @@ describe("isqrt", () => {
 
   it("refuses a negative value", () => {
     expect(() => isqrt(-1n)).toThrow(/negative/)
+  })
+})
+
+describe("ceilDiv", () => {
+  it("rounds an inexact quotient up", () => {
+    expect(ceilDiv(1_000_000_000_000_000n, 60n)).toBe(16_666_666_666_667n)
+    expect(ceilDiv(7n, 2n)).toBe(4n)
+    expect(ceilDiv(1n, 3n)).toBe(1n)
+  })
+
+  it("leaves an exact quotient and a zero numerator unchanged", () => {
+    expect(ceilDiv(1_000_000_000_000_000n, 100n)).toBe(10_000_000_000_000n)
+    expect(ceilDiv(0n, 5n)).toBe(0n)
+  })
+
+  it("refuses a negative numerator and a non-positive denominator", () => {
+    expect(() => ceilDiv(-1n, 2n)).toThrow(RangeError)
+    expect(() => ceilDiv(1n, 0n)).toThrow(RangeError)
+    expect(() => ceilDiv(1n, -2n)).toThrow(RangeError)
   })
 })

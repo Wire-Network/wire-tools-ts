@@ -42,6 +42,7 @@ import { Level, NestedError } from "@wireio/shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
+import { WireClient } from "../clients/wire/WireClient.js"
 import {
   ListenAllAddress,
   Localhost,
@@ -134,19 +135,26 @@ function assertApiCount(options: ClusterBuildOptions): number {
 }
 
 /**
- * The economic clock's start, refused here when it does not parse rather than at the
- * bootstrap's `seteconomy` step.
+ * The economic clock's start, normalized by `WireClient.toChainSeconds` — the parser the
+ * bootstrap's `seteconomy` step applies — to the zone-less UTC stamp the action takes, so a
+ * start the step would refuse is refused here, and the step pushes exactly the value persisted.
  *
  * @param options - The caller's options (its `economicStartTime`, if any).
- * @returns The start as given, or `null` to anchor it at the chain head.
+ * @returns The start as `YYYY-MM-DDTHH:MM:SS` (UTC), or `null` to anchor it at the chain head.
+ * @throws NestedError when the start does not parse.
  */
-function assertEconomicStartTime(options: ClusterBuildOptions): string {
+function resolveEconomicStartTime(options: ClusterBuildOptions): string {
   const { economicStartTime = null } = options
-  Assert.ok(
-    economicStartTime == null || !Number.isNaN(Date.parse(economicStartTime)),
-    `ClusterConfigProvider: economicStartTime must be an ISO-8601 timestamp — got ${economicStartTime}`
-  )
-  return economicStartTime
+  return economicStartTime == null
+    ? null
+    : Either.try(() => WireClient.toChainSeconds(economicStartTime))
+        .ifLeft(error => {
+          throw new NestedError(
+            "ClusterConfigProvider: economicStartTime must be an ISO-8601 timestamp",
+            { cause: error, context: { economicStartTime } }
+          )
+        })
+        .getOrThrow()
 }
 
 /**
@@ -453,7 +461,7 @@ export namespace ClusterConfigProvider {
       lcoImport = resolveLcoImport(options),
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
-      economicStartTime = assertEconomicStartTime(options),
+      economicStartTime = resolveEconomicStartTime(options),
       { epochDurationSec = DefaultEpochDurationSec } = options,
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)

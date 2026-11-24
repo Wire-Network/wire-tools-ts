@@ -577,8 +577,8 @@ contract/mint addresses via the same shapes.
 | Field | Value | Notes |
 |---|---|---|
 | `synd_fee_bps` / `desynd_fee_bps` | `0` / `5` | Syndication is always free. Desyndication takes floor(quantity × 5 / 10000) + desynd_fee_flat to recover external-chain gas for BOTH round-trip legs. A lone Ethereum round trip measured ≈507k gas; Solana measured 9k–104k lamports. Break-even sizing assumes a syndication of min_desyndicate. |
-| `synd_burst` / `synd_refill` | `1000000000000000` / same | one million tokens at 9 decimals per bucket and per-epoch refill **(cluster)** |
-| `desynd_burst` / `desynd_refill` | `1000000000000000` / same | likewise |
+| `synd_burst` / `synd_refill` | `1000000000000000` / `ceil(1000000000000000 / epochDurationSec)` | one million tokens at 9 decimals per bucket. `sysio.synd` adds the refill once per elapsed second, capped at the burst; the tooling derives it from the cluster's own consensus `epochDurationSec`, so one consensus epoch restores a full burst: `3333333333334` per second (≈3,333 tokens) at the default 300 s, `16666666666667` per second (≈16,667 tokens) at 60 s **(cluster)** |
+| `desynd_burst` / `desynd_refill` | `1000000000000000` / `ceil(1000000000000000 / epochDurationSec)` | likewise — the refill per second |
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
 | `challenge_extra` | `1000000000` | one token charged to a challenger on top of the hold bond (the contract refuses `0`) |

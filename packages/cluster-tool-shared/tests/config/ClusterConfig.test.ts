@@ -381,9 +381,62 @@ describe("ClusterConfig shape", () => {
     expect(past.economicStartTime).toBe("2026-11-01T06:00:00")
   })
 
-  it("requires the economic epoch duration", () => {
-    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
-    delete parsed.economicEpochDurationSec
-    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow()
+  it("decodes a config saved before the economic clock with the economic duration of its epoch duration", () => {
+    const saved = JSON.parse(
+      ClusterConfigSchemaCodec.serialize({ ...config, epochDurationSec: 300 })
+    )
+    delete saved.economicEpochDurationSec
+    delete saved.economicStartTime
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))
+    expect(rehydrated.epochDurationSec).toBe(300)
+    expect(rehydrated.economicEpochDurationSec).toBe(300)
+    expect(rehydrated.economicStartTime).toBeNull()
+    // Every other member decodes as it did before the economic clock existed.
+    expect(rehydrated).toEqual({
+      ...config,
+      epochDurationSec: 300,
+      economicEpochDurationSec: 300,
+      economicStartTime: null
+    })
+  })
+
+  it("keeps a saved economic duration that differs from the epoch duration", () => {
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize({
+        ...config,
+        epochDurationSec: 60,
+        economicEpochDurationSec: 3_600
+      })
+    )
+    expect(rehydrated.economicEpochDurationSec).toBe(3_600)
+  })
+
+  it("refuses a config without the epoch duration its economic default is read from", () => {
+    const saved = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete saved.epochDurationSec
+    delete saved.economicEpochDurationSec
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))).toThrow(
+      /epochDurationSec/
+    )
+  })
+
+  it("refuses a non-numeric economic duration rather than defaulting it", () => {
+    const saved = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    saved.economicEpochDurationSec = "60"
+    expect(() => ClusterConfigSchemaCodec.deserialize(JSON.stringify(saved))).toThrow(
+      /economicEpochDurationSec/
+    )
+  })
+
+  it("encodes the economic duration a config carries, never re-deriving it", () => {
+    expect(
+      JSON.parse(
+        ClusterConfigSchemaCodec.serialize({
+          ...config,
+          epochDurationSec: 60,
+          economicEpochDurationSec: 360
+        })
+      )
+    ).toMatchObject({ epochDurationSec: 60, economicEpochDurationSec: 360 })
   })
 })

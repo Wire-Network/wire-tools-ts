@@ -122,6 +122,22 @@ describe("Steps.contracts.sysio.epoch", () => {
       })
     })
 
+    it.each([
+      ["a +00:00 offset", "2026-11-20T12:34:56+00:00"],
+      ["the normalized form ClusterConfigProvider.resolve persists", "2026-11-20T12:34:56"]
+    ])("pushes a start with %s as the UTC second it falls in", async (_form, startTime) => {
+      const { ctx, invoke } = epochContext()
+      await Steps.contracts.sysio.epoch.runSeteconomy(
+        ctx,
+        { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec: 60, startTime },
+        new AbortController().signal
+      )
+      expect(invoke).toHaveBeenCalledWith({
+        epoch_duration_sec: 60,
+        start_time: "2026-11-20T12:34:56"
+      })
+    })
+
     it("refuses an unparseable start before pushing", async () => {
       const { ctx, invoke } = epochContext()
       await expect(

@@ -138,6 +138,17 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       })
       expect(step.runner).toBe(Steps.contracts.sysio.epoch.runSeteconomy)
     })
+
+    it("passes seteconomy the start normalized at resolution, a +00:00 offset included", async () => {
+      const cluster = await ClusterBuildDefaults.create({
+          ...baseOptions(),
+          economicStartTime: "2026-11-20T12:34:56+00:00"
+        }),
+        step = findPhase(cluster.children, "OPPConfig").steps.find(
+          candidate => candidate.name === "configure-economy"
+        )
+      expect(step.input).toMatchObject({ startTime: "2026-11-20T12:34:56" })
+    })
   })
 
   describe("genesis account seeding", () => {

@@ -21,6 +21,8 @@ import { Constants } from "../../Constants.js"
 
 import Assert from "node:assert"
 
+import { asOption } from "@3fv/prelude-ts"
+
 import type {
   ChainTokenAmount,
   ClusterConfig,
@@ -30,6 +32,7 @@ import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
+import { WireClient } from "../../clients/wire/WireClient.js"
 import { ProtocolTiming } from "../../Constants.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -71,9 +74,10 @@ export namespace WireCollateralTool {
   export const TableRowLimit = 100
 
   /**
-   * Epochs of the slower clock a remit claim may take to appear: the contract's two-epoch
-   * withdraw wait on each clock, the economic tick whose `flushwtdw` credits the claim, and
-   * one epoch of margin. Changing it moves the {@link planVerifyRemitClaim} deadline.
+   * Epochs of the slower clock a remit claim may take to appear once the economic clock
+   * ticks: the contract's two-epoch withdraw wait on each clock, the economic tick whose
+   * `flushwtdw` credits the claim, and one epoch of margin. Changing it moves the
+   * {@link planVerifyRemitClaim} deadline.
    */
   export const RemitClaimEpochCount = 4
 
@@ -662,8 +666,9 @@ export namespace WireCollateralTool {
    * termination payouts and lock releases. The caller passes that cumulative expected
    * value, not the amount of the last withdrawal.
    * The row appears at the epoch boundary whose `flushwtdw` matures the withdrawal, so the
-   * runner polls for up to {@link RemitClaimEpochCount} effective epochs. A missing row
-   * reads as zero, so a zero expectation verifies a claim that `claimremit` has paid.
+   * runner polls until the first economic tick ({@link economicStartDelayMs}) plus
+   * {@link RemitClaimEpochCount} effective epochs. A missing row reads as zero, so a zero
+   * expectation verifies a claim that `claimremit` has paid.
    */
   export function planVerifyRemitClaim<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -727,19 +732,47 @@ export namespace WireCollateralTool {
   }
 
   /**
-   * The {@link planVerifyRemitClaim} deadline for a cluster (ms): {@link RemitClaimEpochCount}
-   * effective epochs of its slower clock.
+   * Wall clock until a cluster's first economic tick may land (ms). `sysio.epoch::tickeconomy`
+   * refuses economic epoch 1 before the configured start, and a withdrawal matures only on
+   * economic ticks, so a start still ahead of `nowMs` defers every remit claim by the time
+   * left until it. A start at the chain head (`null`) or in the past adds nothing: the clock
+   * is ticking, or catching up one epoch per tick.
    *
-   * @param config - The resolved cluster config (its consensus and economic durations).
+   * @param economicStartTime - The cluster's economic start, as `ClusterConfigProvider.resolve`
+   *   normalized it, or `null`.
+   * @param nowMs - The instant the wait starts (epoch ms).
+   * @returns The non-negative lead (ms).
    */
-  export function remitClaimDeadlineMs(config: ClusterConfig): number {
+  export function economicStartDelayMs(
+    economicStartTime: ClusterConfig["economicStartTime"],
+    nowMs: number
+  ): number {
+    return asOption(economicStartTime)
+      .map(start => Math.max(0, WireClient.chainTimeMs(start) - nowMs))
+      .getOrElse(0)
+  }
+
+  /**
+   * The {@link planVerifyRemitClaim} deadline for a cluster (ms): the wait for its first
+   * economic tick ({@link economicStartDelayMs}), then {@link RemitClaimEpochCount} effective
+   * epochs of its slower clock.
+   *
+   * @param config - The resolved cluster config (its consensus and economic durations, and
+   *   its economic start).
+   * @param nowMs - The instant the wait starts (epoch ms); defaults to now.
+   */
+  export function remitClaimDeadlineMs(
+    config: ClusterConfig,
+    nowMs: number = Date.now()
+  ): number {
     return (
+      economicStartDelayMs(config.economicStartTime, nowMs) +
       RemitClaimEpochCount *
-      ProtocolTiming.effectiveSlowerEpochSec(
-        config.epochDurationSec,
-        config.economicEpochDurationSec
-      ) *
-      ProtocolTiming.MsPerSecond
+        ProtocolTiming.effectiveSlowerEpochSec(
+          config.epochDurationSec,
+          config.economicEpochDurationSec
+        ) *
+        ProtocolTiming.MsPerSecond
     )
   }
 
@@ -748,11 +781,19 @@ export namespace WireCollateralTool {
    * ({@link remitClaimDeadlineMs}) plus `ProtocolTiming.PollDeadlineBufferMs`, so the Step's
    * timeout never races the poll it wraps. Pass the config the runner reads — a scenario's
    * `plan()` passes `cluster.context.config`, which its runners later read as `ctx.config`.
+   * Measured at plan time, before the runner measures its own, the economic start's lead here
+   * is never the shorter one.
    *
    * @param config - The resolved cluster config.
+   * @param nowMs - The instant the Step is planned (epoch ms); defaults to now.
    */
-  export function remitClaimStepTimeoutMs(config: ClusterConfig): number {
-    return remitClaimDeadlineMs(config) + ProtocolTiming.PollDeadlineBufferMs
+  export function remitClaimStepTimeoutMs(
+    config: ClusterConfig,
+    nowMs: number = Date.now()
+  ): number {
+    return (
+      remitClaimDeadlineMs(config, nowMs) + ProtocolTiming.PollDeadlineBufferMs
+    )
   }
 
   // ── value helpers ────────────────────────────────────────────────────────

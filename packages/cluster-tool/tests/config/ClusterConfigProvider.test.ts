@@ -19,7 +19,7 @@ import { Base58, KeyType, PrivateKey, PublicKey, SlugName } from "@wireio/sdk-co
 import { NestedError } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 
-import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { KeyGenerator, WireClient } from "@wireio/cluster-tool/clients/wire"
 import {
   BindConfigProvider,
   ClusterConfigProvider,
@@ -306,6 +306,27 @@ describe("ClusterConfigProvider", () => {
       const reloaded = ClusterConfigProvider.loadSync(file)
       expect(reloaded.clusterPath).toBe(dir)
       expect(reloaded.bind.nodeop.ports.batch).toHaveLength(3)
+    })
+
+    it("loads a cluster-config.json saved before the economic clock, its economic duration the epoch duration", async () => {
+      const file = Path.join(dir, ClusterConfigProvider.ConfigFilename),
+        saved = JSON.parse(
+          JSON.stringify({ ...PersistedFixture, clusterPath: dir, epochDurationSec: 300 })
+        )
+      delete saved.economicEpochDurationSec
+      delete saved.economicStartTime
+      Fs.writeFileSync(file, JSON.stringify(saved))
+      // `run` and `destroy` both start from this load.
+      expect(ClusterConfigProvider.loadSync(file)).toMatchObject({
+        epochDurationSec: 300,
+        economicEpochDurationSec: 300,
+        economicStartTime: null
+      })
+      await expect(ClusterConfigProvider.load(file)).resolves.toMatchObject({
+        epochDurationSec: 300,
+        economicEpochDurationSec: 300,
+        economicStartTime: null
+      })
     })
 
     it("refuses to load a read confirmation nodeop would refuse, a depth beside a non-latest tag", async () => {
@@ -2074,6 +2095,24 @@ describe("ClusterConfigProvider", () => {
         })
       ).rejects.toThrow(/economicStartTime must be an ISO-8601 timestamp/)
     })
+
+    it.each([
+      ["a +00:00 offset", "2026-11-20T12:34:56+00:00", "2026-11-20T12:34:56"],
+      ["a Z", "2026-11-20T12:34:56Z", "2026-11-20T12:34:56"],
+      ["no zone, read as UTC", "2026-11-20T12:34:56.750", "2026-11-20T12:34:56"],
+      ["a non-UTC offset", "2026-11-20T14:34:56+02:00", "2026-11-20T12:34:56"]
+    ])(
+      "normalizes an economic start with %s to the stamp seteconomy pushes",
+      async (_form, economicStartTime, expected) => {
+        const { config } = await ClusterConfigProvider.resolveWithBiosKeys({
+          ...keyModeOptions(),
+          economicStartTime
+        })
+        expect(config.economicStartTime).toBe(expected)
+        // The bootstrap step normalizes with the same parser, so it pushes the persisted value.
+        expect(WireClient.toChainSeconds(config.economicStartTime)).toBe(expected)
+      }
+    )
 
     it("plain resolve already carries the same genesis publics (config-only facade)", async () => {
       const config = await ClusterConfigProvider.resolve(keyModeOptions())
