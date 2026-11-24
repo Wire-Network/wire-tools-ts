@@ -48,8 +48,11 @@ const root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-delivery-proof-")),
       {
         name: "discard_envelope_chunks",
         discriminator: [8, 7, 6, 5, 4, 3, 2, 1],
-        accounts: [],
-        args: []
+        accounts: [
+          { name: "uploader", signer: true },
+          { name: "chunk_buffer" }
+        ],
+        args: [{ name: "epoch_index", type: "u32" }]
       }
     ]
   }
@@ -156,6 +159,48 @@ function proof(transactions, record = accepted, operator = signer) {
 }
 function history(overrides = {}) {
   return [0, 1, 2].map(i => transaction(i, overrides))
+}
+function discard(overrides = {}) {
+  const {
+      uploader = signer,
+      signed = true,
+      chunkBuffer = buffer,
+      epoch = epochIndex,
+      slot = 5,
+      version = "legacy"
+    } = overrides,
+    instruction = new TransactionInstruction({
+      programId,
+      keys: [uploader, chunkBuffer].map((pubkey, index) => ({
+        pubkey,
+        isSigner: index === 0 && signed,
+        isWritable: true
+      })),
+      data: program.coder.instruction.encode("discardEnvelopeChunks", {
+        epochIndex: epoch
+      })
+    }),
+    message = new TransactionMessage({
+      payerKey: signed ? uploader : Keypair.generate().publicKey,
+      recentBlockhash: Keypair.generate().publicKey.toBase58(),
+      instructions: [instruction]
+    })
+  return {
+    slot,
+    transaction: {
+      message:
+        version === "legacy"
+          ? message.compileToLegacyMessage()
+          : message.compileToV0Message()
+    },
+    meta: {
+      err: null,
+      logMessages: [
+        `Program ${programId} invoke [1]`,
+        `Program ${programId} success`
+      ]
+    }
+  }
 }
 
 for (const version of ["legacy", 0])
@@ -279,15 +324,103 @@ test("an indirect target-program invocation is ambiguous evidence", () => {
   }
 })
 
-test("ambiguous instructions and discarded uploads fail closed", () => {
+test("ambiguous instructions and invalid discards fail closed", () => {
   const records = history(),
     message = records[0].transaction.message
   message.instructions.push(message.instructions[0])
   Assert.equal(proof(records), false)
   const discarded = history({ version: 0 })
   discarded[1].transaction.message.compiledInstructions[0].data =
-    program.coder.instruction.encode("discardEnvelopeChunks", {})
+    program.coder.instruction.encode("discardEnvelopeChunks", { epochIndex })
   Assert.equal(proof(discarded), false)
+})
+
+for (const version of ["legacy", 0])
+  test(`a rejected upload can be discarded and canonically re-uploaded (${version})`, () => {
+    const rejected = history({ version }),
+      corrected = history({ version }),
+      wrong = Buffer.from(parts[0])
+    wrong[0] ^= 1
+    rejected[0] = transaction(0, { version, chunkData: wrong })
+    rejected[2].meta.err = { InstructionError: [0, "Custom"] }
+    corrected.forEach(record => (record.slot = 6))
+    Assert.equal(
+      proof([
+        corrected[2],
+        rejected[1],
+        discard({ version }),
+        corrected[0],
+        rejected[2],
+        corrected[1],
+        rejected[0]
+      ]),
+      true
+    )
+  })
+
+test("discarding a buffer does not erase an earlier canonical vote", () => {
+  const later = transaction(0, { totalBytes: 999 })
+  later.slot = 6
+  Assert.equal(proof([...history(), discard(), later]), true)
+})
+
+test("chunks on opposite sides of a discard cannot be combined", () => {
+  for (const split of [1, 2]) {
+    const records = history()
+    records.slice(split).forEach(record => (record.slot += 10))
+    Assert.equal(proof([...records, discard()]), false)
+  }
+})
+
+test("a discard boundary requires the exact uploader, signature, epoch and buffer", () => {
+  for (const overrides of [
+    { uploader: Keypair.generate().publicKey },
+    { signed: false },
+    { epoch: epochIndex + 1 },
+    { chunkBuffer: Keypair.generate().publicKey }
+  ])
+    Assert.equal(proof([...history(), discard(overrides)]), false)
+})
+
+test("failed discards do not reset upload evidence", () => {
+  const failed = discard(),
+    corrected = history()
+  failed.meta.err = { InstructionError: [0, "Custom"] }
+  Assert.equal(proof([...history(), failed]), true)
+  corrected.forEach(record => (record.slot += 10))
+  Assert.equal(proof([transaction(0), failed, ...corrected]), false)
+})
+
+test("discard and mutating upload calls in one slot are ambiguous", () => {
+  const boundary = discard({ slot: 2 })
+  Assert.equal(proof([...history(), boundary]), false)
+  Assert.equal(proof([boundary, ...history().toReversed()]), false)
+  boundary.slot = undefined
+  Assert.equal(proof([...history(), boundary]), false)
+  const late = transaction(2, {
+    operator: Keypair.generate().publicKey,
+    totalBytes: 99
+  })
+  late.slot = 5
+  late.meta.logMessages[1] = `Program log: opp_outpost: epoch_in late no-op epoch=7 cursor=8`
+  Assert.equal(proof([...history(), discard(), late]), true)
+})
+
+test("multiple discarded attempts remain separate from a final canonical upload", () => {
+  const corrected = history(),
+    middle = transaction(1)
+  corrected.forEach(record => (record.slot += 10))
+  middle.slot = 7
+  Assert.equal(
+    proof([
+      transaction(0),
+      discard(),
+      middle,
+      discard({ slot: 8 }),
+      ...corrected
+    ]),
+    true
+  )
 })
 
 test("bounded history reads confirmed transactions serially in chronological order", async () => {

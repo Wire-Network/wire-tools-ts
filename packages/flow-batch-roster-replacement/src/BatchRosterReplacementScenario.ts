@@ -1,6 +1,6 @@
 import Assert from "node:assert"
 
-import { PublicKey } from "@solana/web3.js"
+import { PublicKey, SystemProgram } from "@solana/web3.js"
 import { PublicKey as SdkPublicKey } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { OperatorType, OperatorStatus } from "@wireio/opp-typescript-models"
@@ -494,9 +494,14 @@ export namespace BatchRosterReplacementScenario {
       ),
       address = SolanaOutpostProgramTool.derivePda(program.programId, ...seeds),
       account = await ctx.solana.connection.getAccountInfo(address)
-    return account
-      ? program.coder.accounts.decode<T>(accountName, account.data)
-      : undefined
+    if (
+      !account ||
+      (accountName === "epochDeliveries" &&
+        account.owner.equals(SystemProgram.programId) &&
+        account.data.length === 0)
+    )
+      return undefined
+    return program.coder.accounts.decode<T>(accountName, account.data)
   }
   /**
    * Read the actual registry PDA and decode only its live member windows.

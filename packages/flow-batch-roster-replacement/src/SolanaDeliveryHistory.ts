@@ -23,6 +23,11 @@ interface Chunk {
   totalBytes: number
   chunkData: Buffer
 }
+interface UploadInstruction {
+  slot: number
+  chunk: Chunk
+  logs: string[]
+}
 
 /** Durable proof of the replacement's canonical vote after settled-tally cleanup. */
 export namespace SolanaDeliveryHistory {
@@ -36,8 +41,8 @@ export namespace SolanaDeliveryHistory {
   const NewVoteLogSuffix = " consensus_retry=false"
   /** Program ABI instruction names as converted by Anchor's deployed IDL loader. */
   enum Instruction {
-    EpochIn = "epochIn",
-    Discard = "discardEnvelopeChunks"
+    epochIn = "epochIn",
+    discardEnvelopeChunks = "discardEnvelopeChunks"
   }
 
   /**
@@ -84,7 +89,7 @@ export namespace SolanaDeliveryHistory {
    * @param program - The deployed IDL, coder and program identity.
    * @param accepted - The full canonical envelope checksum and epoch.
    * @param signer - The operator that must have signed and finalized the upload.
-   * @returns False for partial, conflicting, discarded, failed or ambiguous evidence.
+   * @returns Whether one complete upload proves the canonical vote without mixing discarded bytes.
    */
   export function provesDelivery(
     transactions: VersionedTransactionResponse[],
@@ -97,9 +102,8 @@ export namespace SolanaDeliveryHistory {
         accepted.epochIndex,
         signer
       ),
-      chunks = new Map<number, Buffer>()
-    let geometry: Chunk,
-      finalized = false
+      uploadInstructions: UploadInstruction[] = [],
+      discardSlots = new Set<number>()
     for (const response of transactions) {
       if (!response?.meta) return false
       if (response.meta.err) continue
@@ -132,19 +136,33 @@ export namespace SolanaDeliveryHistory {
           Buffer.from(instruction.data)
         )
       if (!decoded) return false
-      if (decoded.name === Instruction.Discard) return false
-      if (decoded.name !== Instruction.EpochIn) continue
-      const logs = directLogs(response.meta.logMessages, program.programId)
-      // Phase A returns before authorization or buffer access for closed epochs.
-      if (logs.some(line => line.startsWith(LateNoopLogPrefix))) continue
       const accounts = program.idl.instructions.find(
-          ix => ix.name === Instruction.EpochIn
+          ix => ix.name === decoded.name
         )?.accounts,
         accountIndex = (name: string) =>
           instruction.accountKeyIndexes[
             accounts?.findIndex(a => a.name === name)
-          ],
-        operatorIndex = accountIndex("operator"),
+          ]
+      if (decoded.name === Instruction.discardEnvelopeChunks) {
+        const uploaderIndex = accountIndex("uploader")
+        if (
+          !keys.get(uploaderIndex)?.equals(signer) ||
+          !message.isAccountSigner(uploaderIndex) ||
+          !keys.get(accountIndex("chunkBuffer"))?.equals(buffer) ||
+          (decoded.data as Pick<Chunk, "epochIndex">).epochIndex !==
+            accepted.epochIndex ||
+          !Number.isSafeInteger(response.slot) ||
+          response.slot < 0
+        )
+          return false
+        discardSlots.add(response.slot)
+        continue
+      }
+      if (decoded.name !== Instruction.epochIn) continue
+      const logs = directLogs(response.meta.logMessages, program.programId)
+      // Phase A returns before authorization or buffer access for closed epochs.
+      if (logs.some(line => line.startsWith(LateNoopLogPrefix))) continue
+      const operatorIndex = accountIndex("operator"),
         chunk = decoded.data as Chunk
       if (
         !keys.get(operatorIndex)?.equals(signer) ||
@@ -158,6 +176,40 @@ export namespace SolanaDeliveryHistory {
         chunk.totalChunks <= 0
       )
         return false
+      uploadInstructions.push({ slot: response.slot, chunk, logs })
+    }
+    const boundaries = [...discardSlots].sort((a, b) => a - b),
+      uploads: UploadInstruction[][] = Array.from(
+        { length: boundaries.length + 1 },
+        () => []
+      )
+    for (const instruction of uploadInstructions) {
+      // RPC ordering within a slot cannot establish which side of a discard wrote bytes.
+      if (
+        boundaries.length &&
+        (!Number.isSafeInteger(instruction.slot) ||
+          instruction.slot < 0 ||
+          discardSlots.has(instruction.slot))
+      )
+        return false
+      uploads[
+        boundaries.findLastIndex(slot => slot < instruction.slot) + 1
+      ].push(instruction)
+    }
+    // Discard closes staging bytes; it does not erase an already-recorded vote.
+    return uploads.some(upload => provesUpload(upload, accepted, signer))
+  }
+
+  /** Verify one upload without borrowing chunks from discarded attempts. */
+  function provesUpload(
+    instructions: UploadInstruction[],
+    accepted: BatchRosterReplacementScenario.EnvelopeRecord,
+    signer: PublicKey
+  ): boolean {
+    const chunks = new Map<number, Buffer>()
+    let geometry: Chunk,
+      finalized = false
+    for (const { chunk, logs } of instructions) {
       if (
         geometry &&
         (chunk.totalChunks !== geometry.totalChunks ||
