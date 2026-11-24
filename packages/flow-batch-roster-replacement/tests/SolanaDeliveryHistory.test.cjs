@@ -237,6 +237,15 @@ test("staging, late no-op and failed terminal transactions are absent votes", ()
   Assert.equal(proof(records), false)
 })
 
+test("a complete canonical upload finalized only as a consensus retry is not a new vote", () => {
+  const records = history()
+  records[2].meta.logMessages[1] = records[2].meta.logMessages[1].replace(
+    "consensus_retry=false",
+    "consensus_retry=true"
+  )
+  Assert.equal(proof(records), false)
+})
+
 test("identity, signature, epoch and geometry must all match", () => {
   Assert.equal(proof(history(), accepted, Keypair.generate().publicKey), false)
   Assert.equal(proof(history({ signed: false })), false)
@@ -423,7 +432,7 @@ test("multiple discarded attempts remain separate from a final canonical upload"
   )
 })
 
-test("bounded history reads confirmed transactions serially in chronological order", async () => {
+test("bounded history reads finalized transactions serially in chronological order", async () => {
   let active = 0
   const records = history(),
     requests = [],
@@ -431,12 +440,12 @@ test("bounded history reads confirmed transactions serially in chronological ord
       getSignaturesForAddress: async (address, options, commitment) => {
         Assert.ok(address.equals(buffer))
         Assert.equal(options.limit, History.SignatureLimit)
-        Assert.equal(commitment, "confirmed")
+        Assert.equal(commitment, "finalized")
         return [2, 1, 0].map(i => ({ signature: String(i) }))
       },
       getTransaction: async (signature, options) => {
         Assert.equal(++active, 1)
-        Assert.equal(options.commitment, "confirmed")
+        Assert.equal(options.commitment, "finalized")
         Assert.equal(options.maxSupportedTransactionVersion, 0)
         requests.push(signature)
         await Promise.resolve()

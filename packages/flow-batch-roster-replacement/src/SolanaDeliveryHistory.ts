@@ -51,7 +51,7 @@ export namespace SolanaDeliveryHistory {
    * @param program - The deployed program and its generated instruction coder.
    * @param accepted - The canonical accepted envelope for a completed epoch.
    * @param signer - The replacement operator's signing public key.
-   * @returns Whether confirmed transactions prove the exact canonical delivery.
+   * @returns Whether finalized transactions prove the exact canonical delivery.
    */
   export async function read(
     connection: Connection,
@@ -67,13 +67,13 @@ export namespace SolanaDeliveryHistory {
       signatures = await connection.getSignaturesForAddress(
         buffer,
         { limit: SignatureLimit },
-        SolanaClient.ConfirmationStatus.confirmed
+        SolanaClient.ConfirmationStatus.finalized
       ),
       transactions: VersionedTransactionResponse[] = []
     if (!signatures.length || signatures.length === SignatureLimit) return false
     for (const { signature } of signatures.toReversed()) {
       const transaction = await connection.getTransaction(signature, {
-        commitment: SolanaClient.ConfirmationStatus.confirmed,
+        commitment: SolanaClient.ConfirmationStatus.finalized,
         maxSupportedTransactionVersion: 0
       })
       // Pruned or missing transactions cannot establish a complete upload history.
@@ -85,7 +85,7 @@ export namespace SolanaDeliveryHistory {
 
   /**
    * Reconstruct actual chunk writes and require a fresh, successful finalization.
-   * @param transactions - Complete confirmed buffer history, including same-slot calls.
+   * @param transactions - Complete finalized buffer history, including same-slot calls.
    * @param program - The deployed IDL, coder and program identity.
    * @param accepted - The full canonical envelope checksum and epoch.
    * @param signer - The operator that must have signed and finalized the upload.

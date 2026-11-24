@@ -1,6 +1,7 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const {
+  EthereumRoundTripScenario,
   EthereumSyndicationTool,
   SolanaOutpostProgramTool
 } = require("@wireio/cluster-tool")
@@ -10,6 +11,35 @@ const {
 } = require("../lib/BatchRosterReplacementScenario.js")
 const { SolanaDeliveryHistory } = require("../lib/SolanaDeliveryHistory.js")
 afterEach(() => mock.restoreAll())
+for (const deliveredEpoch of [6, 5])
+  test(`the Solana poll checks newest completed epochs first and stops at ${deliveredEpoch}`, async () => {
+    const { Keypair } = require("@solana/web3.js"),
+      signer = Keypair.generate().publicKey,
+      envelopes = [4, 9, 6, 3, 5].map(epochIndex => ({ epochIndex })),
+      originalOrder = [...envelopes],
+      checked = [],
+      phases = [],
+      ctx = { outputs: { assert: () => 4 } }
+    mock.method(EthereumRoundTripScenario.prototype, "plan", () => {})
+    mock.method(Scenario, "solanaConfig", async () => ({ nextEpochIndex: 7 }))
+    mock.method(Scenario, "solanaInbound", async () => ({ envelopes }))
+    mock.method(Scenario, "solanaAddress", () => signer)
+    mock.method(Scenario, "hasAcceptedSolanaDelivery", async (...args) => {
+      Assert.equal(args[0], ctx)
+      Assert.equal(args[2], signer)
+      checked.push(args[1].epochIndex)
+      return args[1].epochIndex === deliveredEpoch
+    })
+    new Scenario().plan({ context: ctx, push: phase => phases.push(phase) })
+    const step = phases
+      .flatMap(phase => phase.steps)
+      .find(step => step.name === "replacement-relayed-solana")
+    Assert.ok(step)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    Assert.deepEqual(checked, deliveredEpoch === 6 ? [6] : [6, 5])
+    Assert.deepEqual(envelopes, originalOrder)
+  })
+
 for (const exists of [true, false])
   test(`replacement delivery uses live votes before history: ${exists}`, async () => {
     const { Keypair } = require("@solana/web3.js"),
