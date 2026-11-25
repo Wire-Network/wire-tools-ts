@@ -464,7 +464,8 @@ describe("Steps.contracts.sysio.epoch economic clock reads", () => {
       row: SysioContracts.SysioEpochEconomicStateType = {
         current_epoch_index: 4,
         current_epoch_start: "2026-11-23T00:06:00.000",
-        next_epoch_start: "2026-11-23T00:08:00.000"
+        next_epoch_start: "2026-11-23T00:08:00.000",
+        caught_up: true
       },
       query = jest.spyOn(contract.tables.economystate, "query")
     query.mockResolvedValueOnce({ rows: [row], more: false })

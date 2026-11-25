@@ -85,7 +85,8 @@ function economyRow(index: number): SysioContracts.SysioEpochEconomicStateType {
   return {
     current_epoch_index: index,
     current_epoch_start: stamp(boundaryMs(index)),
-    next_epoch_start: stamp(boundaryMs(index + 1))
+    next_epoch_start: stamp(boundaryMs(index + 1)),
+    caught_up: true
   }
 }
 
