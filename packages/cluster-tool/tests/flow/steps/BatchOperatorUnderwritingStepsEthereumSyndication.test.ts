@@ -1,4 +1,5 @@
 import { ethers } from "ethers"
+import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool"
 import {
   BatchOperatorUnderwritingSteps,
@@ -6,22 +7,35 @@ import {
 } from "@wireio/cluster-tool/flow"
 import {
   ClusterBuild,
+  outputKey,
   type ClusterBuildPhase
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
+
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { syndEnvelopeRow } from "../../tools/wire/syndicationRowFixture.js"
 
 const Steps = BatchOperatorUnderwritingSteps
 /** Two LIQETH in depot units. */
 const Amount = 2_000_000_000n
+const CreditedAmount = outputKey<bigint>(
+  "ethereumTest.creditedAmount",
+  "depot credit"
+)
 /** The user whose syndication the operators underwrite. */
 const Syndicator: BatchOperatorUnderwritingSteps.EthereumSyndicator = {
   account: "synd.ethuser",
   walletName: "ethereum-user",
-  amount: Amount
+  amount: Amount,
+  creditedAmount: CreditedAmount
 }
 
 describe("BatchOperatorUnderwritingSteps Ethereum syndication", () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   it("converts a depot LIQETH amount to native liqETH precision — nine more decimals", () => {
     expect(Steps.ethereumNativeAmount(Amount)).toBe(Amount * 1_000_000_000n)
     expect(Steps.ethereumNativeAmount(1n)).toBe(1_000_000_000n)
@@ -94,7 +108,8 @@ describe("BatchOperatorUnderwritingSteps Ethereum syndication", () => {
     })
     expect(syndicate.input).toMatchObject({
       walletName: Syndicator.walletName,
-      amount: Steps.ethereumNativeAmount(Amount)
+      amount: Steps.ethereumNativeAmount(Amount),
+      creditedAmount: CreditedAmount
     })
     expect(syndicate.input).not.toHaveProperty("compressedPubkey")
   })
@@ -112,4 +127,43 @@ describe("BatchOperatorUnderwritingSteps Ethereum syndication", () => {
     expect(budgets.get("fund-ethereum-wallet")).toBe(SyndicationScenario.OutpostOptions)
     expect(budgets.get("ethereum-syndicate")).toBe(SyndicationScenario.OutpostOptions)
   })
+
+  it.each([Amount - 1n, Amount])(
+    "records a request matching the actual credit of %s depot units",
+    async amount => {
+      const ctx = fixtureContext(),
+        plan = Steps.createPlan("ethereumTest"),
+        chain = Constants.ETHEREUM_CHAIN_CODENAME,
+        token = Constants.liqTokenCode(chain),
+        { REQUESTED } = SysioContracts.SysioSyndEnvelopeState,
+        matching = {
+          ...syndEnvelopeRow(chain, token, 2, REQUESTED, 2),
+          synd_total: amount.toString()
+        },
+        wrongAmount = {
+          ...syndEnvelopeRow(chain, token, 1, REQUESTED, 1),
+          synd_total: (amount + 1n).toString()
+        },
+        step = Steps.planVerifyRecorded(
+          Report.Actor.Sysio,
+          "ethereum-requested",
+          "record the issued request",
+          {},
+          CreditedAmount,
+          null,
+          plan.firstEpoch,
+          plan.firstRequest,
+          chain,
+          token
+        )
+      ctx.outputs.set(CreditedAmount, amount)
+      const readEnvelopes = jest
+        .spyOn(WireSyndicationTool, "readEnvelopes")
+        .mockResolvedValue([wrongAmount, matching])
+      await step.runner(ctx, step.input, new AbortController().signal)
+      expect(readEnvelopes).toHaveBeenCalledWith(ctx, chain, token)
+      expect(ctx.outputs.assert(plan.firstEpoch)).toBe(matching.epoch_index)
+      expect(ctx.outputs.assert(plan.firstRequest)).toBe(matching.request_id)
+    }
+  )
 })

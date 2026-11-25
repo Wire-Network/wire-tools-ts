@@ -300,14 +300,16 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         "syndicate to the holder's linked WIRE account",
         options,
         Constants.EthereumWalletName,
-        Constants.EthereumNativeAmount
+        Constants.EthereumNativeAmount,
+        undefined,
+        Constants.EthereumCreditedAmount
       ),
       UnderwritingSteps.planVerifyRecorded(
         Actor.Sysio,
         "ethereum-requested",
         "the Ethereum envelope gets its request without a flow crank",
         UnderwritingSteps.UnderwriterRequestIssuedOptions,
-        plan.amount,
+        Constants.EthereumCreditedAmount,
         null,
         plan.firstEpoch,
         plan.firstRequest,
@@ -337,7 +339,8 @@ export class SyndicationPluginUnderwritingScenario extends SyndicationScenario {
         async ctx => {
           const accounts = UnderwritingSteps.fundedOperatorAccounts(ctx),
             before = ctx.outputs.assert(Constants.EthereumBefore),
-            principal = before.holder + plan.amount
+            principal =
+              before.holder + ctx.outputs.assert(Constants.EthereumCreditedAmount)
           // Waits on the holder's credit, not the envelope row: the operators' housekeeping
           // prunes a released envelope once its approval is acknowledged.
           await pollUntil(
