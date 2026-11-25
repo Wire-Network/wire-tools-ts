@@ -30,6 +30,32 @@ const seedOfSize = (
 }
 
 describe("SolanaOutpostBootstrapper.PdaSeed", () => {
+  it("owns the epoch-buffer seed and exact little-endian tally derivation", () => {
+    expect(SolanaOutpostBootstrapper.PdaSeed.EnvelopeChunks).toBe(
+      "envelope_chunks"
+    )
+    const programId = Keypair.generate().publicKey
+    for (const epoch of [0, 7, 0xffffffff]) {
+      const index = Buffer.alloc(4)
+      index.writeUInt32LE(epoch)
+      expect(
+        SolanaOutpostProgramTool.derivePda(
+          programId,
+          ...SolanaOutpostBootstrapper.createEpochDeliveriesSeeds(epoch)
+        )
+      ).toEqual(
+        PublicKey.findProgramAddressSync(
+          [Buffer.from("epoch_deliveries"), index],
+          programId
+        )[0]
+      )
+    }
+    for (const epoch of [-1, 1.5, Number.NaN, 0x100000000])
+      expect(() =>
+        SolanaOutpostBootstrapper.createEpochDeliveriesSeeds(epoch)
+      ).toThrow()
+  })
+
   it("carries the liqsol global_config seed matching the on-chain program", () => {
     // MUST match wire-solana/programs/liqsol-core/src/states/global_config.rs
     // (`GlobalConfig::SEEDS`) — every OPP admin instruction derives the gate PDA

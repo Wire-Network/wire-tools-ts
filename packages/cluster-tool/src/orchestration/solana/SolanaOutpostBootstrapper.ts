@@ -590,6 +590,8 @@ export namespace SolanaOutpostBootstrapper {
     export const OperatorRegistry = "operator_registry"
     /** Per-epoch recorded canonical votes; epoch index is the little-endian u32 seed. */
     export const EpochDeliveries = "epoch_deliveries"
+    /** Per-epoch, per-operator staging buffer for inbound envelope chunks. */
+    export const EnvelopeChunks = "envelope_chunks"
     export const InboundEnvelopes = "inbound_envelopes"
     export const OutboundEnvelopes = "outbound_envelopes"
     export const LatestOutboundEnvelope = "latest_outbound_envelope"
@@ -608,6 +610,21 @@ export namespace SolanaOutpostBootstrapper {
      * staking surface.
      */
     export const GlobalConfig = "global_config"
+  }
+
+  /**
+   * Encode the ordered tally PDA seeds shared by live-vote and history readers.
+   * @param epoch - The protocol's unsigned 32-bit inbound epoch index.
+   * @returns The tally seed followed by the little-endian epoch index.
+   */
+  export function createEpochDeliveriesSeeds(epoch: number): Buffer[] {
+    Assert.ok(
+      Number.isInteger(epoch) && epoch >= 0,
+      "Epoch index must be a nonnegative integer"
+    )
+    const index = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT)
+    index.writeUInt32LE(epoch)
+    return [Buffer.from(PdaSeed.EpochDeliveries), index]
   }
 
   /**

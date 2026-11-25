@@ -1,6 +1,6 @@
 import Assert from "node:assert"
 
-import { PublicKey } from "@solana/web3.js"
+import { PublicKey, SystemProgram } from "@solana/web3.js"
 import { PublicKey as SdkPublicKey } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { OperatorType, OperatorStatus } from "@wireio/opp-typescript-models"
@@ -25,6 +25,8 @@ import {
   type ClusterBuild,
   type ClusterBuildContext
 } from "@wireio/cluster-tool"
+
+import { SolanaDeliveryHistory } from "./SolanaDeliveryHistory.js"
 
 const { Actor } = Report
 
@@ -196,20 +198,16 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
                 first = ctx.outputs.assert(
                   BatchRosterReplacementScenario.SolanaEpochBefore
                 )
-              for (const record of accepted.envelopes.filter(
-                record =>
-                  record.epochIndex >= first &&
-                  record.epochIndex < config.nextEpochIndex
-              )) {
-                const deliveries =
-                  await BatchRosterReplacementScenario.solanaDeliveries(
-                    ctx,
-                    record.epochIndex
-                  )
+              for (const record of accepted.envelopes
+                .filter(
+                  record =>
+                    record.epochIndex >= first &&
+                    record.epochIndex < config.nextEpochIndex
+                )
+                .toSorted((a, b) => b.epochIndex - a.epochIndex)) {
                 if (
-                  deliveries &&
-                  BatchRosterReplacementScenario.isAcceptedSolanaDelivery(
-                    deliveries,
+                  await BatchRosterReplacementScenario.hasAcceptedSolanaDelivery(
+                    ctx,
                     record,
                     BatchRosterReplacementScenario.solanaAddress(ctx)
                   )
@@ -449,15 +447,47 @@ export namespace BatchRosterReplacementScenario {
     ctx: ClusterBuildContext,
     epoch: number
   ): Promise<SolanaDeliveries> {
-    const index = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT)
-    index.writeUInt32LE(epoch)
-    return readSolanaAccount<SolanaDeliveries>(ctx, "epochDeliveries", [
-      Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
-      index
-    ])
+    const { program, account } = await readSolanaAccountInfo(
+      ctx,
+      SolanaOutpostBootstrapper.createEpochDeliveriesSeeds(epoch)
+    )
+    if (
+      !account ||
+      (account.owner.equals(SystemProgram.programId) && account.data.length === 0)
+    )
+      return undefined
+    return program.coder.accounts.decode<SolanaDeliveries>(
+      "epochDeliveries",
+      account.data
+    )
   }
   /**
-   * Load an account through the deployed IDL; absent epoch votes remain absent evidence.
+   * Prove the replacement's vote even after the settled tally has been reaped.
+   * @param ctx - The live cluster context and deployed program.
+   * @param accepted - A canonical envelope whose epoch the caller verified is closed.
+   * @param signer - The replacement's actual Solana signing key.
+   * @returns Whether live votes or complete finalized upload history prove delivery.
+   */
+  export async function hasAcceptedSolanaDelivery(
+    ctx: ClusterBuildContext,
+    accepted: EnvelopeRecord,
+    signer: PublicKey
+  ): Promise<boolean> {
+    const deliveries = await solanaDeliveries(ctx, accepted.epochIndex)
+    if (deliveries)
+      return isAcceptedSolanaDelivery(deliveries, accepted, signer)
+    return SolanaDeliveryHistory.read(
+      ctx.solana.connection,
+      SolanaOutpostProgramTool.loadReadOnlyProgram(
+        ctx.solana.connection,
+        ctx.config.solanaPath
+      ),
+      accepted,
+      signer
+    )
+  }
+  /**
+   * Load an account through the deployed IDL; only a missing account skips decoding.
    * @param ctx - The live cluster context and its deployed chain clients.
    * @param accountName - The value used by this scenario.
    * @param seeds - The value used by this scenario.
@@ -467,15 +497,25 @@ export namespace BatchRosterReplacementScenario {
     accountName: string,
     seeds: Buffer[]
   ): Promise<T> {
+    const { program, account } = await readSolanaAccountInfo(ctx, seeds)
+    return account
+      ? program.coder.accounts.decode<T>(accountName, account.data)
+      : undefined
+  }
+  /**
+   * Read raw account information together with its deployed program's coder.
+   * @param ctx - The live cluster context and its deployed chain clients.
+   * @param seeds - The seeds identifying the program account.
+   * @returns The program and raw account for lifecycle-aware decoding.
+   */
+  async function readSolanaAccountInfo(ctx: ClusterBuildContext, seeds: Buffer[]) {
     const program = SolanaOutpostProgramTool.loadReadOnlyProgram(
         ctx.solana.connection,
         ctx.config.solanaPath
       ),
       address = SolanaOutpostProgramTool.derivePda(program.programId, ...seeds),
       account = await ctx.solana.connection.getAccountInfo(address)
-    return account
-      ? program.coder.accounts.decode<T>(accountName, account.data)
-      : undefined
+    return { program, account }
   }
   /**
    * Read the actual registry PDA and decode only its live member windows.
