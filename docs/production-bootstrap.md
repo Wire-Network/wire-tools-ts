@@ -340,10 +340,10 @@ before the operator `createlink` calls in Stage 12.
 | Field | Value | Notes |
 |---|---|---|
 | `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
-| `terminate_max_consecutive_misses` | `5` | |
+| `terminate_max_consecutive_misses` | `5` | missed duty epochs of a chain in a row since the membership's last delivery, whatever their age |
 | `terminate_max_pct_misses_24h` | `5` | |
 | `terminate_min_pct_samples` | `20` | duty epochs a chain membership holds before the percent rail applies; the consecutive rail applies from the first |
-| `terminate_window_ms` | `86400000` | 24 h |
+| `terminate_window_ms` | `86400000` | 24 h: the duty epochs the percent rail rates; the consecutive rail and the epoch schedules do not depend on it |
 | `req_prod_collat[0]` | `{chain_code:"WIRE", token_code:"LIQETH", min_bond:200000000}` | 0.2 LIQETH bonded on WIRE |
 | `req_prod_collat[1]` | `{chain_code:"WIRE", token_code:"LIQSOL", min_bond:5000000000}` | 5 LIQSOL bonded on WIRE |
 | `req_batchop_collat` | `[]` | empty by default |
