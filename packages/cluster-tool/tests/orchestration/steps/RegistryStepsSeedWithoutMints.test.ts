@@ -47,9 +47,12 @@ describe("Steps.registry.runSeedRegistry without sol-mock-mints.json (launch pol
           .with(ActionName.regtoken, () =>
             recorded.regtoken.push(data as SysioContracts.SysioTokensRegtokenAction)
           )
-          .with(ActionName.regctok, () =>
+          .with(ActionName.regctok, () => {
+            const binding = data as SysioContracts.SysioTokensRegctokAction
+            expect(recorded.regchain.some(chain => chain.code === binding.chain_code)).toBe(true)
+            expect(recorded.regtoken.some(token => token.code === binding.token_code)).toBe(true)
             recorded.regctok.push(data as SysioContracts.SysioTokensRegctokAction)
-          )
+          })
           .otherwise(noop)
         return null
       })
