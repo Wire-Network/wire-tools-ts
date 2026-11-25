@@ -359,8 +359,6 @@ describe("decoded syndication intake", () => {
 
   beforeEach(() => {
     clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "synd-intake-test-"))
-    // The intake wait's keep-due pump reads every chain's epoch state; no chain by default.
-    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({} as never)
   })
   afterEach(() => {
     Fs.rmSync(clusterPath, { recursive: true, force: true })
@@ -500,20 +498,9 @@ describe("decoded syndication intake", () => {
     expect(ctx.outputs.get(request)).toBe(intakeRequest)
   })
 
-  it("keeps the syndication chain alone due while its intake has not reached the depot", async () => {
+  it("adds no traffic while its intake has not reached the depot: the outpost's backlog report drives it", async () => {
     const ctx = fixtureContext({ clusterPath }),
       wallet = Keypair.generate(),
-      idle = {
-        chain_code: 0,
-        current_epoch_index: 4,
-        current_epoch_start: "2026-11-24T00:00:00.000",
-        traffic_since: "1970-01-01T00:00:00.000",
-        due_at: "1970-01-01T00:00:00.000",
-        current_batch_op_group: 0,
-        batch_op_groups: [],
-        is_paused: false,
-        previous_group: []
-      },
       step = SyndicationScenario.planVerifyIntake(
         Actor.Sysio,
         "verify-intake",
@@ -528,11 +515,8 @@ describe("decoded syndication intake", () => {
         )
       )
     jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
-    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
-      [Constants.ETHEREUM_CHAIN_CODENAME]: idle,
-      [Constants.SOLANA_CHAIN_CODENAME]: idle
-    })
-    const push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockResolvedValue(undefined)
+    const states = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates"),
+      push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockResolvedValue(undefined)
     // The first read finds nothing held; the second finds the intake held and persisted.
     jest
       .spyOn(WireSyndicationTool, "readHeldEnvelope")
@@ -542,7 +526,8 @@ describe("decoded syndication intake", () => {
         return heldEnvelope()
       })
     await step.runner(ctx, step.input, signal)
-    expect(push.mock.calls.map(([, input]) => input.data.chain_code)).toEqual([SyndicationScenario.Chain])
+    expect(push).not.toHaveBeenCalled()
+    expect(states).not.toHaveBeenCalled()
   })
 
   it("refuses a custody attestation below its own syndication", async () => {

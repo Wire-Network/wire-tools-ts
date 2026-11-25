@@ -357,7 +357,7 @@ test("the Solana delivery check keeps Solana alone due while no post-roster epoc
   Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [Constants.SOLANA_CHAIN_CODENAME])
 })
 
-test("the inherited Ethereum intake wait keeps Ethereum alone due until the held envelope appears", async () => {
+test("the inherited Ethereum intake wait pushes no traffic until the held envelope appears: the intake's backlog report drives Ethereum", async () => {
   const { OutputStore, Constants, EthereumRoundTripScenario, EthereumFundingTool, WireSyndicationTool } = require("@wireio/cluster-tool"),
     StepTools = require("@wireio/cluster-tool/lib/cjs/orchestration/StepTools.js"),
     step = plannedStep("ethereum-intake-held"),
@@ -372,7 +372,7 @@ test("the inherited Ethereum intake wait keeps Ethereum alone due until the held
     step.runner({ outputs: new OutputStore() }, step.input, new AbortController().signal),
     /Ethereum syndication intake/
   )
-  Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [Constants.ETHEREUM_CHAIN_CODENAME])
+  Assert.equal(push.mock.callCount(), 0)
 })
 
 test("the inherited post-settlement wait keeps Ethereum due for one more accepted inbound epoch", async () => {

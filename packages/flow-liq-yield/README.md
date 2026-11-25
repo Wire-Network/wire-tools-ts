@@ -28,11 +28,11 @@ Every write is a Report Step; depot confirmations wait for irreversibility.
    `mismatch` is empty.
 
 Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed.
-Solana's epochs here come from two sources: keep-due traffic (`sysio.epoch::notetraffic`) that the
-keep-due pump gives Solana while the flow waits for each Solana → depot attestation (the outpost
-emits only with its reply to the depot's next envelope, until the outposts report their backlog to
-the depot), and the `DESYNDICATE_LIQ` the desyndication queues. Ethereum advances only under the
-final check's pump.
+Solana's epochs here come from two sources: each Solana → depot attestation the outpost queues (it
+emits them with its reply to the depot's next envelope, and the relays' report of the outpost's
+backlog to the depot, `sysio.msgch::reportqueue`, makes Solana due for that envelope, so the waits
+for them add no traffic), and the `DESYNDICATE_LIQ` the desyndication queues. Ethereum advances
+only under the final check's keep-due pump (`sysio.epoch::notetraffic`).
 
 ## Bootstrap defaults
 

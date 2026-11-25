@@ -174,23 +174,17 @@ test("rejection checks fail if an Ethereum link or original tier changes", () =>
 test("uncompressed AuthEx rows match compressed fixture keys and expose rejected links", () =>
   checkRejectionState("uncompressed"))
 
-test("the commit-path verify keeps Ethereum alone due until the OPP-registered row lands", async () => {
-  const { Constants: HarnessConstants, Steps: HarnessSteps, WireNodeOwnerTool } = require("@wireio/cluster-tool"),
+test("the commit-path verify waits on the OPP-registered row without pushing traffic: the claim's backlog report drives Ethereum", async () => {
+  const { Steps: HarnessSteps, WireNodeOwnerTool } = require("@wireio/cluster-tool"),
     StepTools = require("@wireio/cluster-tool/lib/cjs/orchestration/StepTools.js"),
     { verifyCommitPathConfirmed } = require("../lib/NodeOwnerNftScenario.js"),
-    idle = { current_epoch_index: 2, due_at: "1970-01-01T00:00:00.000", is_paused: false }
-  mock.method(HarnessSteps.contracts.sysio.epoch, "readEpochStates", async () => ({
-    [HarnessConstants.ETHEREUM_CHAIN_CODENAME]: idle,
-    [HarnessConstants.SOLANA_CHAIN_CODENAME]: idle
-  }))
-  const push = mock.method(HarnessSteps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+    states = mock.method(HarnessSteps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(HarnessSteps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
   mock.method(WireNodeOwnerTool, "readNodeOwner", async () => undefined)
   mock.method(StepTools, "pollUntil", async (label, predicate) => {
     Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
   })
-  await Assert.rejects(verifyCommitPathConfirmed({ wire: {} }, new AbortController().signal), /nodeowners row for .* via OPP/)
-  Assert.deepEqual(
-    push.mock.calls.map(call => call.arguments[1].data.chain_code),
-    [HarnessConstants.ETHEREUM_CHAIN_CODENAME]
-  )
+  await Assert.rejects(verifyCommitPathConfirmed({ wire: {} }), /nodeowners row for .* via OPP/)
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(states.mock.callCount(), 0)
 })

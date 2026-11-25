@@ -8,13 +8,16 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>,... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
  * (`epoch=` lists every outpost chain's own consensus epoch: a `p` suffix marks a paused
  * chain, then `i` an idle chain (no traffic, so it legitimately stays in its epoch), `w` a
  * chain with traffic waiting for its `due_at`, `d` a chain that is due and should advance, `?` a
  * chain whose `due_at` does not read — unknown, never treated as idle; then `u` while its
- * current epoch is still undecided)
+ * current epoch is still undecided. `qreports=` lists each chain's backlog reports in its
+ * current epoch (`sysio.msgch::qreports`): the reporters `r` over the seats `s` of its group on
+ * duty, counting only members that are ACTIVE and not EVICTED from the chain; reports from a
+ * strict majority of the seats record the chain's traffic; `?` while unknown)
  * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
  * once it appears: `executables.clio` (the resolved clio binary) and the URL
@@ -27,7 +30,9 @@
  *   2. operators table           — `sysio.opreg::operators` (v6 `-S` scope, fields under `.value`)
  *   3. epoch state per chain     — `sysio.epoch::epochstate`, one row per outpost chain → index, start, traffic_since, due_at + pause,
  *                                  `sysio.epoch::epochcfg` → each chain's epoch duration (the depot's value),
- *                                  and `sysio.msgch::outpcons` → the epoch each chain decided last
+ *                                  `sysio.msgch::outpcons` → the epoch each chain decided last,
+ *                                  and `sysio.msgch::qreports` + `sysio.opreg::servchains` → each chain's
+ *                                  current-epoch backlog reports over its group's seats
  *   4. msgch outbound envelopes  — `sysio.msgch::envelopes` row count
  *   5. opp-debugging artifacts   — total + per-direction `.metadata` counts + delta
  *   6. aggregate cluster log     — action-receipt top-3 + the TWO failure classes:
@@ -101,8 +106,10 @@
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import { argv, chalk, echo, fs, glob, path, $, sleep } from "zx"
+import { SysioContracts } from "@wireio/sdk-core"
 
 import {
+  chainCodename,
   chainEpochConfigs,
   chainEpochDurations,
   chainEpochStates,
@@ -263,7 +270,7 @@ const FatalTailLines = 2
 /** Action receipts carried on the heartbeat line (`acts=[...]`, most frequent first). */
 const TopActionReceipts = 3
 
-/** Row limit for the operators / envelopes probes — the envelope count caps here. */
+/** Row limit for the envelopes probe — the envelope count caps here. */
 const TableQueryLimit = 50
 
 /**
@@ -400,6 +407,16 @@ const OperatorsTable = "operators"
 const SysioMsgchAccount = "sysio.msgch"
 const EnvelopesTable = "envelopes"
 const OutpostConsensusTable = "outpcons"
+const QueueReportsTable = "qreports"
+const ServedChainsTable = "servchains"
+
+/**
+ * Row limit of the operator (`sysio.opreg::operators`), backlog-report (`sysio.msgch::qreports`,
+ * one row per outpost chain and reporting batch operator) and membership
+ * (`sysio.opreg::servchains`, one row per batch operator and chain it joined) probes. A read
+ * truncated at it counts as unread, so a chain's reporters read as unknown rather than short.
+ */
+const MembershipRowLimit = 200
 
 // Cluster-path-relative surfaces.
 const ClusterConfigFilename = "cluster-config.json"
@@ -727,6 +744,37 @@ async function clioGetTableRows(clioExecutable, url, code, table, scope, limit) 
 }
 
 /**
+ * The row values of a COMPLETE `clio get table` read (v6 `{key, value}` rows unwrapped,
+ * {@link kvRowValue}): null when the probe failed, the output does not parse or carries no rows,
+ * or the read was truncated at its limit (`more` set), so a probe never counts a partial table.
+ *
+ * @param {string | null} stdout the read's stdout, or null when the probe failed.
+ * @return {object[] | null} the row values, or null unless the read is complete.
+ */
+export function completeTableValues(stdout) {
+  const result = stdout == null ? null : parseJson(stdout)
+  return Array.isArray(result?.rows) && result.more !== true ? result.rows.map(kvRowValue) : null
+}
+
+/**
+ * `clio get table <code> <table> -S <scope> -l <limit>` → the row values of a COMPLETE read
+ * ({@link completeTableValues}).
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @param {string} code contract account owning the table.
+ * @param {string} table table name.
+ * @param {string} scope table scope (v6 `-S` form).
+ * @param {number} limit row limit.
+ * @return {Promise<object[] | null>} the row values, or null unless the read is complete.
+ */
+async function clioGetCompleteTableValues(clioExecutable, url, code, table, scope, limit) {
+  return completeTableValues(
+    await runClio(clioExecutable, url, ["get", "table", code, table, "-S", scope, "-l", String(limit)])
+  )
+}
+
+/**
  * Probe 1 — chain liveness: `clio get info` → head block AND last-irreversible
  * block. BOTH are reported because a frozen LIB under an advancing head is a
  * distinct, silent failure the head alone cannot show: when finalizers lock on
@@ -758,19 +806,23 @@ async function probeChainLiveness(clioExecutable, url) {
 
 /**
  * Probe 2 — operators summary (account / status / balance count). Queried on
- * every beat per the rule; intentionally NOT printed on the heartbeat line —
- * extend here when a flow needs an operator-status red flag (e.g. "operator
- * under test UNKNOWN with balance_count < required_chains").
+ * every beat per the rule; NOT printed on the heartbeat line itself — it decides whose
+ * backlog reports count ({@link chainEligibleOperators}). Extend here
+ * when a flow needs an operator-status red flag (e.g. "operator under test UNKNOWN with
+ * balance_count < required_chains").
  *
  * @param {string} clioExecutable resolved clio binary.
  * @param {string} url the producer HTTP URL.
  * @return {Promise<Array<{ account: string, status: string, balanceCount: number }> | null>}
- *   one summary per operator, or null while unreachable.
+ *   one summary per operator, or null while the table cannot be read completely (a partial read
+ *   would drop ACTIVE members from an eligible set).
  */
 async function probeOperators(clioExecutable, url) {
-  const rows = await clioGetTableRows(clioExecutable, url, SysioOpregAccount, OperatorsTable, SysioOpregAccount, TableQueryLimit)
-  if (rows == null) return null
-  return rows.map(kvRowValue).map(operator => ({
+  const operators = await clioGetCompleteTableValues(
+    clioExecutable, url, SysioOpregAccount, OperatorsTable, SysioOpregAccount, MembershipRowLimit
+  )
+  if (operators == null) return null
+  return operators.map(operator => ({
     account: operator?.account,
     status: operator?.status,
     balanceCount: operator?.balances?.length ?? 0
@@ -961,6 +1013,124 @@ export function describeChainEpochs(states, chains, headBlockTimeMs = null, cons
           )
         })
         .join(",")
+}
+
+/**
+ * Whether a table cell holds `member` of a generated contract enum, in any spelling the RPC
+ * renders it: the number, its decimal string, or the member's name.
+ *
+ * @param {unknown} cell the cell.
+ * @param {Record<string | number, string | number>} enumObject the generated enum.
+ * @param {number} member the member's value.
+ * @return {boolean} true when the cell holds the member.
+ */
+function isEnumMember(cell, enumObject, member) {
+  return cell === member || cell === enumObject[member] || (typeof cell === "string" && Number(cell) === member)
+}
+
+/**
+ * The codename a `slug_name` cell names (`servchains.chain_code`): the ABI renders the spelling
+ * itself, or the packed value as a number or quoted decimal.
+ *
+ * @param {unknown} cell the cell.
+ * @return {string | null} the codename, or null when the cell names no chain.
+ */
+export function slugCellCodename(cell) {
+  return typeof cell === "string" && !/^\d+$/.test(cell) ? cell : chainCodename(cell)
+}
+
+/**
+ * A chain's group on duty: `epochstate.batch_op_groups[current_batch_op_group]`, the seats its
+ * backlog reports are tallied over.
+ *
+ * @param {object} state the chain's epoch row.
+ * @return {string[] | null} the group's accounts, one per seat, or null when the row carries none.
+ */
+export function chainGroupOnDuty(state) {
+  const group = state?.batch_op_groups?.[state?.current_batch_op_group]
+  return Array.isArray(group) ? group : null
+}
+
+/**
+ * The members of a chain's group on duty ({@link chainGroupOnDuty}) whose backlog reports
+ * `sysio.msgch` counts: those ACTIVE in `sysio.opreg::operators` holding a membership of the chain
+ * that is not EVICTED. Null when the beat could not read the operators or the memberships, or the
+ * chain has no group on duty.
+ *
+ * @param {object} state the chain's epoch row.
+ * @param {Array<{ account: string, status: unknown }> | null} operators the operators probe.
+ * @param {object[] | null} memberships the `servchains` rows.
+ * @param {string} chain the chain's codename.
+ * @return {string[] | null} the eligible accounts, or null when unknown.
+ */
+export function chainEligibleOperators(state, operators, memberships, chain) {
+  const group = chainGroupOnDuty(state)
+  if (operators == null || memberships == null || group == null) return null
+  const { SysioOpregOperatorstatus, SysioOpregChainServiceStatus } = SysioContracts,
+    isActive = account =>
+      operators.some(
+        operator =>
+          operator.account === account &&
+          isEnumMember(operator.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE)
+      ),
+    deliversOnChain = account =>
+      memberships.some(
+        membership =>
+          membership.account === account &&
+          slugCellCodename(membership.chain_code) === chain &&
+          !isEnumMember(membership.status, SysioOpregChainServiceStatus, SysioOpregChainServiceStatus.EVICTED)
+      )
+  return group.filter(account => isActive(account) && deliversOnChain(account))
+}
+
+/**
+ * One chain's backlog reports in its current epoch, as `sysio.msgch` tallies them: the eligible
+ * members ({@link chainEligibleOperators}) with a `qreports` row of the chain in its current
+ * epoch, over every seat of its group on duty — a slashed, evicted or inactive member never lowers
+ * the strict majority of seats whose reports record the chain's traffic.
+ *
+ * @param {object[]} reports every `qreports` row.
+ * @param {object} state the chain's epoch row.
+ * @param {string} chain the chain's codename.
+ * @param {string[] | null} eligible the chain's eligible accounts, or null when unknown.
+ * @return {{ reporters: number | null, seats: number | null }} the reporters (null while the
+ *   eligible set is unknown) and the seats (null without a group on duty).
+ */
+export function chainBacklogReports(reports, state, chain, eligible) {
+  const reporters =
+      eligible == null
+        ? null
+        : reports.filter(
+            report =>
+              chainCodename(report?.chain_code) === chain &&
+              Number(report?.epoch_index) === state.current_epoch_index &&
+              eligible.includes(report.account)
+          ).length,
+    seats = chainGroupOnDuty(state)?.length ?? null
+  return { reporters, seats }
+}
+
+/**
+ * Every watched chain's current-epoch backlog reports, for the heartbeat line —
+ * `ETHEREUM:2/3,SOLANA:0/3` (reporters / seats, {@link chainBacklogReports}); `?` for an unknown
+ * count, and for a chain before its genesis advance or without a row.
+ *
+ * @param {string[]} chains the watched chains.
+ * @param {Record<string, object>} states each chain's epoch row.
+ * @param {object[] | null} reports every `qreports` row, or null when unread.
+ * @param {Record<string, string[] | null>} eligibleByChain each chain's eligible accounts.
+ * @return {string} the fragment; `?` when the reports were not read or no chain is watched.
+ */
+export function describeBacklogReports(chains, states, reports, eligibleByChain) {
+  if (reports == null || chains.length === 0) return "?"
+  return chains
+    .map(chain => {
+      const state = states?.[chain]
+      if (!(state?.current_epoch_index >= 1)) return `${chain}:?`
+      const { reporters, seats } = chainBacklogReports(reports, state, chain, eligibleByChain?.[chain])
+      return `${chain}:${reporters ?? "?"}/${seats ?? "?"}`
+    })
+    .join(",")
 }
 
 /**
@@ -1254,6 +1424,36 @@ async function probeOutpostConsensus(clioExecutable, url) {
 }
 
 /**
+ * Probe 3 (backlog) — every `sysio.msgch::qreports` row: each batch operator's latest report of an
+ * outpost's outbound backlog (`sysio.msgch::reportqueue`), with the chain epoch it was made in.
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @return {Promise<object[] | null>} the report rows (v6 values unwrapped), or null while the
+ *   table cannot be read completely.
+ */
+async function probeQueueReports(clioExecutable, url) {
+  return clioGetCompleteTableValues(
+    clioExecutable, url, SysioMsgchAccount, QueueReportsTable, SysioMsgchAccount, MembershipRowLimit
+  )
+}
+
+/**
+ * Probe 3 (memberships) — every `sysio.opreg::servchains` row: each batch operator's membership
+ * of each outpost chain it joined, which decides whether it delivers on (and reports for) it.
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @return {Promise<object[] | null>} the membership rows (v6 values unwrapped), or null while
+ *   the table cannot be read completely.
+ */
+async function probeServedChains(clioExecutable, url) {
+  return clioGetCompleteTableValues(
+    clioExecutable, url, SysioOpregAccount, ServedChainsTable, SysioOpregAccount, MembershipRowLimit
+  )
+}
+
+/**
  * Probe 4 — `sysio.msgch::envelopes` row count (caps at TableQueryLimit).
  *
  * @param {string} clioExecutable resolved clio binary.
@@ -1412,11 +1612,12 @@ ${chalk.bold("Options:")}
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>,... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
                             (one epoch per outpost chain; p = paused; i = idle, no
                             traffic, never a stall; w = traffic, waiting for due_at;
                             d = due, must advance; ? = due_at unreadable, never idle;
-                            u = current epoch still undecided)
+                            u = current epoch still undecided; qreports = each chain's
+                            backlog reporters / its group's seats in its current epoch)
   Liveness bails beside the epoch ones: the depot head block frozen across a beat and
                             a ${HeadStallReprobeDelaySeconds}s re-probe (wall clock); a chain's epoch undecided past
                             max(${UndecidedEpochFloorSeconds}s, ${UndecidedEpochDurations} x its minimum)
@@ -1602,8 +1803,13 @@ async function main() {
       firstLivenessTimestamp = now
     }
 
-    // Probe 2 — operators (queried every beat; see probeOperators for why unprinted).
-    await probeOperators(clioExecutable, producerUrl)
+    // Probe 2 — operators (queried every beat; unprinted, it decides whose backlog reports
+    // count).
+    const operators = await probeOperators(clioExecutable, producerUrl)
+
+    // Probe 3 — the outposts' backlog reports and the chain memberships that decide whose count.
+    const queueReports = await probeQueueReports(clioExecutable, producerUrl)
+    const memberships = await probeServedChains(clioExecutable, producerUrl)
 
     // Probe 3 — every outpost chain's epoch state, its epoch duration from the
     // depot's epochcfg row (the cluster config's until the row exists), and the
@@ -1618,6 +1824,9 @@ async function main() {
     )
     const epochIndices = Object.fromEntries(
       chains.map(chain => [chain, epochStates[chain]?.current_epoch_index])
+    )
+    const eligibleByChain = Object.fromEntries(
+      chains.map(chain => [chain, chainEligibleOperators(epochStates[chain], operators, memberships, chain)])
     )
     undecidedSince = Object.fromEntries(
       chains
@@ -1672,6 +1881,7 @@ async function main() {
       `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
         `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
         `epoch=${describeChainEpochs(epochStates, chains, headBlockTimeMs, outpostConsensus)} ` +
+        `qreports=${describeBacklogReports(chains, epochStates, queueReports, eligibleByChain)} ` +
         `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
         `acts=[${logProbe.actionReceipts.join(" ")}] ` +
         `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})${growthMarker}`

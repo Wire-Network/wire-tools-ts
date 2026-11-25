@@ -36,8 +36,11 @@ const log = getLogger(__filename)
  * / {@link EpochAdvanceSteps.pollForKeepingDue} run it beside a wait's predicate. The pump never
  * touches the chain's `rostersent`, so an advance it brings queues the roster only when the
  * roster changed: governance `sysio.epoch::resendroster` stays the roster-recovery action, never
- * a pump. Outpost → depot messages also need the pump until the outposts report their backlog to
- * the depot: an outpost emits its envelope only on receiving the depot's next one.
+ * a pump. A message either side queues needs no pump: the depot's own outbound queue gives its
+ * chain traffic (`sysio.msgch::queueout`), and the relays report each outpost's outbound backlog to
+ * the depot (`sysio.msgch::reportqueue`), which gives the chain traffic once a strict majority of
+ * its group reported, so a wait on an outpost → depot delivery polls without the pump. The pump is
+ * for waits that need an advance nothing queued would bring.
  *
  * The bootstrap's per-chain gate ({@link EpochAdvanceSteps.planAwaitEpochDecided}) waits for
  * each chain's genesis epoch to be decided — one full round trip, which needs no traffic — and
@@ -202,8 +205,9 @@ export namespace EpochAdvanceSteps {
    * predicate does not hold runs one {@link keepChainsDue} pass on that snapshot. The order closes
    * the race of a chain that advances between the predicate and the pump's read: the snapshot
    * still shows its traffic, so the pump adds none, and a wait that is already satisfied never
-   * pumps. THE form of every wait that needs a chain to advance, an outpost → depot delivery
-   * included (the outpost emits only on the depot's next envelope).
+   * pumps. THE form of every wait that needs a chain to advance with nothing queued on either
+   * side; a wait on a queued message (depot outbound, or an outpost → depot delivery the relays
+   * report as the outpost's backlog) polls without it.
    *
    * @param ctx - The build context.
    * @param chains - The chains the wait needs to advance.

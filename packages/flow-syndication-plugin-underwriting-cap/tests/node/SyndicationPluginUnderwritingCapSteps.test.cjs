@@ -4,7 +4,6 @@ const {
   BatchOperatorUnderwritingSteps,
   OutputStore,
   Steps,
-  SyndicationScenario,
   WireSyndicationTool
 } = require("@wireio/cluster-tool")
 const StepTools = require("@wireio/cluster-tool/lib/cjs/orchestration/StepTools.js")
@@ -30,11 +29,10 @@ function firstBondOutstanding() {
   mock.method(WireSyndicationTool, "readEnvelopes", async () => [])
 }
 
-test("the second-intake wait keeps the Solana chain alone due while the second intake has not reached the depot", async () => {
+test("the second-intake wait pushes no traffic while the second intake has not reached the depot: its backlog report drives Solana", async () => {
   firstBondOutstanding()
-  const idle = { current_epoch_index: 6, due_at: "1970-01-01T00:00:00.000", is_paused: false }
-  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({ ETHEREUM: idle, SOLANA: idle }))
-  const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  const states = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
   mock.method(StepTools, "pollFor", async (label, read) => {
     const value = await read()
     Assert.ok(value != null, `Timed out waiting for: ${label}`)
@@ -42,7 +40,8 @@ test("the second-intake wait keeps the Solana chain alone due while the second i
   })
   const step = SyndicationPluginUnderwritingCapSteps.planVerifySecondRequested("Sysio", "second-requested", "probe", {}, plan)
   await Assert.rejects(step.runner(context(), null, new AbortController().signal), /second request issued and held/)
-  Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [SyndicationScenario.Chain])
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(states.mock.callCount(), 0)
 })
 
 test("an aborted second-intake wait pushes no traffic", async () => {

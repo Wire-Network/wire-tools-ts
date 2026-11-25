@@ -20,11 +20,12 @@ liqsol_core::report_liq_yield        (permissionless crank — non-admin signer)
 ```
 
 Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed. The
-flow queues nothing to either outpost; Solana's epochs are driven by keep-due traffic
-(`sysio.epoch::notetraffic`) that the keep-due pump gives Solana while the flow waits for each
-Solana → depot attestation. That is an outpost → depot message, which the outpost emits only with
-its reply to the depot's next envelope, so until the outposts report their backlog to the depot
-the pump is what makes Solana ship. The final advance check keeps both chains due the same way.
+flow queues nothing to either outpost; Solana's epochs are driven by its own Solana → depot
+attestations. Each is an outpost → depot message, which the outpost emits with its reply to the
+depot's next envelope: the relays report the outpost's backlog to the depot
+(`sysio.msgch::reportqueue`), and that report is what makes Solana ship, so the waits for them add
+no traffic. The final advance check needs every chain to advance with nothing queued, so it keeps
+both chains due with keep-due traffic (`sysio.epoch::notetraffic`, the keep-due pump).
 
 Asserts:
 

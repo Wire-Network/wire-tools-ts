@@ -16,11 +16,12 @@ The flow aligns both arrivals to one outpost envelope and never weakens finality
 waits until Solana's current epoch is decided and the chain idle (no traffic), adding
 no traffic itself. The outpost has then answered the depot's current envelope and
 emits its next only on the depot's next one, which needs traffic and then a whole
-minimum, so both writes land before it; the intake wait's keep-due pump gives Solana
-that traffic. A wait for a new epoch would not do: the outpost answers a depot
-envelope only after the advance that ships it, so the two writes could straddle that
-answer. Epochs are depot-paced and the flow's only depot → Solana traffic is its
-redemption, so Solana's other epochs come from the keep-due pump.
+minimum from it, so both writes land before it; the relays' report of the outpost's
+backlog to the depot (`sysio.msgch::reportqueue`), made only after the first write, gives
+Solana that traffic, and the intake waits add none. A wait for a new epoch would not
+do: the outpost answers a depot envelope only after the advance that ships it, so the
+two writes could straddle that answer. Epochs are depot-paced: Solana's come from the
+intakes' backlog report and from the redemption, the flow's only depot → Solana traffic.
 
 Each run uses a fresh cluster. Scenario defaults opt into mock liquidity pools and
 the imported bonder, with a 60-second minimum epoch. Pair configuration is set by governance

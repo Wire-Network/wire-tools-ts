@@ -492,21 +492,16 @@ test("custody waits for an unreported claim and its persisted LIQ_YIELD", async 
         ]
   )
   mock.method(SolanaLiqSyndicationTool, "readPoolBalance", async () => 11n)
-  // The custody attestations travel Solana -> depot: while one is missing the wait keeps
-  // Solana due with keep-due traffic.
-  const idle = { current_epoch_index: 4, due_at: "1970-01-01T00:00:00.000", is_paused: false }
-  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({ ETHEREUM: idle, SOLANA: idle }))
-  const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
-  const observation = await BatchOperatorUnderwritingSteps.readSettledCustody(
-    ctx,
-    "t",
-    new AbortController().signal
-  )
+  // The custody attestations travel Solana -> depot: the relays report the outpost's backlog to
+  // the depot, so the wait adds no traffic while one is missing.
+  const epochStates = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  const observation = await BatchOperatorUnderwritingSteps.readSettledCustody(ctx, "t")
   Assert.equal(observation.pool, 11n)
   Assert.equal(observation.attestations.at(-1).sequence, 5n)
   Assert.ok(persisted >= 2)
-  Assert.ok(push.mock.callCount() >= 1)
-  push.mock.calls.forEach(call => Assert.equal(call.arguments[1].data.chain_code, SyndicationScenario.Chain))
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(epochStates.mock.callCount(), 0)
 })
 
 test("setup funding requires every operator's exact credit", async () => {

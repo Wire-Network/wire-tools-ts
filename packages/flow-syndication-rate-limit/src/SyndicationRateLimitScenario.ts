@@ -29,8 +29,9 @@ const { Actor } = Report,
  * envelope only after the advance that ships it, so a wait for a new epoch returns before that
  * answer and the two writes could straddle it. Once the current epoch is decided the outpost has
  * answered, and it emits its next envelope only on the depot's next one, which needs traffic and
- * then one minimum duration: both writes land first, and the intake wait's keep-due pump gives
- * the chain that traffic.
+ * then one minimum duration from it: both writes land first, and the relays' report of the
+ * outpost's backlog to the depot (`sysio.msgch::reportqueue`), made only after the first write,
+ * gives the chain that traffic.
  *
  * @param ctx - The build context.
  * @param signal - Abort signal.

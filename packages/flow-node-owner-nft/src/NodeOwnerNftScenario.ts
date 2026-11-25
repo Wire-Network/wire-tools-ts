@@ -7,13 +7,13 @@ import {
 } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
-  Constants as HarnessConstants,
   EthereumFundingTool,
   FlowScenario,
   matchesProtoEnum,
   NodeOwnerRegStatus,
   NodeOwnerRejectReason,
   NodeOwnerTier,
+  pollUntil,
   ProtocolTiming,
   Report,
   Steps,
@@ -209,27 +209,22 @@ async function verifyHappyPathConfirmed(
  * `nodeownreg`), then the audit reads CONFIRMED. The poll
  * budget is the single-hop envelope; the row appears as soon as the depot
  * processes the consensus envelope carrying the attestation. The Ethereum
- * outpost emits that envelope only with its reply to the depot's next one, and
- * nothing is queued to Ethereum, so the poll keeps Ethereum due with governance
- * traffic (`EpochAdvanceSteps.pollUntilKeepingDue`) until the outposts report
- * their backlog to the depot themselves.
+ * outpost emits that envelope with its reply to the depot's next one, and the
+ * poll adds no traffic: the claim's own message on the outpost is what makes
+ * Ethereum due, once the relays report the outpost's backlog to the depot
+ * (`sysio.msgch::reportqueue`).
  *
  * @param ctx - The build context.
- * @param signal - Abort signal.
  */
 export async function verifyCommitPathConfirmed(
-  ctx: ClusterBuildContext,
-  signal: AbortSignal
+  ctx: ClusterBuildContext
 ): Promise<void> {
-  await Steps.epochAdvance.pollUntilKeepingDue(
-    ctx,
-    [HarnessConstants.ETHEREUM_CHAIN_CODENAME],
+  await pollUntil(
     `nodeowners row for ${Constants.CommitPathAccount} via OPP`,
     async () =>
       (await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
     Constants.CommitPathDeadlineMs,
-    Constants.CommitPathPollIntervalMs,
-    signal
+    Constants.CommitPathPollIntervalMs
   )
   const registration = await WireNodeOwnerTool.readNodeOwner(ctx.wire, Constants.CommitPathAccount)
   Assert.strictEqual(

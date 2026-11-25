@@ -31,10 +31,11 @@ const { SysioSyndItemKind } = SysioContracts
 
 /**
  * One fresh Ethereum custody-to-wallet round trip, with explicit integration hooks. Its Ethereum
- * epochs are driven by two sources: the redemption's `DESYNDICATE_LIQ` (depot general-lane
- * traffic, so its payout drives itself), and keep-due traffic the keep-due pump adds while a
- * wait needs an Ethereum advance — the intake (an outpost → depot message, until the outposts
- * report their backlog to the depot) and the post-settlement inbound epoch.
+ * epochs are driven by three sources: the intake's own outpost backlog, which the relays report
+ * to the depot (`sysio.msgch::reportqueue`), so the intake drives itself; the redemption's
+ * `DESYNDICATE_LIQ` (depot general-lane traffic, so its payout drives itself); and keep-due
+ * traffic the keep-due pump adds for the post-settlement inbound epoch, which nothing queued on
+ * either side would bring.
  */
 export abstract class EthereumRoundTripScenario extends FlowScenario {
   override readonly defaults = {
@@ -135,10 +136,10 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         Actor.Sysio,
         "ethereum-intake-held",
         "identify the fresh wallet's exact held principal",
-        async (ctx, signal) => {
-          await Steps.epochAdvance.pollUntilKeepingDue(
-            ctx,
-            [EthereumRoundTripScenario.Chain],
+        async ctx => {
+          // Traffic: the syndication's own message on the Ethereum outpost — the relays report the
+          // outpost's backlog to the depot (`sysio.msgch::reportqueue`), which makes Ethereum due.
+          await pollUntil(
             "Ethereum syndication intake",
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
@@ -160,8 +161,7 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
               return true
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs,
-            signal
+            SyndicationScenario.PollMs
           )
           Assert.strictEqual(
             await EthereumRoundTripScenario.externalBalance(ctx),
@@ -301,7 +301,8 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         "settlement-stays-exact",
         "another accepted Ethereum inbound epoch passes without a duplicate external payout",
         async (ctx, signal) => {
-          // Nothing more is queued to Ethereum: keep-due traffic keeps it due for the next epoch.
+          // No outpost or depot traffic: the payout queues nothing back to the depot and nothing more
+          // is queued to Ethereum, so the keep-due pump gives Ethereum traffic for the next epoch.
           await Steps.epochAdvance.pollUntilKeepingDue(
             ctx,
             [EthereumRoundTripScenario.Chain],

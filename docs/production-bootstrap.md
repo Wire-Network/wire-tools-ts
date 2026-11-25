@@ -708,7 +708,19 @@ capital requirements, deployed-node recovery, and verification.
 
 The OPP debugging server + daemon deploy artifacts (ETH ABIs with embedded addresses, SOL program id + IDL)
 are prepared just before the provisioning above; the operator nodeop daemons start here — chain-side
-infrastructure, before the first epoch.
+infrastructure, before the first epoch. The preparation refuses an outpost build the daemons would refuse to
+boot on: an `OPP` ABI without the `pendingOutbound()` view (an outpost version requirement), or a `liqsol_core`
+IDL whose `OutboundMessageBuffer` and `LatestOutboundEnvelope` layouts do not place `attestation_count` and
+`epoch_index` at the fixed offsets the relay decodes, or without `EpochDeliveries.deliveries` records carrying an
+`operator` key (a check of the relay's decode surface, not of an outpost version).
+
+Each batch operator's relay pushes, as `<operator>@active`: `sysio.msgch::deliver`, `sysio.msgch::chkcons`,
+`sysio.msgch::reportqueue` (its report of the outpost's outbound backlog, a strict majority of which gives the
+chain traffic), `sysio.chalg::chkdispute`, `sysio.epoch::tickeconomy`, `sysio.swap::tickyield`,
+`sysio.liq::queueyield`, and `sysio.kicker::kick` while the plugin's kick crank is on (`--batch-kick-crank`, on by
+default). The bootstrap links none of them, so `<operator>@active` authorizes them all; an operator whose
+`@active` a `linkauth` restricts must let it authorize every one of these actions, or `batch_operator_plugin`
+refuses to start.
 
 41. `sysio.epoch::schbatchgps({chain_code})` — `[sysio.epoch@active]` — once per outpost chain: initialize
     the chain's batch-operator groups from the ACTIVE batch operators SERVING it (the bootstrapped ones, all

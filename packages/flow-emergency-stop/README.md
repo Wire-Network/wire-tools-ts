@@ -5,10 +5,12 @@ linked Solana holder, releases an initial bonded syndication and queues another
 held envelope. Each write is a Report Step and state assertions are verify Steps.
 
 Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed.
-Solana's epochs here are driven by the redemptions' `DESYNDICATE_LIQ` outbound and by governance
-traffic the keep-due pump gives Solana while the flow waits for a Solana → depot syndication (the
-outpost emits only with its reply to the depot's next envelope, until the outposts report their
-backlog) or for an advance under the cord. Ethereum advances on its lanes' redemptions.
+Solana's epochs here are driven by the redemptions' `DESYNDICATE_LIQ` outbound, by the Solana →
+depot syndications themselves (the outpost emits each with its reply to the depot's next envelope,
+and the relays' report of the outpost's backlog to the depot, `sysio.msgch::reportqueue`, makes
+Solana due for it, so those waits add no traffic), and by keep-due traffic the keep-due pump gives
+Solana for the advance under the cord, when nothing is queued. Ethereum advances on its lanes'
+redemptions.
 
 - The panic key freezes Solana. A syndication refuses with `OutpostFrozen`; a
   depot redemption burns shadow but stores a `PendingPayout` without paying the

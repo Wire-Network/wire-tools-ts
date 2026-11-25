@@ -114,26 +114,6 @@ export function probeTransfer(
 }
 
 /**
- * A governance `sysio.epoch::resendroster` of `chain`, declared by `sysio.epoch@active` (whose
- * authority is `sysio@active`): governance traffic that makes the depot-paced chain due one minimum
- * later, so it ships its next envelope.
- *
- * @param chain - The outpost chain given traffic.
- * @returns The typed action.
- */
-export function resendrosterAction(
-  chain: HarnessConstants.OutpostChainCodename
-): WireClient.ActionPayload<SysioContracts.SysioContractName.epoch, "resendroster"> {
-  return {
-    contract: SysioContractName.epoch,
-    account: SysioContractAccount[SysioContractName.epoch],
-    name: "resendroster",
-    authorization: WireClient.activeAuthorization(SysioContractAccount[SysioContractName.epoch]),
-    data: { code: chain }
-  }
-}
-
-/**
  * The governance action that writes the stand-in council into
  * `sysio.cncl@active` — what `sysio.councl` does itself when an election fills
  * its last seat. Declared by `sysio.cncl@owner`, which is `sysio@active`.
@@ -493,9 +473,9 @@ export async function assertProbePaid(
 }
 
 /**
- * The late owner's NFT claim reached the depot over OPP: a tier-1 `nodeowners` row. The
- * node-owner msig's governance traffic (`latetraffic`) made Ethereum ship the envelope the outpost
- * answers with the claim; the bootstrap key can no longer give a chain traffic itself.
+ * The late owner's NFT claim reached the depot over OPP: a tier-1 `nodeowners` row. The claim
+ * drives Ethereum itself: the relays report the outpost's backlog to the depot
+ * (`sysio.msgch::reportqueue`), which makes Ethereum ship the envelope the outpost answers with it.
  *
  * @param ctx - The build context.
  */
@@ -1072,16 +1052,6 @@ export class GovernanceHandoffScenario extends FlowScenario {
         Constants.LateNodeOwner,
         this.identityPublicKey(Constants.LateNodeOwner)
       ),
-      // Ethereum ships its next envelope only once it has traffic; after the handoff only the node
-      // owners can authorize the governance resendroster that gives it some.
-      planProposal(
-        Constants.LateOwnerTrafficProposal,
-        Constants.InitialNodeOwners,
-        [resendrosterAction(HarnessConstants.ETHEREUM_CHAIN_CODENAME)],
-        `${Proposer} proposes governance traffic for Ethereum (sysio.epoch::resendroster)`
-      ),
-      ...planApprovals(Constants.LateOwnerTrafficProposal, Constants.InitialNodeOwners),
-      planProbeExec(Constants.LateOwnerTrafficProposal),
       verifyStep(
         Actor.Sysio,
         "late-owner-registered",

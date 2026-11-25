@@ -117,6 +117,15 @@ cd ../wire-ethereum && pnpm install && pnpm build      # npx hardhat compile
 cd ../wire-solana && npm install && npm run build:programs
 ```
 
+The batch operators' relay reports each outpost's outbound backlog to the depot
+(`sysio.msgch::reportqueue`, which makes a chain due for a message an outpost queued).
+wire-ethereum must be at a version whose `OPP` declares the `pendingOutbound()` view the relay
+reads. On Solana the relay decodes `OutboundMessageBuffer.attestation_count` and
+`LatestOutboundEnvelope.epoch_index` at fixed offsets, so the bootstrap checks that the
+`liqsol_core` IDL declares those layouts (and `EpochDeliveries.deliveries` records carrying an
+`operator` key): a check of the relay's decode surface, not of an outpost version. The bootstrap's
+artifact preparation refuses a build failing either check before any operator daemon starts.
+
 ## Install & build this repo
 
 ```bash
@@ -327,7 +336,10 @@ node scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster-dir>
 
 Every 90s it probes chain liveness, operators, every outpost chain's epoch state
 (`epoch=ETHEREUM:<n>,SOLANA:<n>`, `p` marking a paused chain, then `i` an idle
-chain, `w` one with traffic waiting for its `due_at`, `d` one that is due), msgch
+chain, `w` one with traffic waiting for its `due_at`, `d` one that is due) and its
+current-epoch backlog reports (`qreports=ETHEREUM:<reporters>/<seats>,…` from
+`sysio.msgch::qreports`: the eligible members that reported, over the seats of the
+chain's group on duty, a strict majority of which records the chain's traffic), msgch
 envelopes, `data/opp-debugging/` per-direction artifact counts, and the aggregate
 cluster log (FATAL vs NOISE classified), printing one `HB …` line per cycle — and it
 **bails loudly** on the fatal conditions (a chain that is due and still at its epoch

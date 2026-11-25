@@ -5,6 +5,7 @@ const {
   OutputStore,
   ProtocolTiming,
   SolanaFundingTool,
+  SolanaLiqSyndicationTool,
   Steps,
   WireSyndicationTool
 } = require("@wireio/cluster-tool")
@@ -77,33 +78,44 @@ test("one clip at the mock LIQSOL pool's cap sells more than the donated yield",
     `a clip of ${clip} does not clear the ${LIQYieldScenarioConstants.BonusYieldLamports} donated`)
 })
 
-test.each(["syndicate-liq-circulates", "syndication-held-before-bond"])(
-  "%s keeps the idle Solana chain alone due until its Solana -> depot attestation arrives",
+test.each(["syndicate-liq-circulates", "syndication-held-before-bond", "yield-held-before-bond"])(
+  "%s waits on its Solana -> depot attestation without pushing traffic: the outpost's backlog report drives Solana",
   async name => {
     const StepTools = require("@wireio/cluster-tool/lib/cjs/orchestration/StepTools.js"),
-      ctx = { outputs: new OutputStore(), config: { ...Config, clusterPath: "/tmp/unused-unit-cluster", dataPath: "/tmp/unused-unit-wallet" } },
+      // A shadow supply read for the yield wait; nothing else reaches the depot.
+      wire = {
+        getSysioContract: () => ({
+          tables: { stat: { query: async () => ({ rows: [{ supply: "1.000000000 LIQSOL" }] }) } }
+        })
+      },
+      ctx = {
+        wire,
+        outputs: new OutputStore(),
+        config: { ...Config, clusterPath: "/tmp/unused-unit-cluster", dataPath: "/tmp/unused-unit-wallet" }
+      },
       build = ClusterBuild.forContext(ctx),
-      idle = { current_epoch_index: 3, due_at: "1970-01-01T00:00:00.000", is_paused: false },
       spies = [
         jest.spyOn(Steps.registry, "readMockSyndicationBonder").mockReturnValue({}),
-        jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
-          [Constants.ETHEREUM_CHAIN_CODENAME]: idle,
-          [Constants.SOLANA_CHAIN_CODENAME]: idle
-        }),
         jest.spyOn(WireSyndicationTool, "readHeldEnvelope").mockResolvedValue(undefined),
         jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue({ publicKey: { toBuffer: () => Buffer.alloc(32), toBytes: () => new Uint8Array(32) } }),
+        jest.spyOn(SolanaLiqSyndicationTool, "readLiqYieldState").mockResolvedValue({
+          liqYieldReported: LIQYieldScenarioConstants.BonusYieldLamports
+        }),
         jest.spyOn(StepTools, "pollUntil").mockImplementation(async (label, predicate) => {
           Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
         })
       ],
+      states = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({}),
       push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockResolvedValue(undefined)
     try {
       new LIQYieldScenario().plan(build)
+      ctx.outputs.set(LIQYieldScenario.LiqYieldStateBeforeKey, { liqYieldReported: 0n })
       const step = steps(build).find(entry => entry.name === name)
       await Assert.rejects(step.runner(ctx, step.input, new AbortController().signal), /Timed out waiting for/)
-      Assert.deepEqual(Array.from(push.mock.calls, call => call[1].data.chain_code), [Constants.SOLANA_CHAIN_CODENAME])
+      Assert.equal(push.mock.calls.length, 0)
+      Assert.equal(states.mock.calls.length, 0)
     } finally {
-      ;[...spies, push].forEach(spy => spy.mockRestore())
+      ;[...spies, states, push].forEach(spy => spy.mockRestore())
     }
   }
 )

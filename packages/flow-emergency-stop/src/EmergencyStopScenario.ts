@@ -733,7 +733,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
         Actor.Sysio,
         "repair-message-admitted",
         "cursor admits repaired custody before the depot cord clears",
-        async (ctx, signal) => {
+        async ctx => {
           const messages = (
               await readEnvelopeAttestations(
                 oppDebuggingPath(ctx.config.clusterPath),
@@ -748,9 +748,9 @@ export class EmergencyStopScenario extends SyndicationScenario {
             )
           Assert.ok(message, "missing post-repair syndication attestation")
           ctx.outputs.set(Constants.RecoverySequence, message.sequence)
-          await Steps.epochAdvance.pollUntilKeepingDue(
-            ctx,
-            [SyndicationScenario.Chain],
+          // Traffic: the post-repair syndication already circulated, with the pre-repair messages
+          // ahead of it; the relays report any still queued as the outpost's backlog.
+          await pollUntil(
             "depot cursor reaches post-repair Solana sequence",
             async () => {
               const { rows, more } = await ctx.wire
@@ -775,8 +775,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
               return true
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs,
-            signal
+            SyndicationScenario.PollMs
           )
           const rows = await WireSyndicationTool.readMismatches(ctx)
           StepExtraRecorder.note(

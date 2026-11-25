@@ -4,14 +4,21 @@ import Os from "node:os"
 import Path from "node:path"
 import { test } from "node:test"
 
+import { SlugName } from "@wireio/sdk-core"
+
 import {
   bootstrapBailReason,
   bootstrapDeadlineSeconds,
+  chainBacklogReports,
+  chainEligibleOperators,
   chainDueAtMs,
   chainEpochDurationSeconds,
+  chainGroupOnDuty,
   chainOverdueSeconds,
   chainTraffic,
   ChainTraffic,
+  completeTableValues,
+  describeBacklogReports,
   describeChainEpochs,
   directionFreezeStreaks,
   firstEpochGrowthDeadlineMs,
@@ -26,6 +33,7 @@ import {
   plateauDirection,
   probeAggregateLog,
   resolveChainEpochDurations,
+  slugCellCodename,
   stallReprobeDueChains,
   stalledChain,
   undecidedEpochAllowanceSeconds,
@@ -464,4 +472,136 @@ test("a decided, paused or unstarted chain, an unread outpcons or head, or --exp
   Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, null, duration), null)
   Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, late, duration, true), null)
   Assert.match(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, late, duration), /ETHEREUM epoch 4/)
+})
+
+// ── backlog reports ─────────────────────────────────────────────────────────
+
+/** A started chain's epoch row with its group on duty, idle unless `dueAt` is given. */
+function groupRow(index, group, dueAt = NoTraffic) {
+  return { ...epochRow(index, dueAt), current_batch_op_group: 1, batch_op_groups: [["other.a"], group] }
+}
+
+/** One `qreports` row: `account`'s backlog report on `chain` in its epoch `epochIndex`. */
+function report(chain, account, epochIndex) {
+  return { chain_code: SlugName.from(chain), account, epoch_index: epochIndex, pending_count: 1 }
+}
+
+/** ACTIVE operators, rendered by name (as clio prints the ABI enum), plus one TERMINATED. */
+const Operators = [
+  { account: "batchop.a", status: "OPERATOR_STATUS_ACTIVE" },
+  { account: "batchop.b", status: 3 },
+  { account: "batchop.c", status: "OPERATOR_STATUS_ACTIVE" },
+  { account: "batchop.d", status: "OPERATOR_STATUS_TERMINATED" }
+]
+
+/** Every operator SERVING both chains, except batchop.c, EVICTED from Ethereum. */
+const Memberships = ["batchop.a", "batchop.b", "batchop.c", "batchop.d"].flatMap(account =>
+  Chains.map(chain => ({
+    account,
+    chain_code: chain,
+    status: account === "batchop.c" && chain === "ETHEREUM" ? "EVICTED" : "SERVING"
+  }))
+)
+
+test("a slug_name cell names its chain as the spelling or as the packed value", () => {
+  Assert.equal(slugCellCodename("ETHEREUM"), "ETHEREUM")
+  Assert.equal(slugCellCodename(SlugName.from("SOLANA")), "SOLANA")
+  Assert.equal(slugCellCodename(String(SlugName.from("SOLANA"))), "SOLANA")
+  Assert.equal(slugCellCodename(0), null)
+  Assert.equal(slugCellCodename(null), null)
+})
+
+test("a chain's eligible set is its group on duty, ACTIVE and not EVICTED from the chain", () => {
+  const group = ["batchop.a", "batchop.b", "batchop.c", "batchop.d", "batchop.x"]
+  // batchop.c is EVICTED from Ethereum, batchop.d TERMINATED, batchop.x neither an operator nor a member.
+  Assert.deepEqual(chainEligibleOperators(groupRow(4, group), Operators, Memberships, "ETHEREUM"), ["batchop.a", "batchop.b"])
+  Assert.deepEqual(chainEligibleOperators(groupRow(4, group), Operators, Memberships, "SOLANA"), ["batchop.a", "batchop.b", "batchop.c"])
+  // An operator that never joined the chain is not eligible on it.
+  Assert.deepEqual(
+    chainEligibleOperators(groupRow(4, ["batchop.a"]), Operators, Memberships.filter(row => row.chain_code !== "SOLANA"), "SOLANA"),
+    []
+  )
+  // A membership whose chain renders packed counts the same.
+  Assert.deepEqual(
+    chainEligibleOperators(groupRow(4, ["batchop.a"]), Operators, [{ account: "batchop.a", chain_code: SlugName.from("SOLANA"), status: 0 }], "SOLANA"),
+    ["batchop.a"]
+  )
+})
+
+test("a chain's eligible set is unknown without operators, memberships or a group on duty", () => {
+  Assert.equal(chainEligibleOperators(groupRow(4, ["batchop.a"]), null, Memberships, "ETHEREUM"), null)
+  Assert.equal(chainEligibleOperators(groupRow(4, ["batchop.a"]), Operators, null, "ETHEREUM"), null)
+  Assert.equal(chainEligibleOperators(epochRow(4), Operators, Memberships, "ETHEREUM"), null)
+  Assert.equal(chainEligibleOperators(undefined, Operators, Memberships, "ETHEREUM"), null)
+})
+
+test("a chain's group on duty is the epoch row's current group, every seat included", () => {
+  Assert.deepEqual(chainGroupOnDuty(groupRow(4, ["batchop.a", "batchop.b", "batchop.c"])), ["batchop.a", "batchop.b", "batchop.c"])
+  Assert.deepEqual(chainGroupOnDuty(groupRow(4, [])), [])
+  // No groups, a current group past them, or no row at all.
+  Assert.equal(chainGroupOnDuty(epochRow(4)), null)
+  Assert.equal(chainGroupOnDuty({ ...groupRow(4, ["batchop.a"]), current_batch_op_group: 5 }), null)
+  Assert.equal(chainGroupOnDuty(undefined), null)
+})
+
+test("a chain's reporters are its eligible members' reports in its current epoch, over every seat", () => {
+  const state = groupRow(4, ["batchop.a", "batchop.b", "batchop.c"]),
+    reports = [
+      report("ETHEREUM", "batchop.a", 4),
+      report("ETHEREUM", "batchop.b", 3), // an earlier epoch never counts again
+      report("ETHEREUM", "batchop.c", 4), // a seat no longer eligible: its report never counts
+      report("ETHEREUM", "batchop.x", 4), // outside the group
+      report("SOLANA", "batchop.b", 4) // another chain
+    ]
+  // batchop.c lost its eligibility: it still holds a seat, so the majority stays 2 of 3.
+  Assert.deepEqual(chainBacklogReports(reports, state, "ETHEREUM", ["batchop.a", "batchop.b"]), { reporters: 1, seats: 3 })
+  Assert.deepEqual(chainBacklogReports([], state, "SOLANA", ["batchop.a"]), { reporters: 0, seats: 3 })
+})
+
+test("a chain's reporters are unknown without its eligible set, its seats without a group on duty", () => {
+  const reports = [report("ETHEREUM", "batchop.a", 4)]
+  Assert.deepEqual(chainBacklogReports(reports, groupRow(4, ["batchop.a", "batchop.b"]), "ETHEREUM", null), {
+    reporters: null,
+    seats: 2
+  })
+  Assert.deepEqual(chainBacklogReports(reports, epochRow(4), "ETHEREUM", ["batchop.a"]), { reporters: 1, seats: null })
+})
+
+test("the heartbeat lists each chain's reporters over its group's seats", () => {
+  const group = ["batchop.a", "batchop.b", "batchop.c"],
+    states = { ETHEREUM: groupRow(4, group), SOLANA: groupRow(2, ["batchop.a", "batchop.b"]) },
+    reports = [report("ETHEREUM", "batchop.a", 4), report("ETHEREUM", "batchop.b", 4), report("SOLANA", "batchop.a", 1)],
+    eligible = { ETHEREUM: ["batchop.a", "batchop.b"], SOLANA: ["batchop.a"] }
+  Assert.equal(describeBacklogReports(Chains, states, reports, eligible), "ETHEREUM:2/3,SOLANA:0/2")
+  Assert.equal(describeBacklogReports(Chains, states, reports, { ETHEREUM: null }), "ETHEREUM:?/3,SOLANA:?/2")
+  Assert.equal(describeBacklogReports(Chains, { ETHEREUM: epochRow(4), SOLANA: states.SOLANA }, reports, eligible), "ETHEREUM:2/?,SOLANA:0/2")
+  // Before its genesis advance, or without a row, a chain has no epoch to report in.
+  Assert.equal(describeBacklogReports(Chains, { ETHEREUM: epochRow(0) }, reports, eligible), "ETHEREUM:?,SOLANA:?")
+  Assert.equal(describeBacklogReports(Chains, states, null, eligible), "?")
+  Assert.equal(describeBacklogReports([], states, reports, eligible), "?")
+})
+
+// ── complete table reads ────────────────────────────────────────────────────
+
+/** A `clio get table` stdout of `rows` (v6 `{key, value}` rows unless already plain). */
+function tableOutput(rows, more = false) {
+  return JSON.stringify({ rows, more, next_key: "" })
+}
+
+test("a complete read unwraps every row value, the qreports and servchains rows alike", () => {
+  const reportRow = report("ETHEREUM", "batchop.a", 4),
+    membershipRow = { account: "batchop.a", chain_code: "ETHEREUM", status: "SERVING" }
+  Assert.deepEqual(completeTableValues(tableOutput([{ key: "1", value: reportRow }])), [reportRow])
+  Assert.deepEqual(completeTableValues(tableOutput([{ key: "2", value: membershipRow }])), [membershipRow])
+  // A row that is not a v6 KV row reads as itself.
+  Assert.deepEqual(completeTableValues(tableOutput([membershipRow])), [membershipRow])
+  Assert.deepEqual(completeTableValues(tableOutput([])), [])
+})
+
+test("a truncated, unparseable or failed read is unknown, never a short table", () => {
+  const rows = [{ key: "1", value: report("ETHEREUM", "batchop.a", 4) }]
+  Assert.equal(completeTableValues(tableOutput(rows, true)), null)
+  Assert.equal(completeTableValues("{\"rows\": ["), null)
+  Assert.equal(completeTableValues(JSON.stringify({ more: false })), null)
+  Assert.equal(completeTableValues(null), null)
 })

@@ -416,9 +416,8 @@ export namespace BatchOperatorUnderwritingSteps {
    * first read. Only `sysio.synd::crank` issues a request, and while nothing is in play the
    * role cranks every {@link OperatorDaemonTool.UnderwriterIdleCrankIntervalMs}, hence the
    * budget. Its custody attestation is checked by the custody Steps, which wait for it. The
-   * syndication is an outpost → depot message, so the wait keeps `chain` due
-   * (`EpochAdvanceSteps.pollForKeepingDue`) until the outposts report their backlog to the
-   * depot themselves.
+   * syndication is an outpost → depot message, so the wait adds no traffic: the relays report
+   * the outpost's backlog to the depot (`sysio.msgch::reportqueue`), which makes `chain` due.
    *
    * @param actor - Report actor.
    * @param name - Step name.
@@ -448,11 +447,10 @@ export namespace BatchOperatorUnderwritingSteps {
       actor,
       name,
       description,
-      async (ctx, signal) => {
+      async ctx => {
+        // Traffic: the syndication's own message on the outpost, reported as its backlog.
         const floor = after == null ? -1 : ctx.outputs.assert(after),
-          envelope = await Steps.epochAdvance.pollForKeepingDue(
-            ctx,
-            [chain],
+          envelope = await pollFor(
             `${name}: the envelope has an issued request`,
             async () =>
               findRecordedEnvelope(
@@ -461,8 +459,7 @@ export namespace BatchOperatorUnderwritingSteps {
                 floor
               ),
             UnderwriterRequestIssuedBudgetMs,
-            SyndicationScenario.PollMs,
-            signal
+            SyndicationScenario.PollMs
           )
         ctx.outputs.set(epoch, envelope.epoch_index)
         ctx.outputs.set(request, envelope.request_id)
@@ -508,22 +505,19 @@ export namespace BatchOperatorUnderwritingSteps {
    * `GlobalState` readings. The newest attestation's `total_syndicated` then names the pool's
    * custody: a yield claim lands in the pool before any envelope carries its `LIQ_YIELD`, so
    * reading earlier compares the pool against a stale total. The attestations travel Solana →
-   * depot, so the wait keeps the Solana chain due (`EpochAdvanceSteps.pollForKeepingDue`) until
-   * the outposts report their backlog to the depot themselves.
+   * depot, so the wait adds no traffic: the syndications queue theirs on the outpost, the relays'
+   * per-epoch `report_liq_yield` crank queues the yield their own claims leave unreported, and the
+   * relays report that backlog to the depot (`sysio.msgch::reportqueue`), which makes Solana due.
    *
    * @param ctx - The build context.
    * @param label - What the poll is for (timeout message).
-   * @param signal - Abort signal.
    * @return The observation.
    */
   export async function readSettledCustody(
     ctx: ClusterBuildContext,
-    label: string,
-    signal: AbortSignal
+    label: string
   ): Promise<CustodyObservation> {
-    return Steps.epochAdvance.pollForKeepingDue(
-      ctx,
-      [SyndicationScenario.Chain],
+    return pollFor(
       `${label}: every custody attestation is persisted and no yield is unreported`,
       async () => {
         const state = await SolanaLiqSyndicationTool.readLiqYieldState(ctx)
@@ -540,8 +534,7 @@ export namespace BatchOperatorUnderwritingSteps {
           : null
       },
       DaemonEffectBudgetMs,
-      SyndicationScenario.PollMs,
-      signal
+      SyndicationScenario.PollMs
     )
   }
 
@@ -625,9 +618,9 @@ export namespace BatchOperatorUnderwritingSteps {
       actor,
       name,
       description,
-      async (ctx, signal) => {
+      async ctx => {
         await assertCovered(ctx, plan.firstRequest, plan.amount)
-        const observation = await readSettledCustody(ctx, name, signal)
+        const observation = await readSettledCustody(ctx, name)
         await findUserAttestation(
           ctx,
           observation.attestations,
@@ -663,9 +656,9 @@ export namespace BatchOperatorUnderwritingSteps {
       actor,
       name,
       description,
-      async (ctx, signal) => {
+      async ctx => {
         await assertCovered(ctx, plan.secondRequest, plan.laterAmount)
-        const observation = await readSettledCustody(ctx, name, signal),
+        const observation = await readSettledCustody(ctx, name),
           first = await findUserAttestation(
             ctx,
             observation.attestations,
@@ -719,8 +712,8 @@ export namespace BatchOperatorUnderwritingSteps {
       actor,
       name,
       description,
-      async (ctx, signal) => {
-        const observation = await readSettledCustody(ctx, name, signal)
+      async ctx => {
+        const observation = await readSettledCustody(ctx, name)
         await findUserAttestation(
           ctx,
           observation.attestations,

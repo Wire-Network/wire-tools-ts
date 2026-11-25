@@ -6,7 +6,6 @@ import {
   OperatorDaemonTool,
   ProtocolTiming,
   StepExtraRecorder,
-  Steps,
   SyndicationScenario,
   WireClient,
   WireSyndicationTool,
@@ -102,9 +101,8 @@ export namespace SyndicationPluginUnderwritingCapSteps {
    * Watch from before the second submission, discovering its request and capturing its
    * held state in that same poll iteration. Phase cancellation ends the poll on its next
    * iteration (at most one poll interval after any pending RPC completes).
-   * The second intake is a Solana → depot message, so the poll keeps Solana due with governance
-   * traffic (`EpochAdvanceSteps.pollForKeepingDue`) until the outposts report their backlog to the
-   * depot themselves; it stops the moment the intake lands, so the hold window adds no epochs.
+   * The second intake is a Solana → depot message, so the poll adds no traffic: the relays report
+   * the outpost's backlog to the depot (`sysio.msgch::reportqueue`), which makes Solana due.
    * No custody or finality wait separates request discovery from the observation. Payment
    * in the read bracket is accepted only with an OPEN, zero-bonded snapshot whose chain
    * creation time strictly precedes first approval; bonding is monotonic and atomic.
@@ -130,9 +128,8 @@ export namespace SyndicationPluginUnderwritingCapSteps {
       async (ctx, signal) => {
         const firstId = ctx.outputs.assert(plan.firstRequest),
           floor = ctx.outputs.assert(plan.firstEpoch),
-          envelope = await Steps.epochAdvance.pollForKeepingDue(
-            ctx,
-            [SyndicationScenario.Chain],
+          // Traffic: the second syndication's own message on the outpost, reported as its backlog.
+          envelope = await pollFor(
             `${name}: second request issued and held`,
             async () => {
               signal.throwIfAborted()
@@ -199,8 +196,7 @@ export namespace SyndicationPluginUnderwritingCapSteps {
               return found
             },
             BatchOperatorUnderwritingSteps.UnderwriterRequestIssuedBudgetMs,
-            SyndicationScenario.PollMs,
-            signal
+            SyndicationScenario.PollMs
           )
         ctx.outputs.set(plan.secondEpoch, envelope.epoch_index)
         ctx.outputs.set(plan.secondRequest, envelope.request_id)

@@ -272,7 +272,17 @@ epochs, not blocks), and a started, unpaused chain whose current epoch (genesis
 included) stays undecided past `max(420 s, 8 × its minimum)` (suppressed by
 `--expect-epoch-freeze`).
 
-**The keep-due pump.** A flow wait that needs a chain to advance gives it
+**Queued messages make their chain due themselves.** A message the depot queues
+to an outpost gives the chain traffic (`sysio.msgch::queueout`), and the relays
+report each outpost's outbound backlog to the depot (`sysio.msgch::reportqueue`;
+reports from eligible members holding a strict majority of the seats of the
+chain's group on duty record its traffic), so a wait on an outpost → depot
+delivery (a syndication, a yield report, a node-owner claim) polls with no pump:
+it relies on the backlog report, exercising the path a real network runs. The
+monitor's `qreports=` field shows each chain's reporters over its group's seats.
+
+**The keep-due pump.** A flow wait that needs a chain to advance with nothing
+queued on either side (governance, an idle chain, a pacing window) gives it
 traffic through the one keep-due pump: `EpochAdvanceSteps.pollUntilKeepingDue`
 / `pollForKeepingDue` read the `epochstate` snapshot first, then the wait's
 predicate, and only while it fails push `sysio.epoch::notetraffic` (traffic

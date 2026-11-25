@@ -23,9 +23,9 @@ so Solana advances at most once per minimum, and only with traffic: at a 60-seco
 the window alone could hold about ten epochs, so the second request's statement could
 leave the log first and the request would never be bonded. 72 seconds is the shortest
 minimum that keeps one epoch to spare; a longer minimum only adds margin, since the log
-counts epochs. The flow queues nothing to Solana: each wait for a Solana → depot intake
-keeps Solana due with keep-due traffic (the keep-due pump) and stops the moment the
-intake lands, so the hold window itself adds no epochs.
+counts epochs. The flow queues nothing to Solana: each Solana → depot intake makes Solana
+due itself, once the relays report the outpost's backlog to the depot
+(`sysio.msgch::reportqueue`), and the waits for them add no traffic.
 
 Step deadlines remain ceilings that return early; they do not size the window.
 `WIRE_FLOW_TIMEOUT_SCALE` scales deadlines only. Once the first request is issued (and has

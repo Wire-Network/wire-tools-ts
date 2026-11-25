@@ -115,6 +115,14 @@ Use the branches the manifest declares (`wire-platform-manifest/default.xml`): t
 (cd wire-solana   && git fetch && git checkout next)
 ```
 
+The batch operators' relay reports each outpost's outbound backlog to the depot (`sysio.msgch::reportqueue`),
+which is what makes a chain due for a message an outpost queued. wire-ethereum must be at a version whose `OPP`
+declares the `pendingOutbound()` view the relay reads. On Solana the relay decodes
+`OutboundMessageBuffer.attestation_count` and `LatestOutboundEnvelope.epoch_index` at fixed offsets, so the bootstrap
+checks that the `liqsol_core` IDL declares those layouts (and `EpochDeliveries.deliveries` records carrying an
+`operator` key): a check of the relay's decode surface, not of an outpost version. The bootstrap's artifact
+preparation refuses a build failing either check before any operator daemon starts.
+
 ---
 
 ## 2. Environment
