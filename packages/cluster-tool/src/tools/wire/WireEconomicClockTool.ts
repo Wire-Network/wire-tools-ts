@@ -263,6 +263,41 @@ export namespace WireEconomicClockTool {
   }
 
   /**
+   * Assert a chain's `due_at` follows its `epochcfg` — pure: an idle chain has neither traffic nor
+   * a `due_at`; a chain with traffic is due exactly at the later of its epoch start plus its
+   * minimum duration and its traffic plus its traffic wait.
+   *
+   * @param reading - The chain's consensus reading.
+   * @param config - The chain's `epochcfg` row: its minimum and its traffic wait (s).
+   * @param chain - The chain (for the message).
+   * @throws When an idle chain carries a `due_at`, or a chain with traffic is due at another time.
+   */
+  export function assertDueAt(
+    reading: ConsensusReading,
+    config: SysioContracts.SysioEpochEpochConfigType,
+    chain: Constants.OutpostChainCodename
+  ): void {
+    if (reading.trafficSinceMs === EpochContractSteps.NoTrafficMs) {
+      Assert.strictEqual(
+        reading.dueAtMs,
+        EpochContractSteps.NoTrafficMs,
+        `the ${chain} epoch ${reading.epochIndex} has no traffic yet is due at ${new Date(reading.dueAtMs).toISOString()}`
+      )
+      return
+    }
+    const { epoch_duration_sec: minimumSec, traffic_wait_sec: trafficWaitSec } = config
+    Assert.strictEqual(
+      reading.dueAtMs,
+      Math.max(
+        reading.epochStartMs + minimumSec * ProtocolTiming.MsPerSecond,
+        reading.trafficSinceMs + trafficWaitSec * ProtocolTiming.MsPerSecond
+      ),
+      `the ${chain} epoch ${reading.epochIndex} is not due at the later of its start plus its ${minimumSec} s ` +
+        `minimum and its traffic plus its ${trafficWaitSec} s wait`
+    )
+  }
+
+  /**
    * One chain's consensus reading as text — its epoch index, marked when the chain is paused
    * (`2 (paused)`), else when it is idle (`3 (idle)`). The per-chain describer of
    * `describeOutpostChains`, which spells every chain's alike: `ETHEREUM 4 (idle), SOLANA 2 (paused)`.

@@ -971,6 +971,70 @@ describe("WireEconomicClockTool", () => {
   })
 })
 
+describe("WireEconomicClockTool.assertDueAt", () => {
+  const MinimumSec = ConsensusDurationSec,
+    TrafficWaitSec = ConsensusDurationSec / 2,
+    MinimumMs = MinimumSec * ProtocolTiming.MsPerSecond,
+    TrafficWaitMs = TrafficWaitSec * ProtocolTiming.MsPerSecond,
+    StartMs = GridStartMs,
+    /** The chain's `epochcfg` row: its minimum and the contract's default traffic wait (half). */
+    Config: SysioContracts.SysioEpochEpochConfigType = {
+      chain_code: String(SlugName.from(Held)),
+      epoch_duration_sec: MinimumSec,
+      traffic_wait_sec: TrafficWaitSec,
+      late_window_sec: TrafficWaitSec,
+      operators_per_epoch: 3,
+      batch_operator_minimum_active: 9,
+      batch_op_groups: 3,
+      epoch_retention_envelope_log_count: 2
+    }
+
+  /** The chain at epoch 4, started at `StartMs`, with the given traffic and due time. */
+  function dueReading(trafficSinceMs: number, dueAtMs: number): WireEconomicClockTool.ConsensusReading {
+    return { epochIndex: 4, epochStartMs: StartMs, trafficSinceMs, dueAtMs, paused: false, decided: true }
+  }
+
+  it("passes a chain with traffic due one minimum after its start", () => {
+    // Traffic before the start, or early in the epoch.
+    WireEconomicClockTool.assertDueAt(dueReading(StartMs - 5_000, StartMs + MinimumMs), Config, Held)
+    WireEconomicClockTool.assertDueAt(dueReading(StartMs + 7_000, StartMs + MinimumMs), Config, Held)
+  })
+
+  it("passes a chain whose late traffic makes it due one traffic wait after the traffic", () => {
+    const lateMs = StartMs + MinimumMs - 1_000
+    WireEconomicClockTool.assertDueAt(dueReading(lateMs, lateMs + TrafficWaitMs), Config, Held)
+  })
+
+  it("passes an idle chain with neither traffic nor a due_at", () => {
+    WireEconomicClockTool.assertDueAt(
+      dueReading(Steps.contracts.sysio.epoch.NoTrafficMs, Steps.contracts.sysio.epoch.NoTrafficMs),
+      Config,
+      Held
+    )
+  })
+
+  it("fails a due_at off the rule", () => {
+    const lateMs = StartMs + MinimumMs - 1_000
+    // Due one minimum after the start, as if the late traffic waited nothing; then one full
+    // minimum after the traffic, the rule before the traffic wait.
+    ;[StartMs + MinimumMs, lateMs + MinimumMs].forEach(dueAtMs =>
+      expect(() => WireEconomicClockTool.assertDueAt(dueReading(lateMs, dueAtMs), Config, Held)).toThrow(
+        /ETHEREUM epoch 4 is not due at the later of its start plus its 60 s minimum and its traffic plus its 30 s wait/
+      )
+    )
+  })
+
+  it("fails an idle chain carrying a due_at", () => {
+    expect(() =>
+      WireEconomicClockTool.assertDueAt(
+        dueReading(Steps.contracts.sysio.epoch.NoTrafficMs, StartMs + MinimumMs),
+        Config,
+        Held
+      )
+    ).toThrow(/ETHEREUM epoch 4 has no traffic yet is due at/)
+  })
+})
+
 /** The real client's chain-time parser, reachable for the stamp helper's round trip. */
 describe("fixture stamps", () => {
   it("round-trip through WireClient.chainTimeMs", () => {

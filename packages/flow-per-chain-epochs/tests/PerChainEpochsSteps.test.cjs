@@ -261,45 +261,11 @@ describe("epoch configuration", () => {
     )
   })
 
-  test("a chain due at the later of its start plus its minimum and its traffic plus its wait passes", () => {
-    const ethereum = consensus[OutpostChainCodename.ETHEREUM],
-      startMs = ethereum.epochStartMs,
-      minimumMs = EthereumSec * 1_000
-    // Traffic before the start, or early in the epoch: due one minimum after the start.
-    PerChainEpochsSteps.assertDueAt(
-      { ...ethereum, trafficSinceMs: startMs - 5_000, dueAtMs: startMs + minimumMs },
-      ethereumConfig,
-      OutpostChainCodename.ETHEREUM
-    )
-    PerChainEpochsSteps.assertDueAt(
-      { ...ethereum, trafficSinceMs: startMs + 7_000, dueAtMs: startMs + minimumMs },
-      ethereumConfig,
-      OutpostChainCodename.ETHEREUM
-    )
-    // Traffic late in the epoch: due one wait after the traffic.
-    const lateMs = startMs + minimumMs - 1_000
-    PerChainEpochsSteps.assertDueAt(
-      { ...ethereum, trafficSinceMs: lateMs, dueAtMs: lateMs + waitMs },
-      ethereumConfig,
-      OutpostChainCodename.ETHEREUM
-    )
-    // Idle: neither traffic nor due.
-    PerChainEpochsSteps.assertDueAt(ethereum, ethereumConfig, OutpostChainCodename.ETHEREUM)
-  })
-
-  test("a due_at off the rule fails, in the configuration check too", () => {
+  test("a due_at off the rule fails the configuration check", () => {
     const ethereum = consensus[OutpostChainCodename.ETHEREUM],
       lateMs = ethereum.epochStartMs + EthereumSec * 1_000 - 1_000,
       // Due one minimum after the start, as if the late traffic waited nothing.
-      early = { ...ethereum, trafficSinceMs: lateMs, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 },
-      // Due one full minimum after the traffic, the rule before the wait.
-      late = { ...ethereum, trafficSinceMs: lateMs, dueAtMs: lateMs + EthereumSec * 1_000 }
-    ;[early, late].forEach(reading =>
-      Assert.throws(
-        () => PerChainEpochsSteps.assertDueAt(reading, ethereumConfig, OutpostChainCodename.ETHEREUM),
-        /ETHEREUM epoch 4 is not due at the later of its start plus its 60 s minimum and its traffic plus its 30 s wait/
-      )
-    )
+      early = { ...ethereum, trafficSinceMs: lateMs, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 }
     Assert.throws(
       () =>
         PerChainEpochsSteps.assertEpochConfiguration(
@@ -307,20 +273,17 @@ describe("epoch configuration", () => {
           { ...consensus, [OutpostChainCodename.ETHEREUM]: early },
           Durations
         ),
-      /is not due at the later of its start plus its 60 s minimum/
+      /ETHEREUM epoch 4 is not due at the later of its start plus its 60 s minimum and its traffic plus its 30 s wait/
     )
   })
 
-  test("an idle chain carrying a due_at fails", () => {
-    const ethereum = consensus[OutpostChainCodename.ETHEREUM]
-    Assert.throws(
-      () =>
-        PerChainEpochsSteps.assertDueAt(
-          { ...ethereum, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 },
-          ethereumConfig,
-          OutpostChainCodename.ETHEREUM
-        ),
-      /ETHEREUM epoch 4 has no traffic yet is due at/
+  test("a chain due at the later of its start plus its minimum and its traffic plus its wait passes the configuration check", () => {
+    const ethereum = consensus[OutpostChainCodename.ETHEREUM],
+      lateMs = ethereum.epochStartMs + EthereumSec * 1_000 - 1_000
+    PerChainEpochsSteps.assertEpochConfiguration(
+      configs,
+      { ...consensus, [OutpostChainCodename.ETHEREUM]: { ...ethereum, trafficSinceMs: lateMs, dueAtMs: lateMs + waitMs } },
+      Durations
     )
   })
 

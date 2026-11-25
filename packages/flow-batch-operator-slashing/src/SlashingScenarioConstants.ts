@@ -172,13 +172,6 @@ export namespace SlashingScenarioConstants {
   export const OperatorTableReadLimit = 100
   /** Row ceiling for `sysio.msgch::outpcons` reads (one row per active outpost). */
   export const OutpostConsensusTableReadLimit = 100
-  /**
-   * Row ceiling for `sysio.msgch::envelopes` reads. The depot keeps each outpost's
-   * deliveries for its current and previous epoch only, one row per delivering
-   * group member, so the table stays far below this; a read that reports more rows
-   * is refused, since a truncated read could miss the row it looks for.
-   */
-  export const EnvelopeTableReadLimit = 100
 
   /**
    * Frozen := the epoch index held across ≥ this many consecutive settle polls

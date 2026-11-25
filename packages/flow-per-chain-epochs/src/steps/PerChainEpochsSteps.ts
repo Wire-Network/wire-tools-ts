@@ -185,8 +185,9 @@ export namespace PerChainEpochsSteps {
   /**
    * Assert the depot paces each outpost chain by its configured minimum: its `epochcfg` duration
    * is the configured one, its `epochstate` is idle or due exactly at the later of its epoch start
-   * plus its minimum and its traffic plus its traffic wait ({@link assertDueAt}), and the chains'
-   * minimums are pairwise distinct (so each later per-chain check tells the chains apart).
+   * plus its minimum and its traffic plus its traffic wait (`WireEconomicClockTool.assertDueAt`),
+   * and the chains' minimums are pairwise distinct (so each later per-chain check tells the chains
+   * apart).
    *
    * @param depotConfigs - Each chain's `epochcfg` row.
    * @param consensus - Every chain's consensus epoch, read from its `epochstate` row.
@@ -205,49 +206,12 @@ export namespace PerChainEpochsSteps {
         configured[chain],
         `the ${chain} epochcfg runs ${depotDuration} s epochs, not the configured ${configured[chain]} s`
       )
-      assertDueAt(consensus[chain], depotConfigs[chain], chain)
+      WireEconomicClockTool.assertDueAt(consensus[chain], depotConfigs[chain], chain)
     })
     Assert.strictEqual(
       new Set(OutpostChainCodenames.map(chain => configured[chain])).size,
       OutpostChainCodenames.length,
       "two outpost chains run one consensus epoch duration, so no per-chain check can tell them apart"
-    )
-  }
-
-  /**
-   * Assert a chain's `due_at` follows its `epochcfg` — pure: an idle chain has neither traffic nor
-   * a `due_at`; a chain with traffic is due exactly at the later of its epoch start plus its
-   * minimum duration and its traffic plus its traffic wait.
-   *
-   * @param reading - The chain's consensus reading.
-   * @param config - The chain's `epochcfg` row: its minimum and its traffic wait (s).
-   * @param chain - The chain (for the message).
-   * @throws When an idle chain carries a `due_at` or traffic alone, or a chain with traffic is due
-   *   at another time.
-   */
-  export function assertDueAt(
-    reading: WireEconomicClockTool.ConsensusReading,
-    config: SysioContracts.SysioEpochEpochConfigType,
-    chain: OutpostChainCodename
-  ): void {
-    const { NoTrafficMs } = Steps.contracts.sysio.epoch
-    if (reading.trafficSinceMs === NoTrafficMs) {
-      Assert.strictEqual(
-        reading.dueAtMs,
-        NoTrafficMs,
-        `the ${chain} epoch ${reading.epochIndex} has no traffic yet is due at ${new Date(reading.dueAtMs).toISOString()}`
-      )
-      return
-    }
-    const { epoch_duration_sec: minimumSec, traffic_wait_sec: trafficWaitSec } = config
-    Assert.strictEqual(
-      reading.dueAtMs,
-      Math.max(
-        reading.epochStartMs + minimumSec * ProtocolTiming.MsPerSecond,
-        reading.trafficSinceMs + trafficWaitSec * ProtocolTiming.MsPerSecond
-      ),
-      `the ${chain} epoch ${reading.epochIndex} is not due at the later of its start plus its ${minimumSec} s ` +
-        `minimum and its traffic plus its ${trafficWaitSec} s wait`
     )
   }
 

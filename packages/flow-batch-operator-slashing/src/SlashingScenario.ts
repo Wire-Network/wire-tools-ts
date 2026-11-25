@@ -90,8 +90,8 @@ async function verifyContestedBucketEmpty(
   ctx: ClusterBuildContext
 ): Promise<void> {
   const epoch = ctx.outputs.assert(DisputeSteps.ContestedEpochKey),
-    bucket = DisputeSteps.outpostEpochEnvelopes(
-      await DisputeSteps.readEnvelopes(ctx),
+    bucket = Steps.contracts.sysio.msgch.outpostEpochEnvelopes(
+      await Steps.contracts.sysio.msgch.readEnvelopes(ctx),
       Constants.ContestedChain,
       epoch
     )

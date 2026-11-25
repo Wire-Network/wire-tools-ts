@@ -4,6 +4,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 
 import { mapOutpostChains, type PerOutpostChain } from "@wireio/cluster-tool-shared"
 
+import type { Constants } from "../../../../Constants.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -172,5 +173,52 @@ export namespace MsgchContractSteps {
       `MsgchContractSteps: sysio.msgch::outpcons has more than ${OutpostConsensusRowLimit} rows; the read is truncated`
     )
     return mapOutpostChains(chain => EpochContractSteps.findChainRow(rows, chain))
+  }
+
+  /**
+   * Row ceiling of the {@link readEnvelopes} read. `deliver` prunes each outpost's rows to its
+   * retained epochs, so the table holds a few groups of rows per outpost chain; a read that still
+   * reports `more` is refused rather than trusted.
+   */
+  export const EnvelopeRowLimit = 100
+
+  /**
+   * Every `sysio.msgch::envelopes` row: the inbound deliveries the depot still retains, one per
+   * delivering batch operator and (outpost, epoch).
+   *
+   * @param ctx - The build context.
+   * @returns The rows.
+   * @throws When the read is truncated at {@link EnvelopeRowLimit}.
+   */
+  export async function readEnvelopes<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioMsgchEnvelopeEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.envelopes.query({ limit: EnvelopeRowLimit })
+    Assert.ok(
+      !more,
+      `MsgchContractSteps: sysio.msgch::envelopes has more than ${EnvelopeRowLimit} rows; the read is truncated`
+    )
+    return rows
+  }
+
+  /**
+   * The deliveries of one (outpost, epoch) bucket: the rows of `rows` for `chain`'s `epochIndex`,
+   * the set `sysio.msgch::evalcons` tallies — pure.
+   *
+   * @param rows - `sysio.msgch::envelopes` rows ({@link readEnvelopes}).
+   * @param chain - The outpost chain.
+   * @param epochIndex - The chain's epoch.
+   * @returns The bucket's rows, in table order.
+   */
+  export function outpostEpochEnvelopes(
+    rows: readonly SysioContracts.SysioMsgchEnvelopeEntryType[],
+    chain: Constants.OutpostChainCodename,
+    epochIndex: number
+  ): SysioContracts.SysioMsgchEnvelopeEntryType[] {
+    return rows.filter(
+      row => EpochContractSteps.isChainRow(row.chain_code, chain) && Number(row.epoch_index) === epochIndex
+    )
   }
 }

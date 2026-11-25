@@ -162,11 +162,6 @@ function clockContext(headBlockTime) {
   }
 }
 
-/** A `sysio.msgch::envelopes` row of `chain` at `epochIndex` delivered by `operator`, as the RPC renders it. */
-function envelope(chain, epochIndex, operator) {
-  return { chain_code: String(SlugName.from(chain)), epoch_index: epochIndex, batch_op_name: operator }
-}
-
 describe("isExactGroup", () => {
   test("the dispute operators in any order are exactly the group", () => {
     Assert.equal(DisputeSteps.isExactGroup([...DisputeAccounts].reverse(), DisputeAccounts), true)
@@ -227,64 +222,6 @@ describe("hasAdvanceHeadroom / isDue", () => {
     const busy = epochState(ContestedEpoch, DisputeAccounts)
     Assert.equal(DisputeSteps.hasAdvanceHeadroom(busy, "not a time", 0), false)
     Assert.equal(DisputeSteps.isDue(busy, "not a time"), false)
-  })
-})
-
-describe("outpostEpochEnvelopes", () => {
-  test("keeps only the chain's deliveries for the epoch", () => {
-    const bucket = DisputeSteps.outpostEpochEnvelopes(
-      [
-        envelope(Constants.ContestedChain, ContestedEpoch, "dispop.a"),
-        envelope(Constants.ContestedChain, ContestedEpoch - 1, "batchop.a"),
-        envelope(Constants.RunningChain, ContestedEpoch, "batchop.b"),
-        envelope(Constants.ContestedChain, ContestedEpoch, "dispop.b")
-      ],
-      Constants.ContestedChain,
-      ContestedEpoch
-    )
-    Assert.deepEqual(
-      bucket.map(row => row.batch_op_name),
-      ["dispop.a", "dispop.b"]
-    )
-  })
-
-  test("an empty table yields an empty bucket", () => {
-    Assert.deepEqual(DisputeSteps.outpostEpochEnvelopes([], Constants.ContestedChain, ContestedEpoch), [])
-  })
-})
-
-describe("readEnvelopes", () => {
-  /** A build context whose `sysio.msgch::envelopes` read returns `rows` and `more`, recording each read. */
-  function envelopesContext(rows, more) {
-    const reads = []
-    return {
-      reads,
-      wire: {
-        getSysioContract: contract => ({
-          tables: {
-            envelopes: {
-              query: async options => {
-                reads.push({ contract, options })
-                return { rows, more }
-              }
-            }
-          }
-        })
-      }
-    }
-  }
-
-  test("reads sysio.msgch::envelopes within the row ceiling", async () => {
-    const rows = [envelope(Constants.ContestedChain, ContestedEpoch, "dispop.a")],
-      ctx = envelopesContext(rows, false)
-    Assert.deepEqual(await DisputeSteps.readEnvelopes(ctx), rows)
-    Assert.deepEqual(ctx.reads, [
-      { contract: SysioContracts.SysioContractName.msgch, options: { limit: Constants.EnvelopeTableReadLimit } }
-    ])
-  })
-
-  test("a truncated read is refused rather than trusted", async () => {
-    await Assert.rejects(DisputeSteps.readEnvelopes(envelopesContext([], true)), /the read is truncated/)
   })
 })
 

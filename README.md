@@ -148,6 +148,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `flow-economic-clock` | `@wireio/test-flow-economic-clock` | The economic clock beside consensus: economic epochs on their own grid pay emissions, a withdrawal matures only once both clocks pass, a held payout leaves OPP running and pays the whole period once funded, and the andon cord leaves emissions and `claimpay` working |
 | `flow-per-chain-epochs` | `@wireio/test-flow-per-chain-epochs` | Each outpost chain runs its own depot-paced consensus epoch: kept due, Ethereum at a 60 s minimum and Solana at 150 s each advance on their own minimum, an operator joined to one chain is seated only there, `leavechain` stops its new seats on that chain while the other keeps seating it, and a pause of Ethereum holds only Ethereum while Solana, kept due, advances and a Solana-only withdrawal matures |
+| `flow-depot-paced-epochs` | `@wireio/test-flow-depot-paced-epochs` | Each outpost chain's epochs are paced by the depot: an idle chain stays in its decided epoch while the economic clock ticks, an outpost backlog reported by a strict majority (an Ethereum burst) or a depot-queued message (a Solana desyndication) makes its chain alone due after its minimum and traffic wait, a strict majority decides at its second delivery, and a member restarted inside the late window has its late delivery credited |
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
@@ -179,10 +180,11 @@ and outbound queue entries are intermediate checks.
 | `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
 | `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
 
-The other nine enabled flows (`flow-batch-operator-slashing`,
-`flow-batch-operator-termination`, `flow-economic-clock`, `flow-emissions-soak`,
-`flow-governance-handoff`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
-`flow-per-chain-epochs`, `flow-producer-registration`) exercise their own paths. Imported
+The other ten enabled flows (`flow-batch-operator-slashing`,
+`flow-batch-operator-termination`, `flow-depot-paced-epochs`, `flow-economic-clock`,
+`flow-emissions-soak`, `flow-governance-handoff`, `flow-node-owner-nft`,
+`flow-operator-collateral-deposit`, `flow-per-chain-epochs`, `flow-producer-registration`) exercise
+their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 

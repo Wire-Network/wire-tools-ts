@@ -9,7 +9,6 @@ import {
   Constants as TestClusterConstants,
   ethereumKeyPairFromWallet,
   isNotEmpty,
-  isPackedCode,
   matchesProtoEnum,
   outputKey,
   pollUntil,
@@ -205,47 +204,6 @@ export namespace SlashingScenarioDisputeSteps {
   function disputeOperatorAccounts(ctx: ClusterBuildContext): string[] {
     return Constants.DisputeOperators.map(
       label => ctx.keyStore.assertOperator(label).account
-    )
-  }
-
-  /**
-   * Every `sysio.msgch::envelopes` row: the inbound deliveries the depot still retains.
-   *
-   * @param ctx - The build context.
-   * @returns The rows.
-   * @throws If the read reports more rows than {@link SlashingScenarioConstants.EnvelopeTableReadLimit}.
-   */
-  export async function readEnvelopes(
-    ctx: ClusterBuildContext
-  ): Promise<SysioContracts.SysioMsgchEnvelopeEntryType[]> {
-    const { rows, more } = await ctx.wire
-      .getSysioContract(SysioContractName.msgch)
-      .tables.envelopes.query({ limit: Constants.EnvelopeTableReadLimit })
-    Assert.ok(
-      !more,
-      `sysio.msgch::envelopes holds more than ${Constants.EnvelopeTableReadLimit} rows; the read is truncated`
-    )
-    return rows
-  }
-
-  /**
-   * The deliveries of one (outpost, epoch) bucket: the rows of `rows` for `chain`'s
-   * `epochIndex`, the set `sysio.msgch::evalcons` tallies.
-   *
-   * @param rows - `sysio.msgch::envelopes` rows (see {@link readEnvelopes}).
-   * @param chain - The outpost chain.
-   * @param epochIndex - The chain's epoch.
-   * @returns The bucket's rows.
-   */
-  export function outpostEpochEnvelopes(
-    rows: SysioContracts.SysioMsgchEnvelopeEntryType[],
-    chain: TestClusterConstants.OutpostChainCodename,
-    epochIndex: number
-  ): SysioContracts.SysioMsgchEnvelopeEntryType[] {
-    return rows.filter(
-      row =>
-        isPackedCode(row.chain_code, chain) &&
-        Number(row.epoch_index) === epochIndex
     )
   }
 
