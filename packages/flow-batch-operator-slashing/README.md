@@ -11,12 +11,14 @@ that epoch instead of owning it alone. The flow runs every miss rail at its loos
 `terminateMinimumPercentSamples` 100), so the dispute operators are not evicted before the slash.
 
 Nothing delivers for the new epoch, so Ethereum freezes on it with an empty envelope bucket, which
-the flow verifies. Past that epoch's boundary the three deliver three different envelopes for it.
-`sysio.msgch::evalcons` opens a dispute and `sysio.chalg::opendispute` pauses the Ethereum consensus
-epoch alone: the Solana chain's schedule keeps the bootstrapped operators, which keep it advancing.
-Three of the four Tier-1 node owners vote the canonical checksum, the bootstrapped batch operators'
-`chkdispute` crank resolves the dispute and lifts the pause, and Ethereum's next `advance` slashes
-the two non-canonical deliverers. The canonical deliverer is not slashed.
+the flow verifies. The three then deliver three different envelopes for it. The third leaves no
+version able to win, so its `sysio.msgch::evalcons` opens a dispute and `sysio.chalg::opendispute`
+pauses the Ethereum consensus epoch alone: the Solana chain's schedule keeps the bootstrapped
+operators, which keep it advancing. Three of the four Tier-1 node owners vote the canonical
+checksum, and the bootstrapped batch operators' `chkdispute` crank resolves the dispute and lifts
+the pause. The resolution's acceptance of the winner slashes the two non-canonical deliverers in
+that transaction, while Ethereum still sits at the contested epoch. The canonical deliverer is not
+slashed.
 
 While the dispute is open, the **EconomicClockDuringDispute** group checks that the pause holds the
 Ethereum consensus only. An economic epoch opens on the bootstrapped relays' `tickeconomy` crank

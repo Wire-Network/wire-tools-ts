@@ -50,10 +50,10 @@ const UtcZuluSuffix = "Z"
 export namespace SlashingScenarioDisputeSteps {
   // ── Cross-step output keys ────────────────────────────────────────────────
 
-  /** The frozen, dispute-operators-owned epoch (boundary passed) hosting the divergent split. */
+  /** The frozen, dispute-operators-owned epoch hosting the divergent split. */
   export const ContestedEpochKey = outputKey<number>(
     "SlashingScenario.contestedEpoch",
-    "the frozen dispute-operators-owned epoch whose boundary has passed"
+    "the frozen dispute-operators-owned epoch hosting the divergent split"
   )
 
   /** What the Tier-1 electorate votes for — the open dispute + its canonical candidate. */
@@ -330,43 +330,6 @@ export namespace SlashingScenarioDisputeSteps {
       ?.checksum
   }
 
-  // ── Cranks (permissionless writes driven inside polls) ───────────────────
-
-  /**
-   * Crank the contested chain's consensus: `sysio.msgch::chkcons(chain)`
-   * (permissionless) re-runs `evalcons` for that chain's current epoch and drives
-   * its epoch advance. With the dispute operators SBP-less, nothing else cranks
-   * the contested chain, so the flow does — to drive the post-resolution
-   * `advance` where the slash runs. Tolerant of
-   * transient errors (e.g. chkcons racing a concurrent advance / a forked-out
-   * crank) so it is safe to call inside a poll — but NEVER silently: a
-   * persistent crank failure (the original `tx_duplicate` bug) is only
-   * diagnosable if it is logged. The typed `invoke` waits for finality, spacing
-   * repeated cranks so byte-identical empty-data txs don't collide on TAPOS.
-   *
-   * @param ctx - The build context.
-   */
-  export async function crankChkcons(ctx: ClusterBuildContext): Promise<void> {
-    try {
-      await ctx.wire
-        .getSysioContract(SysioContractName.msgch)
-        .actions.chkcons.invoke(
-          { chain_code: Constants.ContestedChainCode },
-          {
-            authorization: [
-              {
-                actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator)
-                  .account,
-                permission: ActivePermission
-              }
-            ]
-          }
-        )
-    } catch (error) {
-      log.warn(`[slashing] chkcons crank transient: ${errorMessage(error)}`)
-    }
-  }
-
   // There is deliberately NO `crankChkdispute` here. `sysio.chalg::chkdispute` is
   // cranked in PRODUCTION by `batch_operator_plugin`'s epoch tick from every ACTIVE
   // batch operator (wire-sysio `crank_open_disputes`). A flow that cranks the tally
@@ -377,31 +340,6 @@ export namespace SlashingScenarioDisputeSteps {
   // daemons and stay opreg-ACTIVE across the dispute (bootstrapped ops bypass
   // `termcheck`, and a paused epoch runs no `recorddel`), so their plugin tick is
   // what resolves the dispute here.
-
-  /**
-   * Wait until the CHAIN's head-block time is past the contested chain's current
-   * epoch's `next_epoch_start` (plus a margin). A dispute opens only from a deliver
-   * whose ON-CHAIN block time is ≥ `next_epoch_start` (`chkcons` can't open
-   * one), and the SBP-less dispute group never reaches consensus so the epoch
-   * stays put. Gating on the chain clock rather than the runner's wall clock
-   * avoids the race where the runner is past the boundary but the chain is a
-   * block or two behind, landing the divergent deliver pre-boundary so no
-   * dispute ever opens.
-   *
-   * @param ctx - The build context.
-   */
-  export async function waitPastEpochBoundary(
-    ctx: ClusterBuildContext
-  ): Promise<void> {
-    await pollUntil(
-      "chain head-block time passes next_epoch_start",
-      async () =>
-        (await readMsUntilEpochBoundary(ctx)) <=
-        -Constants.EpochBoundaryMarginMs,
-      Constants.boundaryDeadlineMs(),
-      Constants.BoundaryPollIntervalMs
-    )
-  }
 
   /**
    * The chain-clock time left before an epoch boundary (ms): `nextEpochStart` minus the
@@ -751,14 +689,15 @@ export namespace SlashingScenarioDisputeSteps {
       )
   }
 
-  // ── Step: stage the contested epoch (boundary wait + capture) ─────────────
+  // ── Step: stage the contested epoch (capture) ─────────────────────────────
 
   /**
-   * Wait past the settled epoch's boundary ({@link waitPastEpochBoundary}) and
-   * capture the contested epoch index into {@link ContestedEpochKey} — the
-   * epoch every subsequent deliver / dispute read keys on. The index and the
-   * active group are read from one `epochstate` row, and the epoch is captured
-   * only when the dispute operators alone own its group.
+   * Capture the settled contested epoch index into {@link ContestedEpochKey} —
+   * the epoch every subsequent deliver / dispute read keys on. The index and
+   * the active group are read from one `epochstate` row, and the epoch is
+   * captured only when the dispute operators alone own its group. No boundary
+   * wait: the depot opens a dispute on the delivery after which no version can
+   * still win, at any time in the epoch.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -784,14 +723,13 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — boundary wait, then store the contested epoch index once the dispute operators own it. */
+  /** Named runner — store the contested epoch index once the dispute operators own it. */
   export async function runStageContestedEpoch<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await waitPastEpochBoundary(ctx)
     const state = await readEpochState(ctx),
       epoch = Number(state.current_epoch_index),
       activeGroup = state.batch_op_groups?.[state.current_batch_op_group]
@@ -981,8 +919,8 @@ export namespace SlashingScenarioDisputeSteps {
    * NOT cranked here — `batch_operator_plugin` cranks `sysio.chalg::chkdispute`
    * on its epoch tick, and this step asserts that it does: `chkdispute` records
    * the winner, dispatches the winning envelope via `sysio.msgch::resolvedisp`,
-   * and unpauses the epoch. A timeout here means nothing in production tallied
-   * the votes.
+   * whose acceptance of it slashes the non-canonical deliverers, and unpauses the
+   * epoch. A timeout here means nothing in production tallied the votes.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -1035,7 +973,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  // ── Step: await an operator slash (crank chkcons inside the poll) ─────────
+  // ── Step: await an operator slash (pure poll) ─────────────────────────────
 
   /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
@@ -1044,10 +982,11 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * Poll until the operator flips OPERATOR_STATUS_SLASHED. The slash runs in
-   * `sysio.epoch::advance`; `chkcons` drives advance and the SBP-less group
-   * means nothing else cranks it, so each iteration cranks
-   * ({@link crankChkcons}) until the unpaused epoch advances.
+   * Poll until the operator flips OPERATOR_STATUS_SLASHED. The dispute's
+   * resolution slashes it: `sysio.msgch::resolvedisp`, inside the `chkdispute`
+   * transaction that records the winner, slashes every deliverer whose envelope
+   * differs from it. Nothing is cranked, so the contested chain does not
+   * advance meanwhile.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -1079,7 +1018,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — crank + poll until the operator row shows SLASHED. */
+  /** Named runner — poll until the operator row shows SLASHED. */
   export async function runAwaitOperatorSlashed<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitOperatorSlashedInput,
@@ -1089,7 +1028,6 @@ export namespace SlashingScenarioDisputeSteps {
     await pollUntil(
       `${input.label} (non-canonical) becomes SLASHED`,
       async () => {
-        await crankChkcons(ctx)
         const row = await readOperator(ctx, input.label)
         return (
           row != null &&
@@ -1169,11 +1107,6 @@ export namespace SlashingScenarioDisputeSteps {
       Constants.activeDeadlineMs(),
       Constants.LongPollIntervalMs
     )
-  }
-
-  /** The chain-side reason folded into a caught error, for crank logging. */
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
   }
 
   /** Parse a chain timestamp as UTC ms (chain timestamps omit the zone suffix). */

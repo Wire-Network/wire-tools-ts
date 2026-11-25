@@ -52,12 +52,6 @@ export namespace SlashingScenarioConstants {
   export const LongPollIntervalMs = 3_000
   /** Interval for the tight epoch-boundary poll (ms). */
   export const BoundaryPollIntervalMs = 1_000
-  /**
-   * Margin past `next_epoch_start` (in CHAIN time) before injecting the
-   * divergent deliveries, so the dispute-opening deliver lands comfortably
-   * after the epoch boundary even if block production lags.
-   */
-  export const EpochBoundaryMarginMs = 2_000
 
   /**
    * The three batch operators whose divergent deliveries form the split. The
@@ -221,24 +215,24 @@ export namespace SlashingScenarioConstants {
   export const GroupEpochBudget = 1
   /** Epochs budgeted for the epoch index to settle (freeze) on the dispute-operators-owned epoch. */
   export const SettleEpochBudget = 6
-  /** Epochs budgeted for the chain head-block time to pass `next_epoch_start`. */
-  export const BoundaryEpochBudget = 2
   /**
-   * Epochs budgeted for the dispute row to appear. CI-load timing margin: the
-   * dispute opens on the 3rd divergent deliver's inline `evalcons` once it
-   * lands past `next_epoch_start`. Under CI load the deliver txns + epoch
-   * boundary can lag, so the dispute row can appear a little late — 4 epochs
-   * (2 raced the boundary and flaked, e.g. run 28108464932). The poll returns
-   * the instant the row appears, so a wider ceiling adds no wall-clock to the
-   * happy path.
+   * Epochs budgeted for the dispute row to appear. The dispute opens in the
+   * transaction of the 3rd divergent delivery, the one after which no version
+   * can still win, through its inline `evalcons`. Under CI load the delivery
+   * transactions can land late. The poll returns the instant the row appears,
+   * so a wider ceiling adds no wall-clock to the happy path.
    */
   export const DisputeOpenEpochBudget = 4
   /** Epochs budgeted for the vote tally to resolve the dispute. */
   export const ResolveEpochBudget = 2
   /** Epochs budgeted for the epoch to unpause after resolution. */
   export const UnpauseEpochBudget = 2
-  /** Epochs budgeted for the post-resolution advance to slash a non-canonical deliverer. */
-  export const SlashPropagationEpochs = 8
+  /**
+   * Epochs budgeted for a non-canonical deliverer to read SLASHED once the dispute
+   * has resolved. The resolving `chkdispute` transaction slashes it, so the poll
+   * normally returns on its first read.
+   */
+  export const SlashEpochBudget = 1
 
   /** Chain-clock headroom before the contested chain's next boundary the ACTIVE flips start with (ms). */
   export function activationHeadroomMs(): number {
@@ -288,15 +282,6 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for the chain clock to pass the epoch boundary (ms). */
-  export function boundaryDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      BoundaryEpochBudget *
-      MsPerSecond
-    )
-  }
-
   /** Deadline for the OPEN dispute row to appear (ms). */
   export function disputeOpenDeadlineMs(): number {
     return (
@@ -324,11 +309,11 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for a non-canonical deliverer to flip SLASHED (ms). */
+  /** Deadline for a non-canonical deliverer to read SLASHED once the dispute has resolved (ms). */
   export function slashDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      SlashPropagationEpochs *
+      SlashEpochBudget *
       MsPerSecond
     )
   }

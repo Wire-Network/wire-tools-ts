@@ -316,22 +316,96 @@ describe("runAwaitSoleActiveGroup", () => {
   })
 })
 
+/** A build context with no chain clock: a read of the chain head fails the test. */
+function clocklessContext() {
+  return {
+    keyStore,
+    outputs: new OutputStore(),
+    wire: {
+      getInfo: async () => {
+        throw new Error("the chain head was read")
+      }
+    }
+  }
+}
+
 describe("runStageContestedEpoch", () => {
-  test("captures the epoch past its boundary that the dispute operators own", async () => {
-    serveEpochStates(epochState(ContestedEpoch, [...DisputeAccounts].reverse()))
-    const ctx = clockContext(chainTime(Constants.EpochBoundaryMarginMs))
+  test("captures the epoch the dispute operators own without waiting for its boundary", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, [...DisputeAccounts].reverse(), chainTime(60_000))),
+      ctx = clocklessContext()
     await DisputeSteps.runStageContestedEpoch(ctx, null, new AbortController().signal)
     Assert.equal(ctx.outputs.assert(DisputeSteps.ContestedEpochKey), ContestedEpoch)
+    Assert.equal(read.mock.callCount(), 1)
   })
 
   test("refuses an epoch whose active group still seats a bootstrapped operator, capturing nothing", async () => {
     serveEpochStates(epochState(ContestedEpoch, [DisputeAccounts[0], "batchop.a", "batchop.b"]))
-    const ctx = clockContext(chainTime(Constants.EpochBoundaryMarginMs))
+    const ctx = clocklessContext()
     await Assert.rejects(
       DisputeSteps.runStageContestedEpoch(ctx, null, new AbortController().signal),
       /is not owned by the dispute operators alone/
     )
     Assert.equal(ctx.outputs.has(DisputeSteps.ContestedEpochKey), false)
+  })
+
+  test("an aborted step reads nothing", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts)),
+      aborted = new AbortController()
+    aborted.abort()
+    await Assert.rejects(DisputeSteps.runStageContestedEpoch(clocklessContext(), null, aborted.signal))
+    Assert.equal(read.mock.callCount(), 0)
+  })
+})
+
+describe("runAwaitOperatorSlashed", () => {
+  /**
+   * A build context whose `sysio.opreg::operators` reads serve `statuses` in turn (repeating the last) for the
+   * losing operator, and which offers no action, so a crank fails the test.
+   */
+  function operatorsContext(...statuses) {
+    const reads = []
+    return {
+      reads,
+      keyStore,
+      wire: {
+        getSysioContract: contract => ({
+          tables: {
+            operators: {
+              query: async () => {
+                reads.push(contract)
+                return { rows: [{ account: Constants.LosingOperators[0], status: statuses[Math.min(reads.length - 1, statuses.length - 1)] }] }
+              }
+            }
+          }
+        })
+      }
+    }
+  }
+
+  /** The step input for the first losing operator. */
+  const input = {
+    kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput",
+    label: Constants.LosingOperators[0]
+  }
+
+  test("returns once the operator reads SLASHED, cranking nothing", async () => {
+    const ctx = operatorsContext("OPERATOR_STATUS_SLASHED")
+    await DisputeSteps.runAwaitOperatorSlashed(ctx, input, new AbortController().signal)
+    Assert.deepEqual(ctx.reads, [SysioContracts.SysioContractName.opreg])
+  })
+
+  test("keeps reading while the operator is still ACTIVE", async () => {
+    const ctx = operatorsContext("OPERATOR_STATUS_ACTIVE", "OPERATOR_STATUS_SLASHED")
+    await DisputeSteps.runAwaitOperatorSlashed(ctx, input, new AbortController().signal)
+    Assert.equal(ctx.reads.length, 2)
+  })
+
+  test("an aborted step reads nothing", async () => {
+    const ctx = operatorsContext("OPERATOR_STATUS_SLASHED"),
+      aborted = new AbortController()
+    aborted.abort()
+    await Assert.rejects(DisputeSteps.runAwaitOperatorSlashed(ctx, input, aborted.signal))
+    Assert.equal(ctx.reads.length, 0)
   })
 })
 
@@ -348,5 +422,27 @@ describe("await step factories", () => {
     Assert.equal(step.input, null)
     Assert.equal(step.runner, DisputeSteps.runAwaitSoleActiveGroup)
     Assert.equal(step.options.timeoutMs, 1)
+  })
+
+  test("planStageContestedEpoch carries no input and its named runner", () => {
+    const step = DisputeSteps.planStageContestedEpoch(Report.Actor.Sysio, "stage", "stage", { timeoutMs: 1 })
+    Assert.equal(step.input, null)
+    Assert.equal(step.runner, DisputeSteps.runStageContestedEpoch)
+    Assert.equal(step.options.timeoutMs, 1)
+  })
+
+  test("planAwaitOperatorSlashed carries the operator's label and its named runner", () => {
+    const step = DisputeSteps.planAwaitOperatorSlashed(
+      Report.Actor.Sysio,
+      "slashed",
+      "slashed",
+      { timeoutMs: 1 },
+      Constants.LosingOperators[0]
+    )
+    Assert.deepEqual(step.input, {
+      kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput",
+      label: Constants.LosingOperators[0]
+    })
+    Assert.equal(step.runner, DisputeSteps.runAwaitOperatorSlashed)
   })
 })

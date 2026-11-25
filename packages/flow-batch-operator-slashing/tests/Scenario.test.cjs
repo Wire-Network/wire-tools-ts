@@ -185,7 +185,53 @@ test("the dispute's assertions stay in place around the new phases", () => {
   )
   Assert.deepEqual(
     child(build, "SlashNonCanonical").steps.map(step => step.name),
-    [...Constants.LosingOperators.map(operator => `${operator}-slashed`), "canonical-not-slashed"]
+    [
+      ...Constants.LosingOperators.map(operator => `${operator}-slashed`),
+      "slashed-before-advance",
+      "canonical-not-slashed"
+    ]
+  )
+})
+
+test("each loser's SLASHED read is budgeted from the resolution, which slashes it", () => {
+  const { build } = plannedBuild(),
+    awaits = child(build, "SlashNonCanonical").steps.filter(
+      step => step.runner === DisputeSteps.runAwaitOperatorSlashed
+    )
+  Assert.deepEqual(
+    awaits.map(step => step.input.label),
+    [...Constants.LosingOperators]
+  )
+  awaits.forEach(step =>
+    Assert.equal(step.options.timeoutMs, Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs)
+  )
+  Assert.equal(
+    Constants.slashDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, Constants.SlashEpochBudget)
+  )
+})
+
+/** A build context holding the staged contested epoch, whose contested chain sits at `currentEpoch`. */
+function heldContext(currentEpoch) {
+  mock.method(Steps.contracts.sysio.epoch, "readEpochState", async (_ctx, chain) => ({
+    chain_code: String(SlugName.from(chain)),
+    current_epoch_index: currentEpoch
+  }))
+  return { outputs: new OutputStore().set(DisputeSteps.ContestedEpochKey, StagedEpoch) }
+}
+
+test("the slashed-before-advance verify passes while the contested chain sits at the contested epoch", async () => {
+  const { build } = plannedBuild(),
+    held = child(build, "SlashNonCanonical").steps.find(step => step.name === "slashed-before-advance")
+  await held.runner(heldContext(StagedEpoch), null, new AbortController().signal)
+})
+
+test("the slashed-before-advance verify fails once the contested chain has advanced", async () => {
+  const { build } = plannedBuild(),
+    held = child(build, "SlashNonCanonical").steps.find(step => step.name === "slashed-before-advance")
+  await Assert.rejects(
+    held.runner(heldContext(StagedEpoch + 1), null, new AbortController().signal),
+    new RegExp(`moved from the contested epoch ${StagedEpoch} to ${StagedEpoch + 1}`)
   )
 })
 
@@ -278,6 +324,7 @@ test("the contested epoch is captured, then its envelope bucket is verified empt
   )
   Assert.equal(stage.name, "stage-contested-epoch")
   Assert.equal(stage.runner, DisputeSteps.runStageContestedEpoch)
+  Assert.deepEqual(stage.options, {})
   Assert.equal(bucketEmpty.name, "contested-bucket-empty")
 })
 
