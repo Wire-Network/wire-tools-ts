@@ -52,6 +52,10 @@ describe("BatchOperatorUnderwritingConfig", () => {
       ])
     })
 
+    it("adds 2500 bps (+25%) of gas headroom to every Ethereum funding write", () => {
+      expect(BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps).toBe(2_500)
+    })
+
     it("nativeTokenAmount packs the codename as the depot's slug code", () => {
       const amount = BatchOperatorUnderwritingConfig.nativeTokenAmount(
         EthereumNativeTokenCodename,
@@ -127,6 +131,51 @@ describe("BatchOperatorUnderwritingConfig", () => {
       expect(parsed.reserve).toEqual([])
     })
 
+    it("fills gasDriftMarginBps with the default when a config omits it, or sets it undefined", () => {
+      expect(
+        BatchOperatorUnderwritingConfigSchema.parse({
+          fundedOperatorCount: 1,
+          maxExposure: [Cap]
+        }).gasDriftMarginBps
+      ).toBe(BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps)
+      expect(
+        BatchOperatorUnderwritingConfigSchema.parse({
+          fundedOperatorCount: 1,
+          maxExposure: [Cap],
+          gasDriftMarginBps: undefined
+        }).gasDriftMarginBps
+      ).toBe(BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps)
+    })
+
+    it("parses an explicit gasDriftMarginBps, zero included", () => {
+      expect(
+        BatchOperatorUnderwritingConfigSchema.parse({
+          fundedOperatorCount: 1,
+          maxExposure: [Cap],
+          gasDriftMarginBps: 1_000
+        }).gasDriftMarginBps
+      ).toBe(1_000)
+      expect(
+        BatchOperatorUnderwritingConfigSchema.parse({
+          fundedOperatorCount: 1,
+          maxExposure: [Cap],
+          gasDriftMarginBps: 0
+        }).gasDriftMarginBps
+      ).toBe(0)
+    })
+
+    it("rejects a negative, fractional or non-numeric gasDriftMarginBps", () => {
+      const marginParses = (gasDriftMarginBps: unknown): boolean =>
+        BatchOperatorUnderwritingConfigSchema.safeParse({
+          fundedOperatorCount: 1,
+          maxExposure: [Cap],
+          gasDriftMarginBps
+        }).success
+      expect(marginParses(-1)).toBe(false)
+      expect(marginParses(2.5)).toBe(false)
+      expect(marginParses("2500")).toBe(false)
+    })
+
     it("rejects a malformed stake entry as a zod issue, never a raw proto error", () => {
       const result = BatchOperatorUnderwritingConfigSchema.safeParse({
         fundedOperatorCount: 1,
@@ -141,6 +190,7 @@ describe("BatchOperatorUnderwritingConfig", () => {
       const options: BatchOperatorUnderwritingOptions = { fundedOperatorCount: 1 }
       expect(options.stake).toBeUndefined()
       expect(options.reserve).toBeUndefined()
+      expect(options.gasDriftMarginBps).toBeUndefined()
     })
 
     it("round-trips through the codec with the defaults persisted and bigints intact", () => {
@@ -155,6 +205,12 @@ describe("BatchOperatorUnderwritingConfig", () => {
         reloaded = codec.deserialize(text)
       expect(JSON.parse(text).stake).toHaveLength(2)
       expect(JSON.parse(text).reserve).toHaveLength(2)
+      expect(JSON.parse(text).gasDriftMarginBps).toBe(
+        BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
+      )
+      expect(reloaded.gasDriftMarginBps).toBe(
+        BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
+      )
       expect(reloaded.stake[1].amount).toBe(
         BatchOperatorUnderwritingConfig.DefaultStakeSolanaUnits
       )

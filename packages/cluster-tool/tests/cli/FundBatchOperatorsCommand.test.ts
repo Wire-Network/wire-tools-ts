@@ -280,7 +280,7 @@ describe("FundBatchOperatorsCommand", () => {
       expect(fund).not.toHaveBeenCalled()
     })
 
-    it("adopts the first fundedOperatorCount operators and funds them with the document's stake + the default reserve", async () => {
+    it("adopts the first fundedOperatorCount operators and funds them with the document's stake + gas margin and the default reserve", async () => {
       const stake = [
           TokenAmount.create({ tokenCode: BigInt(SlugName.from(Constants.ETH_TOKEN_CODENAME)), amount: 5n }),
           TokenAmount.create({ tokenCode: BigInt(SlugName.from(Constants.SOL_TOKEN_CODENAME)), amount: 6n })
@@ -294,7 +294,7 @@ describe("FundBatchOperatorsCommand", () => {
       await expect(
         runFundBatchOperators(
           fundableOptions({
-            batchOperatorUnderwriting: { fundedOperatorCount: 2, stake }
+            batchOperatorUnderwriting: { fundedOperatorCount: 2, stake, gasDriftMarginBps: 1_000 }
           })
         )
       ).resolves.toBe(outcome)
@@ -303,25 +303,29 @@ describe("FundBatchOperatorsCommand", () => {
       expect(settings.signatureProvider.type).toBe(SignatureProviderType.SSM)
       expect(settings.awsClusterNodeConfig.account).toBe(AWSAccountName.dev)
       expect(labels).toEqual(["batchop.a", "batchop.b"])
-      const [funded, allocation, targets] = fund.mock.calls[0]
+      const [funded, allocation, targets, tuning] = fund.mock.calls[0]
       expect(funded).toBe(operators)
       expect(allocation.stake).toBe(stake)
       expect(allocation.reserve).toEqual(BatchOperatorUnderwritingConfig.DefaultReserve)
+      expect(tuning).toEqual({ gasDriftMarginBps: 1_000 })
       expect(targets.ethereum.chainId).toBe(ChainId)
       expect(targets.solana.programId.toBase58()).toBe(programId)
     })
 
-    it("funds every operator with both defaults when the document sets neither amount", async () => {
+    it("funds every operator with the default amounts and gas margin when the document sets none", async () => {
       jest.spyOn(BatchOperatorFundingTool, "adoptOperators").mockResolvedValue([])
       const fund = jest
         .spyOn(BatchOperatorFundingTool, "fund")
         .mockResolvedValue({ receipts: [], skips: [] })
       await runFundBatchOperators(fundableOptions())
-      const [, allocation] = fund.mock.calls[0],
+      const [, allocation, , tuning] = fund.mock.calls[0],
         [, labels] = (BatchOperatorFundingTool.adoptOperators as jest.Mock).mock.calls[0]
       expect(labels).toEqual(["batchop.a", "batchop.b", "batchop.c"])
       expect(allocation.stake).toEqual(BatchOperatorUnderwritingConfig.DefaultStake)
       expect(allocation.reserve).toEqual(BatchOperatorUnderwritingConfig.DefaultReserve)
+      expect(tuning).toEqual({
+        gasDriftMarginBps: BatchOperatorUnderwritingConfig.DefaultGasDriftMarginBps
+      })
     })
   })
 
