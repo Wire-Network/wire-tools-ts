@@ -104,7 +104,8 @@ function chainRow(
     next_epoch_start: stamp(GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond),
     current_batch_op_group: 0,
     batch_op_groups: [],
-    is_paused: paused
+    is_paused: paused,
+    previous_group: []
   }
 }
 
@@ -131,7 +132,9 @@ function outpostConsensusRow(
     consensus_reached: true,
     winning_checksum: "",
     envelope_digest: "",
-    message_tip: ""
+    message_tip: "",
+    previous_epoch_index: 0,
+    previous_winning_checksum: ""
   }
 }
 

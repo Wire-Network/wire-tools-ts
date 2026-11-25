@@ -188,12 +188,13 @@ describe("budgets", () => {
     )
   })
 
-  test("a seat-seconds deadline adds the open pay period's close to the chain's rotation", () => {
+  test("a seat-seconds deadline adds the book-closing advance and the open pay period's close to the chain's rotation", () => {
     Assert.equal(
       PerChainEpochsSteps.seatSecondsDeadlineMs(Config, OutpostChainCodename.ETHEREUM, 4),
-      4 * (EthereumSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000 +
+      (4 + Constants.BookClosingEpochs) * (EthereumSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000 +
         Constants.DutyPeriodEconomicEpochs * (EconomicSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000
     )
+    Assert.equal(Constants.BookClosingEpochs, 1)
   })
 })
 

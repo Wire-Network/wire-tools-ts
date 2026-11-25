@@ -130,12 +130,30 @@ test("the status checks around the deposits are the shared operator-status verif
   })
 })
 
-test("the rotation ceiling covers every chain's own full window", () => {
+test("the rotation waits for the evicted operator's last seat to slide out, then covers every chain's own full window", () => {
   const { build } = plannedBuild(),
-    [rotation] = child(build, "ContinuedRotation").steps
+    steps = child(build, "ContinuedRotation").steps,
+    [slideOut, rotation] = steps
+  Assert.deepEqual(
+    steps.map(step => step.name),
+    ["evicted-seat-slides-out", "post-eviction-rotation"]
+  )
+  Assert.equal(
+    slideOut.options.timeoutMs,
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, Constants.EvictedSeatEpochs) +
+      ProtocolTiming.PollDeadlineBufferMs
+  )
   Assert.equal(
     rotation.options.timeoutMs,
     ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, 3 + Constants.RotationFinalEnvelopeEpochs) +
       ProtocolTiming.PollDeadlineBufferMs
   )
+})
+
+test("the evicted seat's deadline covers its slide out two advances after the eviction", () => {
+  Assert.equal(
+    Constants.evictedSeatDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, Constants.EvictedSeatEpochs)
+  )
+  Assert.ok(Constants.EvictedSeatEpochs > 2)
 })

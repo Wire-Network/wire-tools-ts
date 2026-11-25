@@ -110,7 +110,9 @@ describe("Steps.contracts.sysio.msgch outpcons read", () => {
       consensus_reached: true,
       winning_checksum: "",
       envelope_digest: "",
-      message_tip: ""
+      message_tip: "",
+      previous_epoch_index: 0,
+      previous_winning_checksum: ""
     }
   }
 

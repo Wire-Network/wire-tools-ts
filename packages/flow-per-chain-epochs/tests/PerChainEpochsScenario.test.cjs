@@ -297,8 +297,8 @@ test("each phase group's longest Step ceiling is the one the README states", () 
     }),
     [
       ["OwnCadence", "cadence-window", 780],
-      ["ServesOneChain", "ethereum-seat-seconds", 540],
-      ["LeavesOneChain", "seated-on-solana", 930]
+      ["ServesOneChain", "ethereum-seat-seconds", 630],
+      ["LeavesOneChain", "solana-seat-seconds", 1080]
     ]
   )
 })

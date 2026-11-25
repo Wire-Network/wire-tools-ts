@@ -107,6 +107,12 @@ export namespace PerChainEpochsScenarioConstants {
   /** Economic epochs a duty wait allows on top of the chain's rotation: the open period's close. */
   export const DutyPeriodEconomicEpochs = 1
 
+  /**
+   * Epochs of a chain a duty wait allows after a seat's own epoch closes: the advance after it closes that
+   * epoch's books and credits the seat's seat-seconds. Changing it moves every seat-seconds deadline.
+   */
+  export const BookClosingEpochs = 1
+
   /** Ethereum epochs the resumed chain must advance after the unpause. */
   export const ResumeEpochs = 1
 

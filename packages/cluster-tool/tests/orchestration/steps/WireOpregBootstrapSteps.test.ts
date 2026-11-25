@@ -77,7 +77,8 @@ function epochStateRow(
     next_epoch_start: "2026-10-16T00:01:00.000",
     current_batch_op_group: 0,
     batch_op_groups: groups,
-    is_paused: false
+    is_paused: false,
+    previous_group: []
   }
 }
 

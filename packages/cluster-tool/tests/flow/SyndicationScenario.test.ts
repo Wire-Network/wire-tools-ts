@@ -158,7 +158,8 @@ describe("syndication scenario accounting", () => {
         next_epoch_start: "2026-11-24T00:01:00.000",
         current_batch_op_group: 0,
         batch_op_groups: [],
-        is_paused: false
+        is_paused: false,
+        previous_group: []
       })
     jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract as never)
     jest.spyOn(contract.tables.epochstate, "query").mockResolvedValue({

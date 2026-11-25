@@ -110,6 +110,28 @@ describe("reads", () => {
     )
   })
 
+  test("the seat await returns once the missed chain's window seats the operator as asked", async () => {
+    const read = mock.method(Steps.contracts.sysio.epoch, "readEpochState", async () => ({
+      batch_op_groups: [["batchop.a"], [Doomed]]
+    }))
+    await TerminationSteps.awaitMissedChainSeat(context(), true, 1_000, 1)
+    Assert.deepEqual(read.mock.calls[0].arguments.slice(1), [Constants.MissedChain])
+    mock.restoreAll()
+    mock.method(Steps.contracts.sysio.epoch, "readEpochState", async () => ({ batch_op_groups: [["batchop.a"]] }))
+    await TerminationSteps.awaitMissedChainSeat(context(), false, 1_000, 1)
+  })
+
+  test("the seat await polls past a failed read and times out while the window still seats the operator", async () => {
+    let reads = 0
+    mock.method(Steps.contracts.sysio.epoch, "readEpochState", async () => {
+      reads += 1
+      if (reads === 1) throw new Error("transient")
+      return { batch_op_groups: [[Doomed]] }
+    })
+    await Assert.rejects(TerminationSteps.awaitMissedChainSeat(context(), false, 20, 1), /Timed out waiting for/)
+    Assert.ok(reads > 1)
+  })
+
   test("a membership read asks for the doomed operator's account on the named chain", async () => {
     const row = membership(Constants.MissedChain, "SERVING"),
       read = mock.method(Steps.contracts.sysio.opreg, "readMembership", async () => row)

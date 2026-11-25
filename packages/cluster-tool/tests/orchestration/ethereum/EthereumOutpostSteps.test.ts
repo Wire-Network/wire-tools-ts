@@ -284,7 +284,8 @@ describe("Steps.ethereumOutpost.runOppBootstrap", () => {
       next_epoch_start: "2026-11-24T00:01:00.000",
       current_batch_op_group: 1,
       batch_op_groups: [["acct.aaaaa"], ["acct.bbbbb"]],
-      is_paused: false
+      is_paused: false,
+      previous_group: []
     }
   }
 

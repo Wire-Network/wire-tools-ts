@@ -1030,8 +1030,9 @@ export namespace PerChainEpochsSteps {
 
   /**
    * The deadline of a seat-second await (ms): `budgetEpochs` effective epochs of the chain the
-   * operator is seated on, for its next seat to close, then the open pay period's close
-   * (`PerChainEpochsScenarioConstants.DutyPeriodEconomicEpochs` economic epochs).
+   * operator is seated on, for its next seat to close, the advance that closes that seat's books
+   * (`PerChainEpochsScenarioConstants.BookClosingEpochs` more epochs of the chain), then the open pay
+   * period's close (`PerChainEpochsScenarioConstants.DutyPeriodEconomicEpochs` economic epochs).
    *
    * @param config - The resolved cluster config.
    * @param chain - The chain the operator is seated on.
@@ -1044,7 +1045,7 @@ export namespace PerChainEpochsSteps {
     budgetEpochs: number
   ): number {
     return (
-      chainEpochsBudgetMs(config, chain, budgetEpochs) +
+      chainEpochsBudgetMs(config, chain, budgetEpochs + Constants.BookClosingEpochs) +
       ProtocolTiming.effectiveEpochsMs(config.economicEpochDurationSec, Constants.DutyPeriodEconomicEpochs)
     )
   }

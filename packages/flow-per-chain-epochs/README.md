@@ -19,13 +19,13 @@ Each phase group asserts its own claim, so a failure names the phase:
    it bonds 2 WIRE against the flow's 1 WIRE minimum and turns `ACTIVE`. Its only membership is
    `SERVING` on Ethereum. Ethereum's window seats it (non-bootstrapped operators are seated first)
    while Solana's never does. Its `sysio.system::batchduty` row on Ethereum (rows are keyed by
-   operator and chain) holds a positive multiple of 60 s, and no other chain's row of it accrues in
-   that pay period.
+   operator and chain), credited by the advance that closes each seat's books one epoch after the
+   seat, holds a positive multiple of 60 s, and no other chain's row of it accrues in that pay period.
 3. **LeavesOneChain** — it joins Solana (`SERVING` on both) and Solana's window seats it. It then
    leaves Ethereum: the membership is `LEFT`, its resident Ethereum seat closes, no new Ethereum
    group seats it through a full rotation (four Ethereum epochs), and Solana seats it in a group
-   appended after the leave. In a pay period that opens after its last Ethereum seat closed, its
-   Solana row holds a positive multiple of 150 s and its Ethereum row accrues nothing.
+   appended after the leave. In a pay period that opens after the books of its last Ethereum seat
+   closed, its Solana row holds a positive multiple of 150 s and its Ethereum row accrues nothing.
 4. **PausesOneChain** — a second non-bootstrapped operator (`solwithdraw`) joins Solana only and
    bonds 0.5 WIRE, below the minimum, so it stays `UNKNOWN` and no schedule seats it. Governance
    pauses Ethereum (`sysio.epoch::pause`, signed `sysio.chalg@active`, as an open dispute on
@@ -49,11 +49,11 @@ Solana epoch 150 + 30 s, one economic epoch 120 + 30 s.
 | Phase group | Typical | Longest Step ceiling |
 | --- | --- | --- |
 | OwnCadence | 12 min (the 720 s window) | 780 s (the window await) |
-| ServesOneChain | 6-10 min (provision, relay start, first seat and its duty) | 540 s (the seat-seconds await) |
-| LeavesOneChain | 15-20 min (a Solana seat, a full Ethereum rotation, a Solana duty period) | 930 s (the first Solana seat await) |
+| ServesOneChain | 7-11 min (provision, relay start, first seat and the advance that credits its duty) | 630 s (the seat-seconds await) |
+| LeavesOneChain | 17-23 min (a Solana seat, a full Ethereum rotation, a Solana duty period) | 1080 s (the Solana seat-seconds await) |
 | PausesOneChain | 8-10 min (two economic epochs and two Solana epochs under the pause) | 750 s (the remit-claim verify) |
 
-With the bootstrap the flow takes about 70 minutes.
+With the bootstrap the flow takes about 75 minutes.
 
 ## Running
 
