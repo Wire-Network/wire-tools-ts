@@ -24,10 +24,11 @@ the pause. The resolution's acceptance of the winner slashes the two non-canonic
 that transaction, while Ethereum still sits at the contested epoch. The canonical deliverer is not
 slashed.
 
-Ethereum's group is still the three dispute operators, which run no relay, so no elected operator
-cranks it after the resolution. The **ContestedChainAdvances** phase records the SLASHED operators,
-gives Ethereum traffic (`sysio.epoch::notetraffic`) only while it is idle, waits for it to fall due
-one minimum later, and pushes `sysio.msgch::chkcons` itself. Ethereum advances past the contested
+The resolution records Ethereum's traffic (`sysio.msgch::resolvedisp`), so Ethereum falls due one
+traffic wait later, but its group is still the three dispute operators, which run no relay, so no
+elected operator cranks it. The **ContestedChainAdvances** phase records the SLASHED operators, waits
+for Ethereum to fall due, and pushes `sysio.msgch::chkcons` itself, unless a relay serving Ethereum
+already pushed it for liveness (one minimum after it falls due). Ethereum advances past the contested
 epoch, and that advance slashes no one new: no operator is SLASHED that was not before it, the
 losers stay SLASHED from the resolution and the canonical deliverer stays unslashed. The flow ends
 there and leaves the Ethereum outpost on the contested epoch: no relay of that epoch's group

@@ -412,18 +412,16 @@ test("a live head with idle chains never bails", () => {
 /** The fixtures' epoch start (`epochRow`'s `current_epoch_start`) in ms. */
 const EpochStartMs = Date.parse("2026-10-01T00:00:00.000Z")
 
-test("an epoch may stay undecided 8 minimums, never under the 7-minute single-hop floor", () => {
-  Assert.equal(undecidedEpochAllowanceSeconds(60), 480)
-  Assert.equal(undecidedEpochAllowanceSeconds(150), 1_200)
+test("an epoch may stay undecided 5 minimums, never under the 7-minute single-hop floor", () => {
+  Assert.equal(undecidedEpochAllowanceSeconds(150), 750)
+  Assert.equal(undecidedEpochAllowanceSeconds(90), 450)
+  Assert.equal(undecidedEpochAllowanceSeconds(60), 420)
   Assert.equal(undecidedEpochAllowanceSeconds(30), 420)
   Assert.equal(undecidedEpochAllowanceSeconds(10), 420)
-  // Every minimum gets at least the time a live chain needs to decide or dispute an epoch:
-  // the genesis gate's max(3 x (minimum + 30), 240) s round trip plus a 3-minimum dispute fallback.
-  ;[10, 30, 45, 50, 60, 90, 150, 360, 3_600].forEach(minimum =>
-    Assert.ok(
-      undecidedEpochAllowanceSeconds(minimum) >= Math.max(3 * (minimum + 30), 240) + 3 * minimum,
-      `minimum ${minimum}s`
-    )
+  // Every minimum gets at least the time a live chain needs to decide an epoch: the genesis
+  // gate's max(3 x (minimum + 30), 240) s round trip. No dispute timer adds to it.
+  ;[10, 30, 45, 50, 60, 90, 110, 111, 150, 360, 3_600].forEach(minimum =>
+    Assert.ok(undecidedEpochAllowanceSeconds(minimum) >= Math.max(3 * (minimum + 30), 240), `minimum ${minimum}s`)
   )
 })
 
@@ -451,13 +449,13 @@ test("a chain whose current epoch, genesis included, stays undecided past its al
     consensus = { SOLANA: { epoch_index: 2 } },
     duration = () => 60
   Assert.match(
-    undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 481_000, duration),
-    /ETHEREUM epoch 1 undecided for 481s \(allowance 480s; outpcons last decided none\)/
+    undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 421_000, duration),
+    /ETHEREUM epoch 1 undecided for 421s \(allowance 420s; outpcons last decided none\)/
   )
-  Assert.equal(undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 480_000, duration), null)
+  Assert.equal(undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 420_000, duration), null)
   // Traffic plays no part: an idle chain and a due one bail alike.
   const busy = { ...states, ETHEREUM: epochRow(1, DueAt) }
-  Assert.match(undecidedEpochBailReason(Chains, busy, consensus, since, EpochStartMs + 481_000, duration), /ETHEREUM/)
+  Assert.match(undecidedEpochBailReason(Chains, busy, consensus, since, EpochStartMs + 421_000, duration), /ETHEREUM/)
 })
 
 test("a decided, paused or unstarted chain, an unread outpcons or head, or --expect-epoch-freeze never bails", () => {

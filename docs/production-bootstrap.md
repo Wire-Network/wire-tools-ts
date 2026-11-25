@@ -189,6 +189,7 @@ The bootstrap registers no node owner and issues no `sysio.roa::addpolicy`. It d
 | `economicEpochDurationSec` | `300` | the economic clock's epoch duration (`sysio.epoch::seteconomy`); `epochDurationSec` (at least the contract's 60 s floor) when that is set. No per-chain consensus default reaches it |
 | `economicStartTime` | chain head | start of economic epoch 1 (`sysio.epoch::seteconomy`) |
 | `EnvelopeLogRetentionEpochs` | `10` | `sysio.epoch::setconfig.epoch_retention_envelope_log_count` |
+| `DefaultShareOfMinimumSec` | `0` | `sysio.epoch::setconfig.traffic_wait_sec` and `late_window_sec`: the contract default, half the chain's minimum |
 
 ---
 
@@ -318,8 +319,9 @@ uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so t
 before the operator `createlink` calls in Stage 12.
 
 ## Stage 9 — OPP / application configuration (epoch, opreg, genesis producer registration, emissions, snapshot attestation, dclaim)
-20. `sysio.epoch::setconfig({chain_code, epoch_duration_sec, operators_per_epoch:1,
-    batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
+20. `sysio.epoch::setconfig({chain_code, epoch_duration_sec, traffic_wait_sec:0, late_window_sec:0,
+    operators_per_epoch:1, batch_operator_minimum_active:3, batch_op_groups:3,
+    epoch_retention_envelope_log_count:10})` —
     `[sysio.epoch@active]` — once per outpost chain (`ETHEREUM`, then `SOLANA`): each chain runs its own
     consensus epoch, with its own `epochcfg` / `epochstate` row. Sizing is computed from the operator counts
     and is the same on every chain, since every bootstrapped batch operator serves every chain:
@@ -329,9 +331,12 @@ before the operator `createlink` calls in Stage 12.
     (default `60` for `ETHEREUM` and `30` for `SOLANA`, or `epochDurationSec` when that is set; the contract's
     floor is 10) **(production: Ethereum 60 s, Solana 30 s)**: the chain's minimum time between two envelopes.
     Epochs are depot-paced: a chain advances only once it has traffic (a general-lane outbound attestation,
-    rows its last envelope left behind, or a governance `sysio.epoch::resendroster`) and this minimum has
-    passed since the later of its epoch start and that traffic, so an idle chain stays in its epoch. The
-    genesis advance needs no traffic.
+    rows its last envelope left behind, an outpost backlog its relays report, a dispute's resolution, or a
+    governance `sysio.epoch::resendroster`) and is due: this minimum has passed since its epoch start and
+    `traffic_wait_sec` since that traffic, so an idle chain stays in its epoch. `late_window_sec` is how long
+    after an epoch starts a late delivery of the previous epoch still counts. A zero `traffic_wait_sec` or
+    `late_window_sec` takes the contract default, half the minimum (at least 1 s); a value above the minimum is
+    refused. The genesis advance needs no traffic.
     Then `sysio.epoch::seteconomy({epoch_duration_sec, start_time})` — `[sysio.epoch@active]` — configures the
     economic clock emissions, collateral withdrawals and producer pay run on. `epoch_duration_sec` is
     `economicEpochDurationSec` (default `300`, or `epochDurationSec` raised to the contract's 60 s floor when that
@@ -715,8 +720,8 @@ IDL whose `OutboundMessageBuffer` and `LatestOutboundEnvelope` layouts do not pl
 `operator` key (a check of the relay's decode surface, not of an outpost version).
 
 Each batch operator's relay pushes, as `<operator>@active`: `sysio.msgch::deliver`, `sysio.msgch::chkcons`,
-`sysio.msgch::reportqueue` (its report of the outpost's outbound backlog, a strict majority of which gives the
-chain traffic), `sysio.chalg::chkdispute`, `sysio.epoch::tickeconomy`, `sysio.swap::tickyield`,
+`sysio.msgch::reportqueue` (its report of the outpost's outbound backlog; reports from a strict majority of the
+seats of the chain's group give the chain traffic), `sysio.chalg::chkdispute`, `sysio.epoch::tickeconomy`, `sysio.swap::tickyield`,
 `sysio.liq::queueyield`, and `sysio.kicker::kick` while the plugin's kick crank is on (`--batch-kick-crank`, on by
 default). The bootstrap links none of them, so `<operator>@active` authorizes them all; an operator whose
 `@active` a `linkauth` restricts must let it authorize every one of these actions, or `batch_operator_plugin`

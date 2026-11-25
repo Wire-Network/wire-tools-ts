@@ -917,11 +917,12 @@ export namespace SlashingScenarioDisputeSteps {
   // ── Step: await the contested chain due after the resolution ─────────────
 
   /**
-   * Poll until the contested chain is due its next advance ({@link isDue}). After the
-   * resolution its group is the dispute operators, which run no relay, so no elected
-   * operator pushes its `chkcons`: the flow gives the idle chain traffic
-   * (`EpochAdvanceSteps.planKeepChainDue`), waits here for it to fall due one minimum later,
-   * and pushes `sysio.msgch::chkcons` itself.
+   * Poll until the contested chain is due its next advance ({@link isDue}) or already past the
+   * contested epoch. The resolution records the chain's traffic (`sysio.msgch::resolvedisp`), so
+   * it falls due one traffic wait later; its group is the dispute operators, which run no relay,
+   * so no elected operator pushes its `chkcons`: the flow waits here and pushes
+   * `sysio.msgch::chkcons` itself ({@link planCrankContestedChain}). A relay serving the chain
+   * pushes it for liveness one minimum after it falls due, so the wait also accepts that advance.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -947,20 +948,80 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — poll the contested chain's `epochstate` and head until it is due. */
+  /**
+   * Named runner — poll the contested chain's `epochstate` and head until it is due or past the
+   * contested epoch ({@link ContestedEpochKey}).
+   */
   export async function runAwaitContestedChainDue<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    const contested = ctx.outputs.assert(ContestedEpochKey)
     await pollUntil(
-      `the ${Constants.ContestedChain} chain is due its next advance`,
-      async () =>
-        isDue(await readEpochState(ctx), String((await ctx.wire.getInfo()).head_block_time)),
+      `the ${Constants.ContestedChain} chain is due its next advance or past the contested epoch ${contested}`,
+      async () => {
+        const state = await readEpochState(ctx)
+        return (
+          isDue(state, String((await ctx.wire.getInfo()).head_block_time)) ||
+          Number(state.current_epoch_index) > contested
+        )
+      },
       Constants.contestedDueDeadlineMs(),
       Constants.BoundaryPollIntervalMs
     )
+  }
+
+  // ── Step: crank the contested chain past the contested epoch ─────────────
+
+  /**
+   * `sysio.msgch::chkcons` for the contested chain, skipped when a relay's liveness crank already
+   * moved it past the contested epoch ({@link runCrankContestedChain}).
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @returns The crank step, carrying the `chkcons` data.
+   */
+  export function planCrankContestedChain<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, Steps.contracts.sysio.msgch.ChkconsInput> {
+    return ClusterBuildStep.create<C, Steps.contracts.sysio.msgch.ChkconsInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "MsgchContractSteps.ChkconsInput",
+        data: { chain_code: Constants.ContestedChainCode }
+      },
+      runCrankContestedChain
+    )
+  }
+
+  /** Named runner — push the input's `chkcons` unless the chain is already past the contested epoch. */
+  export async function runCrankContestedChain<C extends ClusterBuildContext>(
+    ctx: C,
+    input: Steps.contracts.sysio.msgch.ChkconsInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const contested = ctx.outputs.assert(ContestedEpochKey),
+      epoch = await currentEpoch(ctx)
+    if (epoch > contested) {
+      log.info(
+        `[slashing] ${Constants.ContestedChain} already advanced to epoch ${epoch} past the contested epoch ${contested}: no chkcons`
+      )
+      return
+    }
+    await Steps.contracts.sysio.msgch.runChkcons(ctx, input, signal)
   }
 
   // ── Step: record the SLASHED operators (capture) ──────────────────────────

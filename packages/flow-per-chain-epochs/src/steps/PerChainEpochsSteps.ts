@@ -88,8 +88,29 @@ export namespace PerChainEpochsSteps {
   // ── Reads ─────────────────────────────────────────────────────────────────
 
   /**
-   * READ each outpost chain's consensus epoch duration from its `epochcfg` row, in one read of the
-   * table — the depot's value, which every per-chain check measures against.
+   * READ every outpost chain's `epochcfg` row, in one read of the table — the depot's minimum
+   * duration and traffic wait of each chain, which every per-chain check measures against.
+   *
+   * @param ctx - The build context.
+   * @returns Each chain's `epochcfg` row.
+   * @throws When a chain has no `epochcfg` row, or the read is truncated.
+   */
+  export async function readChainEpochConfigs<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<SysioContracts.SysioEpochEpochConfigType>> {
+    const configs = await Steps.contracts.sysio.epoch.readEpochConfigs(ctx)
+    return mapOutpostChains(chain => {
+      Assert.ok(
+        configs[chain] != null,
+        `PerChainEpochsSteps: sysio.epoch::epochcfg has no ${chain} row`
+      )
+      return configs[chain]
+    })
+  }
+
+  /**
+   * READ each outpost chain's consensus epoch duration from its `epochcfg` row
+   * ({@link readChainEpochConfigs}).
    *
    * @param ctx - The build context.
    * @returns Each chain's `epoch_duration_sec`.
@@ -98,14 +119,8 @@ export namespace PerChainEpochsSteps {
   export async function readEpochDurations<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<OutpostEpochDurations> {
-    const configs = await Steps.contracts.sysio.epoch.readEpochConfigs(ctx)
-    return mapOutpostChains(chain => {
-      Assert.ok(
-        configs[chain] != null,
-        `PerChainEpochsSteps: sysio.epoch::epochcfg has no ${chain} row`
-      )
-      return configs[chain].epoch_duration_sec
-    })
+    const configs = await readChainEpochConfigs(ctx)
+    return mapOutpostChains(chain => configs[chain].epoch_duration_sec)
   }
 
   // ── Verify: each chain's configured duration ──────────────────────────────
@@ -119,8 +134,8 @@ export namespace PerChainEpochsSteps {
 
   /**
    * Assert each outpost chain's `epochcfg` carries its own configured minimum duration, its
-   * `epochstate` paces its next advance by that minimum, and no two chains share a minimum
-   * ({@link assertEpochConfiguration}).
+   * `epochstate` paces its next advance by that minimum and its traffic wait, and no two chains
+   * share a minimum ({@link assertEpochConfiguration}).
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -160,36 +175,37 @@ export namespace PerChainEpochsSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const [depotDurations, consensus] = await Promise.all([
-      readEpochDurations(ctx),
+    const [depotConfigs, consensus] = await Promise.all([
+      readChainEpochConfigs(ctx),
       WireEconomicClockTool.readConsensusReadings(ctx)
     ])
-    assertEpochConfiguration(depotDurations, consensus, input.durations)
+    assertEpochConfiguration(depotConfigs, consensus, input.durations)
   }
 
   /**
    * Assert the depot paces each outpost chain by its configured minimum: its `epochcfg` duration
-   * is the configured one, its `epochstate` is idle or due exactly one minimum after the later of
-   * its epoch start and its traffic ({@link assertDueAt}), and the chains' minimums are pairwise
-   * distinct (so each later per-chain check tells the chains apart).
+   * is the configured one, its `epochstate` is idle or due exactly at the later of its epoch start
+   * plus its minimum and its traffic plus its traffic wait ({@link assertDueAt}), and the chains'
+   * minimums are pairwise distinct (so each later per-chain check tells the chains apart).
    *
-   * @param depotDurations - Each chain's `epochcfg.epoch_duration_sec`.
+   * @param depotConfigs - Each chain's `epochcfg` row.
    * @param consensus - Every chain's consensus epoch, read from its `epochstate` row.
    * @param configured - Each chain's configured duration.
    * @throws On the first chain that differs, or two chains at one duration.
    */
   export function assertEpochConfiguration(
-    depotDurations: OutpostEpochDurations,
+    depotConfigs: PerOutpostChain<SysioContracts.SysioEpochEpochConfigType>,
     consensus: WireEconomicClockTool.ConsensusReadings,
     configured: OutpostEpochDurations
   ): void {
     OutpostChainCodenames.forEach(chain => {
+      const depotDuration = depotConfigs[chain].epoch_duration_sec
       Assert.strictEqual(
-        depotDurations[chain],
+        depotDuration,
         configured[chain],
-        `the ${chain} epochcfg runs ${depotDurations[chain]} s epochs, not the configured ${configured[chain]} s`
+        `the ${chain} epochcfg runs ${depotDuration} s epochs, not the configured ${configured[chain]} s`
       )
-      assertDueAt(consensus[chain], depotDurations[chain], chain)
+      assertDueAt(consensus[chain], depotConfigs[chain], chain)
     })
     Assert.strictEqual(
       new Set(OutpostChainCodenames.map(chain => configured[chain])).size,
@@ -199,19 +215,19 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Assert a chain's `due_at` follows its minimum — pure: an idle chain has neither traffic nor a
-   * `due_at`; a chain with traffic is due exactly one minimum after the later of its epoch start
-   * and its traffic.
+   * Assert a chain's `due_at` follows its `epochcfg` — pure: an idle chain has neither traffic nor
+   * a `due_at`; a chain with traffic is due exactly at the later of its epoch start plus its
+   * minimum duration and its traffic plus its traffic wait.
    *
    * @param reading - The chain's consensus reading.
-   * @param durationSec - The chain's minimum duration (s).
+   * @param config - The chain's `epochcfg` row: its minimum and its traffic wait (s).
    * @param chain - The chain (for the message).
    * @throws When an idle chain carries a `due_at` or traffic alone, or a chain with traffic is due
    *   at another time.
    */
   export function assertDueAt(
     reading: WireEconomicClockTool.ConsensusReading,
-    durationSec: number,
+    config: SysioContracts.SysioEpochEpochConfigType,
     chain: OutpostChainCodename
   ): void {
     const { NoTrafficMs } = Steps.contracts.sysio.epoch
@@ -223,10 +239,15 @@ export namespace PerChainEpochsSteps {
       )
       return
     }
+    const { epoch_duration_sec: minimumSec, traffic_wait_sec: trafficWaitSec } = config
     Assert.strictEqual(
       reading.dueAtMs,
-      Math.max(reading.epochStartMs, reading.trafficSinceMs) + durationSec * ProtocolTiming.MsPerSecond,
-      `the ${chain} epoch ${reading.epochIndex} is not due one ${durationSec} s minimum after the later of its start and its traffic`
+      Math.max(
+        reading.epochStartMs + minimumSec * ProtocolTiming.MsPerSecond,
+        reading.trafficSinceMs + trafficWaitSec * ProtocolTiming.MsPerSecond
+      ),
+      `the ${chain} epoch ${reading.epochIndex} is not due at the later of its start plus its ${minimumSec} s ` +
+        `minimum and its traffic plus its ${trafficWaitSec} s wait`
     )
   }
 

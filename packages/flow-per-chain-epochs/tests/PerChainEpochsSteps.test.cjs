@@ -100,11 +100,16 @@ function epochStates(ethereum = 4, solana = 2) {
   }
 }
 
+/** One chain's `epochcfg` row at `durationSec`, its traffic wait the contract default (half). */
+function epochConfig(durationSec) {
+  return { epoch_duration_sec: durationSec, traffic_wait_sec: durationSec / 2 }
+}
+
 /** Both chains' `epochcfg` rows at `durations`. */
 function epochConfigs(durations = Durations) {
   return {
-    [OutpostChainCodename.ETHEREUM]: { epoch_duration_sec: durations[OutpostChainCodename.ETHEREUM] },
-    [OutpostChainCodename.SOLANA]: { epoch_duration_sec: durations[OutpostChainCodename.SOLANA] }
+    [OutpostChainCodename.ETHEREUM]: epochConfig(durations[OutpostChainCodename.ETHEREUM]),
+    [OutpostChainCodename.SOLANA]: epochConfig(durations[OutpostChainCodename.SOLANA])
   }
 }
 
@@ -218,32 +223,37 @@ describe("budgets", () => {
 })
 
 describe("epoch durations", () => {
-  test("every chain's duration comes from one epochcfg read", async () => {
+  test("every chain's epochcfg row and duration come from one epochcfg read", async () => {
     const read = mock.method(Steps.contracts.sysio.epoch, "readEpochConfigs", async () => epochConfigs())
+    Assert.deepEqual(await PerChainEpochsSteps.readChainEpochConfigs(context()), epochConfigs())
     Assert.deepEqual(await PerChainEpochsSteps.readEpochDurations(context()), Durations)
-    Assert.equal(read.mock.callCount(), 1)
+    Assert.equal(read.mock.callCount(), 2)
   })
 
   test("a chain without an epochcfg row fails", async () => {
     mock.method(Steps.contracts.sysio.epoch, "readEpochConfigs", async () => ({
       [OutpostChainCodename.ETHEREUM]: { epoch_duration_sec: EthereumSec }
     }))
+    await Assert.rejects(PerChainEpochsSteps.readChainEpochConfigs(context()), /epochcfg has no SOLANA row/)
     await Assert.rejects(PerChainEpochsSteps.readEpochDurations(context()), /epochcfg has no SOLANA row/)
   })
 })
 
 describe("epoch configuration", () => {
-  const { consensus } = reading(GenesisMs, 4, 2)
+  const { consensus } = reading(GenesisMs, 4, 2),
+    configs = epochConfigs(),
+    ethereumConfig = configs[OutpostChainCodename.ETHEREUM],
+    waitMs = ethereumConfig.traffic_wait_sec * 1_000
 
   test("each chain at its configured, distinct duration passes", () => {
-    PerChainEpochsSteps.assertEpochConfiguration(Durations, consensus, Durations)
+    PerChainEpochsSteps.assertEpochConfiguration(configs, consensus, Durations)
   })
 
   test("a chain at another duration fails", () => {
     Assert.throws(
       () =>
         PerChainEpochsSteps.assertEpochConfiguration(
-          { ...Durations, [OutpostChainCodename.SOLANA]: EthereumSec },
+          epochConfigs({ ...Durations, [OutpostChainCodename.SOLANA]: EthereumSec }),
           consensus,
           Durations
         ),
@@ -251,40 +261,53 @@ describe("epoch configuration", () => {
     )
   })
 
-  test("a chain due one minimum after the later of its start and its traffic passes", () => {
+  test("a chain due at the later of its start plus its minimum and its traffic plus its wait passes", () => {
     const ethereum = consensus[OutpostChainCodename.ETHEREUM],
-      startMs = ethereum.epochStartMs
-    // Traffic before the start: due one minimum after the start.
+      startMs = ethereum.epochStartMs,
+      minimumMs = EthereumSec * 1_000
+    // Traffic before the start, or early in the epoch: due one minimum after the start.
     PerChainEpochsSteps.assertDueAt(
-      { ...ethereum, trafficSinceMs: startMs - 5_000, dueAtMs: startMs + EthereumSec * 1_000 },
-      EthereumSec,
+      { ...ethereum, trafficSinceMs: startMs - 5_000, dueAtMs: startMs + minimumMs },
+      ethereumConfig,
       OutpostChainCodename.ETHEREUM
     )
-    // Traffic after the start: due one minimum after the traffic.
     PerChainEpochsSteps.assertDueAt(
-      { ...ethereum, trafficSinceMs: startMs + 7_000, dueAtMs: startMs + 7_000 + EthereumSec * 1_000 },
-      EthereumSec,
+      { ...ethereum, trafficSinceMs: startMs + 7_000, dueAtMs: startMs + minimumMs },
+      ethereumConfig,
+      OutpostChainCodename.ETHEREUM
+    )
+    // Traffic late in the epoch: due one wait after the traffic.
+    const lateMs = startMs + minimumMs - 1_000
+    PerChainEpochsSteps.assertDueAt(
+      { ...ethereum, trafficSinceMs: lateMs, dueAtMs: lateMs + waitMs },
+      ethereumConfig,
       OutpostChainCodename.ETHEREUM
     )
     // Idle: neither traffic nor due.
-    PerChainEpochsSteps.assertDueAt(ethereum, EthereumSec, OutpostChainCodename.ETHEREUM)
+    PerChainEpochsSteps.assertDueAt(ethereum, ethereumConfig, OutpostChainCodename.ETHEREUM)
   })
 
-  test("a due_at off the minimum fails, in the configuration check too", () => {
+  test("a due_at off the rule fails, in the configuration check too", () => {
     const ethereum = consensus[OutpostChainCodename.ETHEREUM],
-      early = { ...ethereum, trafficSinceMs: ethereum.epochStartMs + 7_000, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 }
-    Assert.throws(
-      () => PerChainEpochsSteps.assertDueAt(early, EthereumSec, OutpostChainCodename.ETHEREUM),
-      /ETHEREUM epoch 4 is not due one 60 s minimum after the later of its start and its traffic/
+      lateMs = ethereum.epochStartMs + EthereumSec * 1_000 - 1_000,
+      // Due one minimum after the start, as if the late traffic waited nothing.
+      early = { ...ethereum, trafficSinceMs: lateMs, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 },
+      // Due one full minimum after the traffic, the rule before the wait.
+      late = { ...ethereum, trafficSinceMs: lateMs, dueAtMs: lateMs + EthereumSec * 1_000 }
+    ;[early, late].forEach(reading =>
+      Assert.throws(
+        () => PerChainEpochsSteps.assertDueAt(reading, ethereumConfig, OutpostChainCodename.ETHEREUM),
+        /ETHEREUM epoch 4 is not due at the later of its start plus its 60 s minimum and its traffic plus its 30 s wait/
+      )
     )
     Assert.throws(
       () =>
         PerChainEpochsSteps.assertEpochConfiguration(
-          Durations,
+          configs,
           { ...consensus, [OutpostChainCodename.ETHEREUM]: early },
           Durations
         ),
-      /is not due one 60 s minimum/
+      /is not due at the later of its start plus its 60 s minimum/
     )
   })
 
@@ -294,7 +317,7 @@ describe("epoch configuration", () => {
       () =>
         PerChainEpochsSteps.assertDueAt(
           { ...ethereum, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 },
-          EthereumSec,
+          ethereumConfig,
           OutpostChainCodename.ETHEREUM
         ),
       /ETHEREUM epoch 4 has no traffic yet is due at/
@@ -308,7 +331,7 @@ describe("epoch configuration", () => {
         [OutpostChainCodename.SOLANA]: consensusReading(4, EthereumSec)
       }
     Assert.throws(
-      () => PerChainEpochsSteps.assertEpochConfiguration(uniform, uniformConsensus, uniform),
+      () => PerChainEpochsSteps.assertEpochConfiguration(epochConfigs(uniform), uniformConsensus, uniform),
       /two outpost chains run one consensus epoch duration/
     )
   })

@@ -15,8 +15,8 @@ amount. A queued instruction alone cannot pass the flow.
 The flow aligns both arrivals to one outpost envelope and never weakens finality: it
 waits until Solana's current epoch is decided and the chain idle (no traffic), adding
 no traffic itself. The outpost has then answered the depot's current envelope and
-emits its next only on the depot's next one, which needs traffic and then a whole
-minimum from it, so both writes land before it; the relays' report of the outpost's
+emits its next only on the depot's next one, which needs traffic and then Solana's
+traffic wait from it, so both writes land before it; the relays' report of the outpost's
 backlog to the depot (`sysio.msgch::reportqueue`), made only after the first write, gives
 Solana that traffic, and the intake waits add none. A wait for a new epoch would not
 do: the outpost answers a depot envelope only after the advance that ships it, so the

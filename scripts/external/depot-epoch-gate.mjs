@@ -103,7 +103,7 @@ export async function readDepotEpoch(clio, expectedChains) {
 /**
  * Give each of `chains` traffic: one `sysio.epoch::notetraffic` (traffic since now) per chain,
  * declared by {@link NotetrafficPermission} and signed through the kiod wallet at `walletUrl`,
- * so the chain is due one minimum duration later. A refused push (the wallet lacks the key behind
+ * so the chain is due within one minimum duration. A refused push (the wallet lacks the key behind
  * `sysio@active`, or the chain moved on) is printed and retried on the next poll.
  *
  * @param {DepotClio} clio the depot-container clio runner.

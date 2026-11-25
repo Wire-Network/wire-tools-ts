@@ -1817,9 +1817,11 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
-   * One outpost chain's `sysio.epoch::setconfig` data: the chain's consensus epoch duration,
-   * and the schedule shape derived from the batch-operator topology (every chain is sized the
-   * same, since every bootstrapped batch operator serves every chain).
+   * One outpost chain's `sysio.epoch::setconfig` data: the chain's consensus epoch duration, its
+   * traffic wait and late-delivery window at the contract default (half the minimum,
+   * `EpochContractSteps.DefaultShareOfMinimumSec`), and the schedule shape derived from the
+   * batch-operator topology (every chain is sized the same, since every bootstrapped batch
+   * operator serves every chain).
    *
    * The shape itself comes from {@link BatchOperatorSchedule.resolve} — the ONE
    * place it is derived and validated, shared with
@@ -1847,6 +1849,8 @@ export namespace ClusterBuildDefaults {
     return {
       chain_code: chain,
       epoch_duration_sec: config.outpostEpochDurationSec[chain],
+      traffic_wait_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
+      late_window_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
       operators_per_epoch: operatorsPerEpoch,
       batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,

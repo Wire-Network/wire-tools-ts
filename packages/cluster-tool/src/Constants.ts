@@ -784,9 +784,10 @@ export namespace Constants {
  * Protocol timing envelope (author guidance, 2026-07-04) — the authoritative
  * worst-case durations of OPP propagation classes at the 60s minimum epoch.
  * Epochs are depot-paced: a chain advances only once it is due (it has traffic,
- * and its minimum duration has passed since the later of its epoch start and
- * that traffic), so every epoch-counted budget counts from a traffic injection,
- * never from a cadence. An advance can land ~15–30s after its chain is due
+ * its minimum duration has passed since its epoch start and its traffic wait,
+ * at most that minimum, since that traffic), so every epoch-counted budget
+ * counts from a traffic injection, never from a cadence: from traffic, a chain
+ * is due within one minimum. An advance can land ~15–30s after its chain is due
  * while a scheduled batch operator has yet to deliver or crank (operators crank
  * on ~15s internal loops);
  * collateral deposit + depot verification takes ~4–6 minutes; a single-hop

@@ -1060,7 +1060,8 @@ export namespace EconomicClockSteps {
   /**
    * Poll until `chain`'s current consensus epoch is decided and the chain is idle
    * ({@link decidedAndIdle}): with no traffic it cannot advance, so a write right after lands on
-   * that decided epoch (traffic arriving meanwhile still leaves a whole minimum before it is due).
+   * that decided epoch (traffic recorded at its arrival still leaves the chain its traffic wait,
+   * half a minimum, before it is due).
    * Pair it with {@link epochDecidedStepTimeoutMs}.
    */
   export function planAwaitEpochDecided<
@@ -1106,7 +1107,7 @@ export namespace EconomicClockSteps {
   /**
    * Whether `chain`'s current consensus epoch is decided at `reading` and the chain is idle (no
    * traffic, so no `due_at`): a depot-paced chain in that state stays on the epoch until traffic
-   * arrives, and then for at least one more minimum — pure.
+   * arrives, and then until its `due_at` passes — pure.
    *
    * @param reading - Both clocks.
    * @param chain - The outpost chain.

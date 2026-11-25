@@ -258,8 +258,8 @@ NEVER wrap either script in session-local launchers/watchers, never invoke
 the scripts (not new ones) when a run needs something they lack. Epoch stall =
 stop the run, preserve forensics, diagnose (`epoch-stall-is-fatal.md`). Epochs are
 depot-paced: a chain advances only once it is due (it has traffic and its
-`due_at`, its minimum duration past the later of its epoch start and that
-traffic, has passed). A stall is a DUE chain that does not advance; an IDLE
+`due_at`, the later of its epoch start plus its minimum duration and that
+traffic plus its traffic wait, has passed). A stall is a DUE chain that does not advance; an IDLE
 chain (no traffic, `due_at` zero) legitimately stays in its epoch and is never
 a stall, and an idle cluster legitimately grows no OPP artifacts. The monitor
 marks each chain `i` (idle), `w` (traffic, waiting for `due_at`), `d` (due) or
@@ -269,8 +269,9 @@ chains. Two bails do not depend on traffic: a depot head block frozen across a
 beat and a re-probe (wall clock — the head time every `due_at` is measured on
 stops with the producers; never suppressed, since a dispute pause freezes
 epochs, not blocks), and a started, unpaused chain whose current epoch (genesis
-included) stays undecided past `max(420 s, 8 × its minimum)` (suppressed by
-`--expect-epoch-freeze`).
+included) stays undecided past `max(420 s, 5 × its minimum)` (suppressed by
+`--expect-epoch-freeze`); a split held open by a silent member never disputes,
+so this bail is its alarm.
 
 **Queued messages make their chain due themselves.** A message the depot queues
 to an outpost gives the chain traffic (`sysio.msgch::queueout`), and the relays
@@ -291,9 +292,7 @@ behind `sysio@active`, as `sysio.epoch@active` is) for each chain that snapshot
 shows idle (`EpochAdvanceSteps.keepChainsDue`). `notetraffic` leaves
 `rostersent` alone, so a pumped advance queues the roster only when it changed;
 governance `sysio.epoch::resendroster` stays the roster-recovery action a flow
-plans explicitly, never a pump. A flow that needs exactly one advance at a known
-point plans the idempotent `EpochAdvanceSteps.planKeepChainDue` (traffic only
-while the chain is idle) instead. The pump is the one sanctioned exception to
+plans explicitly, never a pump. The pump is the one sanctioned exception to
 "every write is its own Step" (`tools-return-orchestration-units.md`): a wait
 cannot know at plan time how many advances, so how many pushes, it needs, so
 each push runs inside the waiting Step through the named runner of

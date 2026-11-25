@@ -568,59 +568,6 @@ describe("EpochAdvanceSteps", () => {
     })
   })
 
-  describe("planKeepChainDue", () => {
-    /** The step for `chain`, as a flow plans it. */
-    function keepDueStep(chain: OutpostChainCodename) {
-      return Steps.epochAdvance.planKeepChainDue(Report.Actor.Sysio, "traffic", "traffic", {}, chain)
-    }
-
-    it("carries its chain to the named runner", () => {
-      const step = keepDueStep(ETHEREUM)
-      expect(step.input).toEqual({ kind: "EpochAdvanceSteps.KeepChainDueInput", chain: ETHEREUM })
-      expect(step.runner).toBe(Steps.epochAdvance.runKeepChainDue)
-    })
-
-    it("gives an idle chain traffic since now, once", async () => {
-      serveStates(states())
-      const notetraffic = stubNotetraffic(),
-        step = keepDueStep(SOLANA)
-      await step.runner(context(), step.input, signal)
-      expect(notetraffic.mock.calls.map(([, input]) => input)).toEqual([
-        Steps.epochAdvance.keepDueTrafficInput(SOLANA)
-      ])
-    })
-
-    it.each([
-      ["has traffic", epochState(ETHEREUM, 3, Due)],
-      ["is paused", epochState(ETHEREUM, 3, NoTraffic, true)],
-      ["has not started", epochState(ETHEREUM, 0)],
-      ["has no row", undefined]
-    ])("pushes nothing when the chain %s: re-running it is harmless", async (_case, row) => {
-      serveStates(states({ [ETHEREUM]: row }))
-      const notetraffic = stubNotetraffic(),
-        step = keepDueStep(ETHEREUM)
-      await step.runner(context(), step.input, signal)
-      expect(notetraffic).not.toHaveBeenCalled()
-    })
-
-    it("fails the Step on a refused push or a failed read", async () => {
-      serveStates(states())
-      stubNotetraffic(new Error("missing authority of sysio.msgch"))
-      const step = keepDueStep(ETHEREUM)
-      await expect(step.runner(context(), step.input, signal)).rejects.toThrow(/sysio.msgch/)
-      jest.restoreAllMocks()
-      serveStates(new Error("rpc reset"))
-      await expect(step.runner(context(), step.input, signal)).rejects.toThrow("rpc reset")
-    })
-
-    it("refuses to run once aborted", async () => {
-      const read = serveStates(states()),
-        step = keepDueStep(ETHEREUM)
-      await expect(step.runner(context(), step.input, AbortSignal.abort())).rejects.toThrow()
-      expect(read).not.toHaveBeenCalled()
-    })
-  })
-
   describe("isDecidedAndIdle", () => {
     const decided = (epochIndex: number) =>
       ({ epoch_index: epochIndex }) as SysioContracts.SysioMsgchOutpostConsensusEntryType

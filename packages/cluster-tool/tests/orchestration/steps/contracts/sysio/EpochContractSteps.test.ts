@@ -59,6 +59,8 @@ function epochConfigRow(
   return {
     chain_code: packedCode(chain),
     epoch_duration_sec: epochDurationSec,
+    traffic_wait_sec: Math.floor(epochDurationSec / 2),
+    late_window_sec: Math.floor(epochDurationSec / 2),
     operators_per_epoch: 3,
     batch_operator_minimum_active: 9,
     batch_op_groups: 3,
@@ -75,6 +77,8 @@ describe("Steps.contracts.sysio.epoch", () => {
     const data: SysioContracts.SysioEpochSetconfigAction = {
       chain_code: Ethereum,
       epoch_duration_sec: 60,
+      traffic_wait_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
+      late_window_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
       operators_per_epoch: 3,
       batch_operator_minimum_active: 9,
       batch_op_groups: 3,

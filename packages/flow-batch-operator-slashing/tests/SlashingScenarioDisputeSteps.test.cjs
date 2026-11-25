@@ -357,15 +357,55 @@ describe("runAwaitSoleActiveGroup", () => {
   })
 })
 
+/** A build context whose chain head is at `headBlockTime` and whose staged contested epoch is {@link ContestedEpoch}. */
+function contestedContext(headBlockTime) {
+  const ctx = clockContext(headBlockTime)
+  ctx.outputs.set(DisputeSteps.ContestedEpochKey, ContestedEpoch)
+  return ctx
+}
+
 describe("runAwaitContestedChainDue", () => {
   test("polls the contested chain until its due_at is reached", async () => {
     const read = serveEpochStates(
       epochState(ContestedEpoch, DisputeAccounts, chainTime(1_000)),
       epochState(ContestedEpoch, DisputeAccounts, chainTime(0))
     )
-    await DisputeSteps.runAwaitContestedChainDue(clockContext(chainTime(0)), null, new AbortController().signal)
+    await DisputeSteps.runAwaitContestedChainDue(contestedContext(chainTime(0)), null, new AbortController().signal)
     Assert.equal(read.mock.callCount(), 2)
     Assert.equal(read.mock.calls[0].arguments[1], Constants.ContestedChain)
+  })
+
+  test("returns once a relay's liveness crank moved the chain past the contested epoch, though it is not due", async () => {
+    const read = serveEpochStates(
+      epochState(ContestedEpoch, DisputeAccounts, chainTime(1_000)),
+      epochState(ContestedEpoch + 1, DisputeAccounts, NoTraffic)
+    )
+    await DisputeSteps.runAwaitContestedChainDue(contestedContext(chainTime(0)), null, new AbortController().signal)
+    Assert.equal(read.mock.callCount(), 2)
+  })
+
+  test("pushes no traffic while the chain is idle: the resolution's own traffic makes it due", async () => {
+    const read = serveEpochStates(
+        epochState(ContestedEpoch, DisputeAccounts, NoTraffic),
+        epochState(ContestedEpoch, DisputeAccounts, chainTime(0))
+      ),
+      states = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({
+        [Constants.ContestedChain]: { ...epochState(ContestedEpoch, DisputeAccounts, NoTraffic), is_paused: false },
+        [Constants.RunningChain]: { ...epochState(4, ["batchop.b"], NoTraffic), is_paused: false }
+      })),
+      push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+    await DisputeSteps.runAwaitContestedChainDue(contestedContext(chainTime(0)), null, new AbortController().signal)
+    Assert.equal(read.mock.callCount(), 2)
+    Assert.equal(push.mock.callCount(), 0)
+    Assert.equal(states.mock.callCount(), 0)
+  })
+
+  test("reads nothing without a staged contested epoch", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts))
+    await Assert.rejects(
+      DisputeSteps.runAwaitContestedChainDue(clockContext(chainTime(0)), null, new AbortController().signal)
+    )
+    Assert.equal(read.mock.callCount(), 0)
   })
 
   test("the factory wires the runner, and an aborted step does not poll", async () => {
@@ -373,8 +413,51 @@ describe("runAwaitContestedChainDue", () => {
       read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts))
     Assert.equal(step.runner, DisputeSteps.runAwaitContestedChainDue)
     Assert.equal(step.input, null)
-    await Assert.rejects(DisputeSteps.runAwaitContestedChainDue(clockContext(chainTime(0)), null, AbortSignal.abort()))
+    await Assert.rejects(DisputeSteps.runAwaitContestedChainDue(contestedContext(chainTime(0)), null, AbortSignal.abort()))
     Assert.equal(read.mock.callCount(), 0)
+  })
+})
+
+describe("runCrankContestedChain", () => {
+  /** The crank step, carrying the contested chain's `chkcons` data. */
+  function crankStep() {
+    return DisputeSteps.planCrankContestedChain(Report.Actor.Sysio, "crank", "crank", {})
+  }
+
+  test("the factory carries the contested chain's chkcons data and its named runner", () => {
+    const step = crankStep()
+    Assert.deepEqual(step.input, {
+      kind: "MsgchContractSteps.ChkconsInput",
+      data: { chain_code: Constants.ContestedChainCode }
+    })
+    Assert.equal(step.runner, DisputeSteps.runCrankContestedChain)
+  })
+
+  test("pushes the chkcons while the chain is still at the contested epoch", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts)),
+      crank = mock.method(Steps.contracts.sysio.msgch, "runChkcons", async () => undefined),
+      step = crankStep()
+    await DisputeSteps.runCrankContestedChain(contestedContext(chainTime(0)), step.input, new AbortController().signal)
+    Assert.equal(read.mock.calls[0].arguments[1], Constants.ContestedChain)
+    Assert.equal(crank.mock.callCount(), 1)
+    Assert.equal(crank.mock.calls[0].arguments[1], step.input)
+  })
+
+  test("pushes nothing once a relay's liveness crank moved the chain past the contested epoch", async () => {
+    serveEpochStates(epochState(ContestedEpoch + 1, DisputeAccounts, NoTraffic))
+    const crank = mock.method(Steps.contracts.sysio.msgch, "runChkcons", async () => undefined)
+    await DisputeSteps.runCrankContestedChain(contestedContext(chainTime(0)), crankStep().input, new AbortController().signal)
+    Assert.equal(crank.mock.callCount(), 0)
+  })
+
+  test("an aborted step reads and pushes nothing", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts)),
+      crank = mock.method(Steps.contracts.sysio.msgch, "runChkcons", async () => undefined)
+    await Assert.rejects(
+      DisputeSteps.runCrankContestedChain(contestedContext(chainTime(0)), crankStep().input, AbortSignal.abort())
+    )
+    Assert.equal(read.mock.callCount(), 0)
+    Assert.equal(crank.mock.callCount(), 0)
   })
 })
 

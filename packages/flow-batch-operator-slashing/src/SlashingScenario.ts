@@ -526,9 +526,11 @@ export class SlashingScenario extends FlowScenario {
     )
 
     // ── 4. SlashNonCanonical — losers SLASHED at the resolution, winner untouched ──
-    // Nothing cranks the contested chain after the resolution (its group's
-    // operators run no relay) and nothing gives it traffic, so it still sits at
-    // the contested epoch: the resolution itself slashed the losers.
+    // The resolution gives the contested chain traffic (sysio.msgch::resolvedisp),
+    // but its group's operators run no relay, so no elected operator cranks it (a
+    // relay serving it cranks it for liveness only one minimum after it falls due)
+    // and it still sits at the contested epoch: the resolution itself slashed the
+    // losers.
     ClusterBuildPhase.create(
       cluster,
       "SlashNonCanonical",
@@ -557,12 +559,13 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // ── 5. ContestedChainAdvances — traffic + chkcons move it past the contested epoch ──
-    // The contested chain's group still runs no relay, so no elected operator
-    // pushes its chkcons: the flow gives the idle chain traffic (only when it is
-    // idle, so the step is idempotent), waits for it to fall due one minimum
-    // later, and cranks it. That advance closes the books of the epoch before the
-    // contested one and must slash no one the resolution did not.
+    // ── 5. ContestedChainAdvances — a chkcons moves it past the contested epoch ──
+    // The resolution's traffic makes the contested chain due one traffic wait
+    // after it, and its group still runs no relay, so no elected operator pushes
+    // its chkcons: the flow waits for it to fall due and cranks it. A relay's
+    // liveness chkcons may advance it first, so the wait also accepts an advance
+    // and the crank then pushes nothing. That advance closes the books of the
+    // epoch before the contested one and must slash no one the resolution did not.
     //
     // The flow ends there and leaves the Ethereum outpost on the contested epoch:
     // no relay of the contested epoch's group delivers its depot envelope, so the
@@ -573,7 +576,7 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "ContestedChainAdvances",
-      `Traffic and a chkcons move the ${Constants.ContestedChain} chain past the contested epoch with no new slash`
+      `A chkcons moves the ${Constants.ContestedChain} chain, due from the resolution's traffic, past the contested epoch with no new slash`
     ).push(
       DisputeSteps.planRecordSlashedOperators(
         Actor.Sysio,
@@ -581,25 +584,17 @@ export class SlashingScenario extends FlowScenario {
         "record every SLASHED operator on sysio.opreg before the contested chain advances",
         {}
       ),
-      Steps.epochAdvance.planKeepChainDue(
-        Actor.Sysio,
-        "contested-chain-traffic",
-        `give the ${Constants.ContestedChain} chain traffic (sysio.epoch::notetraffic) only while it is idle`,
-        {},
-        Constants.ContestedChain
-      ),
       DisputeSteps.planAwaitContestedChainDue(
         Actor.Sysio,
         "contested-chain-due",
-        `the ${Constants.ContestedChain} chain falls due one minimum after the traffic`,
+        `the ${Constants.ContestedChain} chain falls due one traffic wait after the resolution's traffic`,
         contestedDueStepOptions
       ),
-      Steps.contracts.sysio.msgch.planChkcons(
+      DisputeSteps.planCrankContestedChain(
         Actor.Sysio,
         "crank-contested-chain",
-        `crank the ${Constants.ContestedChain} chain's decided contested epoch through sysio.msgch::chkcons`,
-        {},
-        { chain_code: Constants.ContestedChainCode }
+        `crank the ${Constants.ContestedChain} chain's decided contested epoch through sysio.msgch::chkcons, unless a relay's liveness crank already advanced it`,
+        {}
       ),
       verifyStep(
         Actor.Sysio,

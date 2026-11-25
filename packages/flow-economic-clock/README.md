@@ -2,8 +2,8 @@
 
 `sysio.epoch` runs two kinds of clock. Each outpost chain runs its own depot-paced consensus epoch
 (its `epochcfg` / `epochstate` row): it advances on that outpost's consensus only once it is due (it
-has traffic and its minimum has passed since the later of its epoch start and that traffic), so an
-idle chain stays in its epoch, and it stops while the chain is paused. The one economic clock
+has traffic, its minimum has passed since its epoch start and its traffic wait since that traffic), so
+an idle chain stays in its epoch, and it stops while the chain is paused. The one economic clock
 (`economycfg` / `economystate`) opens epochs on a fixed wall-clock grid through the batch operators'
 `tickeconomy` crank; emissions accrue and pay, and collateral withdrawals mature, on it. The flow runs
 every chain's consensus at a 60 s minimum and the economic clock at 120 s, so a chain kept due

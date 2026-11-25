@@ -28,19 +28,21 @@ const log = getLogger(__filename)
 
 /**
  * Steps and waits over every outpost chain's depot-paced consensus epoch. A chain advances only
- * once it is due — it has traffic and its minimum duration has passed since the later of its
- * epoch start and that traffic — so an idle chain stays in its decided epoch, and a wait that
- * needs a chain to advance must give it traffic. {@link EpochAdvanceSteps.keepChainsDue} is THE
- * one pump that does: it pushes `sysio.epoch::notetraffic` (signed `sysio.msgch@active`, traffic
- * since now) for each awaited chain that is idle, and {@link EpochAdvanceSteps.pollUntilKeepingDue}
+ * once it is due — it has traffic, its minimum duration has passed since its epoch start and its
+ * traffic wait (`epochcfg.traffic_wait_sec`) since that traffic — so an idle chain stays in its
+ * decided epoch, and a wait that needs a chain to advance must give it traffic.
+ * {@link EpochAdvanceSteps.keepChainsDue} is THE one pump that does: it pushes
+ * `sysio.epoch::notetraffic` (signed `sysio.msgch@active`, traffic since now) for each awaited
+ * chain that is idle, and {@link EpochAdvanceSteps.pollUntilKeepingDue}
  * / {@link EpochAdvanceSteps.pollForKeepingDue} run it beside a wait's predicate. The pump never
  * touches the chain's `rostersent`, so an advance it brings queues the roster only when the
  * roster changed: governance `sysio.epoch::resendroster` stays the roster-recovery action, never
  * a pump. A message either side queues needs no pump: the depot's own outbound queue gives its
  * chain traffic (`sysio.msgch::queueout`), and the relays report each outpost's outbound backlog to
- * the depot (`sysio.msgch::reportqueue`), which gives the chain traffic once a strict majority of
- * its group reported, so a wait on an outpost → depot delivery polls without the pump. The pump is
- * for waits that need an advance nothing queued would bring.
+ * the depot (`sysio.msgch::reportqueue`), which gives the chain traffic once eligible members
+ * holding a strict majority of its group's seats reported, so a wait on an outpost → depot
+ * delivery polls without the pump. The pump is for waits that need an advance nothing queued
+ * would bring.
  *
  * The bootstrap's per-chain gate ({@link EpochAdvanceSteps.planAwaitEpochDecided}) waits for
  * each chain's genesis epoch to be decided — one full round trip, which needs no traffic — and
@@ -48,8 +50,7 @@ const log = getLogger(__filename)
  * verified advanced past by a later Step ({@link EpochAdvanceSteps.planVerifyEpochIndicesAdvanced})
  * that keeps every chain due. Every wait returns the moment its condition holds, and logs and
  * retries a read that fails transiently. `ClusterManager.run`'s relaunch liveness gate is
- * {@link EpochAdvanceSteps.awaitEpochIndicesAdvanced}, the same pumped poll. A Step that must give
- * one chain traffic exactly when it is idle is {@link EpochAdvanceSteps.planKeepChainDue}.
+ * {@link EpochAdvanceSteps.awaitEpochIndicesAdvanced}, the same pumped poll.
  */
 export namespace EpochAdvanceSteps {
   /**
@@ -113,8 +114,9 @@ export namespace EpochAdvanceSteps {
 
   /**
    * The `sysio.epoch::notetraffic` input the pump pushes for `chain`: traffic since now
-   * (`EpochContractSteps.TrafficSinceNow`), so the chain is due one minimum duration after the
-   * block the push lands in.
+   * (`EpochContractSteps.TrafficSinceNow`), so the chain is due within one minimum duration of the
+   * block the push lands in: the later of its epoch start plus its minimum and that block plus its
+   * traffic wait.
    *
    * @param chain - The chain given traffic.
    * @returns The named runner's input.
@@ -153,7 +155,7 @@ export namespace EpochAdvanceSteps {
   /**
    * One pass of THE keep-due pump over a snapshot: push `sysio.epoch::notetraffic` (traffic since
    * now, {@link keepDueTrafficInput}) for each chain of `chains` the snapshot shows idle
-   * ({@link chainsToKeepDue}), so it is due one minimum duration later. Each push is
+   * ({@link chainsToKeepDue}), so it is due within one minimum duration. Each push is
    * `EpochContractSteps.runNotetraffic`, the named runner of `planNotetraffic`, signed
    * `sysio.msgch@active` (on a local cluster, through `sysio@active`'s key, exactly as
    * `sysio.epoch@active` is), so it lands in the waiting Step's Report. The pump leaves
@@ -164,8 +166,7 @@ export namespace EpochAdvanceSteps {
    * plan time how many advances (so how many traffic pushes) it takes — the number depends on
    * when its predicate holds — so the pushes cannot be planned as Steps; they run inside the
    * waiting Step instead, each through the named runner of `planNotetraffic`, so the Report still
-   * attributes every one. A wait whose number of pushes IS known (exactly one, when a chain is
-   * idle) plans {@link planKeepChainDue} instead.
+   * attributes every one.
    *
    * A chain the snapshot shows with traffic gets nothing, so calling the pump on every poll pushes
    * at most once per advance. A failed push is logged and left to the next pass. No snapshot (a
@@ -275,69 +276,6 @@ export namespace EpochAdvanceSteps {
       timeoutMs,
       intervalMs
     )
-  }
-
-  // ── Step: give one chain traffic when it is idle ─────────────────────────
-
-  /** Input for {@link planKeepChainDue}. */
-  export interface KeepChainDueInput extends StepInput {
-    readonly kind: "EpochAdvanceSteps.KeepChainDueInput"
-    /** The outpost chain given traffic when it is idle. */
-    readonly chain: Constants.OutpostChainCodename
-  }
-
-  /**
-   * Give one outpost chain traffic exactly when it is idle ({@link runKeepChainDue}): the
-   * idempotent Step form of the keep-due pump, for a flow that needs one advance of a chain at a
-   * known point. Re-running it, or running it while the chain already has traffic, pushes nothing.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name (report row).
-   * @param description - One-line description.
-   * @param options - Step option overrides.
-   * @param chain - The outpost chain given traffic when it is idle.
-   * @returns The keep-due step.
-   */
-  export function planKeepChainDue<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    chain: Constants.OutpostChainCodename
-  ): ClusterBuildStep<C, KeepChainDueInput> {
-    return ClusterBuildStep.create<C, KeepChainDueInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "EpochAdvanceSteps.KeepChainDueInput", chain },
-      runKeepChainDue
-    )
-  }
-
-  /**
-   * Named runner — read the chain's `epochstate` and, only when it is idle and not paused
-   * ({@link chainsToKeepDue}), push one `sysio.epoch::notetraffic` ({@link keepDueTrafficInput})
-   * through `EpochContractSteps.runNotetraffic`. At most one write; a refused push fails the Step.
-   *
-   * @param ctx - The build context.
-   * @param input - The chain given traffic when it is idle.
-   * @param signal - Abort signal.
-   * @throws When the read or the push fails.
-   */
-  export async function runKeepChainDue<C extends ClusterBuildContext>(
-    ctx: C,
-    input: KeepChainDueInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const { chain } = input
-    if (chainsToKeepDue(await EpochContractSteps.readEpochStates(ctx), [chain]).length === 0) {
-      log.info(`[epoch-advance] ${chain} has traffic, is paused or has not started: no notetraffic`)
-      return
-    }
-    await EpochContractSteps.runNotetraffic(ctx, keepDueTrafficInput(chain), signal)
-    log.info(`[epoch-advance] ${chain} is idle: notetraffic gives it traffic`)
   }
 
   /** A caught error's message, for the pump's and the polls' logs. */

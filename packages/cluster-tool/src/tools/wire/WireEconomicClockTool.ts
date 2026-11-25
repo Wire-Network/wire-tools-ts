@@ -4,8 +4,9 @@
  * `tickeconomy` crank opens; emissions, collateral-withdrawal maturity and producer pay run on it,
  * and it never waits on outpost consensus. Each outpost chain runs its own depot-paced consensus
  * epoch (its `epochstate` row): it advances only once that outpost has reached consensus and the
- * chain is due — it has traffic and its minimum duration has passed since the later of its epoch
- * start and that traffic — so an idle chain stays in its epoch, and it stops while it is paused.
+ * chain is due — it has traffic, its minimum duration has passed since its epoch start and its
+ * traffic wait (`epochcfg.traffic_wait_sec`) since that traffic — so an idle chain stays in its
+ * epoch, and it stops while it is paused.
  *
  * {@link WireEconomicClockTool.planAwaitEconomicEpochsOpened} observes economic epochs open,
  * recording a {@link WireEconomicClockTool.Reading} of both clocks at each one, and

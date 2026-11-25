@@ -98,7 +98,7 @@ export class PerChainEpochsScenario extends FlowScenario {
       PerChainEpochsSteps.planVerifyEpochConfiguration(
         Actor.Sysio,
         "epoch-configuration",
-        `epochcfg runs ${OutpostChainCodename.ETHEREUM} at ${ethereumSec} s and ${OutpostChainCodename.SOLANA} at ${solanaSec} s, each epochstate idle or due one minimum after its start or traffic`,
+        `epochcfg runs ${OutpostChainCodename.ETHEREUM} at ${ethereumSec} s and ${OutpostChainCodename.SOLANA} at ${solanaSec} s, each epochstate idle or due at the later of its start plus its minimum and its traffic plus its wait`,
         {},
         outpostEpochDurationSec
       )

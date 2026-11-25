@@ -39,15 +39,26 @@ const { SysioContractAccount, SysioContractName } = SysioContracts
  * reads are execution details, not Steps.
  */
 export namespace EpochContractSteps {
+  /**
+   * The `traffic_wait_sec` / `late_window_sec` that `sysio.epoch::setconfig` reads as its default,
+   * half the chain's minimum duration; the chain's `epochcfg` row then holds the resolved value.
+   * The bootstrap sets both to it.
+   */
+  export const DefaultShareOfMinimumSec = 0
+
   /** Input for {@link planSetconfig} — the generated `epoch::setconfig` data. */
   export interface SetconfigInput extends StepInput {
     readonly kind: "EpochContractSteps.SetconfigInput"
-    /** The action data: one outpost chain's epoch duration, group sizing and retention. */
+    /**
+     * The action data: one outpost chain's epoch duration, traffic wait, late-delivery window,
+     * group sizing and retention.
+     */
     readonly data: SysioContracts.SysioEpochSetconfigAction
   }
 
   /**
-   * `sysio.epoch::setconfig` — one outpost chain's epoch duration, group sizing, retention.
+   * `sysio.epoch::setconfig` — one outpost chain's epoch duration, traffic wait, late-delivery
+   * window, group sizing, retention.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -202,14 +213,16 @@ export namespace EpochContractSteps {
    * chain, its genesis advance included, needs `sysio.msgch` (its `chkcons`) or `sysio.epoch`
    * authority, and a chain's genesis advance also needs its schedule (`schbatchgps`) to exist.
    * Past its genesis a chain advances only once it is due, under either authority; otherwise
-   * the action returns without effect.
+   * the action returns without effect. Under `sysio.epoch` authority it is refused for an active
+   * chain whose current epoch is undecided.
    */
   export const AdvanceAccount = SysioContractAccount[SysioContractName.epoch]
 
   /**
    * `sysio.epoch::advance` — advance one outpost chain's consensus epoch once it is due (it has
    * traffic and `due_at` has passed; the genesis advance needs no traffic), opening the next
-   * epoch at the advance time. Signed by {@link AdvanceAccount}.
+   * epoch at the advance time. Signed by {@link AdvanceAccount}, so refused while an active
+   * chain's current epoch is undecided.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -371,7 +384,7 @@ export namespace EpochContractSteps {
   /**
    * `sysio.epoch::resendroster` — forget the roster last queued to one outpost chain, so its next
    * advance queues the roster again, and record traffic for the chain at now: governance traffic,
-   * which makes an idle chain due one minimum duration later. Refused when no roster has been
+   * which makes an idle chain due within one minimum duration. Refused when no roster has been
    * queued to the outpost since its last advance. Signed by {@link ResendrosterAccount}.
    *
    * @param actor - The narrative subject.
@@ -435,8 +448,9 @@ export namespace EpochContractSteps {
 
   /**
    * `sysio.epoch::notetraffic` — record traffic for one outpost chain since `data.since`
-   * ({@link TrafficSinceNow} for now): `traffic_since` keeps the earliest, and the chain is due
-   * one minimum duration after the later of its epoch start and that traffic. Unlike
+   * ({@link TrafficSinceNow} for now): `traffic_since` keeps the earliest, and the chain is due at
+   * the later of its epoch start plus its minimum duration and that traffic plus its traffic wait
+   * (`epochcfg.traffic_wait_sec`). Unlike
    * {@link planResendroster} it leaves the chain's `rostersent` alone, so the next advance queues
    * the roster only when it changed. No effect before the chain's genesis advance. Signed by
    * {@link NotetrafficAccount}.

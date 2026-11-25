@@ -208,7 +208,7 @@ export namespace SlashingScenarioConstants {
   /**
    * Epochs budgeted, from the moment all three dispute operators are ACTIVE, for
    * the contested chain's next advance to seat them as its sole active group: the
-   * keep-due traffic the await gives it makes it due one minimum later, and its
+   * keep-due traffic the await gives it makes it due within one minimum, and its
    * relays' consensus advances it; one more for the traffic's own landing.
    */
   export const GroupEpochBudget = 2
@@ -233,8 +233,9 @@ export namespace SlashingScenarioConstants {
    */
   export const SlashEpochBudget = 1
   /**
-   * Epochs budgeted, from the traffic the flow gives the contested chain after the
-   * resolution, for the chain to fall due: one minimum, plus the delivery extension.
+   * Epochs budgeted, from the traffic the resolution gives the contested chain
+   * (`sysio.msgch::resolvedisp`), for the chain to fall due: its traffic wait, at most
+   * one minimum, plus the delivery extension.
    */
   export const ContestedDueEpochBudget = 1
 
@@ -322,7 +323,7 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for the contested chain to fall due after the post-resolution traffic (ms). */
+  /** Deadline for the contested chain to fall due after the resolution's traffic (ms). */
   export function contestedDueDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *

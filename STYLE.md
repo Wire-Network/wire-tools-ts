@@ -894,7 +894,7 @@ validate.
   a wait that needs a depot-paced chain to advance cannot know at plan time how
   many advances, so how many `sysio.epoch::notetraffic` pushes, it takes, so the
   pushes run inside the waiting Step, each through `planNotetraffic`'s named
-  runner. A wait whose one push is known plans `planKeepChainDue` instead.
+  runner.
 
 ### Tools are FACTORIES that return orchestration units
 

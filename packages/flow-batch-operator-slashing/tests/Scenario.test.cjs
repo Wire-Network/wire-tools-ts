@@ -200,27 +200,20 @@ test("the dispute's assertions stay in place around the new phases", () => {
   )
 })
 
-test("after the resolution, idle-only traffic and a chkcons move the contested chain on, and the flow ends there", () => {
+test("after the resolution, a chkcons moves the contested chain on with no traffic of the flow's own, and the flow ends there", () => {
   const { build } = plannedBuild(),
     steps = child(build, "ContestedChainAdvances").steps,
-    [record, traffic, due, crank, verify] = steps
+    [record, due, crank, verify] = steps
+  // The resolution records the chain's traffic itself, so the phase pushes no notetraffic.
   Assert.deepEqual(
     steps.map(step => step.name),
-    [
-      "record-slashed-operators",
-      "contested-chain-traffic",
-      "contested-chain-due",
-      "crank-contested-chain",
-      "advanced-without-slash"
-    ]
+    ["record-slashed-operators", "contested-chain-due", "crank-contested-chain", "advanced-without-slash"]
   )
+  Assert.ok(!steps.some(step => step.runner === Steps.contracts.sysio.epoch.runNotetraffic))
   Assert.equal(record.runner, DisputeSteps.runRecordSlashedOperators)
-  // The traffic step gives the chain traffic only while it is idle: re-running it adds none.
-  Assert.equal(traffic.runner, Steps.epochAdvance.runKeepChainDue)
-  Assert.deepEqual(traffic.input, { kind: "EpochAdvanceSteps.KeepChainDueInput", chain: Constants.ContestedChain })
   Assert.equal(due.runner, DisputeSteps.runAwaitContestedChainDue)
   Assert.equal(due.options.timeoutMs, Constants.contestedDueDeadlineMs() + Constants.PollDeadlineBufferMs)
-  Assert.equal(crank.runner, Steps.contracts.sysio.msgch.runChkcons)
+  Assert.equal(crank.runner, DisputeSteps.runCrankContestedChain)
   Assert.deepEqual(crank.input.data, { chain_code: Constants.ContestedChainCode })
   Assert.equal(
     Constants.contestedDueDeadlineMs(),

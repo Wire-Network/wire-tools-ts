@@ -91,6 +91,8 @@ function epochConfigRow(
   return {
     chain_code: SlugName.from(chain),
     epoch_duration_sec: epochDurationSec,
+    traffic_wait_sec: Math.floor(epochDurationSec / 2),
+    late_window_sec: Math.floor(epochDurationSec / 2),
     operators_per_epoch: 1,
     batch_operator_minimum_active: BatchOperators.length,
     batch_op_groups: BatchOperators.length,

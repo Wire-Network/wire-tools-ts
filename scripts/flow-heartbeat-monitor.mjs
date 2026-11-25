@@ -41,12 +41,12 @@
  *      counted + quoted, NEVER a bail).
  *
  * Epochs are depot-paced: a chain advances only once it is due — it has traffic
- * (`traffic_since`) and its `due_at` (the later of its epoch start and that
- * traffic, plus its minimum duration) has passed — so an IDLE chain (no traffic,
- * `due_at` zero) legitimately stays in its epoch for as long as it is idle, and an
- * idle cluster legitimately grows no OPP artifacts. Idle is never a stall: the
- * epoch-stall, zero-growth and plateau bails fire only on a chain that is DUE and
- * overdue, measured on the depot's own clock (`head_block_time`). That clock stops
+ * (`traffic_since`) and its `due_at` (the later of its epoch start plus its
+ * minimum duration and that traffic plus its traffic wait) has passed — so an
+ * IDLE chain (no traffic, `due_at` zero) legitimately stays in its epoch for as
+ * long as it is idle, and an idle cluster legitimately grows no OPP artifacts.
+ * Idle is never a stall: the epoch-stall, zero-growth and plateau bails fire only
+ * on a chain that is DUE and overdue, measured on the depot's own clock (`head_block_time`). That clock stops
  * when the producers stop, so two bails do not lean on it alone: the head-advance
  * bail measures block production on the monitor's wall clock, and the
  * undecided-epoch bail catches a chain whose current epoch never gets decided,
@@ -212,28 +212,26 @@ const HeadStallReprobeDelaySeconds = 15
  * Minimum durations of a chain after which its current epoch, still undecided,
  * is a stall (`max(UndecidedEpochFloorSeconds, this × minimum)`, counted from the
  * later of the epoch's start and the first beat that saw it). The value is the
- * time a live chain needs to decide or dispute an epoch, from the harness's
- * timing constants: the bootstrap gate allows the epoch's round trip
+ * time a live chain needs to decide an epoch, from the harness's timing
+ * constants: the bootstrap gate allows the epoch's round trip
  * `ProtocolTiming.EpochVerifyEpochCount` (3) effective epochs of
  * `minimum + ProtocolTiming.EpochExtensionMaxSec` (30 s), never under
- * `ProtocolTiming.OppCirculationRestartMs` (240 s), and a split whose silent
- * members never answer disputes — pausing the chain, which this bail skips —
- * `sysio.msgch::DISPUTE_FALLBACK_EPOCHS` (3) minimums after its last delivery.
- * From a 50 s minimum up (where `3 × (minimum + 30)` passes the 240 s floor) that
- * is `3 × (minimum + 30) + 3 × minimum = 6 × minimum + 90 s`, which 8 × minimum
- * covers; {@link UndecidedEpochFloorSeconds} covers the shorter minimums. A normal
- * round trip decides an epoch within seconds, far inside it.
- * Lowering it below 7 false-bails a dispute still on its fallback timer.
+ * `ProtocolTiming.OppCirculationRestartMs` (240 s): `max(3 × (minimum + 30), 240)` s,
+ * which 5 × minimum covers from a 50 s minimum up; {@link UndecidedEpochFloorSeconds}
+ * covers the shorter minimums. A split held open by a silent member never
+ * disputes, so this bail is its alarm; a dispute pauses the chain, which this
+ * bail skips. A normal round trip decides an epoch within seconds, far inside it.
+ * Lowering it below 4 false-bails a slow round trip of a chain with a minimum
+ * over 110 s.
  */
-const UndecidedEpochDurations = 8
+const UndecidedEpochDurations = 5
 
 /**
  * Floor (seconds) of the undecided-epoch bail: `ProtocolTiming.SingleHopBudgetMs`,
  * the 7 minutes one OPP hop is budgeted. It covers every chain whose minimum is
- * too short for {@link UndecidedEpochDurations} alone: for a minimum up to 50 s
- * the decision-or-dispute time is at most `240 s + 3 × minimum` = 390 s, which
- * the floor exceeds. Lowering it below that false-bails a short-epoch chain
- * restarting OPP circulation.
+ * too short for {@link UndecidedEpochDurations} alone: for a minimum up to 110 s
+ * the decision time `max(3 × (minimum + 30), 240)` s is at most 420 s. Lowering
+ * it below that false-bails a short-epoch chain restarting OPP circulation.
  */
 const UndecidedEpochFloorSeconds = 420
 

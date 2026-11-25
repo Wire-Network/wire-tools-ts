@@ -3,8 +3,8 @@
 Each outpost chain runs its own depot-paced consensus epoch on the depot: its own
 `sysio.epoch::epochcfg` and `epochstate` row, its own minimum duration, counter and schedule window,
 the batch operators that joined it (`sysio.opreg::servchains`), and its own pause. A chain advances
-only once it is due: it has traffic and its minimum has passed since the later of its epoch start and
-that traffic. The flow runs Ethereum at a 60 s minimum and Solana at 150 s (`outpostEpochDurationSec`)
+only once it is due: it has traffic, its minimum has passed since its epoch start and its traffic wait
+(half the minimum) since that traffic. The flow runs Ethereum at a 60 s minimum and Solana at 150 s (`outpostEpochDurationSec`)
 with nine bootstrapped batch operators in three groups of three on each chain, and the economic clock
 at 120 s.
 
@@ -16,8 +16,8 @@ is idle. That traffic is what drives both chains' epochs in this flow.
 Each phase group asserts its own claim, so a failure names the phase:
 
 1. **OwnMinimum** — each chain's `epochcfg` carries its own minimum, every chain's `epochstate` is
-   idle (no `traffic_since`, no `due_at`) or due exactly one minimum after the later of its epoch
-   start and its traffic, and the two minimums differ. Over an 840 s window on the depot head, with
+   idle (no `traffic_since`, no `due_at`) or due exactly at the later of its epoch start plus its
+   minimum and its traffic plus its traffic wait, and the two minimums differ. Over an 840 s window on the depot head, with
    both chains kept due, each chain stays unpaused, closes at least `floor(window / (minimum + 30 s))`
    epochs and at most `floor(window / minimum) + 1`, its epochs start at least one of its minimums
    apart (`start(to) - start(from) >= (to - from) × minimum`; an advance opens the next epoch at its
