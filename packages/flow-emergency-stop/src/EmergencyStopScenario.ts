@@ -1313,7 +1313,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
       verifyStep(
         Actor.User,
         "ethereum-paid",
-        "successful receipt transfers the exact payout from the pool to the holder",
+        "successful receipt verifies the nominal payout and share-rounded pool debit",
         async ctx => {
           const holder = EmergencyStopScenario.ethereumAddress(ctx),
             payment = await EthereumSyndicationTool.readDesyndicationPayment(
@@ -1333,8 +1333,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
             ethers.getAddress(payment.recipient),
             ethers.getAddress(holder)
           )
-          // The receipt proves the transfer at any transaction index, without
-          // reconstructing a rebasing balance from the previous block's state.
+          // Receipt verification prices the transfer at the payment transaction's share rate.
           const paid = await EthereumSyndicationTool.readLiqEthBalance(
             ctx,
             holder
