@@ -1,6 +1,7 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 const {
+  EthereumRoundTripScenario,
   EthereumSyndicationTool,
   SolanaOutpostProgramTool
 } = require("@wireio/cluster-tool")
@@ -8,7 +9,189 @@ const { PrivateKey, KeyType } = require("@wireio/sdk-core")
 const {
   BatchRosterReplacementScenario: Scenario
 } = require("../lib/BatchRosterReplacementScenario.js")
+const { SolanaDeliveryHistory } = require("../lib/SolanaDeliveryHistory.js")
 afterEach(() => mock.restoreAll())
+for (const deliveredEpoch of [6, 5])
+  test(`the Solana poll checks newest completed epochs first and stops at ${deliveredEpoch}`, async () => {
+    const { Keypair } = require("@solana/web3.js"),
+      signer = Keypair.generate().publicKey,
+      envelopes = [4, 9, 6, 3, 5].map(epochIndex => ({ epochIndex })),
+      originalOrder = [...envelopes],
+      checked = [],
+      phases = [],
+      ctx = { outputs: { assert: () => 4 } }
+    mock.method(EthereumRoundTripScenario.prototype, "plan", () => {})
+    mock.method(Scenario, "solanaConfig", async () => ({ nextEpochIndex: 7 }))
+    mock.method(Scenario, "solanaInbound", async () => ({ envelopes }))
+    mock.method(Scenario, "solanaAddress", () => signer)
+    mock.method(Scenario, "hasAcceptedSolanaDelivery", async (...args) => {
+      Assert.equal(args[0], ctx)
+      Assert.equal(args[2], signer)
+      checked.push(args[1].epochIndex)
+      return args[1].epochIndex === deliveredEpoch
+    })
+    new Scenario().plan({ context: ctx, push: phase => phases.push(phase) })
+    const step = phases
+      .flatMap(phase => phase.steps)
+      .find(step => step.name === "replacement-relayed-solana")
+    Assert.ok(step)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    Assert.deepEqual(checked, deliveredEpoch === 6 ? [6] : [6, 5])
+    Assert.deepEqual(envelopes, originalOrder)
+  })
+
+for (const exists of [true, false])
+  test(`replacement delivery uses live votes before history: ${exists}`, async () => {
+    const { Keypair } = require("@solana/web3.js"),
+      signer = Keypair.generate().publicKey,
+      accepted = { epochIndex: 4, checksum: Array(32).fill(7) },
+      votes = {
+        epochIndex: 4,
+        consensusReached: true,
+        consensusHash: accepted.checksum,
+        deliveries: [{ operator: signer, envelopeHash: accepted.checksum }]
+      },
+      program = {
+        programId: Keypair.generate().publicKey,
+        coder: { accounts: { decode: () => votes } }
+      },
+      connection = {
+        getAccountInfo: async () =>
+          exists
+            ? { owner: program.programId, data: Buffer.from([1]) }
+            : null
+      },
+      ctx = {
+        solana: { connection },
+        config: { solanaPath: "/tmp/deployed-idl" }
+      },
+      fallback = mock.method(SolanaDeliveryHistory, "read", async (...args) => {
+        Assert.deepEqual(args, [connection, program, accepted, signer])
+        return false
+      })
+    mock.method(SolanaOutpostProgramTool, "loadReadOnlyProgram", () => program)
+    Assert.equal(
+      await Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      exists
+    )
+    Assert.equal(fallback.mock.callCount(), exists ? 0 : 1)
+    votes.deliveries = []
+    Assert.equal(
+      await Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      false
+    )
+  })
+
+for (const delivered of [true, false])
+  test(`a funded empty tally uses durable delivery proof: ${delivered}`, async () => {
+    const { Keypair, SystemProgram } = require("@solana/web3.js"),
+      signer = Keypair.generate().publicKey,
+      accepted = { epochIndex: 4, checksum: Array(32).fill(7) },
+      decoder = mock.fn(() => {
+        throw new Error("empty system account must not be decoded")
+      }),
+      program = {
+        programId: Keypair.generate().publicKey,
+        coder: { accounts: { decode: decoder } }
+      },
+      connection = {
+        getAccountInfo: async () => ({
+          owner: SystemProgram.programId,
+          data: Buffer.alloc(0),
+          lamports: 1
+        })
+      },
+      ctx = {
+        solana: { connection },
+        config: { solanaPath: "/tmp/deployed-idl" }
+      },
+      fallback = mock.method(SolanaDeliveryHistory, "read", async (...args) => {
+        Assert.deepEqual(args, [connection, program, accepted, signer])
+        return delivered
+      })
+    mock.method(SolanaOutpostProgramTool, "loadReadOnlyProgram", () => program)
+    Assert.equal(
+      await Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      delivered
+    )
+    Assert.equal(decoder.mock.callCount(), 0)
+    Assert.equal(fallback.mock.callCount(), 1)
+  })
+
+test("malformed tally accounts retain decode errors instead of using history", async () => {
+  const { Keypair, SystemProgram } = require("@solana/web3.js"),
+    signer = Keypair.generate().publicKey,
+    accepted = { epochIndex: 4, checksum: Array(32).fill(7) },
+    error = new Error("malformed account"),
+    program = {
+      programId: Keypair.generate().publicKey,
+      coder: {
+        accounts: {
+          decode: () => {
+            throw error
+          }
+        }
+      }
+    },
+    fallback = mock.method(SolanaDeliveryHistory, "read", async () => true)
+  mock.method(SolanaOutpostProgramTool, "loadReadOnlyProgram", () => program)
+  for (const account of [
+    { owner: program.programId, data: Buffer.alloc(0) },
+    { owner: program.programId, data: Buffer.from([1]) },
+    { owner: SystemProgram.programId, data: Buffer.from([1]) },
+    { owner: Keypair.generate().publicKey, data: Buffer.alloc(0) }
+  ]) {
+    const ctx = {
+      solana: { connection: { getAccountInfo: async () => account } },
+      config: { solanaPath: "/tmp/deployed-idl" }
+    }
+    await Assert.rejects(
+      Scenario.hasAcceptedSolanaDelivery(ctx, accepted, signer),
+      candidate => candidate === error
+    )
+  }
+  const ctx = {
+    solana: {
+      connection: {
+        getAccountInfo: async () => ({
+          owner: SystemProgram.programId,
+          data: Buffer.alloc(0)
+        })
+      }
+    },
+    config: { solanaPath: "/tmp/deployed-idl" }
+  }
+  await Assert.rejects(Scenario.solanaConfig(ctx), candidate => candidate === error)
+  Assert.equal(fallback.mock.callCount(), 0)
+})
+
+test("a failed tally RPC read remains visible instead of using history", async () => {
+  const { Keypair } = require("@solana/web3.js"),
+    error = new Error("RPC unavailable"),
+    program = { programId: Keypair.generate().publicKey },
+    ctx = {
+      solana: {
+        connection: {
+          getAccountInfo: async () => {
+            throw error
+          }
+        }
+      },
+      config: { solanaPath: "/tmp/deployed-idl" }
+    },
+    fallback = mock.method(SolanaDeliveryHistory, "read", async () => true)
+  mock.method(SolanaOutpostProgramTool, "loadReadOnlyProgram", () => program)
+  await Assert.rejects(
+    Scenario.hasAcceptedSolanaDelivery(
+      ctx,
+      { epochIndex: 4 },
+      Keypair.generate().publicKey
+    ),
+    candidate => candidate === error
+  )
+  Assert.equal(fallback.mock.callCount(), 0)
+})
+
 test("Ethereum signer normalization preserves the replacement identity", () => {
   for (const address of [
     "1234567890123456789012345678901234567890",
