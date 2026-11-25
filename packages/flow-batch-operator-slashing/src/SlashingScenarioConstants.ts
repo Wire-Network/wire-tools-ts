@@ -1,5 +1,10 @@
 import { SlugName } from "@wireio/sdk-core"
-import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
+import {
+  Constants,
+  ManagedProcess,
+  NodeopProcess,
+  ProtocolTiming
+} from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
@@ -12,6 +17,33 @@ import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 export namespace SlashingScenarioConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
+  /**
+   * Economic epoch duration (s) — the `sysio.epoch::seteconomy` floor, equal to the consensus
+   * epoch. The economic clock keeps opening epochs while the dispute pauses consensus, so this
+   * sizes the waits of the economic-clock phase.
+   */
+  export const EconomicEpochDurationSec = 60
+  /** Economic epochs each economic-clock observation during the dispute awaits. */
+  export const EconomicEpochsPerObservation = 1
+  /** The economic-clock observation taken while the dispute pauses consensus. */
+  export const DisputePauseObservation = "dispute-pause"
+  /** The economic-clock observation taken after every batch-operator relay restarted. */
+  export const RelayRestartObservation = "relay-restart"
+  /** Ceiling on stopping one relay: its graceful stop window plus the step margin (ms). */
+  export const RelayStopTimeoutMs =
+    ManagedProcess.GracefulKillMs + ProtocolTiming.PollDeadlineBufferMs
+  /**
+   * Launches `NodeopProcess.startWithRecovery` may make for one relay: the start, and the
+   * hard-replay restart it falls back to when the retained data is dirty.
+   */
+  export const RelayStartAttempts = 2
+  /**
+   * Ceiling on starting one relay against its retained data: every launch within the node's
+   * readiness window, plus the step margin (ms).
+   */
+  export const RelayStartTimeoutMs =
+    RelayStartAttempts * NodeopProcess.StartupTimeoutMs +
+    ProtocolTiming.PollDeadlineBufferMs
   /** 1 s in ms — multiplies epoch counts into ms deadlines. */
   export const MsPerSecond = 1_000
   /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */

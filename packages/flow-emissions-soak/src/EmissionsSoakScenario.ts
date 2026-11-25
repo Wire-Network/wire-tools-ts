@@ -38,27 +38,7 @@ const log = getLogger(__filename)
 const { SysioContractAccount, SysioContractName } = SysioContracts
 const { Actor } = Report
 
-/** The `sysio::t5state` singleton row (a read; asserts the row exists). */
-async function readT5State(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioSystemT5StateType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.system)
-    .tables.t5state.query()
-  Assert.ok(rows.length >= 1, "sysio::t5state singleton row missing")
-  return rows[0]
-}
-
-/** The `sysio::emitcfg` singleton row (a read; asserts the row exists). */
-async function readEmissionConfig(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioSystemEmissionConfigType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.system)
-    .tables.emitcfg.query()
-  Assert.ok(rows.length >= 1, "sysio::emitcfg singleton row missing")
-  return rows[0]
-}
+const { readEmissionConfig, readT5State } = Steps.contracts.sysio.system
 
 /** The `sysio.dclaim::capcfg` singleton row (a read; asserts the row exists). */
 async function readCapConfig(

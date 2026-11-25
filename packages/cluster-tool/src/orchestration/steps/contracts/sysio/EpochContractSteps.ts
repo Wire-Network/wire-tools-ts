@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
@@ -8,13 +9,14 @@ import {
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioContractAccount, SysioContractName } = SysioContracts
 
 /**
  * Steps for `sysio.epoch` actions — the Step-layer mirror of
  * `getSysioContract(SysioContractName.epoch).actions.<action>`. Action factory
  * names match the ABI action name exactly. The trailing "Reads" section holds
- * the `sysio.epoch::epochstate` accessors every runner / verify step shares —
+ * the consensus (`epochstate`, `epochcfg`) and economic clock (`economycfg`,
+ * `economystate`, `blocklog`) accessors every runner / verify step shares —
  * reads are execution details, not Steps.
  */
 export namespace EpochContractSteps {
@@ -168,6 +170,74 @@ export namespace EpochContractSteps {
     await ctx.wire.getSysioContract(SysioContractName.epoch).actions.advance.invoke({})
   }
 
+  /**
+   * The account `sysio.epoch::pause` and `unpause` require: `sysio.chalg`, which pauses the
+   * consensus epoch while an envelope dispute is open. Its `active` authority is
+   * `sysio@active`, so governance can hold consensus the same way.
+   */
+  export const PauseAccount = SysioContractAccount[SysioContractName.chalg]
+
+  /**
+   * `sysio.epoch::pause` — set the global pause, which stops the consensus epoch only: the
+   * economic clock keeps opening economic epochs. Authorized by {@link PauseAccount}.
+   */
+  export function planPause<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runPause
+    )
+  }
+
+  /** Named runner — `sysio.epoch::pause` (empty payload), signed `sysio.chalg@active`. */
+  export async function runPause<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .actions.pause.invoke({}, { authorization: WireClient.activeAuthorization(PauseAccount) })
+  }
+
+  /** `sysio.epoch::unpause` — clear the global pause. Authorized by {@link PauseAccount}. */
+  export function planUnpause<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runUnpause
+    )
+  }
+
+  /** Named runner — `sysio.epoch::unpause` (empty payload), signed `sysio.chalg@active`. */
+  export async function runUnpause<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .actions.unpause.invoke({}, { authorization: WireClient.activeAuthorization(PauseAccount) })
+  }
+
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
 
   /**
@@ -223,5 +293,64 @@ export namespace EpochContractSteps {
   ): Promise<string[]> {
     const epochState = await readEpochState(ctx)
     return epochState?.batch_op_groups?.[epochState.current_batch_op_group]
+  }
+
+  /**
+   * Row ceiling of the {@link readBlockLog} read. The table holds at most the one open
+   * episode; a read that still reports `more` is refused rather than trusted.
+   */
+  export const BlockLogRowLimit = 10
+
+  /**
+   * The `sysio.epoch::economycfg` singleton row — the economic clock's duration and the
+   * start of its grid.
+   *
+   * @param ctx - The build context.
+   * @returns The economic-config row (absent before `seteconomy` has run).
+   */
+  export async function readEconomyConfig<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioEpochEconomicConfigType> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .tables.economycfg.query()
+    return rows[0]
+  }
+
+  /**
+   * The `sysio.epoch::economystate` singleton row — the economic epoch index and its
+   * current / next boundary.
+   *
+   * @param ctx - The build context.
+   * @returns The economic-state row (absent before the first `tickeconomy`).
+   */
+  export async function readEconomyState<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioEpochEconomicStateType> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .tables.economystate.query()
+    return rows[0]
+  }
+
+  /**
+   * Every `sysio.epoch::blocklog` row — at most the one open emissions block episode,
+   * erased by the first economic epoch whose emissions pass the readiness gate.
+   *
+   * @param ctx - The build context.
+   * @returns The open episode's row, or none.
+   * @throws When the read is truncated at {@link BlockLogRowLimit}.
+   */
+  export async function readBlockLog<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioEpochBlocklogEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .tables.blocklog.query({ limit: BlockLogRowLimit })
+    Assert.ok(
+      !more,
+      `EpochContractSteps: sysio.epoch::blocklog has more than ${BlockLogRowLimit} rows; the read is truncated`
+    )
+    return rows
   }
 }

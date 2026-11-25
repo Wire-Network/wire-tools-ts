@@ -410,3 +410,99 @@ describe("Steps.contracts.sysio.system", () => {
     jest.restoreAllMocks()
   })
 })
+
+describe("Steps.contracts.sysio.system claimpay", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  it("claimpay carries the claim and is signed by the claiming account", async () => {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    const invoke = jest.spyOn(contract.actions.claimpay, "invoke").mockResolvedValue(undefined),
+      data: SysioContracts.SysioSystemClaimpayAction = { account_name: "defproducera" },
+      step = Steps.contracts.sysio.system.planClaimpay(
+        Report.Actor.Producer,
+        "claimpay",
+        "claim epoch pay",
+        {},
+        data
+      )
+    expect(step.input).toEqual({ kind: "SystemContractSteps.ClaimpayInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.system.runClaimpay)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "defproducera", permission: "active" }]
+    })
+  })
+
+  it("an aborted claimpay pushes nothing", async () => {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    const invoke = jest.spyOn(contract.actions.claimpay, "invoke").mockResolvedValue(undefined)
+    await expect(
+      Steps.contracts.sysio.system.runClaimpay(
+        ctx,
+        { kind: "SystemContractSteps.ClaimpayInput", data: { account_name: "defproducera" } },
+        AbortSignal.abort()
+      )
+    ).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("Steps.contracts.sysio.system emissions reads", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** A real context whose system contract client is memoized for spying. */
+  function systemContract() {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    return { ctx, contract }
+  }
+
+  it("readEmissionConfig unwraps emitcfg and refuses a missing row", async () => {
+    const { ctx, contract } = systemContract(),
+      row = { pay_cadence_epochs: 1 } as SysioContracts.SysioSystemEmissionConfigType,
+      query = jest.spyOn(contract.tables.emitcfg, "query")
+    query.mockResolvedValueOnce({ rows: [row], more: false })
+    await expect(Steps.contracts.sysio.system.readEmissionConfig(ctx)).resolves.toBe(row)
+    query.mockResolvedValueOnce({ rows: [], more: false })
+    await expect(Steps.contracts.sysio.system.readEmissionConfig(ctx)).rejects.toThrow(
+      /emitcfg singleton row missing/
+    )
+  })
+
+  it("readT5State unwraps t5state and refuses a missing row", async () => {
+    const { ctx, contract } = systemContract(),
+      row = { last_epoch_index: 3 } as SysioContracts.SysioSystemT5StateType,
+      query = jest.spyOn(contract.tables.t5state, "query")
+    query.mockResolvedValueOnce({ rows: [row], more: false })
+    await expect(Steps.contracts.sysio.system.readT5State(ctx)).resolves.toBe(row)
+    query.mockResolvedValueOnce({ rows: [], more: false })
+    await expect(Steps.contracts.sysio.system.readT5State(ctx)).rejects.toThrow(
+      /t5state singleton row missing/
+    )
+  })
+
+  it("readEpochLog reads every page of epochlog", async () => {
+    const { ctx, contract } = systemContract(),
+      rows = [
+        { economic_epoch_index: 4 },
+        { economic_epoch_index: 5 }
+      ] as SysioContracts.SysioSystemEpochLogType[],
+      queryAll = jest.spyOn(contract.tables.epochlog, "queryAll").mockResolvedValue(rows)
+    await expect(Steps.contracts.sysio.system.readEpochLog(ctx)).resolves.toBe(rows)
+    expect(queryAll).toHaveBeenCalledTimes(1)
+  })
+
+  it("readOutstandingPay is payclaimtot.outstanding, 0n before the first credit", async () => {
+    const { ctx, contract } = systemContract(),
+      query = jest.spyOn(contract.tables.payclaimtot, "query")
+    query.mockResolvedValueOnce({ rows: [{ outstanding: "123456789" }], more: false })
+    await expect(Steps.contracts.sysio.system.readOutstandingPay(ctx)).resolves.toBe(123_456_789n)
+    query.mockResolvedValueOnce({ rows: [], more: false })
+    await expect(Steps.contracts.sysio.system.readOutstandingPay(ctx)).resolves.toBe(0n)
+  })
+})

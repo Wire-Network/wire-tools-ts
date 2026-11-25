@@ -228,3 +228,102 @@ describe("Steps.contracts.sysio.epoch epochstate reads", () => {
     ).resolves.toBeUndefined()
   })
 })
+
+describe("Steps.contracts.sysio.epoch pause / unpause", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** A real context whose epoch contract client is memoized for spying. */
+  function epochContext() {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    return { ctx, contract }
+  }
+
+  it("PauseAccount is sysio.chalg, the account the contract requires", () => {
+    expect(Steps.contracts.sysio.epoch.PauseAccount).toBe("sysio.chalg")
+  })
+
+  it.each([
+    ["planPause", "runPause", "pause"],
+    ["planUnpause", "runUnpause", "unpause"]
+  ] as const)("%s pushes an empty %s signed sysio.chalg@active", async (factory, runner, action) => {
+    const { ctx, contract } = epochContext(),
+      invoke = jest.spyOn(contract.actions[action], "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch[factory](Report.Actor.Sysio, action, action, {})
+    expect(step.input).toBeNull()
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch[runner])
+    await step.runner(ctx, null, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(
+      {},
+      { authorization: [{ actor: "sysio.chalg", permission: "active" }] }
+    )
+  })
+
+  it.each(["runPause", "runUnpause"] as const)("an aborted %s pushes nothing", async runner => {
+    const { ctx, contract } = epochContext(),
+      pause = jest.spyOn(contract.actions.pause, "invoke").mockResolvedValue(undefined),
+      unpause = jest.spyOn(contract.actions.unpause, "invoke").mockResolvedValue(undefined)
+    await expect(
+      Steps.contracts.sysio.epoch[runner](ctx, null, AbortSignal.abort())
+    ).rejects.toThrow()
+    expect(pause).not.toHaveBeenCalled()
+    expect(unpause).not.toHaveBeenCalled()
+  })
+})
+
+describe("Steps.contracts.sysio.epoch economic clock reads", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  /** A real context whose epoch contract client is memoized for spying. */
+  function epochContract() {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    return { ctx, contract }
+  }
+
+  it("readEconomyConfig unwraps the economycfg singleton, absent before seteconomy", async () => {
+    const { ctx, contract } = epochContract(),
+      row: SysioContracts.SysioEpochEconomicConfigType = {
+        epoch_duration_sec: 120,
+        start_time: "2026-11-23T00:00:00"
+      },
+      query = jest.spyOn(contract.tables.economycfg, "query")
+    query.mockResolvedValueOnce({ rows: [row], more: false })
+    await expect(Steps.contracts.sysio.epoch.readEconomyConfig(ctx)).resolves.toBe(row)
+    query.mockResolvedValueOnce({ rows: [], more: false })
+    await expect(Steps.contracts.sysio.epoch.readEconomyConfig(ctx)).resolves.toBeUndefined()
+  })
+
+  it("readEconomyState unwraps the economystate singleton, absent before the first tick", async () => {
+    const { ctx, contract } = epochContract(),
+      row: SysioContracts.SysioEpochEconomicStateType = {
+        current_epoch_index: 4,
+        current_epoch_start: "2026-11-23T00:06:00.000",
+        next_epoch_start: "2026-11-23T00:08:00.000",
+        caught_up: true
+      },
+      query = jest.spyOn(contract.tables.economystate, "query")
+    query.mockResolvedValueOnce({ rows: [row], more: false })
+    await expect(Steps.contracts.sysio.epoch.readEconomyState(ctx)).resolves.toBe(row)
+    query.mockResolvedValueOnce({ rows: [], more: false })
+    await expect(Steps.contracts.sysio.epoch.readEconomyState(ctx)).resolves.toBeUndefined()
+  })
+
+  it("readBlockLog returns the open episode, bounded by BlockLogRowLimit", async () => {
+    const { ctx, contract } = epochContract(),
+      row = { epoch_index: 7 } as SysioContracts.SysioEpochBlocklogEntryType,
+      query = jest
+        .spyOn(contract.tables.blocklog, "query")
+        .mockResolvedValue({ rows: [row], more: false })
+    await expect(Steps.contracts.sysio.epoch.readBlockLog(ctx)).resolves.toEqual([row])
+    expect(query).toHaveBeenCalledWith({ limit: Steps.contracts.sysio.epoch.BlockLogRowLimit })
+  })
+
+  it("readBlockLog refuses a truncated read", async () => {
+    const { ctx, contract } = epochContract()
+    jest.spyOn(contract.tables.blocklog, "query").mockResolvedValue({ rows: [], more: true })
+    await expect(Steps.contracts.sysio.epoch.readBlockLog(ctx)).rejects.toThrow(/truncated/)
+  })
+})

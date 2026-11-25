@@ -1120,3 +1120,20 @@ describe("NodeConfig — ad-hoc nodes", () => {
     })
   })
 })
+
+describe("NodeConfig.batchOperatorNodes", () => {
+  it("is every planned batch-operator node, in plan order, and nothing else", () => {
+    const config = fixtureConfig(),
+      relays = NodeConfig.batchOperatorNodes(config)
+    expect(relays.map(node => node.name)).toEqual(
+      NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.batch_operator)
+        .map(node => node.name)
+    )
+    expect(relays).toHaveLength(3)
+    expect(relays.map(node => node.batchOperatorLabel)).toEqual(
+      Constants.batchOperatorLabels(3)
+    )
+    relays.forEach(node => expect(node.role).toBe(NodeRole.batch_operator))
+  })
+})

@@ -6,8 +6,10 @@ import {
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   FlowScenario,
+  NodeConfig,
   Report,
   Steps,
+  WireEconomicClockTool,
   WireOperatorProvisioningTool,
   matchesProtoEnum,
   pollUntil,
@@ -113,6 +115,9 @@ async function verifyCanonicalNotSlashed(
  *    (outpost, epoch) with no majority, past the epoch boundary.
  *    `sysio.msgch::evalcons` detects the 3-way split and inline-calls
  *    `sysio.chalg::opendispute`, which pauses the epoch.
+ *    While the dispute is open the economic clock keeps opening epochs — before
+ *    and after every batch-operator relay is stopped and restarted — and
+ *    consensus stays paused at the contested epoch.
  * 2. Tier-1 node owners vote (`sysio.chalg::votedispute`) for the canonical
  *    checksum.
  * 3. A permissionless crank (`sysio.chalg::chkdispute`) tallies the votes;
@@ -138,6 +143,7 @@ export class SlashingScenario extends FlowScenario {
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
+    economicEpochDurationSec: Constants.EconomicEpochDurationSec,
     // Enough bootstrapped batch ops to keep the rest of the network healthy
     // while the dispute operators drive the contested outpost.
     batchOperatorCount: Constants.BootstrapBatchOperatorCount,
@@ -408,6 +414,9 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
+    // ── 2b. EconomicClockDuringDispute — the pause holds consensus only ──
+    this.planEconomicClockDuringDispute(cluster)
+
     // ── 3. VoteAndResolve — Tier-1 vote → chkdispute resolves → unpause ──
     ClusterBuildPhase.create(
       cluster,
@@ -461,6 +470,106 @@ export class SlashingScenario extends FlowScenario {
         "canonical-not-slashed",
         "the canonical deliverer is NOT slashed",
         verifyCanonicalNotSlashed
+      )
+    )
+  }
+
+  /**
+   * While the open dispute pauses consensus, the economic clock keeps opening epochs: once with
+   * the batch-operator relays that crank `tickeconomy` running, and again after every relay has
+   * been stopped and restarted against its retained data — consensus stays paused at the
+   * contested epoch throughout. The relays restart before the vote, so their `chkdispute` crank
+   * still resolves the dispute.
+   *
+   * @param cluster - The cluster build.
+   */
+  private planEconomicClockDuringDispute(cluster: ClusterBuild): void {
+    const relays = NodeConfig.batchOperatorNodes(cluster.context.config),
+      observationOptions = {
+        timeoutMs: WireEconomicClockTool.awaitEconomicEpochsStepTimeoutMs(
+          cluster.context.config.economicEpochDurationSec,
+          Constants.EconomicEpochsPerObservation
+        )
+      },
+      group = ClusterBuildPhaseGroup.create(
+        cluster,
+        "EconomicClockDuringDispute",
+        "The dispute pause holds consensus only: the economic clock keeps opening epochs, across a restart of every batch-operator relay"
+      )
+
+    ClusterBuildPhase.create(
+      group,
+      "EconomicClockWhilePaused",
+      "An economic epoch opens while consensus is paused"
+    ).push(
+      WireEconomicClockTool.planAwaitEconomicEpochsOpened(
+        Actor.BatchOperator,
+        "economic-epoch-while-paused",
+        "the relays' tickeconomy crank opens an economic epoch during the dispute",
+        observationOptions,
+        Constants.EconomicEpochsPerObservation,
+        Constants.DisputePauseObservation
+      ),
+      WireEconomicClockTool.planVerifyConsensusHeld(
+        Actor.Sysio,
+        "consensus-frozen-while-paused",
+        "consensus stays paused at the contested epoch while the economic clock advances",
+        {},
+        [Constants.DisputePauseObservation]
+      )
+    )
+
+    ClusterBuildPhase.create(
+      group,
+      "StopRelays",
+      "Stop every batch-operator relay, retaining its data"
+    ).push(
+      ...relays.map(node =>
+        Steps.processes.nodeop.planStop(
+          Actor.BatchOperator,
+          `stop-${node.name}`,
+          `stop and reap ${node.name} (${node.batchOperatorLabel}), retaining its data`,
+          { timeoutMs: Constants.RelayStopTimeoutMs },
+          node.name
+        )
+      )
+    )
+
+    ClusterBuildPhase.create(
+      group,
+      "StartRelays",
+      "Restart every batch-operator relay against its retained data"
+    ).push(
+      ...relays.map(node =>
+        Steps.processes.nodeop.planStart(
+          Actor.BatchOperator,
+          `restart-${node.name}`,
+          `relaunch ${node.name} (${node.batchOperatorLabel}) with its retained data and keys`,
+          { timeoutMs: Constants.RelayStartTimeoutMs },
+          node.name
+        )
+      )
+    )
+
+    ClusterBuildPhase.create(
+      group,
+      "EconomicClockAfterRelayRestart",
+      "The restarted relays catch the economic clock up and keep it opening epochs while consensus stays paused"
+    ).push(
+      WireEconomicClockTool.planAwaitEconomicEpochsOpened(
+        Actor.BatchOperator,
+        "economic-epoch-after-relay-restart",
+        "the restarted relays catch the economic clock up with its grid and open another epoch",
+        observationOptions,
+        Constants.EconomicEpochsPerObservation,
+        Constants.RelayRestartObservation
+      ),
+      WireEconomicClockTool.planVerifyConsensusHeld(
+        Actor.Sysio,
+        "consensus-frozen-across-relay-restart",
+        "consensus stayed paused at the same contested epoch across the restart while the economic index grew",
+        {},
+        [Constants.DisputePauseObservation, Constants.RelayRestartObservation]
       )
     )
   }
