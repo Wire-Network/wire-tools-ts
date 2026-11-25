@@ -27,29 +27,34 @@ const { Actor } = Report,
   { SysioOpregChainServiceStatus, SysioOpregOperatorstatus } = SysioContracts
 
 /**
- * Each outpost chain runs its own consensus epoch: its own duration, counter, schedule window,
- * operator set and pause. Ethereum runs 60 s epochs and Solana 150 s ones, and four phase groups
- * each assert one claim, independent of the others' outcome so a failure names its phase:
+ * Each outpost chain runs its own depot-paced consensus epoch: its own minimum duration, counter,
+ * schedule window, operator set and pause. Ethereum's minimum is 60 s and Solana's 150 s. The
+ * flow queues nothing to either outpost, so every chain is idle between its waits: each wait that
+ * needs a chain to advance gives that chain keep-due traffic (`sysio.epoch::notetraffic`,
+ * through the keep-due pump `EpochAdvanceSteps.pollUntilKeepingDue`), which is what drives both
+ * chains' epochs. Four phase groups each assert one claim, independent of the others' outcome so a
+ * failure names its phase:
  *
- * 1. **OwnCadence** — each chain's `epochcfg` carries its own duration, and over a 720 s window
- *    each chain's epochs start exactly one of its own durations apart, each closes as often as its
- *    envelope requires, and the 60 s chain advances more often than the 150 s one.
+ * 1. **OwnMinimum** — each chain's `epochcfg` carries its own minimum and its `due_at` follows it,
+ *    and over an 840 s window with both chains kept due each chain advances at least as often as a
+ *    chain kept due must and no more often than its minimum allows, its epochs start at least one
+ *    of its minimums apart, and the 60 s chain advances more often than the 150 s one.
  * 2. **ServesOneChain** — a non-bootstrapped batch operator joins Ethereum only, bonds to ACTIVE
  *    and runs its relay: its only membership is SERVING on Ethereum, Ethereum's window seats it,
- *    Solana's never does, and its seat-seconds are whole Ethereum epochs.
+ *    Solana's never does, and its seat-seconds are whole Ethereum minimums.
  * 3. **LeavesOneChain** — it joins Solana and Solana seats it; it leaves Ethereum (LEFT): its
  *    Ethereum seat closes, no new Ethereum group seats it through a full rotation, Solana seats
  *    it in a group appended after the leave, and its seat-seconds in a later pay period are
- *    whole Solana epochs.
+ *    whole Solana minimums.
  * 4. **PausesOneChain** — with Ethereum paused through `sysio.chalg@active` (as an open dispute
- *    pauses it), Solana keeps advancing, and an operator whose only membership is Solana withdraws:
- *    its request waits on Solana's consensus alone and matures into its remit claim while
- *    Ethereum is still held; Ethereum then resumes.
+ *    pauses it), Solana kept due advances, and an operator whose only membership is Solana
+ *    withdraws: its request waits on Solana's consensus alone and matures into its remit claim
+ *    while Ethereum is still held; Ethereum then resumes once given traffic.
  */
 export class PerChainEpochsScenario extends FlowScenario {
   readonly name = "flow-per-chain-epochs"
   readonly description =
-    "Each outpost chain runs its own consensus epoch: its own cadence, the operators that serve it, and a pause that holds it alone"
+    "Each outpost chain runs its own depot-paced consensus epoch: its own minimum, the operators that serve it, and a pause that holds it alone"
 
   override readonly defaults: ClusterBuildOptions = {
     outpostEpochDurationSec: Constants.OutpostEpochDurationSec,
@@ -68,32 +73,32 @@ export class PerChainEpochsScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    this.planOwnCadence(cluster)
+    this.planOwnMinimum(cluster)
     this.planServesOneChain(cluster)
     this.planLeavesOneChain(cluster)
     this.planPausesOneChain(cluster)
   }
 
-  /** Phase group 1: each chain advances on its own grid, the faster one more often. */
-  private planOwnCadence(cluster: ClusterBuild): void {
+  /** Phase group 1: each chain kept due advances on its own minimum, the faster one more often. */
+  private planOwnMinimum(cluster: ClusterBuild): void {
     const { outpostEpochDurationSec } = cluster.context.config,
       ethereumSec = outpostEpochDurationSec[OutpostChainCodename.ETHEREUM],
       solanaSec = outpostEpochDurationSec[OutpostChainCodename.SOLANA],
       group = ClusterBuildPhaseGroup.create(
         cluster,
-        "OwnCadence",
-        `Each outpost chain advances on its own epoch grid: the ${ethereumSec} s ${OutpostChainCodename.ETHEREUM} chain more often than the ${solanaSec} s ${OutpostChainCodename.SOLANA} one`
+        "OwnMinimum",
+        `Each outpost chain kept due advances on its own minimum: the ${ethereumSec} s ${OutpostChainCodename.ETHEREUM} chain more often than the ${solanaSec} s ${OutpostChainCodename.SOLANA} one`
       )
 
     ClusterBuildPhase.create(
       group,
       "EpochConfiguration",
-      "The depot runs each outpost chain at its own configured duration"
+      "The depot paces each outpost chain by its own configured minimum"
     ).push(
       PerChainEpochsSteps.planVerifyEpochConfiguration(
         Actor.Sysio,
         "epoch-configuration",
-        `epochcfg runs ${OutpostChainCodename.ETHEREUM} at ${ethereumSec} s and ${OutpostChainCodename.SOLANA} at ${solanaSec} s, each epochstate spaced by its own duration`,
+        `epochcfg runs ${OutpostChainCodename.ETHEREUM} at ${ethereumSec} s and ${OutpostChainCodename.SOLANA} at ${solanaSec} s, each epochstate idle or due one minimum after its start or traffic`,
         {},
         outpostEpochDurationSec
       )
@@ -101,38 +106,38 @@ export class PerChainEpochsScenario extends FlowScenario {
 
     ClusterBuildPhase.create(
       group,
-      "ObserveCadence",
-      `Both chains run a ${Constants.CadenceWindowSec} s window, each on its own grid`
+      "ObservePacing",
+      `Both chains, kept due, run a ${Constants.PacingWindowSec} s window, each on its own minimum`
     ).push(
       WireEconomicClockTool.planRecordClockReading(
         Actor.Sysio,
-        "cadence-start",
+        "pacing-start",
         "record every chain's consensus epoch at the start of the window",
         {},
-        Constants.CadenceStartObservation
+        Constants.PacingStartObservation
       ),
       PerChainEpochsSteps.planAwaitWindowElapsed(
         Actor.Sysio,
-        "cadence-window",
-        `the depot head runs ${Constants.CadenceWindowSec} s past the start`,
-        ProtocolTiming.pollStepOptions(PerChainEpochsSteps.windowDeadlineMs(Constants.CadenceWindowSec)),
-        Constants.CadenceStartObservation,
-        Constants.CadenceWindowSec
+        "pacing-window",
+        `the depot head runs ${Constants.PacingWindowSec} s past the start, every chain given traffic whenever it goes idle`,
+        ProtocolTiming.pollStepOptions(PerChainEpochsSteps.windowDeadlineMs(Constants.PacingWindowSec)),
+        Constants.PacingStartObservation,
+        Constants.PacingWindowSec
       ),
       WireEconomicClockTool.planRecordClockReading(
         Actor.Sysio,
-        "cadence-end",
+        "pacing-end",
         "record every chain's consensus epoch at the end of the window",
         {},
-        Constants.CadenceEndObservation
+        Constants.PacingEndObservation
       ),
-      PerChainEpochsSteps.planVerifyOwnCadence(
+      PerChainEpochsSteps.planVerifyOwnMinimum(
         Actor.Sysio,
-        "own-cadence",
-        "each chain's epochs started one of its own durations apart, each closed as often as its envelope requires, and the faster chain advanced more",
+        "own-minimum",
+        "each chain advanced within its kept-due bounds, its epochs started at least one of its minimums apart, and the faster chain advanced more",
         {},
-        Constants.CadenceStartObservation,
-        Constants.CadenceEndObservation
+        Constants.PacingStartObservation,
+        Constants.PacingEndObservation
       )
     )
   }
@@ -237,12 +242,12 @@ export class PerChainEpochsScenario extends FlowScenario {
     ClusterBuildPhase.create(
       group,
       "EthereumSeatSeconds",
-      "The operator's duty is whole Ethereum epochs"
+      "The operator's duty is whole Ethereum minimums"
     ).push(
       PerChainEpochsSteps.planAwaitSeatSecondsAccrued(
         Actor.Sysio,
         "ethereum-seat-seconds",
-        `the operator's ${OutpostChainCodename.ETHEREUM} batchduty seat-seconds are a positive multiple of ${ethereumSec} s, with no other chain's duty in that pay period`,
+        `the operator's ${OutpostChainCodename.ETHEREUM} batchduty seat-seconds are its seats times the ${ethereumSec} s minimum, with no other chain's duty in that pay period`,
         ProtocolTiming.pollStepOptions(
           PerChainEpochsSteps.seatSecondsDeadlineMs(config, OutpostChainCodename.ETHEREUM, rotationEpochs)
         ),
@@ -378,7 +383,7 @@ export class PerChainEpochsScenario extends FlowScenario {
     ClusterBuildPhase.create(
       group,
       "SolanaSeatSeconds",
-      "In a pay period after its last Ethereum seat closed, the operator's duty is whole Solana epochs"
+      "In a pay period after its last Ethereum seat closed, the operator's duty is whole Solana minimums"
     ).push(
       PerChainEpochsSteps.planRecordDutyPeriod(
         Actor.Sysio,
@@ -390,7 +395,7 @@ export class PerChainEpochsScenario extends FlowScenario {
       PerChainEpochsSteps.planAwaitSeatSecondsAccrued(
         Actor.Sysio,
         "solana-seat-seconds",
-        `in a later pay period the operator's ${OutpostChainCodename.SOLANA} batchduty seat-seconds are a positive multiple of ${solanaSec} s, with no other chain's duty in that period`,
+        `in a later pay period the operator's ${OutpostChainCodename.SOLANA} batchduty seat-seconds are its seats times the ${solanaSec} s minimum, with no other chain's duty in that period`,
         ProtocolTiming.pollStepOptions(
           PerChainEpochsSteps.seatSecondsDeadlineMs(config, OutpostChainCodename.SOLANA, rotationEpochs)
         ),
@@ -409,7 +414,7 @@ export class PerChainEpochsScenario extends FlowScenario {
       group = ClusterBuildPhaseGroup.create(
         cluster,
         "PausesOneChain",
-        "Pausing Ethereum holds Ethereum alone: Solana advances and a withdrawal waiting on Solana matures"
+        "Pausing Ethereum holds Ethereum alone: Solana kept due advances and a withdrawal waiting on Solana matures"
       )
 
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
@@ -508,6 +513,28 @@ export class PerChainEpochsScenario extends FlowScenario {
         OutpostChainCodename.SOLANA,
         Constants.WithdrawalSnapshot
       ),
+      PerChainEpochsSteps.planAwaitConsensusAdvanced(
+        Actor.Sysio,
+        "solana-advances-while-ethereum-held",
+        `kept due, the Solana consensus advances ${WireCollateralTool.WithdrawWaitConsensusEpochs} epoch(s) while Ethereum is paused`,
+        ProtocolTiming.pollStepOptions(
+          PerChainEpochsSteps.chainEpochsBudgetMs(
+            config,
+            OutpostChainCodename.SOLANA,
+            WireCollateralTool.WithdrawWaitConsensusEpochs + Constants.RotationMarginEpochs
+          )
+        ),
+        OutpostChainCodename.SOLANA,
+        WireCollateralTool.WithdrawWaitConsensusEpochs,
+        WireCollateralTool.WithdrawWaitConsensusEpochs + Constants.RotationMarginEpochs
+      ),
+      WireEconomicClockTool.planRecordClockReading(
+        Actor.Sysio,
+        "record-solana-advanced",
+        "record both clocks and every chain's consensus once Solana advanced under the pause",
+        {},
+        Constants.SolanaAdvancedObservation
+      ),
       WireCollateralTool.planVerifyRemitClaim(
         Actor.Sysio,
         "withdrawal-matures",
@@ -534,15 +561,15 @@ export class PerChainEpochsScenario extends FlowScenario {
       WireEconomicClockTool.planVerifyConsensusAdvanced(
         Actor.Sysio,
         "solana-advanced",
-        "Solana ran unpaused and advanced as its envelope requires while Ethereum was held",
+        "Solana ran unpaused and, kept due, advanced within its minimum's bounds while Ethereum was held",
         {},
         OutpostChainCodename.SOLANA,
         Constants.PausedStartObservation,
-        Constants.PausedEndObservation
+        Constants.SolanaAdvancedObservation
       )
     )
 
-    ClusterBuildPhase.create(group, "ResumeEthereum", "Ethereum resumes once unpaused").push(
+    ClusterBuildPhase.create(group, "ResumeEthereum", "Ethereum resumes once unpaused and given traffic").push(
       Steps.contracts.sysio.epoch.planUnpause(
         Actor.Sysio,
         "unpause-ethereum",
@@ -553,7 +580,7 @@ export class PerChainEpochsScenario extends FlowScenario {
       PerChainEpochsSteps.planAwaitConsensusAdvanced(
         Actor.Sysio,
         "ethereum-resumes",
-        `the Ethereum consensus advances ${Constants.ResumeEpochs} epoch(s) after the unpause`,
+        `kept due, the Ethereum consensus advances ${Constants.ResumeEpochs} epoch(s) after the unpause`,
         ProtocolTiming.pollStepOptions(
           PerChainEpochsSteps.chainEpochsBudgetMs(config, OutpostChainCodename.ETHEREUM, Constants.ResumeBudgetEpochs)
         ),

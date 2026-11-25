@@ -87,6 +87,14 @@ export namespace GovernanceHandoffScenarioConstants {
    * `syncnodes`, which does. Executed then (pays `cnlc`).
    */
   export const LateOwnerProposal = "lateowner"
+  /**
+   * Proposal: governance traffic for Ethereum (`sysio.epoch::resendroster`), approved by the three
+   * initial owners and executed right after the late owner's `commitNode`. Epochs are depot-paced
+   * and nothing is queued to Ethereum, and after the handoff only the node owners can authorize
+   * `sysio.epoch@active`, so this is what makes Ethereum ship the envelope the outpost answers with
+   * the late owner's claim (until the outposts report their backlog to the depot themselves).
+   */
+  export const LateOwnerTrafficProposal = "latetraffic"
   /** Proposal: write the stand-in council into `sysio.cncl@active`. */
   export const SetCouncilProposal = "setcouncil"
   /** Proposal: hand `sysio` to `sysio.cncl`. */

@@ -10,9 +10,11 @@ import {
   ClusterBuild,
   type ClusterBuildPhase,
   type ClusterBuildStep,
-  outputKey
+  outputKey,
+  Steps
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { SolanaLiqSyndicationTool } from "@wireio/cluster-tool/tools/solana"
 import { WireSyndicationTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { bondRequestRow, bondRow, syndEnvelopeRow } from "../../tools/wire/syndicationRowFixture.js"
@@ -370,5 +372,80 @@ describe("BatchOperatorUnderwritingSteps settlement verifies", () => {
       serveRelease(1n)
       await expect(run(step, settlementContext())).rejects.toThrow(/neither nothing nor all/)
     })
+  })
+})
+
+describe("BatchOperatorUnderwritingSteps waits on outpost -> depot intake keep their chain due", () => {
+  /**
+   * Every chain idle; each keep-due notetraffic is captured and aborts the wait, so the poll's
+   * next check ends it instead of the deadline.
+   */
+  function capturePump(controller: AbortController): jest.SpyInstance {
+    const idle = {
+      chain_code: 0,
+      current_epoch_index: 4,
+      current_epoch_start: "2026-11-24T00:00:00.000",
+      traffic_since: "1970-01-01T00:00:00.000",
+      due_at: "1970-01-01T00:00:00.000",
+      current_batch_op_group: 0,
+      batch_op_groups: [],
+      is_paused: false,
+      previous_group: []
+    }
+    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
+      [Constants.ETHEREUM_CHAIN_CODENAME]: idle,
+      [Constants.SOLANA_CHAIN_CODENAME]: idle
+    })
+    return jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockImplementation(async () => {
+      controller.abort()
+    })
+  }
+
+  it("the recorded-request wait keeps its own chain due until the envelope's request is issued", async () => {
+    const controller = new AbortController(),
+      push = capturePump(controller),
+      epoch = outputKey<number>("test.recorded.epoch", "epoch"),
+      request = outputKey<SysioContracts.SysioBondApproveAction["request_id"]>("test.recorded.request", "request"),
+      step = BatchOperatorUnderwritingSteps.planVerifyRecorded(
+        Report.Actor.Sysio,
+        "recorded",
+        "recorded",
+        {},
+        5n,
+        null,
+        epoch,
+        request,
+        Constants.ETHEREUM_CHAIN_CODENAME,
+        "LIQETH"
+      )
+    jest.spyOn(WireSyndicationTool, "readEnvelopes").mockResolvedValue([])
+    await expect(step.runner(fixtureContext(), null, controller.signal)).rejects.toThrow()
+    expect(push.mock.calls.map(([, input]) => input.data.chain_code)).toEqual([Constants.ETHEREUM_CHAIN_CODENAME])
+  })
+
+  it("the settled-custody read keeps Solana due while a custody attestation is still in flight", async () => {
+    const controller = new AbortController(),
+      push = capturePump(controller),
+      state = { yieldAccumulatedLiqsol: 0n, liqYieldReported: 0n, liqSequence: 3n }
+    jest.spyOn(SolanaLiqSyndicationTool, "readLiqYieldState").mockResolvedValue(state as never)
+    jest.spyOn(SyndicationScenario, "readCustodyAttestations").mockResolvedValue([])
+    await expect(
+      BatchOperatorUnderwritingSteps.readSettledCustody(fixtureContext(), "custody", controller.signal)
+    ).rejects.toThrow()
+    expect(push.mock.calls.map(([, input]) => input.data.chain_code)).toEqual([SyndicationScenario.Chain])
+  })
+
+  it("the settled-custody read adds no traffic once every attestation is persisted", async () => {
+    const controller = new AbortController(),
+      push = capturePump(controller),
+      state = { yieldAccumulatedLiqsol: 0n, liqYieldReported: 0n, liqSequence: 3n },
+      attestation = { type: 0, sequence: 3n, amount: 1n, totalSyndicated: 1n }
+    jest.spyOn(SolanaLiqSyndicationTool, "readLiqYieldState").mockResolvedValue(state as never)
+    jest.spyOn(SyndicationScenario, "readCustodyAttestations").mockResolvedValue([attestation] as never)
+    jest.spyOn(SolanaLiqSyndicationTool, "readPoolBalance").mockResolvedValue(9n)
+    await expect(
+      BatchOperatorUnderwritingSteps.readSettledCustody(fixtureContext(), "custody", controller.signal)
+    ).resolves.toEqual({ pool: 9n, attestations: [attestation] })
+    expect(push).not.toHaveBeenCalled()
   })
 })

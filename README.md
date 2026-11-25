@@ -138,7 +138,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `flow-economic-clock` | `@wireio/test-flow-economic-clock` | The economic clock beside consensus: economic epochs on their own grid pay emissions, a withdrawal matures only once both clocks pass, a held payout leaves OPP running and pays the whole period once funded, and the andon cord leaves emissions and `claimpay` working |
-| `flow-per-chain-epochs` | `@wireio/test-flow-per-chain-epochs` | Each outpost chain runs its own consensus epoch: Ethereum at 60 s and Solana at 150 s advance on their own cadence, an operator joined to one chain is seated only there, `leavechain` stops its new seats on that chain while the other keeps seating it, and a pause of Ethereum holds only Ethereum while Solana advances and a Solana-only withdrawal matures |
+| `flow-per-chain-epochs` | `@wireio/test-flow-per-chain-epochs` | Each outpost chain runs its own depot-paced consensus epoch: kept due, Ethereum at a 60 s minimum and Solana at 150 s each advance on their own minimum, an operator joined to one chain is seated only there, `leavechain` stops its new seats on that chain while the other keeps seating it, and a pause of Ethereum holds only Ethereum while Solana, kept due, advances and a Solana-only withdrawal matures |
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
@@ -326,25 +326,28 @@ node scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster-dir>
 ```
 
 Every 90s it probes chain liveness, operators, every outpost chain's epoch state
-(`epoch=ETHEREUM:<n>,SOLANA:<n>`, `p` marking a paused chain), msgch envelopes,
-`data/opp-debugging/` per-direction artifact counts, and the aggregate cluster
-log (FATAL vs NOISE classified), printing one `HB …` line per cycle — and it
-**bails loudly** on the fatal conditions (a chain's epoch stalled for about twice
-its own duration, a chain that never starts epoch 1, zero-delta opp-debugging,
-plugin-layer failures) instead of letting a dead run burn its full `pollUntil`
-deadline. It self-concludes when the flow exits. `--interval-seconds` /
-`--epoch-duration-seconds` (every chain's duration; default each chain's
-`outpostEpochDurationSec`) are the only tuning knobs; everything else derives
-from the cluster's `cluster-config.json`.
+(`epoch=ETHEREUM:<n>,SOLANA:<n>`, `p` marking a paused chain, then `i` an idle
+chain, `w` one with traffic waiting for its `due_at`, `d` one that is due), msgch
+envelopes, `data/opp-debugging/` per-direction artifact counts, and the aggregate
+cluster log (FATAL vs NOISE classified), printing one `HB …` line per cycle — and it
+**bails loudly** on the fatal conditions (a chain that is due and still at its epoch
+about twice its own minimum past `due_at`, a chain that never starts epoch 1,
+zero-delta opp-debugging while a chain has been due for a whole beat, plugin-layer
+failures) instead of letting a dead run burn its full `pollUntil` deadline. Epochs
+are depot-paced, so an idle chain (no traffic) legitimately stays in its epoch and
+an idle cluster grows no artifacts: idle is never a stall. It self-concludes when
+the flow exits. `--interval-seconds` / `--epoch-duration-seconds` (every chain's
+minimum; default each chain's `outpostEpochDurationSec`) are the only tuning knobs;
+everything else derives from the cluster's `cluster-config.json`.
 
 OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
 by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor**
 when deliberately exercising paused outposts; it counts and quotes those exact
 refusals as NOISE, while preserving unrelated failures and all liveness bails.
 The liquidity flows run without this flag. It is distinct from
-`--expect-epoch-freeze`, which permits a deliberate epoch stall
+`--expect-epoch-freeze`, which permits a deliberate stall of a chain that is due
 (`flow-batch-operator-slashing`, `flow-economic-clock` and `flow-per-chain-epochs`
-hold one chain's epoch on purpose).
+hold one chain's epoch on purpose); an idle chain needs no flag.
 
 Rules of the road (binding for sessions/automation; see
 `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
@@ -553,7 +556,7 @@ command comes first).
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
 | `--epoch-duration-sec` | | each chain's own | minimum consensus epoch duration in seconds of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>` (10 is the depot floor — `sysio.epoch::setconfig` rejects lower); also the economic default. Omitted, each such chain takes its own default and the cluster config persists `epochDurationSec: null`. Every flow pins it |
-| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` (Ethereum) / `15` (Solana) | one outpost chain's minimum consensus epoch duration in seconds — the `epoch_duration_sec` of that chain's `sysio.epoch::setconfig`, persisted as `outpostEpochDurationSec`. The defaults are `ClusterConfigProvider.DefaultOutpostEpochDurationSec` |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` (Ethereum) / `30` (Solana) | one outpost chain's minimum consensus epoch duration in seconds — the `epoch_duration_sec` of that chain's `sysio.epoch::setconfig`, persisted as `outpostEpochDurationSec`: the least time between two of its envelopes, since a chain advances only once it has traffic. The defaults are `ClusterConfigProvider.DefaultOutpostEpochDurationSec` |
 | `--economic-epoch-duration-sec` | | `--epoch-duration-sec` (at least `60`), else `300` | economic epoch duration in seconds — the `sysio.epoch` clock emissions, collateral withdrawals and producer pay run on (60 is its floor). No per-chain consensus default reaches it |
 | `--economic-start-time` | | the chain head | start of economic epoch 1, an ISO-8601 UTC timestamp; a past start is caught up one epoch per tick after the genesis advance |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
@@ -683,9 +686,10 @@ What `create` does with it:
   carries the full daemon args, so the deployed node runs the plugin.
 - **Gates** success on the depot's head block advancing, an outbound envelope
   being queued for every registered outpost, and every batch-operator node having
-  synced — not on epoch distribution (there is no local chain to advance). A LOCAL
-  cluster instead gates on every outpost chain's `sysio.epoch::epochstate`
-  `current_epoch_index` passing its bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
+  synced — not on epoch distribution (there is no local outpost to answer). A LOCAL
+  cluster instead gates on every outpost chain's genesis epoch being decided
+  (`sysio.msgch::outpcons` records its epoch-1 winner): a full OPP round trip,
+  which needs no traffic, while a depot-paced chain with none stays in epoch 1. A remote `anvil`/`solana` bind address WITHOUT
   `--external-outpost-config` fails fast.
 - **Requires the judge's key.** `--judge-public-key` (or `judgePublicKey` in the
   build-options document) names the key `bond.judge` is created under. Its holder

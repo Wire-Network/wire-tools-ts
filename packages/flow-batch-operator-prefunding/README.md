@@ -49,8 +49,8 @@ Report Step; depot confirmations wait for irreversibility.
 ## Bootstrap defaults
 
 `enableBatchOperatorUnderwriting: true` with every operator funded under the default caps
-(10 LIQSOL, 10 LIQETH); 3 producers, 3 batch operators, no standalone underwriters; 60 s
-epochs; the import's pricing, pool tuning and claim funding set explicitly (the dev values
+(10 LIQSOL, 10 LIQETH); 3 producers, 3 batch operators, no standalone underwriters; a 60 s
+minimum epoch (Ethereum advances for the user's syndication under the keep-due pump); the import's pricing, pool tuning and claim funding set explicitly (the dev values
 the import would otherwise take as placeholders). The mock syndication import and the mock
 LIQ pools stay OFF: the launch-data import is the operators' only shadow credit, so the
 bonds it funds are the pre-funding's. The export files are not defaults: `prepare` writes

@@ -335,3 +335,33 @@ test("an owner registered after the last syncnodes is on the roster but not on s
   await Scenario.assertUnsyncedOwner(ctx, "govc")
   await Assert.rejects(Scenario.assertUnsyncedOwner(ctx, "govd"), /govd must be on the roster/)
 })
+
+test("governance traffic is a sysio.epoch::resendroster of the chain, declared by sysio.epoch@active", () => {
+  Assert.deepEqual(Scenario.resendrosterAction(HarnessConstants.ETHEREUM_CHAIN_CODENAME), {
+    contract: "epoch",
+    account: "sysio.epoch",
+    name: "resendroster",
+    authorization: [{ actor: "sysio.epoch", permission: "active" }],
+    data: { code: HarnessConstants.ETHEREUM_CHAIN_CODENAME }
+  })
+  Assert.deepEqual(Scenario.resendrosterAction(HarnessConstants.SOLANA_CHAIN_CODENAME).data, {
+    code: HarnessConstants.SOLANA_CHAIN_CODENAME
+  })
+})
+
+test("after the late owner's commit the node owners execute governance traffic for Ethereum before the claim is awaited", async () => {
+  const { phases } = await plannedPhases(),
+    late = phases.find(phase => phase.name === "LateNodeOwner"),
+    names = late.steps.map(step => step.name),
+    propose = late.steps.find(step => step.name === `propose-${Constants.LateOwnerTrafficProposal}`)
+  Assert.deepEqual(names.slice(names.indexOf("commit-late-owner") + 1, names.indexOf("late-owner-registered")), [
+    `propose-${Constants.LateOwnerTrafficProposal}`,
+    ...Constants.InitialNodeOwners.map(owner => `approve-${Constants.LateOwnerTrafficProposal}-${owner}`),
+    `exec-${Constants.LateOwnerTrafficProposal}`
+  ])
+  Assert.deepEqual(
+    propose.input.data.requested,
+    Constants.InitialNodeOwners.map(actor => ({ actor, permission: "active" }))
+  )
+  Assert.ok(Constants.LateOwnerTrafficProposal.length <= 12)
+})

@@ -1,20 +1,31 @@
 # flow-economic-clock
 
-`sysio.epoch` runs two kinds of clock. Each outpost chain runs its own consensus epoch (its
-`epochcfg` / `epochstate` row), which advances on that outpost's consensus and stops while the chain
-is paused. The one economic clock (`economycfg` / `economystate`) opens epochs on a fixed wall-clock
-grid through the batch operators' `tickeconomy` crank; emissions accrue and pay, and collateral
-withdrawals mature, on it. The flow runs every chain's consensus at 60 s and the economic clock at
-120 s, so each chain advances about twice per economic epoch and a withdrawal's two economic epochs
-(240 s) outlast its two consensus epochs of each chain (120 s).
+`sysio.epoch` runs two kinds of clock. Each outpost chain runs its own depot-paced consensus epoch
+(its `epochcfg` / `epochstate` row): it advances on that outpost's consensus only once it is due (it
+has traffic and its minimum has passed since the later of its epoch start and that traffic), so an
+idle chain stays in its epoch, and it stops while the chain is paused. The one economic clock
+(`economycfg` / `economystate`) opens epochs on a fixed wall-clock grid through the batch operators'
+`tickeconomy` crank; emissions accrue and pay, and collateral withdrawals mature, on it. The flow runs
+every chain's consensus at a 60 s minimum and the economic clock at 120 s, so a chain kept due
+advances about twice per economic epoch and a withdrawal's two economic epochs (240 s) outlast its two
+consensus epochs of each chain (120 s).
+
+The flow queues nothing to either outpost. Its chains' epochs are driven by keep-due traffic
+(`sysio.epoch::notetraffic`) that the keep-due pump (`EpochAdvanceSteps.pollUntilKeepingDue`) gives
+a chain whenever it is idle, and only during the steps that need consensus to move: the eight-epoch
+observation, the hold's envelope round trip and the hold's economic epoch. Between them the chains
+are idle.
 
 Each phase group asserts its own claim, so a failure names the phase:
 
 1. **ClocksIndependent** — `economycfg` and each chain's `epochcfg` row carry the resolved durations,
-   every economic epoch is a pay epoch and `t5state` starts on the economic grid. Five economic epochs
-   open, each at `start_time + (N - 1) × 120 s`, spanning 120 s. Between the first and the last
-   (480 s) each chain's consensus advances at least `floor(window / 90 s)` epochs, and more than the
-   economic clock does. Every
+   every economic epoch is a pay epoch and `t5state` starts on the economic grid. Eight economic epochs
+   open, each at `start_time + (N - 1) × 120 s`, spanning 120 s, while every chain is kept due.
+   Between the first and the last (840 s) each chain's consensus advances at least
+   `floor(window / 90 s)` epochs and at most `floor(window / 60 s) + 1` (two advances are at least one
+   minimum apart), and more than the economic clock does. The window leaves the lower bound about two
+   epochs under the worst real count: a kept-due 60 s epoch really closes within about 73 s (the
+   keep-due pump's latency, the relay's `chkcons` poll and a block on top of the minimum). Every
    economic epoch writes one `epochlog` row, with consecutive payment counts. The producer's
    `payclaims` is positive and `claimpay` pays it in full.
 2. **WithdrawalWaitsOnBothClocks** — a non-bootstrapped batch operator joins every outpost chain
@@ -25,18 +36,19 @@ Each phase group asserts its own claim, so a failure names the phase:
    epochs past the request. A chain's wait passes once the chain reaches that epoch or decides its
    current epoch (its winner accepted, no dispute open on it). When every chain has passed its wait
    the row is still queued, and the remit claim is credited only once the economic wait has passed
-   too. Once Ethereum's current epoch is decided at least 20 s before its boundary, governance
-   pauses Ethereum (`sysio.epoch::pause(ETHEREUM)`, signed `sysio.chalg@active`) on that epoch and
-   the operator withdraws again. When the economic clock reaches its field the row has already
+   too. Once Ethereum's current epoch is decided and Ethereum is idle (no traffic, so it stays on that
+   epoch), governance pauses Ethereum (`sysio.epoch::pause(ETHEREUM)`, signed `sysio.chalg@active`)
+   on that epoch and the operator withdraws again. When the economic clock reaches its field the row has already
    matured: Ethereum is still paused on its decided epoch, at its index from before the request and
    short of the request's epoch for it, and the claim holds both withdrawals. Governance then
    unpauses Ethereum.
 3. **HeldEmissions** — as an economic epoch opens, `sysio`'s spendable WIRE (balance less
    `payclaimtot.outstanding` and `t5state.unsettled_batch_emission`) moves to `econ.holder`. The next
    pay epoch opens a `BALANCE_INSUFFICIENT` `blocklog` episode. `t5state` still accrues the attempted
-   period total and no `epochlog` row is written. While held, the depot sends an envelope to each
-   outpost and accepts its answer at the same consensus epoch of that chain (`sysio.msgch::envlog`),
-   another economic epoch opens and is held, and every chain's consensus advances. After the refund the next economic epoch
+   period total and no `epochlog` row is written. While held, with every chain kept due, the depot
+   sends an envelope to each outpost and accepts its answer at the same consensus epoch of that chain
+   (`sysio.msgch::envlog`), another economic epoch opens and is held, and every chain's consensus
+   advances within its minimum's bounds. After the refund the next economic epoch
    pays one `epochlog` row: everything pending after the last held epoch plus its own share. The
    episode is erased and nothing stays pending.
 4. **AndonCord** — with the `sysio.andon` cord pulled, an economic epoch pays its period and the
@@ -44,17 +56,17 @@ Each phase group asserts its own claim, so a failure names the phase:
 
 ## Timing
 
-Waits derive from `ProtocolTiming`: one economic epoch is 120 + 30 s, one consensus epoch of either
-chain 60 + 30 s.
+Waits derive from `ProtocolTiming`: one economic epoch is 120 + 30 s, one consensus epoch of a chain
+kept due at most 60 + 30 s from its traffic.
 
 | Phase group | Typical | Longest Step ceiling |
 | --- | --- | --- |
-| ClocksIndependent | 9-10 min (five economic epochs) | 930 s (the five-epoch await) |
+| ClocksIndependent | 15-16 min (eight economic epochs) | 1380 s (the eight-epoch await) |
 | WithdrawalWaitsOnBothClocks | 11-13 min (two requests, about two economic epochs each) | 630 s (each remit-claim verify) |
 | HeldEmissions | 6-8 min (about three economic epochs) | 450 s (the envelope round trip) |
 | AndonCord | 1-3 min (one economic epoch) | 330 s (the economic-epoch await) |
 
-With the bootstrap the flow takes about 40 minutes.
+With the bootstrap the flow takes about 46 minutes.
 
 ## Running
 
@@ -68,8 +80,9 @@ node scripts/flow-heartbeat-monitor.mjs --cluster-path <same-cluster-path> --exp
 ```
 
 The second withdrawal pauses Ethereum's consensus for about four minutes on purpose, so arm the
-monitor with `--expect-epoch-freeze`. While it is paused the elected operators' Ethereum `chkcons` is
-refused with `epoch advancement is paused`; Solana keeps advancing.
+monitor with `--expect-epoch-freeze`: a paused chain that has traffic is due but cannot advance.
+While it is paused the elected operators' Ethereum `chkcons` is refused with `epoch advancement is
+paused`. Idle chains between the kept-due steps are marked `i` by the monitor and are never a stall.
 
 `pnpm run test:unit` runs the plan-structure tests and every check against fixture readings; it
 never starts a cluster.

@@ -348,7 +348,7 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
-              "description": "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+              "description": "The chain's minimum consensus epoch duration in seconds, the least time between two of its envelopes (its sysio.epoch::epochcfg.epoch_duration_sec)"
             },
             "batchOperatorGroups": {
               "type": "object",
@@ -395,7 +395,7 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
-              "description": "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+              "description": "The chain's minimum consensus epoch duration in seconds, the least time between two of its envelopes (its sysio.epoch::epochcfg.epoch_duration_sec)"
             },
             "batchOperatorGroups": {
               "type": "object",

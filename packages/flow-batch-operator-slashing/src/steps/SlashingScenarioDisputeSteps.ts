@@ -16,6 +16,7 @@ import {
   pushNodeOwnerReg,
   Report,
   Steps,
+  WireClient,
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
@@ -34,8 +35,6 @@ const log = getLogger(__filename)
 
 /** The permission every flow-pushed action signs with. */
 const ActivePermission = "active"
-/** ISO-8601 Zulu suffix — chain timestamps are UTC; append when missing. */
-const UtcZuluSuffix = "Z"
 
 /**
  * Flow-local step factories + dispute-domain reads for the slashing scenario.
@@ -68,6 +67,15 @@ export namespace SlashingScenarioDisputeSteps {
   export const DisputeResolutionKey = outputKey<DisputeResolutionTarget>(
     "SlashingScenario.disputeResolution",
     "the open dispute's id + the canonical candidate checksum the Tier-1 electorate votes for"
+  )
+
+  /**
+   * Every SLASHED operator account on `sysio.opreg`, recorded once the resolution has slashed the
+   * losers and before the contested chain advances: the advance after it must slash no one new.
+   */
+  export const SlashedOperatorsKey = outputKey<readonly string[]>(
+    "SlashingScenario.slashedOperators",
+    "every SLASHED operator account on sysio.opreg before the contested chain advances past the contested epoch"
   )
 
   // ── Envelope encoding + inbound chain tips ────────────────────────────────
@@ -261,6 +269,58 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
+   * The accounts of the SLASHED operators among `rows`, sorted — pure. `sysio.opreg::slash` is
+   * the only path to SLASHED and never leaves it, so a slash of anyone not already SLASHED grows
+   * this set, and a `slashop` of an operator already SLASHED changes nothing.
+   *
+   * @param rows - `sysio.opreg::operators` rows.
+   * @returns The SLASHED accounts, in account order.
+   */
+  export function slashedAccounts(
+    rows: readonly SysioContracts.SysioOpregOperatorEntryType[]
+  ): string[] {
+    return rows
+      .filter(row =>
+        matchesProtoEnum(row.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED)
+      )
+      .map(row => row.account)
+      .sort()
+  }
+
+  /**
+   * Every SLASHED operator account on `sysio.opreg`, from a complete read of the table.
+   *
+   * @param ctx - The build context.
+   * @returns The SLASHED accounts, in account order ({@link slashedAccounts}).
+   */
+  export async function readSlashedOperators(
+    ctx: ClusterBuildContext
+  ): Promise<string[]> {
+    return slashedAccounts(
+      await ctx.wire
+        .getSysioContract(SysioContractName.opreg)
+        .tables.operators.queryAll({ limit: Constants.OperatorTableReadLimit })
+    )
+  }
+
+  /**
+   * Assert no operator became SLASHED since `before` — pure. Names every newly SLASHED account.
+   *
+   * @param before - The SLASHED accounts recorded earlier ({@link SlashedOperatorsKey}).
+   * @param after - The SLASHED accounts now.
+   * @param when - What happened in between, for the message.
+   * @throws When `after` holds an account `before` does not.
+   */
+  export function assertNoNewSlash(
+    before: readonly string[],
+    after: readonly string[],
+    when: string
+  ): void {
+    const added = after.filter(account => !before.includes(account))
+    Assert.ok(added.length === 0, `${when} slashed ${added.join(", ")}`)
+  }
+
+  /**
    * The OPEN dispute row for the contested chain's `epochIndex`, if any, read through the
    * `byoutepoch` index (`Steps.contracts.sysio.chalg.readEpochDispute`).
    *
@@ -328,29 +388,51 @@ export namespace SlashingScenarioDisputeSteps {
   // what resolves the dispute here.
 
   /**
-   * The chain-clock time left before an epoch boundary (ms): `nextEpochStart` minus the
-   * head-block time, negative once the boundary has passed. Chain timestamps are UTC and
-   * may omit the zone suffix.
+   * Whether a depot-paced chain leaves at least `headroomMs` before its next advance — pure. An
+   * advance never lands before the chain is due, and an idle chain (no traffic) is never due, so
+   * idle means no straddle: writes that follow all land before the same advance. A chain with
+   * traffic qualifies while its `due_at` is still `headroomMs` ahead of the head.
    *
-   * @param nextEpochStart - The chain's `epochstate.next_epoch_start`.
+   * @param state - The chain's `epochstate` row.
    * @param headBlockTime - The chain's `get_info.head_block_time`.
-   * @returns The time left (ms); `NaN` when either timestamp does not parse, which passes
-   *   no comparison.
+   * @param headroomMs - The time the writes need (ms).
+   * @returns True when the chain is idle or due no sooner than `headroomMs` from the head; false
+   *   when the head time does not parse.
    */
-  export function msUntilEpochBoundary(
-    nextEpochStart: string,
-    headBlockTime: string
-  ): number {
-    return parseUtcMs(nextEpochStart) - parseUtcMs(headBlockTime)
+  export function hasAdvanceHeadroom(
+    state: SysioContracts.SysioEpochEpochStateType,
+    headBlockTime: string,
+    headroomMs: number
+  ): boolean {
+    return (
+      Steps.contracts.sysio.epoch.msUntilDue(state, WireClient.chainTimeMs(headBlockTime)) >=
+      headroomMs
+    )
   }
 
-  /** The contested chain's {@link msUntilEpochBoundary}, from its `epochstate` row and the chain head. */
-  async function readMsUntilEpochBoundary(
-    ctx: ClusterBuildContext
-  ): Promise<number> {
-    const nextEpochStart = String((await readEpochState(ctx)).next_epoch_start),
+  /** The contested chain's {@link hasAdvanceHeadroom}, from its `epochstate` row and the chain head. */
+  async function readAdvanceHeadroom(
+    ctx: ClusterBuildContext,
+    headroomMs: number
+  ): Promise<boolean> {
+    const state = await readEpochState(ctx),
       headBlockTime = String((await ctx.wire.getInfo()).head_block_time)
-    return msUntilEpochBoundary(nextEpochStart, headBlockTime)
+    return hasAdvanceHeadroom(state, headBlockTime, headroomMs)
+  }
+
+  /**
+   * Whether a chain is due its next advance at the head — pure: it has traffic and the head has
+   * reached its `due_at`.
+   *
+   * @param state - The chain's `epochstate` row.
+   * @param headBlockTime - The chain's `get_info.head_block_time`.
+   * @returns True once the chain is due; false while it is idle or still waiting.
+   */
+  export function isDue(
+    state: SysioContracts.SysioEpochEpochStateType,
+    headBlockTime: string
+  ): boolean {
+    return Steps.contracts.sysio.epoch.msUntilDue(state, WireClient.chainTimeMs(headBlockTime)) <= 0
   }
 
   /**
@@ -730,13 +812,13 @@ export namespace SlashingScenarioDisputeSteps {
   // ── Step: await headroom before the ACTIVE flips (chain-clock poll) ─────
 
   /**
-   * Poll until the contested chain's clock is at least
-   * {@link SlashingScenarioConstants.activationHeadroomMs} short of its
-   * `next_epoch_start`. An advance never lands before the boundary, so the
-   * dispute operators' ACTIVE flips that follow all land before the same advance.
-   * An advance drawing the pool between two flips would seat a group mixing
-   * dispute and bootstrapped operators; its dispute operators, which deliver only
-   * when the flow injects, would miss that epoch instead of owning it alone.
+   * Poll until the contested chain is idle or due no sooner than
+   * {@link SlashingScenarioConstants.activationHeadroomMs} from its head
+   * ({@link hasAdvanceHeadroom}). An advance never lands before the chain is due and an
+   * idle chain never advances, so the dispute operators' ACTIVE flips that follow all
+   * land before the same advance. An advance drawing the pool between two flips would
+   * seat a group mixing dispute and bootstrapped operators; its dispute operators, which
+   * deliver only when the flow injects, would miss that epoch instead of owning it alone.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -762,15 +844,15 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — poll the contested chain's clock until the headroom before its boundary holds. */
+  /** Named runner — poll the contested chain until it is idle or its due time is the headroom away. */
   export async function runAwaitActivationHeadroom<
     C extends ClusterBuildContext
   >(ctx: C, _input: null, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const headroomMs = Constants.activationHeadroomMs()
     await pollUntil(
-      `the ${Constants.ContestedChain} chain clock is at least ${headroomMs} ms short of next_epoch_start`,
-      async () => (await readMsUntilEpochBoundary(ctx)) >= headroomMs,
+      `the ${Constants.ContestedChain} chain is idle or at least ${headroomMs} ms short of its due_at`,
+      () => readAdvanceHeadroom(ctx, headroomMs),
       Constants.activationHeadroomDeadlineMs(),
       Constants.BoundaryPollIntervalMs
     )
@@ -785,7 +867,10 @@ export namespace SlashingScenarioDisputeSteps {
    * chain's pool (ACTIVE batch operators SERVING the chain, non-bootstrapped
    * first, then by account). Once the three serving dispute operators are
    * ACTIVE, the next advance, pushed by the bootstrapped relays after their
-   * consensus on the epoch then live, seats exactly them.
+   * consensus on the epoch then live, seats exactly them. Nothing is queued to the
+   * contested chain, so the poll gives it keep-due traffic while it is idle
+   * (`EpochAdvanceSteps.pollUntilKeepingDue`) and stops the moment the group is
+   * seated, leaving the new, undeliverable epoch without traffic.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -818,12 +903,104 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [Constants.ContestedChain],
       `the ${Constants.ContestedChain} advance seats the ${Constants.DisputeOperatorCount} dispute operators as its sole active group`,
       () => disputeOperatorsOwnGroup(ctx),
       Constants.groupDeadlineMs(),
-      Constants.LongPollIntervalMs
+      Constants.LongPollIntervalMs,
+      signal
     )
+  }
+
+  // ── Step: await the contested chain due after the resolution ─────────────
+
+  /**
+   * Poll until the contested chain is due its next advance ({@link isDue}). After the
+   * resolution its group is the dispute operators, which run no relay, so no elected
+   * operator pushes its `chkcons`: the flow gives the idle chain traffic
+   * (`EpochAdvanceSteps.planKeepChainDue`), waits here for it to fall due one minimum later,
+   * and pushes `sysio.msgch::chkcons` itself.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @returns The definition step.
+   */
+  export function planAwaitContestedChainDue<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runAwaitContestedChainDue
+    )
+  }
+
+  /** Named runner — poll the contested chain's `epochstate` and head until it is due. */
+  export async function runAwaitContestedChainDue<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await pollUntil(
+      `the ${Constants.ContestedChain} chain is due its next advance`,
+      async () =>
+        isDue(await readEpochState(ctx), String((await ctx.wire.getInfo()).head_block_time)),
+      Constants.contestedDueDeadlineMs(),
+      Constants.BoundaryPollIntervalMs
+    )
+  }
+
+  // ── Step: record the SLASHED operators (capture) ──────────────────────────
+
+  /**
+   * Record every SLASHED operator on `sysio.opreg` under {@link SlashedOperatorsKey}: a read,
+   * carried by a Step because the verify after the contested chain's advance compares against it.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step option overrides.
+   * @returns The record step.
+   */
+  export function planRecordSlashedOperators<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runRecordSlashedOperators
+    )
+  }
+
+  /** Named runner — read the SLASHED operators and store them. */
+  export async function runRecordSlashedOperators<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    ctx.outputs.set(SlashedOperatorsKey, await readSlashedOperators(ctx))
   }
 
   // ── Step: await the dispute opening (poll + capture the resolution target) ─
@@ -1095,10 +1272,4 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Parse a chain timestamp as UTC ms (chain timestamps omit the zone suffix). */
-  function parseUtcMs(raw: string): number {
-    return Date.parse(
-      raw.endsWith(UtcZuluSuffix) ? raw : `${raw}${UtcZuluSuffix}`
-    )
-  }
 }

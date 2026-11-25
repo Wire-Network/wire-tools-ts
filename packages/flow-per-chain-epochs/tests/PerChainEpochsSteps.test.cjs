@@ -37,10 +37,13 @@ function stamp(ms) {
   return new Date(ms).toISOString().replace("Z", "")
 }
 
-/** One chain's consensus reading at epoch `index` of a `durationSec` chain, on its grid. */
+/**
+ * One idle chain's consensus reading at epoch `index` of a `durationSec` chain kept due, its
+ * epochs started exactly one minimum apart (the closest depot pacing allows).
+ */
 function consensusReading(index, durationSec, paused = false) {
   const startMs = GenesisMs + (index - 1) * durationSec * 1_000
-  return { epochIndex: index, epochStartMs: startMs, nextEpochStartMs: startMs + durationSec * 1_000, paused }
+  return { epochIndex: index, epochStartMs: startMs, trafficSinceMs: 0, dueAtMs: 0, paused }
 }
 
 /** A clock reading at `headMs`, each chain at its index; `paused` pauses Ethereum. */
@@ -57,7 +60,7 @@ function reading(headMs, ethereum, solana, paused = false) {
   }
 }
 
-/** The reading of each chain's epoch at `headMs`, one block of lag after its boundary. */
+/** The reading of each chain's epoch at `headMs`, kept due and advancing one block of lag after each minimum. */
 function onTime(headMs) {
   return reading(
     headMs,
@@ -71,14 +74,18 @@ function observation(value) {
   return { start: value, ticks: [] }
 }
 
-/** An `epochstate` row as the RPC renders it: a packed uint64 code, chain-time stamps. */
+/** A zero `time_point` as the RPC renders it: no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+
+/** An idle `epochstate` row as the RPC renders it: a packed uint64 code, chain-time stamps. */
 function epochStateRow(chain, index, durationSec, groups = [["batchop.a"]], cursor = 0) {
   const startMs = GenesisMs + (index - 1) * durationSec * 1_000
   return {
     chain_code: String(SlugName.from(chain)),
     current_epoch_index: index,
     current_epoch_start: stamp(startMs),
-    next_epoch_start: stamp(startMs + durationSec * 1_000),
+    traffic_since: NoTraffic,
+    due_at: NoTraffic,
     current_batch_op_group: cursor,
     batch_op_groups: groups,
     is_paused: false
@@ -164,6 +171,18 @@ function pollImmediately() {
   })
 }
 
+/**
+ * Record the keep-due pump: every chain's `epochstate` idle at `states`, each governance
+ * `notetraffic` captured rather than pushed.
+ *
+ * @return The chains the pump resent the roster to, in push order.
+ */
+function recordPump(states = epochStates()) {
+  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => states)
+  const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  return () => push.mock.calls.map(call => call.arguments[1].data.chain_code)
+}
+
 /** A seating input for the operator on `chain`. */
 function seating(chain, budgetEpochs = 1) {
   return { kind: "PerChainEpochsSteps.SeatingInput", label: Operator, chain, budgetEpochs }
@@ -183,8 +202,8 @@ describe("budgets", () => {
 
   test("the window deadline is the window plus one delivery extension", () => {
     Assert.equal(
-      PerChainEpochsSteps.windowDeadlineMs(Constants.CadenceWindowSec),
-      (Constants.CadenceWindowSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000
+      PerChainEpochsSteps.windowDeadlineMs(Constants.PacingWindowSec),
+      (Constants.PacingWindowSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000
     )
   })
 
@@ -232,14 +251,53 @@ describe("epoch configuration", () => {
     )
   })
 
-  test("an epoch that spans another length fails", () => {
-    const stretched = {
-      ...consensus,
-      [OutpostChainCodename.ETHEREUM]: { ...consensus[OutpostChainCodename.ETHEREUM], nextEpochStartMs: GenesisMs }
-    }
+  test("a chain due one minimum after the later of its start and its traffic passes", () => {
+    const ethereum = consensus[OutpostChainCodename.ETHEREUM],
+      startMs = ethereum.epochStartMs
+    // Traffic before the start: due one minimum after the start.
+    PerChainEpochsSteps.assertDueAt(
+      { ...ethereum, trafficSinceMs: startMs - 5_000, dueAtMs: startMs + EthereumSec * 1_000 },
+      EthereumSec,
+      OutpostChainCodename.ETHEREUM
+    )
+    // Traffic after the start: due one minimum after the traffic.
+    PerChainEpochsSteps.assertDueAt(
+      { ...ethereum, trafficSinceMs: startMs + 7_000, dueAtMs: startMs + 7_000 + EthereumSec * 1_000 },
+      EthereumSec,
+      OutpostChainCodename.ETHEREUM
+    )
+    // Idle: neither traffic nor due.
+    PerChainEpochsSteps.assertDueAt(ethereum, EthereumSec, OutpostChainCodename.ETHEREUM)
+  })
+
+  test("a due_at off the minimum fails, in the configuration check too", () => {
+    const ethereum = consensus[OutpostChainCodename.ETHEREUM],
+      early = { ...ethereum, trafficSinceMs: ethereum.epochStartMs + 7_000, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 }
     Assert.throws(
-      () => PerChainEpochsSteps.assertEpochConfiguration(Durations, stretched, Durations),
-      /does not span one 60 s duration/
+      () => PerChainEpochsSteps.assertDueAt(early, EthereumSec, OutpostChainCodename.ETHEREUM),
+      /ETHEREUM epoch 4 is not due one 60 s minimum after the later of its start and its traffic/
+    )
+    Assert.throws(
+      () =>
+        PerChainEpochsSteps.assertEpochConfiguration(
+          Durations,
+          { ...consensus, [OutpostChainCodename.ETHEREUM]: early },
+          Durations
+        ),
+      /is not due one 60 s minimum/
+    )
+  })
+
+  test("an idle chain carrying a due_at fails", () => {
+    const ethereum = consensus[OutpostChainCodename.ETHEREUM]
+    Assert.throws(
+      () =>
+        PerChainEpochsSteps.assertDueAt(
+          { ...ethereum, dueAtMs: ethereum.epochStartMs + EthereumSec * 1_000 },
+          EthereumSec,
+          OutpostChainCodename.ETHEREUM
+        ),
+      /ETHEREUM epoch 4 has no traffic yet is due at/
     )
   })
 
@@ -295,9 +353,9 @@ describe("epoch configuration", () => {
   })
 })
 
-describe("cadence window", () => {
-  const startName = Constants.CadenceStartObservation,
-    windowSec = Constants.CadenceWindowSec,
+describe("pacing window", () => {
+  const startName = Constants.PacingStartObservation,
+    windowSec = Constants.PacingWindowSec,
     input = { kind: "PerChainEpochsSteps.AwaitWindowElapsedInput", fromObservationName: startName, windowSec }
 
   /** A context holding the window's starting reading at the fixture genesis, the head at `headMs`. */
@@ -314,16 +372,20 @@ describe("cadence window", () => {
     Assert.equal(step.runner, PerChainEpochsSteps.runAwaitWindowElapsed)
   })
 
-  test("the await returns once the depot head is the window past the starting reading", async () => {
+  test("the await returns once the depot head is the window past the starting reading, adding no traffic", async () => {
+    const pumped = recordPump()
     await PerChainEpochsSteps.runAwaitWindowElapsed(windowContext(GenesisMs + windowSec * 1_000), input, signal)
+    Assert.deepEqual(pumped(), [])
   })
 
-  test("a head short of the window's end keeps the await waiting", async () => {
+  test("a head short of the window's end keeps the await waiting and every idle chain due", async () => {
     pollOnce()
+    const pumped = recordPump()
     await Assert.rejects(
       PerChainEpochsSteps.runAwaitWindowElapsed(windowContext(GenesisMs + windowSec * 1_000 - 1), input, signal),
       /Timed out waiting for: the depot head passes/
     )
+    Assert.deepEqual(pumped(), [OutpostChainCodename.ETHEREUM, OutpostChainCodename.SOLANA])
   })
 
   test("an unrecorded starting reading fails", async () => {
@@ -337,56 +399,53 @@ describe("cadence window", () => {
   })
 })
 
-describe("own cadence", () => {
+describe("own minimum", () => {
   const fromMs = GenesisMs + 10 * EthereumSec * 1_000 + LagMs,
-    toMs = fromMs + Constants.CadenceWindowSec * 1_000
+    toMs = fromMs + Constants.PacingWindowSec * 1_000
 
-  test("each chain on its own grid, the faster one advancing more, passes", () => {
-    const advanced = PerChainEpochsSteps.assertOwnCadence(onTime(fromMs), onTime(toMs), Durations)
-    Assert.equal(advanced[OutpostChainCodename.ETHEREUM], Constants.CadenceWindowSec / EthereumSec)
+  test("each chain advancing within its bounds, the faster one more, passes", () => {
+    const advanced = PerChainEpochsSteps.assertOwnMinimum(onTime(fromMs), onTime(toMs), Durations)
+    Assert.equal(advanced[OutpostChainCodename.ETHEREUM], Constants.PacingWindowSec / EthereumSec)
     Assert.ok(advanced[OutpostChainCodename.ETHEREUM] > advanced[OutpostChainCodename.SOLANA])
   })
 
+  test("epochs that started more than a minimum apart pass: there is no grid", () => {
+    const to = onTime(toMs),
+      solana = to.consensus[OutpostChainCodename.SOLANA],
+      late = {
+        ...to,
+        consensus: { ...to.consensus, [OutpostChainCodename.SOLANA]: { ...solana, epochStartMs: solana.epochStartMs + 1_000 } }
+      }
+    PerChainEpochsSteps.assertOwnMinimum(onTime(fromMs), late, Durations)
+  })
+
+  test("the window leaves Ethereum's kept-due bound two epochs under its worst real count", () => {
+    // A kept-due 60 s epoch really closes within 73 s: the pump's latency, the relay's chkcons poll and a block.
+    const window = Constants.PacingWindowSec,
+      keptDueCycleSec = 73,
+      bound = Math.floor(window / ProtocolTiming.effectiveEpochSec(EthereumSec))
+    Assert.equal(window, 840)
+    Assert.ok(Math.floor(window / keptDueCycleSec) - bound >= 2)
+    Assert.ok(window / keptDueCycleSec - window / ProtocolTiming.effectiveEpochSec(EthereumSec) >= 2)
+  })
+
   test("the window separates the chains on any run: the fast floor exceeds the slow ceiling", () => {
-    const window = Constants.CadenceWindowSec,
+    const window = Constants.PacingWindowSec,
       fastFloor = Math.floor(window / (EthereumSec + ProtocolTiming.EpochExtensionMaxSec)),
-      slowCeiling = Math.floor(window / SolanaSec) + 2
+      slowCeiling = Math.floor(window / SolanaSec) + 1
     Assert.ok(fastFloor > slowCeiling, `${fastFloor} <= ${slowCeiling}`)
   })
 
-  test("epochs that did not start one duration apart fail", () => {
+  test("epochs that started closer than one minimum apart fail", () => {
     const to = onTime(toMs),
       solana = to.consensus[OutpostChainCodename.SOLANA],
-      shifted = {
+      early = {
         ...to,
-        consensus: {
-          ...to.consensus,
-          [OutpostChainCodename.SOLANA]: {
-            ...solana,
-            epochStartMs: solana.epochStartMs + 1_000,
-            nextEpochStartMs: solana.nextEpochStartMs + 1_000
-          }
-        }
+        consensus: { ...to.consensus, [OutpostChainCodename.SOLANA]: { ...solana, epochStartMs: solana.epochStartMs - 1_000 } }
       }
     Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(onTime(fromMs), shifted, Durations),
-      /SOLANA epochs \d+\.\.\d+ did not start 150 s apart/
-    )
-  })
-
-  test("a reading off the chain's grid fails", () => {
-    const to = onTime(toMs),
-      ethereum = to.consensus[OutpostChainCodename.ETHEREUM],
-      stretched = {
-        ...to,
-        consensus: {
-          ...to.consensus,
-          [OutpostChainCodename.ETHEREUM]: { ...ethereum, nextEpochStartMs: ethereum.nextEpochStartMs + 1_000 }
-        }
-      }
-    Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(onTime(fromMs), stretched, Durations),
-      /ETHEREUM epoch \d+ does not span one 60 s duration/
+      () => PerChainEpochsSteps.assertOwnMinimum(onTime(fromMs), early, Durations),
+      /SOLANA epochs \d+\.\.\d+ started less than 150 s apart/
     )
   })
 
@@ -399,12 +458,12 @@ describe("own cadence", () => {
         true
       )
     Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(onTime(fromMs), paused, Durations),
+      () => PerChainEpochsSteps.assertOwnMinimum(onTime(fromMs), paused, Durations),
       /ETHEREUM consensus was paused/
     )
   })
 
-  test("a chain behind its envelope fails", () => {
+  test("a chain kept due that advanced too few epochs fails", () => {
     const from = onTime(fromMs),
       to = onTime(toMs),
       behind = reading(
@@ -413,48 +472,64 @@ describe("own cadence", () => {
         to.consensus[OutpostChainCodename.SOLANA].epochIndex
       )
     Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(from, behind, Durations),
-      /ETHEREUM consensus advanced 1 epoch\(s\) in \d+ ms; its epoch closes within 90 s, so at least \d+/
+      () => PerChainEpochsSteps.assertOwnMinimum(from, behind, Durations),
+      /ETHEREUM consensus advanced 1 epoch\(s\) in \d+ ms; kept due, its epoch closes within 90 s, so at least \d+/
+    )
+  })
+
+  test("a chain that advanced faster than its minimum allows fails", () => {
+    const from = onTime(fromMs),
+      to = onTime(toMs),
+      ceiling = Math.floor(Constants.PacingWindowSec / SolanaSec) + 1,
+      rushed = reading(
+        toMs,
+        to.consensus[OutpostChainCodename.ETHEREUM].epochIndex,
+        from.consensus[OutpostChainCodename.SOLANA].epochIndex + ceiling + 1
+      )
+    Assert.throws(
+      () => PerChainEpochsSteps.assertOwnMinimum(from, rushed, Durations),
+      new RegExp(`SOLANA consensus advanced ${ceiling + 1} epoch\\(s\\) in \\d+ ms; its minimum of 150 s allows at most ${ceiling}`)
     )
   })
 
   test("a faster chain that does not out-advance a slower one fails", () => {
-    const from = onTime(fromMs),
-      // Ethereum at exactly its envelope floor, Solana inflated to match it on its own grid.
-      ethereumAdvance = Math.floor((toMs - fromMs) / ((EthereumSec + ProtocolTiming.EpochExtensionMaxSec) * 1_000)),
+    // Over 300 s both chains can close 3 epochs inside their bounds (Ethereum at least 3, Solana at most 3).
+    const windowMs = 300_000,
+      from = onTime(fromMs),
       matched = reading(
-        toMs,
-        from.consensus[OutpostChainCodename.ETHEREUM].epochIndex + ethereumAdvance,
-        from.consensus[OutpostChainCodename.SOLANA].epochIndex + ethereumAdvance
+        fromMs + windowMs,
+        from.consensus[OutpostChainCodename.ETHEREUM].epochIndex + 3,
+        from.consensus[OutpostChainCodename.SOLANA].epochIndex + 3
       )
     Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(from, matched, Durations),
+      () => PerChainEpochsSteps.assertOwnMinimum(from, matched, Durations),
       /no more than the 150 s SOLANA epoch's/
     )
   })
 
   test("a window shorter than one effective epoch measures nothing", () => {
     Assert.throws(
-      () => PerChainEpochsSteps.assertOwnCadence(onTime(fromMs), onTime(fromMs + 1_000), Durations),
+      () => PerChainEpochsSteps.assertOwnMinimum(onTime(fromMs), onTime(fromMs + 1_000), Durations),
       /spans no whole/
     )
   })
 
-  test("the verify step asserts the two stored readings against the depot's durations", async () => {
+  test("the verify step asserts the two stored readings against the depot's minimums", async () => {
     mock.method(Steps.contracts.sysio.epoch, "readEpochConfigs", async () => epochConfigs())
     const outputs = new OutputStore()
         .set(WireEconomicClockTool.observationKey("from"), observation(onTime(fromMs)))
         .set(WireEconomicClockTool.observationKey("to"), observation(onTime(toMs)))
         .set(WireEconomicClockTool.observationKey("paused"), observation(reading(toMs, 30, 10, true))),
-      step = PerChainEpochsSteps.planVerifyOwnCadence("Sysio", "cadence", "probe", {}, "from", "to")
+      step = PerChainEpochsSteps.planVerifyOwnMinimum("Sysio", "minimum", "probe", {}, "from", "to")
     Assert.deepEqual(step.input, {
-      kind: "PerChainEpochsSteps.VerifyOwnCadenceInput",
+      kind: "PerChainEpochsSteps.VerifyOwnMinimumInput",
       fromObservationName: "from",
       toObservationName: "to"
     })
-    await PerChainEpochsSteps.runVerifyOwnCadence(context(outputs), step.input, signal)
+    Assert.equal(step.runner, PerChainEpochsSteps.runVerifyOwnMinimum)
+    await PerChainEpochsSteps.runVerifyOwnMinimum(context(outputs), step.input, signal)
     await Assert.rejects(
-      PerChainEpochsSteps.runVerifyOwnCadence(context(outputs), { ...step.input, toObservationName: "paused" }, signal),
+      PerChainEpochsSteps.runVerifyOwnMinimum(context(outputs), { ...step.input, toObservationName: "paused" }, signal),
       /ETHEREUM consensus was paused/
     )
   })
@@ -485,13 +560,15 @@ describe("consensus advance", () => {
     Assert.equal(read.mock.callCount(), 3)
   })
 
-  test("a chain that stays put keeps the await waiting", async () => {
+  test("a chain that stays put keeps the await waiting and keeps that chain alone due", async () => {
     pollOnce()
+    const pumped = recordPump()
     mock.method(Steps.contracts.sysio.epoch, "readCurrentEpochIndex", async () => 5)
     await Assert.rejects(
       PerChainEpochsSteps.runAwaitConsensusAdvanced(context(), input, signal),
       /the ETHEREUM consensus advances 1 epoch\(s\) past 5/
     )
+    Assert.deepEqual(pumped(), [OutpostChainCodename.ETHEREUM])
   })
 })
 
@@ -605,13 +682,15 @@ describe("seating", () => {
     Assert.equal(read.mock.calls[0].arguments[1], OutpostChainCodename.ETHEREUM)
   })
 
-  test("a window that never seats the operator keeps the seated await waiting", async () => {
+  test("a window that never seats the operator keeps the seated await waiting and its chain due", async () => {
     pollOnce()
+    const pumped = recordPump()
     windowOf([["x"], ["y"]])
     await Assert.rejects(
       PerChainEpochsSteps.runAwaitOperatorSeated(context(), seating(OutpostChainCodename.ETHEREUM), signal),
       /the ETHEREUM schedule window seats chainop/
     )
+    Assert.deepEqual(pumped(), [OutpostChainCodename.ETHEREUM])
   })
 
   test("the unseated await returns once no group seats the operator", async () => {
@@ -665,14 +744,16 @@ describe("seating", () => {
     )
   })
 
-  test("the rotation verify fails when the chain does not advance its budget", async () => {
+  test("the rotation verify fails when the chain does not advance its budget, its chain kept due", async () => {
     pollOnce()
+    const pumped = recordPump()
     windowOf([["x"], ["y"]])
     mock.method(Steps.contracts.sysio.epoch, "readCurrentEpochIndex", async () => 10)
     await Assert.rejects(
       PerChainEpochsSteps.runVerifyUnseatedForRotation(context(), seating(OutpostChainCodename.ETHEREUM, 4), signal),
       /the ETHEREUM consensus advances 4 epoch\(s\) past 10 with chainop unseated/
     )
+    Assert.deepEqual(pumped(), [OutpostChainCodename.ETHEREUM])
   })
 })
 
@@ -814,7 +895,7 @@ describe("seat-seconds", () => {
     return { account_name: account, chain_code: chain, period, seat_seconds: String(seatSeconds) }
   }
 
-  test("a whole number of the chain's durations passes and counts the seats", () => {
+  test("seats times the chain's minimum passes and counts the seats", () => {
     Assert.equal(PerChainEpochsSteps.assertSeatSeconds(BigInt(3 * SolanaSec), SolanaSec, OutpostChainCodename.SOLANA), 3)
   })
 
@@ -833,11 +914,11 @@ describe("seat-seconds", () => {
           SolanaSec,
           OutpostChainCodename.SOLANA
         ),
-      /are not a whole number of 150 s SOLANA epochs/
+      /are not a whole number of 150 s SOLANA seats/
     )
     Assert.throws(
       () => PerChainEpochsSteps.assertSeatSeconds(BigInt(SolanaSec), EthereumSec, OutpostChainCodename.ETHEREUM),
-      /are not a whole number of 60 s ETHEREUM epochs/
+      /are not a whole number of 60 s ETHEREUM seats/
     )
   })
 
@@ -914,7 +995,7 @@ describe("seat-seconds", () => {
         accrual(OutpostChainCodename.SOLANA, Constants.SolanaOnlyDutyPeriod),
         signal
       ),
-      /are not a whole number of 150 s SOLANA epochs/
+      /are not a whole number of 150 s SOLANA seats/
     )
   })
 

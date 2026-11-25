@@ -665,3 +665,21 @@ test("Ethereum recovery funds before the final custody measurement and propagate
   await Assert.rejects(run(Action.fundEthereumRecovery), /Unexpected emergency-stop action refusal/)
   Assert.equal(deposit.mock.calls.length, 1)
 })
+
+/** An `envlog` row `id` that starts on `start`, as the RPC renders it. */
+function envlogRow(id, start) {
+  return { id: String(id), endpoints: { start: { kind: start }, end: { kind: "CHAIN_KIND_WIRE" } } }
+}
+
+test("a Solana envelope accepted after the snapshot proves circulation under the cord", () => {
+  Assert.equal(
+    EmergencyStopSteps.hasSolanaEnvelopeSince([envlogRow(7, "CHAIN_KIND_EVM"), envlogRow(9, "CHAIN_KIND_SVM")], 8n),
+    true
+  )
+})
+
+test("no Solana envelope past the snapshot, or only older or other-chain rows, proves nothing", () => {
+  Assert.equal(EmergencyStopSteps.hasSolanaEnvelopeSince([], 8n), false)
+  Assert.equal(EmergencyStopSteps.hasSolanaEnvelopeSince([envlogRow(8, "CHAIN_KIND_SVM")], 8n), false)
+  Assert.equal(EmergencyStopSteps.hasSolanaEnvelopeSince([envlogRow(12, "CHAIN_KIND_EVM")], 8n), false)
+})

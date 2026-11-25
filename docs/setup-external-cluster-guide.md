@@ -199,8 +199,17 @@ only** — no storage upload, no compute provisioning.
 
 `scripts/external/verify-external-bind-config.mjs` stands the **whole** external
 cluster up in a `docker compose` stack (depot + containerized anvil + solana) on a
-private static-IP network and confirms the depot **advances the epoch** (or head
-blocks under `--exclude-outposts`) against the containerized outposts.
+private static-IP network and confirms the depot **advances the epoch** of every
+outpost chain (or head blocks under `--exclude-outposts`) against the containerized
+outposts. Epochs are depot-paced, so a resumed cluster with nothing queued never
+advances by itself: the epoch gate gives every idle chain traffic (one
+`sysio.epoch::notetraffic` since now, pushed by `clio` in the depot container) and
+passes once every chain has advanced. The gate therefore writes: `notetraffic` is
+declared by `sysio.msgch@active`, whose authority is `sysio@active`, and is signed
+through the kiod wallet `wire-cluster-tool run` unlocked in the depot container, so
+that wallet must hold the key behind `sysio@active` (the cluster's initial key on a
+locally created cluster). A cluster whose governance was handed off has no such key;
+verify it with `--exclude-outposts`, whose head gate writes nothing.
 
 ```bash
 node scripts/external/verify-external-bind-config.mjs \
@@ -243,8 +252,9 @@ The emitted, self-described payload:
   key type: wire/ethereum/solana, plus BLS with its proof-of-possession). KEY
   providers carry the material inline (testnet keys); SSM providers carry
   `awsSecretId` references (no plaintext).
-- `wire.outpostEpochDurationSec` — each outpost chain's consensus epoch duration
-  (compile-time budgets can't cross a remote boundary; this is the transport).
+- `wire.outpostEpochDurationSec` — each outpost chain's minimum consensus epoch
+  duration, the least time between two of its envelopes (compile-time budgets
+  can't cross a remote boundary; this is the transport).
 - `wire.epochDurationSec` — the source cluster's `epochDurationSec`: the one
   duration its caller gave every chain without its own, or `null` when each
   chain took its own default (Ethereum 60 s, Solana 30 s).
@@ -253,10 +263,11 @@ The emitted, self-described payload:
 
 ## Known limitations & notes
 
-- **Epoch-advance on resume.** A resumed cluster whose outposts already completed
-  the current epoch (before the snapshot) may not tick the epoch — the outposts
-  won't re-deliver, so the depot can't reach fresh consensus. The Docker verify's
-  default epoch gate hits this; it is a resume-state consistency property, **not** a
+- **Epoch-advance on resume.** A depot-paced chain advances only once it has
+  traffic, which the Docker verify's epoch gate supplies. A resumed cluster whose
+  outposts already completed the current epoch (before the snapshot) may still not
+  advance — the outposts won't re-deliver, so the depot can't reach fresh consensus
+  on an undecided epoch. That is a resume-state consistency property, **not** a
   bind-config or Docker issue. `--exclude-outposts` (head-block gate) sidesteps it
   when you only need to prove the depot + bind config come up.
 - **Toolchain version match is mandatory** for loading cloned state. The Docker

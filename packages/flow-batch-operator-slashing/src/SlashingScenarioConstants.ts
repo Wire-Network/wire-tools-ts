@@ -191,26 +191,27 @@ export namespace SlashingScenarioConstants {
   export const SettlePollIntervalEpochRatio = 0.75
 
   /**
-   * Share of an epoch that must remain before the contested chain's next boundary,
-   * in chain time, when the dispute operators' ACTIVE flips start. An advance never
-   * lands before the boundary, so all three flips land between the same two
-   * advances unless they take longer than this.
+   * Share of a minimum epoch that must remain, in chain time, before the contested
+   * chain is due when the dispute operators' ACTIVE flips start. An advance never
+   * lands before the chain is due and an idle chain is never due, so all three flips
+   * land between the same two advances unless they take longer than this.
    */
   export const ActivationHeadroomEpochRatio = 0.5
   /**
-   * Epochs budgeted for the contested chain's clock to reach
-   * {@link activationHeadroomMs} short of its next boundary: the rest of the epoch
-   * then live, and the next one if it opened late.
+   * Epochs budgeted for the contested chain to be idle or leave
+   * {@link activationHeadroomMs} before it is due: the epoch then live, if traffic
+   * already made it due, and the next.
    */
   export const ActivationHeadroomEpochBudget = 2
   /** Epochs budgeted for a dispute operator to flip OPERATOR_STATUS_ACTIVE after `processbatch`. */
   export const ActiveEpochBudget = 2
   /**
    * Epochs budgeted, from the moment all three dispute operators are ACTIVE, for
-   * the contested chain's next natural advance to seat them as its sole active
-   * group: the epoch then live runs out and its relays' consensus advances it.
+   * the contested chain's next advance to seat them as its sole active group: the
+   * keep-due traffic the await gives it makes it due one minimum later, and its
+   * relays' consensus advances it; one more for the traffic's own landing.
    */
-  export const GroupEpochBudget = 1
+  export const GroupEpochBudget = 2
   /** Epochs budgeted for the epoch index to settle (freeze) on the dispute-operators-owned epoch. */
   export const SettleEpochBudget = 6
   /**
@@ -231,13 +232,18 @@ export namespace SlashingScenarioConstants {
    * normally returns on its first read.
    */
   export const SlashEpochBudget = 1
+  /**
+   * Epochs budgeted, from the traffic the flow gives the contested chain after the
+   * resolution, for the chain to fall due: one minimum, plus the delivery extension.
+   */
+  export const ContestedDueEpochBudget = 1
 
-  /** Chain-clock headroom before the contested chain's next boundary the ACTIVE flips start with (ms). */
+  /** Chain-clock headroom before the contested chain is due that the ACTIVE flips start with (ms). */
   export function activationHeadroomMs(): number {
     return EpochDurationSec * ActivationHeadroomEpochRatio * MsPerSecond
   }
 
-  /** Deadline for the contested chain's clock to leave {@link activationHeadroomMs} before its boundary (ms). */
+  /** Deadline for the contested chain to be idle or leave {@link activationHeadroomMs} before it is due (ms). */
   export function activationHeadroomDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -312,6 +318,15 @@ export namespace SlashingScenarioConstants {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       SlashEpochBudget *
+      MsPerSecond
+    )
+  }
+
+  /** Deadline for the contested chain to fall due after the post-resolution traffic (ms). */
+  export function contestedDueDeadlineMs(): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ContestedDueEpochBudget *
       MsPerSecond
     )
   }

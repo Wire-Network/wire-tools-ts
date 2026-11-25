@@ -185,6 +185,10 @@ async function readCirculatedDesyndications(
 /**
  * LIQ yield — the reward flow end to end, on the real `liqsol_core` paths and
  * the real depot contracts: with explicit underwriting and release Steps.
+ * Epochs are depot-paced: Solana's are driven by keep-due traffic the keep-due
+ * pump gives it while the flow waits for each Solana → depot attestation (until
+ * the outposts report their backlog to the depot), and by the desyndication's
+ * own `DESYNDICATE_LIQ` outbound; the final advance check keeps both chains due.
  *
  * 1. **SnapshotDepotEpoch** — record `current_epoch_index` BEFORE any write.
  * 2. **ProvisionUser** — the user's WIRE account and their Solana wallet.
@@ -378,13 +382,16 @@ export class LIQYieldScenario extends FlowScenario {
         Actor.BatchOperator,
         "syndicate-liq-circulates",
         "SYNDICATE_LIQ appears in an OUTPOST_SOLANA_DEPOT envelope artifact",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             "SYNDICATE_LIQ in an OUTPOST_SOLANA_DEPOT envelope",
             async () =>
               containsSyndicateLIQ(oppDebuggingPath(ctx.config.clusterPath)),
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
         },
         circulationStepOptions
@@ -393,8 +400,10 @@ export class LIQYieldScenario extends FlowScenario {
         Actor.Sysio,
         "syndication-held-before-bond",
         "the closed envelope holds the user's full item before bonding",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             "held syndication envelope",
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
@@ -417,7 +426,8 @@ export class LIQYieldScenario extends FlowScenario {
               return true
             },
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
           Assert.strictEqual(await readParkedShadow(ctx), 0n)
           Assert.strictEqual(await readHolding(ctx), undefined)
@@ -549,7 +559,7 @@ export class LIQYieldScenario extends FlowScenario {
         Actor.Sysio,
         "yield-held-before-bond",
         "LIQ_YIELD circulates but its item stays held outside liqpending and supply",
-        async ctx => {
+        async (ctx, signal) => {
           const before = ctx.outputs.assert(
               LIQYieldScenario.LiqYieldStateBeforeKey
             ),
@@ -565,7 +575,9 @@ export class LIQYieldScenario extends FlowScenario {
             LIQYieldScenario.SupplyBeforeYieldKey,
             await readShadowSupply(ctx)
           )
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             `LIQ_YIELD held for ${reportedAmount}`,
             async () => {
               if (!containsLIQYield(oppDebuggingPath(ctx.config.clusterPath)))
@@ -594,7 +606,8 @@ export class LIQYieldScenario extends FlowScenario {
               return true
             },
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
         },
         circulationStepOptions
@@ -848,12 +861,12 @@ export class LIQYieldScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "DepotKeepsAdvancing",
-      "The depot advances its epoch past the snapshot — consensus kept closing epochs across every liq attestation"
+      "Kept due, every chain advances its epoch past the snapshot — consensus kept closing epochs across every liq attestation"
     ).push(
       Steps.epochAdvance.planVerifyEpochIndicesAdvanced(
         Actor.Sysio,
         "epoch-index-advances",
-        "every outpost chain's sysio.epoch::epochstate.current_epoch_index advances past its pre-syndication snapshot",
+        "every outpost chain, given keep-due traffic while idle, advances its sysio.epoch::epochstate.current_epoch_index past its pre-syndication snapshot",
         epochAdvanceStepOptions,
         Constants.PreSyndicationEpochSnapshot
       )

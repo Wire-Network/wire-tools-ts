@@ -13,10 +13,10 @@ import {
   SolanaOutpostProgramTool,
   SolanaOutpostTarget,
   StepExtraRecorder,
+  Steps,
   SyndicationScenario,
   WireSyndicationTool,
   matchesProtoEnum,
-  pollFor,
   pollUntil,
   type ClusterBuildContext
 } from "@wireio/cluster-tool"
@@ -154,13 +154,18 @@ export namespace SyndicationPluginUnderwritingRecoverySteps {
   }
 
   /**
-   * Wait for actual account pruning while continuously refusing premature coverage.
+   * Wait for actual account pruning while continuously refusing premature coverage. Pruning needs
+   * ten newer Solana envelopes and nothing is queued to Solana, so the wait keeps Solana due with
+   * keep-due traffic (`EpochAdvanceSteps.pollForKeepingDue`): every advance it drives ships one.
    * @param ctx - The cluster with its sole funded node offline.
+   * @param signal - Abort signal.
    */
-  export async function verifyPruned(ctx: ClusterBuildContext): Promise<void> {
-    const checkpoint = await pollFor("old source digest pruned; newer accepted checkpoint authenticated",
+  export async function verifyPruned(ctx: ClusterBuildContext, signal: AbortSignal): Promise<void> {
+    const checkpoint = await Steps.epochAdvance.pollForKeepingDue(ctx, [SyndicationScenario.Chain],
+      "old source digest pruned; newer accepted checkpoint authenticated",
       () => readPrunedCheckpoint(ctx),
-      Constants.pruningBudgetMs(ctx.config.outpostEpochDurationSec[SyndicationScenario.Chain]), Constants.PruningPollMs)
+      Constants.pruningBudgetMs(ctx.config.outpostEpochDurationSec[SyndicationScenario.Chain]), Constants.PruningPollMs,
+      signal)
     ctx.outputs.set(PrunedCheckpoint, checkpoint)
     await assertStillUnbonded(ctx)
   }

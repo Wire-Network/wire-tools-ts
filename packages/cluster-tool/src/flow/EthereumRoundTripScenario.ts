@@ -29,7 +29,13 @@ import { SyndicationScenario } from "./SyndicationScenario.js"
 const { Actor } = Report
 const { SysioSyndItemKind } = SysioContracts
 
-/** One fresh Ethereum custody-to-wallet round trip, with explicit integration hooks. */
+/**
+ * One fresh Ethereum custody-to-wallet round trip, with explicit integration hooks. Its Ethereum
+ * epochs are driven by two sources: the redemption's `DESYNDICATE_LIQ` (depot general-lane
+ * traffic, so its payout drives itself), and keep-due traffic the keep-due pump adds while a
+ * wait needs an Ethereum advance — the intake (an outpost → depot message, until the outposts
+ * report their backlog to the depot) and the post-settlement inbound epoch.
+ */
 export abstract class EthereumRoundTripScenario extends FlowScenario {
   override readonly defaults = {
     epochDurationSec: SyndicationScenario.EpochDurationSec,
@@ -129,8 +135,10 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         Actor.Sysio,
         "ethereum-intake-held",
         "identify the fresh wallet's exact held principal",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [EthereumRoundTripScenario.Chain],
             "Ethereum syndication intake",
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
@@ -152,7 +160,8 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
               return true
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
           Assert.strictEqual(
             await EthereumRoundTripScenario.externalBalance(ctx),
@@ -291,14 +300,18 @@ export abstract class EthereumRoundTripScenario extends FlowScenario {
         Actor.BatchOperator,
         "settlement-stays-exact",
         "another accepted Ethereum inbound epoch passes without a duplicate external payout",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          // Nothing more is queued to Ethereum: keep-due traffic keeps it due for the next epoch.
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [EthereumRoundTripScenario.Chain],
             "post-settlement Ethereum inbound progress",
             async () =>
               (await EthereumRoundTripScenario.readInboundEpoch(ctx)) >
               ctx.outputs.assert(EthereumRoundTripScenario.SettledEpoch),
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
           Assert.strictEqual(
             await EthereumRoundTripScenario.externalBalance(ctx),
@@ -348,7 +361,7 @@ export namespace EthereumRoundTripScenario {
   /** Destination shared only between isolated scenario clusters. */
   export const Holder = "eth.round"
   /** Registered external chain. */
-  export const Chain = "ETHEREUM"
+  export const Chain = Constants.ETHEREUM_CHAIN_CODENAME
   /** Registered shadow token. */
   export const Token = EthereumSyndicationTool.LiqEthTokenCodename
   /** One token in depot units. */

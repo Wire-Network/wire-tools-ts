@@ -90,7 +90,7 @@ the path flags.
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; swap-underwriter daemons have been removed, so any nonzero value is rejected |
 | `--epoch-duration-sec` | | each chain's own | minimum consensus epoch duration of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>` (10 is the depot floor); also the economic default. Every flow pins it |
-| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` / `15` | one outpost chain's own consensus epoch duration (its `sysio.epoch::setconfig`) |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` / `30` | one outpost chain's own minimum consensus epoch duration (its `sysio.epoch::setconfig`): a depot-paced chain advances only once it has traffic and this minimum has passed |
 | `--economic-epoch-duration-sec` | | `--epoch-duration-sec` (at least `60`), else `300` | the economic clock's epoch duration (`sysio.epoch::seteconomy`) |
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-minimum-percent-samples` / `--terminate-window-ms` | | — | termination tuning |
@@ -520,9 +520,10 @@ addresses and program id overlaid, starts each batch-operator node WITHOUT
 `batch_operator_plugin` so it only syncs the depot chain, and gates success on
 head-block advance, an outbound envelope queued for every registered outpost,
 and every batch-operator node synced (not on epoch distribution — there is no
-local chain to advance an epoch on). The batch-operator `start.sh` scripts carry
-the full daemon args. A LOCAL cluster instead gates on
-`sysio.epoch::current_epoch_index` passing the bootstrap epoch. See the repo
+local outpost to answer). The batch-operator `start.sh` scripts carry
+the full daemon args. A LOCAL cluster instead gates on every outpost chain's
+genesis epoch being decided (`sysio.msgch::outpcons`), a full OPP round trip that
+needs no traffic. See the repo
 root README's "External outpost clusters" section for the file format.
 
 ---

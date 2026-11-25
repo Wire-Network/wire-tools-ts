@@ -39,8 +39,8 @@ const GridStartMs = Date.UTC(2026, 10, 23, 0, 0, 0),
 /**
  * A reading of economic epoch `index`, `LagMs` after it opened, with every chain at consensus
  * epoch `consensus` unless `chainIndices` names another; `paused` pauses the scenario's paused chain,
- * and a chain is decided only when `chainDecided` says so. Every chain's epoch boundary is one
- * consensus epoch after the reading's head.
+ * and a chain is decided only when `chainDecided` says so. Every chain opened its epoch at the
+ * reading's head and is idle (no traffic, no `due_at`).
  */
 function reading(
   index,
@@ -57,7 +57,8 @@ function reading(
     consensus: mapOutpostChains(chain => ({
       epochIndex: chainIndices[chain] ?? consensus,
       epochStartMs: headMs,
-      nextEpochStartMs: headMs + ConsensusSec * 1_000,
+      trafficSinceMs: 0,
+      dueAtMs: 0,
       paused: paused && chain === PausedChain,
       decided: chainDecided[chain] ?? false
     })),
@@ -257,6 +258,14 @@ describe("consensus cadence", () => {
     Assert.throws(
       () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusDurations),
       /consensus advanced 2 epoch\(s\) while the economic clock opened 2/
+    )
+  })
+
+  test("consensus faster than its minimum allows fails", () => {
+    const ticks = [reading(1, 1), reading(5, 11)]
+    Assert.throws(
+      () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusDurations),
+      /allows at most 9/
     )
   })
 
@@ -705,28 +714,28 @@ describe("a paused chain's decided epoch", () => {
     headMs = GridStartMs + 3 * EconomicMs + LagMs,
     config = { economicEpochDurationSec: 120, outpostEpochDurationSec: ConsensusDurations }
 
-  /** A reading at `headMs` whose paused chain is decided (when `decided`) with `leftMs` before its boundary. */
-  function boundaryReading(leftMs, decided = true) {
+  /** A reading at `headMs` whose paused chain is decided (when `decided`) and idle unless it has traffic. */
+  function trafficReading(hasTraffic, decided = true) {
     const value = reading(4, 10, true, headMs, {}, { [PausedChain]: decided })
-    return {
-      ...value,
-      consensus: {
-        ...value.consensus,
-        [PausedChain]: { ...value.consensus[PausedChain], nextEpochStartMs: headMs + leftMs }
-      }
-    }
+    return hasTraffic
+      ? {
+          ...value,
+          consensus: {
+            ...value.consensus,
+            [PausedChain]: {
+              ...value.consensus[PausedChain],
+              trafficSinceMs: headMs,
+              dueAtMs: headMs + ConsensusSec * 1_000
+            }
+          }
+        }
+      : value
   }
 
-  test("decidedBeforeBoundary holds only for a decided epoch with the margin left before its boundary", () => {
-    Assert.equal(EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs), PausedChain), true)
-    Assert.equal(
-      EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs - 1), PausedChain),
-      false
-    )
-    Assert.equal(
-      EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs, false), PausedChain),
-      false
-    )
+  test("decidedAndIdle holds only for a decided epoch on a chain with no traffic", () => {
+    Assert.equal(EconomicClockSteps.decidedAndIdle(trafficReading(false), PausedChain), true)
+    Assert.equal(EconomicClockSteps.decidedAndIdle(trafficReading(true), PausedChain), false)
+    Assert.equal(EconomicClockSteps.decidedAndIdle(trafficReading(false, false), PausedChain), false)
   })
 
   test("the decided-epoch await spans its epochs of the awaited chain", () => {
@@ -744,12 +753,8 @@ describe("a paused chain's decided epoch", () => {
     )
   })
 
-  test("the decided-epoch await polls until the chain's epoch is decided before its boundary", async () => {
-    const readings = [
-        boundaryReading(Constants.DecidedEpochBoundaryMarginMs, false),
-        boundaryReading(Constants.DecidedEpochBoundaryMarginMs - 1),
-        boundaryReading(Constants.DecidedEpochBoundaryMarginMs)
-      ],
+  test("the decided-epoch await polls until the chain's epoch is decided and the chain idle", async () => {
+    const readings = [trafficReading(false, false), trafficReading(true), trafficReading(false)],
       step = EconomicClockSteps.planAwaitEpochDecided("Sysio", "await-decided", "probe", {}, PausedChain)
     Assert.equal(step.runner, EconomicClockSteps.runAwaitEpochDecided)
     Assert.deepEqual(step.input, { kind: "EconomicClockSteps.AwaitEpochDecidedInput", chain: PausedChain })
@@ -759,7 +764,7 @@ describe("a paused chain's decided epoch", () => {
   })
 
   test("an aborted decided-epoch await reads nothing", async () => {
-    const read = mock.method(WireEconomicClockTool, "readReading", async () => boundaryReading(0))
+    const read = mock.method(WireEconomicClockTool, "readReading", async () => trafficReading(false))
     await Assert.rejects(
       EconomicClockSteps.runAwaitEpochDecided(
         { config },
@@ -1044,13 +1049,21 @@ describe("emissions hold", () => {
       ctx = {
         outputs: new OutputStore().set(EconomicClockSteps.holdKey("held"), hold),
         wire: { getSysioContract: () => ({ tables: { envlog: { queryAll: async () => pages.shift() } } }) }
-      }
+      },
+      idle = mapOutpostChains(() => ({ current_epoch_index: 9, due_at: "1970-01-01T00:00:00.000", is_paused: false }))
+    mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => idle)
+    const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
     await EconomicClockSteps.runAwaitEnvelopeRoundTrip(
       ctx,
       { kind: "EconomicClockSteps.HoldInput", holdName: "held" },
       signal
     )
     Assert.equal(pages.length, 0)
+    // Nothing is queued during the hold: the missing Solana round trip kept every idle chain due once.
+    Assert.deepEqual(
+      push.mock.calls.map(call => call.arguments[1].data.chain_code),
+      OutpostChainCodenames
+    )
   })
 
   describe("held across an observation", () => {

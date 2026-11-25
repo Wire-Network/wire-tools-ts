@@ -4,25 +4,25 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 /**
- * Constants for the per-chain-epochs flow. Ethereum runs its consensus epoch at 60 s and Solana
- * at 150 s — two durations neither of which divides the other, so a seat-second total tells the
- * chain it was earned on, and long enough apart that the faster chain's advance count over the
- * observed window provably exceeds the slower one's. Every wait derives from the chain it waits
- * on through `ProtocolTiming`.
+ * Constants for the per-chain-epochs flow. Ethereum's consensus epoch minimum is 60 s and
+ * Solana's 150 s — two minimums neither of which divides the other, so a seat-second total tells
+ * the chain it was earned on, and far enough apart that the faster chain's advance count over the
+ * observed window, both chains kept due, provably exceeds the slower one's. Every wait derives
+ * from the chain it waits on through `ProtocolTiming`, counted from the traffic the wait gives it.
  */
 export namespace PerChainEpochsScenarioConstants {
   /**
-   * Ethereum's consensus epoch duration (s). Changing it moves every Ethereum wait with it, and it
+   * Ethereum's consensus epoch minimum (s). Changing it moves every Ethereum wait with it, and it
    * must stay distinct from {@link SolanaEpochDurationSec} and neither a divisor nor a multiple of
-   * it, or the seat-second checks can no longer tell the chains apart; {@link CadenceWindowSec}
+   * it, or the seat-second checks can no longer tell the chains apart; {@link PacingWindowSec}
    * must still separate the two chains' advance counts.
    */
   export const EthereumEpochDurationSec = 60
 
   /**
-   * Solana's consensus epoch duration (s): 2.5 × Ethereum's. Not a multiple of Ethereum's, so a
-   * seat-second total that is a multiple of one chain's duration is not, for small seat counts, a
-   * multiple of the other's; and slow enough that {@link CadenceWindowSec} separates the two
+   * Solana's consensus epoch minimum (s): 2.5 × Ethereum's. Not a multiple of Ethereum's, so a
+   * seat-second total that is a multiple of one chain's minimum is not, for small seat counts, a
+   * multiple of the other's; and slow enough that {@link PacingWindowSec} separates the two
    * chains' advance counts. Raising it lengthens every Solana wait by the same factor.
    */
   export const SolanaEpochDurationSec = 150
@@ -83,13 +83,16 @@ export namespace PerChainEpochsScenarioConstants {
   // ── Windows and budgets (counts of epochs of the chain waited on) ─────────
 
   /**
-   * The cadence observation window (s). Over W seconds a chain of duration d closes at least
-   * `floor(W / (d + 30))` epochs and at most `floor(W / d) + 2` (its epochs start on a fixed grid,
-   * and it can trail its boundary by one epoch at the window's start). At 720 s Ethereum closes
-   * at least 8 and Solana at most 6, so the faster chain's count exceeds the slower one's on any
-   * run.
+   * The pacing observation window (s). Over W seconds a chain of minimum d, kept due, closes at
+   * least `floor(W / (d + 30))` epochs (`ProtocolTiming.EpochExtensionMaxSec`), and any chain at
+   * most `floor(W / d) + 1` (two advances are at least one minimum apart). At 840 s Ethereum
+   * closes at least 9 and Solana at most 6, so the faster chain's count exceeds the slower one's
+   * on any run. Sized for slack: a kept-due Ethereum cycle really runs ≤ 73 s (60 s, plus ≤ 10 s
+   * of keep-due pump latency, ≤ 2.5 s of relay `chkcons` poll and a block), so it closes at least
+   * `floor(840 / 73)` = 11 — 2 epochs above the bound (`840 × (1/73 − 1/90)` ≈ 2.2), where 720 s
+   * left ≈ 1.9. Shrinking it below ≈ 770 s leaves under 2 epochs of slack.
    */
-  export const CadenceWindowSec = 720
+  export const PacingWindowSec = 840
 
   /**
    * Epochs of a chain budgeted for a newly ACTIVE (or newly joined) operator to ride into a
@@ -116,7 +119,10 @@ export namespace PerChainEpochsScenarioConstants {
   /** Ethereum epochs the resumed chain must advance after the unpause. */
   export const ResumeEpochs = 1
 
-  /** Ethereum epochs budgeted for that advance: a resumed chain may need one catch-up round. */
+  /**
+   * Ethereum epochs budgeted for that advance, counted from the traffic the wait gives it: the
+   * resumed chain may first need its paused epoch decided.
+   */
   export const ResumeBudgetEpochs = 3
 
   /** Interval for chain-state polls (ms). */
@@ -127,10 +133,10 @@ export namespace PerChainEpochsScenarioConstants {
 
   // ── Observation, snapshot and record names ────────────────────────────────
 
-  /** The clock reading the cadence window starts from. */
-  export const CadenceStartObservation = "cadence-start"
-  /** The clock reading the cadence window ends at. */
-  export const CadenceEndObservation = "cadence-end"
+  /** The clock reading the pacing window starts from. */
+  export const PacingStartObservation = "pacing-start"
+  /** The clock reading the pacing window ends at. */
+  export const PacingEndObservation = "pacing-end"
   /** Every chain's epoch index, taken as the serving operator leaves Ethereum. */
   export const LeaveSnapshot = "leave-ethereum"
   /** Every chain's epoch index, taken right before the withdrawal request. */
@@ -141,4 +147,6 @@ export namespace PerChainEpochsScenarioConstants {
   export const PausedStartObservation = "ethereum-paused-start"
   /** Both clocks once the withdrawal has matured, Ethereum still paused. */
   export const PausedEndObservation = "ethereum-paused-end"
+  /** Both clocks once Solana, kept due, advanced under the Ethereum pause. */
+  export const SolanaAdvancedObservation = "solana-advanced"
 }

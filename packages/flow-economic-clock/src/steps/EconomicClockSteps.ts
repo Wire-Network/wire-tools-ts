@@ -323,11 +323,11 @@ export namespace EconomicClockSteps {
     return paid
   }
 
-  // ── Verify: each chain's consensus advances about twice per economic epoch ─
+  // ── Verify: each chain kept due advances about twice per economic epoch ───
 
   /**
-   * Assert every outpost chain's consensus advanced, between the observation's first and last
-   * economic epoch, at least as often as its envelope requires and more often than the economic
+   * Assert every outpost chain's consensus, kept due through the observation, advanced between its
+   * first and last economic epoch within its minimum's bounds and more often than the economic
    * clock ({@link assertConsensusCadence}).
    */
   export function planVerifyConsensusCadence<
@@ -363,13 +363,15 @@ export namespace EconomicClockSteps {
   }
 
   /**
-   * Assert the clocks ran on separate grids: between the observation's first and last tick, every
-   * outpost chain's consensus advanced unpaused at least
-   * `WireEconomicClockTool.consensusAdvanceLowerBound` epochs of its own duration, and more than
-   * the economic epochs that opened.
+   * Assert the clocks ran independently: between the observation's first and last tick, every
+   * outpost chain's consensus — kept due by the observation's await, since a depot-paced chain
+   * with no traffic never advances — advanced unpaused at least
+   * `WireEconomicClockTool.consensusAdvanceLowerBound` epochs of its own minimum and at most
+   * `WireEconomicClockTool.consensusAdvanceUpperBound`, and more than the economic epochs that
+   * opened.
    *
-   * @param observation - At least two economic epochs opening.
-   * @param outpostEpochDurationSec - Each outpost chain's consensus epoch duration (s).
+   * @param observation - At least two economic epochs opening, every chain kept due.
+   * @param outpostEpochDurationSec - Each outpost chain's minimum consensus epoch duration (s).
    * @returns Each chain's consensus epochs advanced over the window.
    * @throws When the observation is too short, or a chain's consensus fell behind either bound.
    */
@@ -1056,10 +1058,10 @@ export namespace EconomicClockSteps {
   }
 
   /**
-   * Poll until `chain`'s current consensus epoch is decided with at least
-   * {@link EconomicClockScenarioConstants.DecidedEpochBoundaryMarginMs} left before its boundary
-   * ({@link decidedBeforeBoundary}), so a write right after lands on that decided epoch. Pair it
-   * with {@link epochDecidedStepTimeoutMs}.
+   * Poll until `chain`'s current consensus epoch is decided and the chain is idle
+   * ({@link decidedAndIdle}): with no traffic it cannot advance, so a write right after lands on
+   * that decided epoch (traffic arriving meanwhile still leaves a whole minimum before it is due).
+   * Pair it with {@link epochDecidedStepTimeoutMs}.
    */
   export function planAwaitEpochDecided<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -1080,7 +1082,7 @@ export namespace EconomicClockSteps {
     )
   }
 
-  /** Named runner — poll both clocks until the chain's epoch is decided before its boundary. */
+  /** Named runner — poll both clocks until the chain's epoch is decided and the chain idle. */
   export async function runAwaitEpochDecided<C extends ClusterBuildContext>(
     ctx: C,
     input: AwaitEpochDecidedInput,
@@ -1088,39 +1090,34 @@ export namespace EconomicClockSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const reading = await pollFor(
-      `the ${input.chain} consensus epoch is decided before its boundary`,
+      `the ${input.chain} consensus epoch is decided and the chain idle`,
       async () => {
         const current = await WireEconomicClockTool.readReading(ctx)
-        return decidedBeforeBoundary(current, input.chain) ? current : null
+        return decidedAndIdle(current, input.chain) ? current : null
       },
       epochDecidedDeadlineMs(ctx.config, input.chain),
       WireEconomicClockTool.PollIntervalMs
     )
     log.info(
-      `[economic-clock] ${input.chain} epoch ${reading.consensus[input.chain].epochIndex} is decided, ` +
-        `${reading.consensus[input.chain].nextEpochStartMs - reading.headBlockTimeMs} ms before its boundary`
+      `[economic-clock] ${input.chain} epoch ${reading.consensus[input.chain].epochIndex} is decided and the chain idle`
     )
   }
 
   /**
-   * Whether `chain`'s current consensus epoch is decided at `reading` with at least
-   * {@link EconomicClockScenarioConstants.DecidedEpochBoundaryMarginMs} left before its boundary
-   * on the chain head — pure.
+   * Whether `chain`'s current consensus epoch is decided at `reading` and the chain is idle (no
+   * traffic, so no `due_at`): a depot-paced chain in that state stays on the epoch until traffic
+   * arrives, and then for at least one more minimum — pure.
    *
    * @param reading - Both clocks.
    * @param chain - The outpost chain.
-   * @returns True when the epoch is decided and its boundary is far enough ahead.
+   * @returns True when the epoch is decided and the chain has no traffic.
    */
-  export function decidedBeforeBoundary(
+  export function decidedAndIdle(
     reading: WireEconomicClockTool.Reading,
     chain: OutpostChainCodename
   ): boolean {
     const consensus = reading.consensus[chain]
-    return (
-      consensus.decided &&
-      consensus.nextEpochStartMs - reading.headBlockTimeMs >=
-        Constants.DecidedEpochBoundaryMarginMs
-    )
+    return consensus.decided && WireEconomicClockTool.isIdleReading(consensus)
   }
 
   /**
@@ -1720,8 +1717,10 @@ export namespace EconomicClockSteps {
   /**
    * Poll until an envelope round trip with every outpost of
    * {@link EconomicClockScenarioConstants.OutpostChainKinds} has completed since the hold was
-   * observed ({@link findEnvelopeRoundTrip}) — OPP keeps running while emissions are held. Pair it
-   * with {@link EconomicClockScenarioConstants.RoundTripOptions}.
+   * observed ({@link findEnvelopeRoundTrip}) — OPP keeps running while emissions are held. Nothing
+   * is queued to the outposts during the hold, so the poll keeps every chain due with governance
+   * traffic (`EpochAdvanceSteps.pollForKeepingDue`): the depot ships each an envelope and accepts
+   * its answer. Pair it with {@link EconomicClockScenarioConstants.RoundTripOptions}.
    */
   export function planAwaitEnvelopeRoundTrip<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -1742,13 +1741,18 @@ export namespace EconomicClockSteps {
     )
   }
 
-  /** Named runner — poll `envlog` until every outpost completed a round trip past the hold's tip. */
+  /**
+   * Named runner — poll `envlog` until every outpost completed a round trip past the hold's tip,
+   * keeping every chain due.
+   */
   export async function runAwaitEnvelopeRoundTrip<
     C extends ClusterBuildContext
   >(ctx: C, input: HoldInput, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const { envelopeLogTip: tip } = ctx.outputs.assert(holdKey(input.holdName)),
-      epochs = await pollFor(
+      epochs = await Steps.epochAdvance.pollForKeepingDue(
+        ctx,
+        OutpostChainCodenames,
         "an envelope round trip with every outpost while emissions are held",
         async () => {
           const envelopeLog = await readEnvelopeLog(ctx),
@@ -1758,7 +1762,8 @@ export namespace EconomicClockSteps {
           return found.every(epoch => epoch != null) ? found : null
         },
         ProtocolTiming.SingleHopBudgetMs,
-        WireEconomicClockTool.PollIntervalMs
+        WireEconomicClockTool.PollIntervalMs,
+        signal
       )
     Constants.OutpostChainKinds.forEach((outpost, index) =>
       log.info(
@@ -1826,8 +1831,9 @@ export namespace EconomicClockSteps {
    * Assert a hold persisted across an observation: one open episode, the one first observed,
    * still `BALANCE_INSUFFICIENT` and covering every economic epoch from its first through the
    * latest the observation saw; the pending period total grew and equals what the gate now
-   * attempts; no held epoch paid; and every outpost chain's consensus advanced unpaused from the
-   * hold to the latest reading (`WireEconomicClockTool.assertConsensusAdvanced`).
+   * attempts; no held epoch paid; and every outpost chain's consensus, kept due through the hold,
+   * advanced unpaused within its minimum's bounds from the hold to the latest reading
+   * (`WireEconomicClockTool.assertConsensusAdvanced`).
    *
    * @param hold - The hold as first observed.
    * @param observation - Economic epochs that opened since.

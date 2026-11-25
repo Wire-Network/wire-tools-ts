@@ -28,13 +28,17 @@ export namespace EconomicClockScenarioConstants {
   export const Producer = producerName(0)
 
   /**
-   * Economic epochs the clock-independence phase observes. Its window spans the four economic
-   * epochs between the first and the last, 480 s, in which the consensus envelope (a consensus
-   * epoch closes within 90 s) guarantees at least five consensus advances even with 30 s of
-   * crank lag between the two readings — so "consensus advances more often" follows from the
-   * envelope, not from a fast run.
+   * Economic epochs the clock-independence phase observes. Its window spans the seven economic
+   * epochs between the first and the last, 840 s, in which the consensus envelope (a kept-due
+   * consensus epoch closes within 90 s, `ProtocolTiming.EpochExtensionMaxSec`) guarantees at least
+   * nine consensus advances even with 30 s of crank lag between the two readings — more than the
+   * seven economic epochs, so "consensus advances more often" follows from the envelope, not
+   * from a fast run. Sized for slack: a kept-due cycle really runs ≤ 73 s (60 s, plus ≤ 10 s of
+   * keep-due pump latency, ≤ 2.5 s of relay `chkcons` poll and a block), so a chain closes at
+   * least `floor(810 / 73)` = 11 — 2 epochs above the bound (`810 × (1/73 − 1/90)` ≈ 2.1), where
+   * the earlier five epochs (480 s) left ≈ 1.3. Fewer than eight leaves under 2 epochs of slack.
    */
-  export const ClockObservationEpochs = 5
+  export const ClockObservationEpochs = 8
 
   /** Economic epochs each later await observes: the next one to open. */
   export const NextEconomicEpoch = 1
@@ -82,15 +86,9 @@ export namespace EconomicClockScenarioConstants {
   export const PausedChain = Constants.ETHEREUM_CHAIN_CODENAME
 
   /**
-   * Time (ms) a decided epoch of {@link PausedChain} must still have before its boundary when the
-   * flow pauses the chain, so the pause lands on that epoch: a third of the 60 s epoch, far above
-   * the pause's own inclusion time. Raising it makes the await wait longer for a fitting epoch.
-   */
-  export const DecidedEpochBoundaryMarginMs = 20_000
-
-  /**
-   * Epochs of {@link PausedChain} the decided-epoch await allows: the one in progress, the next
-   * (its decision lands well before its boundary) and one of margin.
+   * Epochs of {@link PausedChain} the decided-and-idle await allows: the one in progress (its
+   * decision lands one round trip after it opened), an advance its traffic may still bring, and one
+   * of margin.
    */
   export const DecidedEpochAwaitEpochs = 3
 

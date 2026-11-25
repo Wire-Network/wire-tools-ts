@@ -29,7 +29,6 @@ import {
   loadOutpostContract,
   matchesProtoEnum,
   packedSlugValue,
-  pollUntil,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
   type OperatorAccount,
@@ -90,12 +89,14 @@ export namespace TerminationSteps {
 
   /**
    * Poll until the missed chain's schedule window holds a seat of the doomed operator exactly when `seated`: a
-   * tail group draws the seat in, and it leaves once that group slides out. A failed `epochstate` read
-   * mid-advance is logged and polled again.
+   * tail group draws the seat in, and it leaves once that group slides out. Each needs the chain to advance,
+   * so the poll keeps the missed chain due with keep-due traffic (`EpochAdvanceSteps.pollUntilKeepingDue`).
+   * A failed `epochstate` read mid-advance is logged and polled again.
    *
    * @param ctx - The build context.
    * @param seated - Whether to wait for a seat (`true`) or for none (`false`).
    * @param timeoutMs - The poll deadline (ms).
+   * @param signal - Abort signal.
    * @param intervalMs - The delay between reads (ms).
    * @throws When the operator is not in the key store, or the deadline passes first.
    */
@@ -103,10 +104,13 @@ export namespace TerminationSteps {
     ctx: ClusterBuildContext,
     seated: boolean,
     timeoutMs: number,
+    signal: AbortSignal,
     intervalMs: number = Constants.PollIntervalMs
   ): Promise<void> {
     const account = doomedOperatorAccount(ctx)
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [Constants.MissedChain],
       `${Constants.DoomedOperatorLabel} is seated (${seated}) in the ${Constants.MissedChain} epochstate.batch_op_groups`,
       async () => {
         try {
@@ -123,7 +127,8 @@ export namespace TerminationSteps {
         }
       },
       timeoutMs,
-      intervalMs
+      intervalMs,
+      signal
     )
   }
 

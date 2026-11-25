@@ -118,7 +118,7 @@ Always-on. Discovers every pid-file-backed process under the cluster, probes liv
 Watches `<cluster-path>/data/opp-debugging/` for envelope writes produced by the embedded debugging server and surfaces per-epoch counts per outpost endpoint.
 
 **Panels**
-- **OPP — Epoch Tracker** — header displays epoch duration (from `cluster-config.json`) and current epoch index; body lists every `DebugOutpostEndpointsType` slot with a live envelope count for the latest cached epoch.
+- **OPP — Epoch Tracker** — header displays the minimum epoch duration (from `cluster-config.json`) and current epoch index; body lists every `DebugOutpostEndpointsType` slot with a live envelope count for the latest cached epoch.
 
 **Status bar widget**
 - **EpochStatusBarWidget** — `epoch: <current>` badge tracking the highest observed epoch index.

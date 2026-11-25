@@ -327,7 +327,11 @@ before the operator `createlink` calls in Stage 12.
     batch_op_groups)`, `batch_operator_minimum_active = operators_per_epoch * batch_op_groups` (cluster
     `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` is the chain's `outpostEpochDurationSec`
     (default `60` for `ETHEREUM` and `30` for `SOLANA`, or `epochDurationSec` when that is set; the contract's
-    floor is 10) **(production: Ethereum 60 s, Solana 30 s)**.
+    floor is 10) **(production: Ethereum 60 s, Solana 30 s)**: the chain's minimum time between two envelopes.
+    Epochs are depot-paced: a chain advances only once it has traffic (a general-lane outbound attestation,
+    rows its last envelope left behind, or a governance `sysio.epoch::resendroster`) and this minimum has
+    passed since the later of its epoch start and that traffic, so an idle chain stays in its epoch. The
+    genesis advance needs no traffic.
     Then `sysio.epoch::seteconomy({epoch_duration_sec, start_time})` — `[sysio.epoch@active]` — configures the
     economic clock emissions, collateral withdrawals and producer pay run on. `epoch_duration_sec` is
     `economicEpochDurationSec` (default `300`, or `epochDurationSec` raised to the contract's 60 s floor when that
@@ -584,7 +588,7 @@ contract/mint addresses via the same shapes.
 | Field | Value | Notes |
 |---|---|---|
 | `synd_fee_bps` / `desynd_fee_bps` | `0` / `5` | Syndication is always free. Desyndication takes floor(quantity × 5 / 10000) + desynd_fee_flat to recover external-chain gas for BOTH round-trip legs. A lone Ethereum round trip measured ≈507k gas; Solana measured 9k–104k lamports. Break-even sizing assumes a syndication of min_desyndicate. |
-| `synd_burst` / `synd_refill` | `1000000000000000` / `ceil(1000000000000000 / <chain's epoch duration>)` | one million tokens at 9 decimals per bucket. `sysio.synd` adds the refill once per elapsed second, capped at the burst; the tooling derives each pair's refill from the consensus epoch duration of the pair's chain (`outpostEpochDurationSec`), so one epoch of that chain restores a full burst: `16666666666667` per second (≈16,667 tokens) at the Ethereum default of 60 s, `33333333333334` per second (≈33,333 tokens) at the Solana default of 30 s **(cluster)** |
+| `synd_burst` / `synd_refill` | `1000000000000000` / `ceil(1000000000000000 / <chain's epoch duration>)` | one million tokens at 9 decimals per bucket. `sysio.synd` adds the refill once per elapsed second, capped at the burst; the tooling derives each pair's refill from the minimum consensus epoch duration of the pair's chain (`outpostEpochDurationSec`), so one minimum of that chain restores a full burst: `16666666666667` per second (≈16,667 tokens) at the Ethereum default of 60 s, `33333333333334` per second (≈33,333 tokens) at the Solana default of 30 s **(cluster)** |
 | `desynd_burst` / `desynd_refill` | `1000000000000000` / `ceil(1000000000000000 / <chain's epoch duration>)` | likewise — the refill per second |
 | `window_sec` | `60` | challenge window before `sysio.bond::approve` can succeed **(cluster; production: longer)** |
 | `bounty` | `0` | bounty posted on each envelope's `sysio.bond` request |
@@ -674,7 +678,7 @@ capital requirements, deployed-node recovery, and verification.
     harness signs `<account>@active` through sdk-core and a remote `KMS::Sign`; kiod never holds it), an
     ETH key (EM), and a SOL key (ED25519).
     - SOL-side (not a depot action): each batch operator's ED keypair is airdropped **100 SOL** — its daemon
-      pays the fees on every per-epoch `epoch_in` delivery. ETH-side: every operator's random EM address
+      pays the fees on every `epoch_in` delivery, one per epoch the depot-paced chain advances. ETH-side: every operator's random EM address
       starts at zero on the run anvil and is funded through `anvil_setBalance`
       (`WireOperatorProvisioningTool.planEthereumFunding`, one Step per operator) under every provider.
 39. **Operator chain links** — `sysio.authex::createlink({chain_kind, account:<operator>, sig, pub_key,

@@ -20,7 +20,6 @@ import {
   WireCollateralTool,
   WireOperatorProvisioningTool,
   getLogger,
-  pollUntil,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions
@@ -60,6 +59,11 @@ const { Actor } = Report
  *    its `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never started,
  *    so every scheduled epoch of the chain records `recorddel(delivered=false)`
  *    at the advance after it, which closes that epoch's books.
+ *
+ * Epochs are depot-paced and the flow queues nothing to either outpost, so every
+ * duty epoch of the missed chain, and both chains' post-eviction rotation, are
+ * driven by keep-due traffic (`sysio.epoch::notetraffic`) the keep-due pump
+ * gives a chain whenever it is idle during the waits that need it to advance.
  * 7. **EvictFromChain** — once its first `terminateMinimumPercentSamples` duty
  *    epochs are all missed (a 100 % miss rate the moment the percent rail
  *    applies), the `termcheck(account, chain)` of the advance that closes the
@@ -285,7 +289,8 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "enters-schedule-window",
         `operator rides into the ${Constants.MissedChain} epochstate.batch_op_groups via advance's new-tail computation`,
-        async ctx => TerminationSteps.awaitMissedChainSeat(ctx, true, Constants.scheduleWindowDeadlineMs()),
+        async (ctx, signal) =>
+          TerminationSteps.awaitMissedChainSeat(ctx, true, Constants.scheduleWindowDeadlineMs(), signal),
         scheduleWindowStepOptions
       )
     )
@@ -300,15 +305,19 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "membership-evicted",
         `the ${Constants.MissedChain} membership flips EVICTED once its first ${Constants.TerminateMinimumPercentSamples} scheduled epochs are all missed`,
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          // Each duty epoch's books close at a later advance, which needs traffic: keep the chain due.
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.MissedChain],
             `${Constants.DoomedOperatorLabel}'s ${Constants.MissedChain} membership flips to EVICTED`,
             async () =>
               TerminationSteps.isEvicted(
                 await TerminationSteps.readDoomedMembership(ctx, Constants.MissedChain)
               ),
             Constants.terminationDeadlineMs(),
-            Constants.PollIntervalMs
+            Constants.PollIntervalMs,
+            signal
           )
         },
         terminationStepOptions
@@ -357,14 +366,15 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "evicted-seat-slides-out",
         `the seat the ${Constants.MissedChain} window drew for the evicted operator before its eviction slides out, and no later group seats it`,
-        async ctx => TerminationSteps.awaitMissedChainSeat(ctx, false, Constants.evictedSeatDeadlineMs()),
+        async (ctx, signal) =>
+          TerminationSteps.awaitMissedChainSeat(ctx, false, Constants.evictedSeatDeadlineMs(), signal),
         evictedSeatStepOptions
       ),
       verifyStep(
         Actor.Sysio,
         "post-eviction-rotation",
-        "published groups exclude the evicted operator and both outposts advance through a full window of their own chain",
-        async ctx => {
+        "published groups exclude the evicted operator and both outposts, each kept due, advance through a full window of their own chain",
+        async (ctx, signal) => {
           const evicted = TerminationSteps.doomedOperatorAccount(ctx),
             standing = TerminationSteps.standingOperators(ctx.keyStore.operators, evicted),
             groupSize = BatchOperatorSchedule.resolve(ctx.config).operatorsPerEpoch,
@@ -374,7 +384,9 @@ export class TerminationScenario extends FlowScenario {
               await Steps.contracts.sysio.epoch.readEpochStates(ctx),
               await TerminationSteps.readInboundCursors(ctx)
             )
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            OutpostChainCodenames,
             `both outposts accept post-eviction epochs through ${describeOutpostChains(targets, target => String(target.targetEpoch))}`,
             async () => {
               const { rows } = await ctx.wire.getOutboundEnvelopes()
@@ -401,7 +413,8 @@ export class TerminationScenario extends FlowScenario {
               ctx.config,
               mapOutpostChains(chain => targets[chain].groupCount)
             ),
-            Constants.PollIntervalMs
+            Constants.PollIntervalMs,
+            signal
           )
         },
         rotationStepOptions

@@ -119,20 +119,27 @@ const DisputeAccounts = [...Constants.DisputeOperators]
 /** A key store resolving every operator label to the account of the same name. */
 const keyStore = { assertOperator: label => ({ account: label }) }
 
-/** The contested chain's boundary the chain-clock tests measure from (UTC ms). */
-const BoundaryMs = Date.parse("2026-11-24T00:00:00.000Z")
+/** The contested chain's `due_at` the chain-clock tests measure from (UTC ms). */
+const DueMs = Date.parse("2026-11-24T00:00:00.000Z")
 
-/** The chain-clock instant `offsetMs` from {@link BoundaryMs}, as the chain renders it: UTC, no zone suffix. */
+/** The chain-clock instant `offsetMs` from {@link DueMs}, as the chain renders it: UTC, no zone suffix. */
 function chainTime(offsetMs) {
-  return new Date(BoundaryMs + offsetMs).toISOString().slice(0, -1)
+  return new Date(DueMs + offsetMs).toISOString().slice(0, -1)
 }
 
-/** The contested chain's `epochstate` row at `epochIndex`, its window seating `group`, its boundary at `nextEpochStart`. */
-function epochState(epochIndex, group, nextEpochStart = chainTime(0)) {
+/** A zero `time_point` as the chain renders it: no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+
+/**
+ * The contested chain's `epochstate` row at `epochIndex`, its window seating `group`, due at
+ * `dueAt` (traffic since a minimum before), or idle when `dueAt` is {@link NoTraffic}.
+ */
+function epochState(epochIndex, group, dueAt = chainTime(0)) {
   return {
     chain_code: String(SlugName.from(Constants.ContestedChain)),
     current_epoch_index: epochIndex,
-    next_epoch_start: nextEpochStart,
+    traffic_since: dueAt === NoTraffic ? NoTraffic : chainTime(-Constants.EpochDurationSec * 1_000),
+    due_at: dueAt,
     batch_op_groups: [group],
     current_batch_op_group: 0
   }
@@ -195,20 +202,31 @@ describe("disputeOperatorsOwnGroup", () => {
   })
 })
 
-describe("msUntilEpochBoundary", () => {
-  test("is positive before the boundary and negative past it", () => {
-    Assert.equal(DisputeSteps.msUntilEpochBoundary(chainTime(0), chainTime(-1_500)), 1_500)
-    Assert.equal(DisputeSteps.msUntilEpochBoundary(chainTime(0), chainTime(2_500)), -2_500)
+describe("hasAdvanceHeadroom / isDue", () => {
+  test("an idle chain always has the headroom and is never due: idle means no straddle", () => {
+    const idle = epochState(ContestedEpoch, DisputeAccounts, NoTraffic)
+    Assert.equal(DisputeSteps.hasAdvanceHeadroom(idle, chainTime(0), Constants.activationHeadroomMs()), true)
+    Assert.equal(DisputeSteps.isDue(idle, chainTime(10_000)), false)
   })
 
-  test("a timestamp carrying the zone suffix reads as the same instant", () => {
-    Assert.equal(DisputeSteps.msUntilEpochBoundary(`${chainTime(0)}Z`, chainTime(-1_000)), 1_000)
+  test("a chain with traffic has the headroom only while its due_at is far enough ahead", () => {
+    const busy = epochState(ContestedEpoch, DisputeAccounts),
+      headroomMs = Constants.activationHeadroomMs()
+    Assert.equal(DisputeSteps.hasAdvanceHeadroom(busy, chainTime(-headroomMs), headroomMs), true)
+    Assert.equal(DisputeSteps.hasAdvanceHeadroom(busy, chainTime(-headroomMs + 1), headroomMs), false)
   })
 
-  test("an unparsable timestamp yields NaN, which passes no comparison", () => {
-    const left = DisputeSteps.msUntilEpochBoundary("not a time", chainTime(0))
-    Assert.ok(Number.isNaN(left))
-    Assert.equal(left >= 0 || left <= 0, false)
+  test("a chain with traffic is due from its due_at on", () => {
+    const busy = epochState(ContestedEpoch, DisputeAccounts)
+    Assert.equal(DisputeSteps.isDue(busy, chainTime(-1)), false)
+    Assert.equal(DisputeSteps.isDue(busy, chainTime(0)), true)
+    Assert.equal(DisputeSteps.isDue(busy, `${chainTime(2_500)}Z`), true)
+  })
+
+  test("an unparsable head passes neither check", () => {
+    const busy = epochState(ContestedEpoch, DisputeAccounts)
+    Assert.equal(DisputeSteps.hasAdvanceHeadroom(busy, "not a time", 0), false)
+    Assert.equal(DisputeSteps.isDue(busy, "not a time"), false)
   })
 })
 
@@ -271,7 +289,13 @@ describe("readEnvelopes", () => {
 })
 
 describe("runAwaitActivationHeadroom", () => {
-  test("returns at once when the chain clock has the headroom before the boundary", async () => {
+  test("returns at once when the chain is idle", async () => {
+    const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts, NoTraffic))
+    await DisputeSteps.runAwaitActivationHeadroom(clockContext(chainTime(0)), null, new AbortController().signal)
+    Assert.equal(read.mock.callCount(), 1)
+  })
+
+  test("returns at once when the chain clock has the headroom before its due_at", async () => {
     const read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts))
     await DisputeSteps.runAwaitActivationHeadroom(
       clockContext(chainTime(-Constants.activationHeadroomMs())),
@@ -281,11 +305,11 @@ describe("runAwaitActivationHeadroom", () => {
     Assert.equal(read.mock.calls[0].arguments[1], Constants.ContestedChain)
   })
 
-  test("keeps polling while the boundary is too close, until the next epoch opens", async () => {
+  test("keeps polling while the due_at is too close, until the advance leaves the chain idle", async () => {
     const head = chainTime(-1_000),
       read = serveEpochStates(
         epochState(ContestedEpoch, DisputeAccounts, chainTime(0)),
-        epochState(ContestedEpoch + 1, DisputeAccounts, chainTime(Constants.EpochDurationSec * 1_000))
+        epochState(ContestedEpoch + 1, DisputeAccounts, NoTraffic)
       )
     await DisputeSteps.runAwaitActivationHeadroom(clockContext(head), null, new AbortController().signal)
     Assert.equal(read.mock.callCount(), 2)
@@ -301,10 +325,27 @@ describe("runAwaitActivationHeadroom", () => {
 })
 
 describe("runAwaitSoleActiveGroup", () => {
-  test("returns once the contested chain's active group is the dispute operators", async () => {
-    const read = mock.method(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup", async () => DisputeAccounts)
+  test("returns once the contested chain's active group is the dispute operators, adding no traffic then", async () => {
+    const read = mock.method(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup", async () => DisputeAccounts),
+      push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
     await DisputeSteps.runAwaitSoleActiveGroup({ keyStore }, null, new AbortController().signal)
     Assert.equal(read.mock.calls[0].arguments[1], Constants.ContestedChain)
+    Assert.equal(push.mock.callCount(), 0)
+  })
+
+  test("gives the idle contested chain traffic until the advance seats the dispute operators", async () => {
+    const groups = [["batchop.a", "batchop.b", "batchop.c"], DisputeAccounts]
+    mock.method(Steps.contracts.sysio.epoch, "activeBatchOperatorGroup", async () => groups.shift() ?? DisputeAccounts)
+    mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({
+      [Constants.ContestedChain]: { ...epochState(ContestedEpoch, ["batchop.a"], NoTraffic), is_paused: false },
+      [Constants.RunningChain]: { ...epochState(4, ["batchop.b"], NoTraffic), is_paused: false }
+    }))
+    const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+    await DisputeSteps.runAwaitSoleActiveGroup({ keyStore }, null, new AbortController().signal)
+    Assert.deepEqual(
+      push.mock.calls.map(call => call.arguments[1].data.chain_code),
+      [Constants.ContestedChain]
+    )
   })
 
   test("an aborted step does not poll", async () => {
@@ -312,6 +353,27 @@ describe("runAwaitSoleActiveGroup", () => {
       aborted = new AbortController()
     aborted.abort()
     await Assert.rejects(DisputeSteps.runAwaitSoleActiveGroup({ keyStore }, null, aborted.signal))
+    Assert.equal(read.mock.callCount(), 0)
+  })
+})
+
+describe("runAwaitContestedChainDue", () => {
+  test("polls the contested chain until its due_at is reached", async () => {
+    const read = serveEpochStates(
+      epochState(ContestedEpoch, DisputeAccounts, chainTime(1_000)),
+      epochState(ContestedEpoch, DisputeAccounts, chainTime(0))
+    )
+    await DisputeSteps.runAwaitContestedChainDue(clockContext(chainTime(0)), null, new AbortController().signal)
+    Assert.equal(read.mock.callCount(), 2)
+    Assert.equal(read.mock.calls[0].arguments[1], Constants.ContestedChain)
+  })
+
+  test("the factory wires the runner, and an aborted step does not poll", async () => {
+    const step = DisputeSteps.planAwaitContestedChainDue("Sysio", "due", "probe", {}),
+      read = serveEpochStates(epochState(ContestedEpoch, DisputeAccounts))
+    Assert.equal(step.runner, DisputeSteps.runAwaitContestedChainDue)
+    Assert.equal(step.input, null)
+    await Assert.rejects(DisputeSteps.runAwaitContestedChainDue(clockContext(chainTime(0)), null, AbortSignal.abort()))
     Assert.equal(read.mock.callCount(), 0)
   })
 })
@@ -444,5 +506,71 @@ describe("await step factories", () => {
       label: Constants.LosingOperators[0]
     })
     Assert.equal(step.runner, DisputeSteps.runAwaitOperatorSlashed)
+  })
+})
+
+describe("slashedAccounts / readSlashedOperators / assertNoNewSlash", () => {
+  /** An `operators` row of `account` at `status`, by enum name or value. */
+  function operatorRow(account, status) {
+    return { account, status }
+  }
+
+  test("keeps only the SLASHED operators, by name or value, in account order", () => {
+    const { SysioOpregOperatorstatus: Status } = SysioContracts
+    Assert.deepEqual(
+      DisputeSteps.slashedAccounts([
+        operatorRow("dispop.c", "OPERATOR_STATUS_SLASHED"),
+        operatorRow("batchop.a", "OPERATOR_STATUS_ACTIVE"),
+        operatorRow("dispop.a", Status.OPERATOR_STATUS_SLASHED),
+        operatorRow("dispop.b", "OPERATOR_STATUS_TERMINATED")
+      ]),
+      ["dispop.a", "dispop.c"]
+    )
+    Assert.deepEqual(DisputeSteps.slashedAccounts([]), [])
+  })
+
+  test("reads every operators row through a paged read", async () => {
+    const queryAll = mock.fn(async () => [operatorRow("dispop.b", "OPERATOR_STATUS_SLASHED")]),
+      ctx = { wire: { getSysioContract: () => ({ tables: { operators: { queryAll } } }) } }
+    Assert.deepEqual(await DisputeSteps.readSlashedOperators(ctx), ["dispop.b"])
+    Assert.deepEqual(queryAll.mock.calls[0].arguments[0], { limit: Constants.OperatorTableReadLimit })
+  })
+
+  test("passes an unchanged or shrunk SLASHED set and names every newly slashed account", () => {
+    DisputeSteps.assertNoNewSlash(["dispop.a"], ["dispop.a"], "the advance")
+    DisputeSteps.assertNoNewSlash(["dispop.a", "dispop.b"], ["dispop.a"], "the advance")
+    Assert.throws(
+      () => DisputeSteps.assertNoNewSlash(["dispop.a"], ["batchop.a", "dispop.a", "dispop.c"], "the advance"),
+      /the advance slashed batchop\.a, dispop\.c/
+    )
+  })
+})
+
+describe("runRecordSlashedOperators", () => {
+  test("stores the SLASHED operators under SlashedOperatorsKey", async () => {
+    const rows = [
+        { account: "dispop.c", status: "OPERATOR_STATUS_SLASHED" },
+        { account: "batchop.a", status: "OPERATOR_STATUS_ACTIVE" },
+        { account: "dispop.a", status: "OPERATOR_STATUS_SLASHED" }
+      ],
+      step = DisputeSteps.planRecordSlashedOperators("Sysio", "record", "probe", {}),
+      ctx = {
+        outputs: new OutputStore(),
+        wire: { getSysioContract: () => ({ tables: { operators: { queryAll: async () => rows } } }) }
+      }
+    Assert.equal(step.runner, DisputeSteps.runRecordSlashedOperators)
+    Assert.equal(step.input, null)
+    await DisputeSteps.runRecordSlashedOperators(ctx, null, new AbortController().signal)
+    Assert.deepEqual(ctx.outputs.assert(DisputeSteps.SlashedOperatorsKey), ["dispop.a", "dispop.c"])
+  })
+
+  test("an aborted step reads nothing", async () => {
+    const queryAll = mock.fn(async () => []),
+      ctx = {
+        outputs: new OutputStore(),
+        wire: { getSysioContract: () => ({ tables: { operators: { queryAll } } }) }
+      }
+    await Assert.rejects(DisputeSteps.runRecordSlashedOperators(ctx, null, AbortSignal.abort()))
+    Assert.equal(queryAll.mock.callCount(), 0)
   })
 })

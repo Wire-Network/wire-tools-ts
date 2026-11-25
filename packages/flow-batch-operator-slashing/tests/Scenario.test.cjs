@@ -107,7 +107,8 @@ test("the economic-clock phases run while the dispute is open: after it opens, b
       "InjectDivergent",
       "EconomicClockDuringDispute",
       "VoteAndResolve",
-      "SlashNonCanonical"
+      "SlashNonCanonical",
+      "ContestedChainAdvances"
     ]
   )
 })
@@ -148,12 +149,14 @@ test("the economic clock is observed before and after the restart against one he
   Assert.deepEqual(pausedAwait.input, {
     kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
     count: Constants.EconomicEpochsPerObservation,
-    observationName: Constants.DisputePauseObservation
+    observationName: Constants.DisputePauseObservation,
+    keepDueChains: []
   })
   Assert.deepEqual(restartAwait.input, {
     kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
     count: Constants.EconomicEpochsPerObservation,
-    observationName: Constants.RelayRestartObservation
+    observationName: Constants.RelayRestartObservation,
+    keepDueChains: []
   })
   Assert.equal(pausedAwait.options.timeoutMs, timeoutMs)
   Assert.equal(restartAwait.options.timeoutMs, timeoutMs)
@@ -190,6 +193,113 @@ test("the dispute's assertions stay in place around the new phases", () => {
       "slashed-before-advance",
       "canonical-not-slashed"
     ]
+  )
+  Assert.deepEqual(
+    build.children.map(entry => entry.name).slice(-1),
+    ["ContestedChainAdvances"]
+  )
+})
+
+test("after the resolution, idle-only traffic and a chkcons move the contested chain on, and the flow ends there", () => {
+  const { build } = plannedBuild(),
+    steps = child(build, "ContestedChainAdvances").steps,
+    [record, traffic, due, crank, verify] = steps
+  Assert.deepEqual(
+    steps.map(step => step.name),
+    [
+      "record-slashed-operators",
+      "contested-chain-traffic",
+      "contested-chain-due",
+      "crank-contested-chain",
+      "advanced-without-slash"
+    ]
+  )
+  Assert.equal(record.runner, DisputeSteps.runRecordSlashedOperators)
+  // The traffic step gives the chain traffic only while it is idle: re-running it adds none.
+  Assert.equal(traffic.runner, Steps.epochAdvance.runKeepChainDue)
+  Assert.deepEqual(traffic.input, { kind: "EpochAdvanceSteps.KeepChainDueInput", chain: Constants.ContestedChain })
+  Assert.equal(due.runner, DisputeSteps.runAwaitContestedChainDue)
+  Assert.equal(due.options.timeoutMs, Constants.contestedDueDeadlineMs() + Constants.PollDeadlineBufferMs)
+  Assert.equal(crank.runner, Steps.contracts.sysio.msgch.runChkcons)
+  Assert.deepEqual(crank.input.data, { chain_code: Constants.ContestedChainCode })
+  Assert.equal(
+    Constants.contestedDueDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, Constants.ContestedDueEpochBudget)
+  )
+  Assert.equal(verify.input, null)
+})
+
+/** The SLASHED operators the resolution left: the losers. */
+const ResolvedSlashed = [...Constants.LosingOperators].sort()
+
+/**
+ * A context past the contested epoch at `currentEpoch`, the operators' statuses as `statuses` name
+ * them, the SLASHED set recorded before the advances as {@link ResolvedSlashed}.
+ */
+function advancedContext(currentEpoch, statuses) {
+  mock.method(Steps.contracts.sysio.epoch, "readEpochState", async (_ctx, chain) => ({
+    chain_code: String(SlugName.from(chain)),
+    current_epoch_index: currentEpoch
+  }))
+  mock.method(DisputeSteps, "readOperator", async (_ctx, label) => ({ account: label, status: statuses[label] }))
+  mock.method(DisputeSteps, "readSlashedOperators", async () =>
+    Object.entries(statuses)
+      .filter(([, status]) => status === "OPERATOR_STATUS_SLASHED")
+      .map(([account]) => account)
+      .sort()
+  )
+  return {
+    outputs: new OutputStore()
+      .set(DisputeSteps.ContestedEpochKey, StagedEpoch)
+      .set(DisputeSteps.SlashedOperatorsKey, ResolvedSlashed)
+  }
+}
+
+/** The statuses after the resolution: the losers SLASHED, the canonical deliverer ACTIVE. */
+function resolvedStatuses() {
+  return Object.fromEntries([
+    ...Constants.LosingOperators.map(operator => [operator, "OPERATOR_STATUS_SLASHED"]),
+    [Constants.CanonicalOperator, "OPERATOR_STATUS_ACTIVE"]
+  ])
+}
+
+/** The named step of the ContestedChainAdvances phase. */
+function advancesStep(name) {
+  const { build } = plannedBuild()
+  return child(build, "ContestedChainAdvances").steps.find(step => step.name === name)
+}
+
+test("the advanced-without-slash verify passes past the contested epoch with only the losers slashed", async () => {
+  const verify = advancesStep("advanced-without-slash")
+  await verify.runner(advancedContext(StagedEpoch + 1, resolvedStatuses()), null, new AbortController().signal)
+})
+
+test("the advanced-without-slash verify fails at the contested epoch, or once the advance slashed the canonical deliverer", async () => {
+  const verify = advancesStep("advanced-without-slash")
+  await Assert.rejects(
+    verify.runner(advancedContext(StagedEpoch, resolvedStatuses()), null, new AbortController().signal),
+    new RegExp(`still ${StagedEpoch}, not past the contested epoch ${StagedEpoch}`)
+  )
+  mock.restoreAll()
+  await Assert.rejects(
+    verify.runner(
+      advancedContext(StagedEpoch + 1, { ...resolvedStatuses(), [Constants.CanonicalOperator]: "OPERATOR_STATUS_SLASHED" }),
+      null,
+      new AbortController().signal
+    ),
+    new RegExp(`advance past the contested epoch ${StagedEpoch} slashed ${Constants.CanonicalOperator}`)
+  )
+})
+
+test("the advanced-without-slash verify fails when the advance slashed any other operator", async () => {
+  const verify = advancesStep("advanced-without-slash")
+  await Assert.rejects(
+    verify.runner(
+      advancedContext(StagedEpoch + 1, { ...resolvedStatuses(), "batchop.a": "OPERATOR_STATUS_SLASHED" }),
+      null,
+      new AbortController().signal
+    ),
+    /slashed batchop\.a/
   )
 })
 
@@ -271,7 +381,7 @@ test("every miss rail runs at the loosest value the contract accepts", () => {
   )
 })
 
-test("the ACTIVE flips start with headroom before the boundary, then the next advance is awaited", () => {
+test("the ACTIVE flips start with headroom before the chain is due, then the next advance is awaited", () => {
   const { build } = plannedBuild(),
     steps = child(child(build, "SetupDispute"), "ReshapeSchedule").steps,
     [headroom] = steps,
@@ -296,9 +406,9 @@ test("the ACTIVE flips start with headroom before the boundary, then the next ad
   Assert.equal(soleGroup.options.timeoutMs, Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs)
 })
 
-test("the natural advance is budgeted one effective contested-chain epoch", () => {
-  Assert.equal(Constants.GroupEpochBudget, 1)
-  Assert.equal(Constants.groupDeadlineMs(), ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, 1))
+test("the kept-due advance is budgeted two effective contested-chain epochs", () => {
+  Assert.equal(Constants.GroupEpochBudget, 2)
+  Assert.equal(Constants.groupDeadlineMs(), ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, 2))
 })
 
 test("the ACTIVE flips' headroom is a share of the epoch, awaited within its budget", () => {

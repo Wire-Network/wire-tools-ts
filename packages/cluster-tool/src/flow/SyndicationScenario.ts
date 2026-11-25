@@ -30,7 +30,7 @@ import {
   WireState
 } from "../tools/solana/index.js"
 import { WireSyndicationTool } from "../tools/wire/index.js"
-import { pollFor, verifyStep } from "../orchestration/StepTools.js"
+import { verifyStep } from "../orchestration/StepTools.js"
 import { mapSeries } from "../utils/asyncUtils.js"
 import { compareBigInt } from "../utils/bigintUtils.js"
 import { FlowScenario } from "./FlowScenario.js"
@@ -509,7 +509,12 @@ export namespace SyndicationScenario {
       totalSyndicated: message.totalSyndicated
     }
   }
-  /** Wait for intake, prove it is held and capture the consensus epoch and request. */
+  /**
+   * Wait for intake, prove it is held and capture the consensus epoch and request. The intake is
+   * an outpost → depot message: the outpost emits it only with its reply to the depot's next
+   * envelope, so the wait keeps the syndication's chain due (`EpochAdvanceSteps.pollForKeepingDue`)
+   * until the outposts report their backlog to the depot themselves.
+   */
   export function planVerifyIntake(
     actor: Report.Actor,
     name: string,
@@ -524,8 +529,10 @@ export namespace SyndicationScenario {
       actor,
       name,
       description,
-      async ctx => {
-        const { envelope, matching } = await pollFor(
+      async (ctx, signal) => {
+        const { envelope, matching } = await Steps.epochAdvance.pollForKeepingDue(
+          ctx,
+          [Chain],
           name,
           async () => {
             const held = await WireSyndicationTool.readHeldEnvelope(
@@ -545,7 +552,8 @@ export namespace SyndicationScenario {
               : { envelope: held, matching: decoded }
           },
           ProtocolTiming.SingleHopBudgetMs,
-          PollMs
+          PollMs,
+          signal
         )
         ctx.outputs.set(epoch, envelope.epoch_index)
         ctx.outputs.set(request, envelope.request_id)

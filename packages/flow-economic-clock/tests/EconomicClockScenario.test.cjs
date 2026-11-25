@@ -70,14 +70,15 @@ test("plans one phase group per phase, so a failure names its phase", () => {
   )
 })
 
-test("the clock-independence phase observes five economic epochs and asserts over that observation", () => {
+test("the clock-independence phase observes eight economic epochs and asserts over that observation", () => {
   const { build, config } = planned(),
     observe = child(child(build, "ClocksIndependent"), "ObserveClocks"),
     [await_, ...verifies] = observe.steps
   Assert.deepEqual(await_.input, {
     kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
     count: Constants.ClockObservationEpochs,
-    observationName: Constants.ClockObservation
+    observationName: Constants.ClockObservation,
+    keepDueChains: OutpostChainCodenames
   })
   Assert.equal(
     await_.options.timeoutMs,
@@ -217,6 +218,16 @@ test("the treasury drains right after an economic epoch opens and refunds right 
   )
 })
 
+test("the hold keeps every chain due while it waits for its economic epoch, and the other economic waits add no traffic", () => {
+  const { build } = planned(),
+    held = step(child(build, "HeldEmissions"), "economic-epoch-during-hold"),
+    drain = step(child(build, "HeldEmissions"), "economic-epoch-before-drain"),
+    cord = step(child(build, "AndonCord"), "economic-epoch-under-cord")
+  Assert.deepEqual(held.input.keepDueChains, OutpostChainCodenames)
+  Assert.deepEqual(drain.input.keepDueChains, [])
+  Assert.deepEqual(cord.input.keepDueChains, [])
+})
+
 test("the andon cord is pulled, verified throughout the claim, then cleared", () => {
   const { build } = planned(),
     group = child(build, "AndonCord")
@@ -289,4 +300,22 @@ test("the withdrawer serves every outpost chain, so each request waits on every 
   )
   Assert.deepEqual([...Constants.WithdrawerServedChains], [...OutpostChainCodenames])
   Assert.ok(Constants.WithdrawerServedChains.includes(Constants.PausedChain))
+})
+
+/** The worst real length (s) of one kept-due 60 s consensus epoch: pump latency, relay poll and a block on top. */
+const KeptDueCycleSec = 73
+/** The crank lag the clock-independence bound allows between its two readings (s). */
+const CrankLagSec = 30
+
+test("the clock-independence window proves consensus faster from the envelope, with two epochs of slack", () => {
+  const { ProtocolTiming } = require("@wireio/cluster-tool"),
+    economicAdvanced = Constants.ClockObservationEpochs - 1,
+    windowSec = economicAdvanced * Constants.EconomicEpochDurationSec - CrankLagSec,
+    lowerBound = Math.floor(windowSec / ProtocolTiming.effectiveEpochSec(Constants.EpochDurationSec))
+  Assert.equal(Constants.ClockObservationEpochs, 8)
+  // The kept-due lower bound alone exceeds the economic epochs the window opens.
+  Assert.ok(lowerBound > economicAdvanced, `${lowerBound} <= ${economicAdvanced}`)
+  // A healthy kept-due chain closes at least two epochs more than that bound.
+  Assert.ok(Math.floor(windowSec / KeptDueCycleSec) - lowerBound >= 2)
+  Assert.ok(windowSec / KeptDueCycleSec - windowSec / ProtocolTiming.effectiveEpochSec(Constants.EpochDurationSec) >= 2)
 })

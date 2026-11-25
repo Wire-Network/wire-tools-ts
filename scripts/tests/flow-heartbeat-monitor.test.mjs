@@ -7,16 +7,30 @@ import { test } from "node:test"
 import {
   bootstrapBailReason,
   bootstrapDeadlineSeconds,
+  chainDueAtMs,
   chainEpochDurationSeconds,
+  chainOverdueSeconds,
+  chainTraffic,
+  ChainTraffic,
   describeChainEpochs,
+  directionFreezeStreaks,
+  firstEpochGrowthDeadlineMs,
+  headStallBailReason,
+  isHeadFrozen,
   isStallReprobeDue,
   monitoredChains,
   networkGrowthDeadlineMs,
+  OppDirections,
   oppGrowthBailReason,
+  overdueChains,
+  plateauDirection,
   probeAggregateLog,
   resolveChainEpochDurations,
   stallReprobeDueChains,
-  stalledChain
+  stalledChain,
+  undecidedEpochAllowanceSeconds,
+  undecidedEpochBailReason,
+  undecidedEpochSince
 } from "../flow-heartbeat-monitor.mjs"
 
 async function probe(lines, expectFreeze) {
@@ -92,6 +106,17 @@ test("Solana freeze refusal remains conditional on --expect-freeze", async () =>
 /** The chains every per-chain fixture below runs, in codename order. */
 const Chains = ["ETHEREUM", "SOLANA"]
 
+/** A zero `time_point`: no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+/** A chain's `due_at` in the fixtures below, and its epoch ms. */
+const DueAt = "2026-10-01T00:02:00.000",
+  DueAtMs = Date.parse(`${DueAt}Z`)
+
+/** A started chain's epoch row at `index`, due at `dueAt` (zero: idle). */
+function epochRow(index, dueAt = NoTraffic, isPaused = false) {
+  return { current_epoch_index: index, current_epoch_start: "2026-10-01T00:00:00.000", due_at: dueAt, is_paused: isPaused }
+}
+
 test("a chain's duration is the override, else its configured duration, else the default", () => {
   const durations = { ETHEREUM: 60, SOLANA: 150 }
   Assert.equal(chainEpochDurationSeconds(durations, "SOLANA", null, 60), 150)
@@ -118,14 +143,74 @@ test("the watched chains are every configured chain and every chain with a depot
   Assert.deepEqual(monitoredChains({}, {}, {}), [])
 })
 
-test("the heartbeat lists every chain's epoch and marks only a boolean pause", () => {
+test("the heartbeat lists every chain's epoch, marks only a boolean pause, and marks idle, waiting and due", () => {
+  Assert.equal(describeChainEpochs({ ETHEREUM: epochRow(4, NoTraffic, true), SOLANA: epochRow(2) }, Chains), "ETHEREUM:4pi,SOLANA:2i")
+  Assert.equal(describeChainEpochs({ ETHEREUM: { ...epochRow(4), is_paused: 1 } }, ["ETHEREUM"]), "ETHEREUM:4i")
+  // A row without a due_at is unknown traffic, never idle.
   Assert.equal(
     describeChainEpochs({ ETHEREUM: { current_epoch_index: 4, is_paused: true }, SOLANA: { current_epoch_index: 2 } }, Chains),
-    "ETHEREUM:4p,SOLANA:2"
+    "ETHEREUM:4p?,SOLANA:2?"
   )
-  Assert.equal(describeChainEpochs({ ETHEREUM: { current_epoch_index: 4, is_paused: 1 } }, ["ETHEREUM"]), "ETHEREUM:4")
+  Assert.equal(
+    describeChainEpochs({ ETHEREUM: epochRow(4, DueAt), SOLANA: epochRow(2, DueAt, true) }, Chains, DueAtMs - 1),
+    "ETHEREUM:4w,SOLANA:2pw"
+  )
+  Assert.equal(describeChainEpochs({ ETHEREUM: epochRow(4, DueAt) }, ["ETHEREUM"], DueAtMs), "ETHEREUM:4d")
+  // Before its genesis a chain carries no traffic mark.
+  Assert.equal(describeChainEpochs({ ETHEREUM: epochRow(0) }, ["ETHEREUM"], DueAtMs), "ETHEREUM:0")
   Assert.equal(describeChainEpochs({}, ["ETHEREUM"]), "ETHEREUM:?")
   Assert.equal(describeChainEpochs({}, []), "?")
+})
+
+test("a chain's due_at is its traffic deadline; a zero, absent or unparseable cell is no readable deadline", () => {
+  Assert.equal(chainDueAtMs(epochRow(3, DueAt)), DueAtMs)
+  Assert.equal(chainDueAtMs(epochRow(3)), null)
+  Assert.equal(chainDueAtMs({ due_at: "not a time" }), null)
+  Assert.equal(chainDueAtMs(undefined), null)
+})
+
+test("a started chain whose due_at is absent or does not parse is unknown, marked ?, never idle", () => {
+  const { due_at: _dueAt, ...withoutDueAt } = epochRow(3)
+  Assert.equal(chainTraffic(withoutDueAt, DueAtMs), ChainTraffic.unknown)
+  Assert.equal(chainTraffic(epochRow(3, "not a time"), DueAtMs), ChainTraffic.unknown)
+  Assert.equal(describeChainEpochs({ ETHEREUM: withoutDueAt }, ["ETHEREUM"], DueAtMs), "ETHEREUM:3?")
+  Assert.equal(describeChainEpochs({ ETHEREUM: { ...withoutDueAt, is_paused: true } }, ["ETHEREUM"], DueAtMs), "ETHEREUM:3p?")
+  // Unknown traffic is never overdue, so no due-chain bail measures it either.
+  Assert.equal(chainOverdueSeconds(withoutDueAt, DueAtMs + 600_000), null)
+  Assert.deepEqual(overdueChains(["ETHEREUM"], { ETHEREUM: withoutDueAt }, DueAtMs + 600_000, 90), [])
+})
+
+test("the heartbeat marks a started chain whose current epoch outpcons has not decided with u", () => {
+  const states = { ETHEREUM: epochRow(4), SOLANA: epochRow(2, DueAt) }
+  Assert.equal(
+    describeChainEpochs(states, Chains, DueAtMs, { ETHEREUM: { epoch_index: 4 }, SOLANA: { epoch_index: 1 } }),
+    "ETHEREUM:4i,SOLANA:2du"
+  )
+  // No outpcons read this beat: nothing is marked undecided.
+  Assert.equal(describeChainEpochs(states, Chains, DueAtMs, null), "ETHEREUM:4i,SOLANA:2d")
+  // A chain before its genesis carries no mark at all.
+  Assert.equal(describeChainEpochs({ ETHEREUM: epochRow(0) }, ["ETHEREUM"], DueAtMs, {}), "ETHEREUM:0")
+})
+
+test("a started chain is idle without traffic, waiting before due_at and due from it", () => {
+  Assert.equal(chainTraffic(epochRow(3), DueAtMs), ChainTraffic.idle)
+  Assert.equal(chainTraffic(epochRow(3, DueAt), DueAtMs - 1), ChainTraffic.waiting)
+  Assert.equal(chainTraffic(epochRow(3, DueAt), DueAtMs), ChainTraffic.due)
+  // An unknown head never makes a chain due; a chain before its genesis or without a row has none.
+  Assert.equal(chainTraffic(epochRow(3, DueAt), null), ChainTraffic.waiting)
+  Assert.equal(chainTraffic(epochRow(0), DueAtMs), null)
+  Assert.equal(chainTraffic(undefined, DueAtMs), null)
+})
+
+test("only a chain with traffic is ever overdue, measured on the depot head", () => {
+  Assert.equal(chainOverdueSeconds(epochRow(3, DueAt), DueAtMs + 90_000), 90)
+  Assert.equal(chainOverdueSeconds(epochRow(3, DueAt), DueAtMs - 30_000), -30)
+  Assert.equal(chainOverdueSeconds(epochRow(3), DueAtMs + 90_000), null)
+  Assert.equal(chainOverdueSeconds(epochRow(3, DueAt), null), null)
+  Assert.equal(chainOverdueSeconds(epochRow(0, DueAt), DueAtMs), null)
+  const states = { ETHEREUM: epochRow(3, DueAt), SOLANA: epochRow(5) }
+  Assert.deepEqual(overdueChains(Chains, states, DueAtMs + 90_000, 90), ["ETHEREUM"])
+  Assert.deepEqual(overdueChains(Chains, states, DueAtMs + 89_000, 90), [])
 })
 
 test("the bootstrap deadline is the floor, the chain's epochs or the topology, whichever is longest", () => {
@@ -158,30 +243,37 @@ test("with no chain known, the bootstrap bail names the missing epochstate row o
   Assert.equal(bootstrapBailReason([], {}, 449, 5, unused, 150), null)
 })
 
-test("a stall re-probe waits for about two of the chain's own epochs", () => {
-  // 60 s epochs: the first same-epoch beat (90 s) plus the 45 s re-probe passes 120 s.
-  Assert.equal(isStallReprobeDue(90, 60), true)
-  // 150 s epochs: two same-epoch beats are normal cadence; the third is due.
-  Assert.equal(isStallReprobeDue(90, 150), false)
+test("a stall re-probe waits until a due chain is about two of its minimums past due_at", () => {
+  // 60 s minimum: 75 s past due plus the 45 s re-probe reaches 120 s.
+  Assert.equal(isStallReprobeDue(75, 60), true)
+  Assert.equal(isStallReprobeDue(74, 60), false)
+  // 150 s minimum: a chain needs 255 s past due.
   Assert.equal(isStallReprobeDue(180, 150), false)
-  Assert.equal(isStallReprobeDue(270, 150), true)
+  Assert.equal(isStallReprobeDue(255, 150), true)
+  // An idle chain is never re-probed, however long it stays in its epoch.
+  Assert.equal(isStallReprobeDue(null, 60), false)
 })
 
-test("only chains at their previous epoch whose window is due are re-probed", () => {
+test("only due chains at their previous epoch whose grace has run out are re-probed; idle ones never", () => {
   const durations = { ETHEREUM: 60, SOLANA: 150 },
     duration = chain => durations[chain],
-    unchanged = () => 90
+    overdue = { ETHEREUM: 90, SOLANA: 90 }
   Assert.deepEqual(
-    stallReprobeDueChains(Chains, { ETHEREUM: 4, SOLANA: 2 }, { ETHEREUM: 4, SOLANA: 2 }, unchanged, duration),
+    stallReprobeDueChains(Chains, { ETHEREUM: 4, SOLANA: 2 }, { ETHEREUM: 4, SOLANA: 2 }, chain => overdue[chain], duration),
     ["ETHEREUM"]
   )
   Assert.deepEqual(
     stallReprobeDueChains(Chains, { ETHEREUM: 5, SOLANA: 2 }, { ETHEREUM: 4, SOLANA: 2 }, () => 270, duration),
     ["SOLANA"]
   )
+  // Idle chains (no overdue time) stay in their epoch without a re-probe.
+  Assert.deepEqual(
+    stallReprobeDueChains(Chains, { ETHEREUM: 4, SOLANA: 2 }, { ETHEREUM: 4, SOLANA: 2 }, () => null, duration),
+    []
+  )
   // A chain this beat could not read is never due.
   Assert.deepEqual(
-    stallReprobeDueChains(Chains, { ETHEREUM: undefined, SOLANA: 2 }, { SOLANA: 3 }, unchanged, duration),
+    stallReprobeDueChains(Chains, { ETHEREUM: undefined, SOLANA: 2 }, { SOLANA: 3 }, () => 90, duration),
     []
   )
 })
@@ -201,13 +293,44 @@ test("a re-probed chain still at its previous epoch is the stall; one that advan
   Assert.equal(stalledChain(["ETHEREUM"], {}, beat, previous), "ETHEREUM")
 })
 
-test("zero growth bails only once the network has started and its deadline passed", () => {
-  Assert.equal(oppGrowthBailReason(false, 0, 0, 2_000, 1_000), null)
-  Assert.equal(oppGrowthBailReason(true, 0, 3, 500, 1_000), null)
-  Assert.equal(oppGrowthBailReason(true, 1, 3, 2_000, 1_000), null)
-  Assert.equal(oppGrowthBailReason(true, 0, 3, 2_000, 1_000, true), null)
-  Assert.match(oppGrowthBailReason(true, 0, 3, 2_000, 1_000), /zero growth \(total=3\)/)
-  Assert.match(oppGrowthBailReason(true, 0, 3, 2_000, null), /zero growth/)
+test("zero growth bails only once the network has started, its deadline passed and a chain is overdue", () => {
+  const overdue = ["ETHEREUM"]
+  Assert.equal(oppGrowthBailReason(false, 0, 0, 2_000, 1_000, false, overdue), null)
+  Assert.equal(oppGrowthBailReason(true, 0, 3, 500, 1_000, false, overdue), null)
+  Assert.equal(oppGrowthBailReason(true, 1, 3, 2_000, 1_000, false, overdue), null)
+  Assert.equal(oppGrowthBailReason(true, 0, 3, 2_000, 1_000, true, overdue), null)
+  Assert.match(oppGrowthBailReason(true, 0, 3, 2_000, 1_000, false, overdue), /zero growth \(total=3\).*ETHEREUM is due/)
+  Assert.match(oppGrowthBailReason(true, 0, 3, 2_000, null, false, overdue), /zero growth/)
+  // An idle cluster grows nothing and is healthy.
+  Assert.equal(oppGrowthBailReason(true, 0, 3, 2_000, 1_000), null)
+  Assert.equal(oppGrowthBailReason(true, 0, 3, 2_000, 1_000, false, []), null)
+})
+
+test("the first growth deadline is the genesis epoch start plus the minimum, 0 past it, null before it", () => {
+  const start = "2026-10-01T00:00:00.000",
+    startMs = Date.parse(`${start}Z`)
+  Assert.equal(firstEpochGrowthDeadlineMs({ current_epoch_index: 1, current_epoch_start: start }, 60), startMs + 60_000)
+  Assert.equal(firstEpochGrowthDeadlineMs({ current_epoch_index: 2, current_epoch_start: start }, 60), 0)
+  Assert.equal(firstEpochGrowthDeadlineMs({ current_epoch_index: 1, current_epoch_start: "invalid" }, 60), 0)
+  Assert.equal(firstEpochGrowthDeadlineMs({ current_epoch_index: 0 }, 60), null)
+  Assert.equal(firstEpochGrowthDeadlineMs(undefined, 60), null)
+})
+
+test("a direction's freeze streak grows only while its chain is due, every direction has a baseline and the total moved", () => {
+  const zero = Object.fromEntries(OppDirections.map(direction => [direction.name, 0])),
+    counts = { DEPOT_OUTPOST_ETHEREUM: 4, OUTPOST_ETHEREUM_DEPOT: 4, DEPOT_OUTPOST_SOLANA: 2, OUTPOST_SOLANA_DEPOT: 2 },
+    moved = { ...counts, DEPOT_OUTPOST_SOLANA: 3, OUTPOST_SOLANA_DEPOT: 3 }
+  // Ethereum due and frozen while Solana flows: both Ethereum directions grow their streak.
+  const once = directionFreezeStreaks(zero, counts, moved, 2, ["ETHEREUM"])
+  Assert.deepEqual(once, { DEPOT_OUTPOST_ETHEREUM: 1, OUTPOST_ETHEREUM_DEPOT: 1, DEPOT_OUTPOST_SOLANA: 0, OUTPOST_SOLANA_DEPOT: 0 })
+  Assert.equal(plateauDirection(once), null)
+  const twice = directionFreezeStreaks(once, moved, { ...moved, OUTPOST_SOLANA_DEPOT: 4 }, 1, ["ETHEREUM"])
+  Assert.equal(plateauDirection(twice), "DEPOT_OUTPOST_ETHEREUM")
+  // An idle (or waiting) Ethereum never counts, however long it stands still.
+  Assert.deepEqual(directionFreezeStreaks(once, counts, moved, 2, []), zero)
+  // No baseline on every direction, or no total growth: nothing counts.
+  Assert.deepEqual(directionFreezeStreaks(once, counts, { ...moved, DEPOT_OUTPOST_ETHEREUM: 0 }, 2, ["ETHEREUM"]), zero)
+  Assert.deepEqual(directionFreezeStreaks(once, counts, counts, 0, ["ETHEREUM"]), zero)
 })
 
 test("the network growth deadline waits for every chain's first boundary", () => {
@@ -219,7 +342,126 @@ test("the network growth deadline waits for every chain's first boundary", () =>
       ETHEREUM: { current_epoch_index: 1, current_epoch_start: start },
       SOLANA: { current_epoch_index: 1, current_epoch_start: start }
     }
-  Assert.equal(networkGrowthDeadlineMs(states, Chains, duration, duration), startMs + 150_000)
-  Assert.equal(networkGrowthDeadlineMs({ ETHEREUM: states.ETHEREUM }, Chains, duration, duration), null)
-  Assert.equal(networkGrowthDeadlineMs(states, [], duration, duration), null)
+  Assert.equal(networkGrowthDeadlineMs(states, Chains, duration), startMs + 150_000)
+  Assert.equal(networkGrowthDeadlineMs({ ETHEREUM: states.ETHEREUM }, Chains, duration), null)
+  Assert.equal(networkGrowthDeadlineMs(states, [], duration), null)
+})
+
+// ── head advance (wall clock) ──────────────────────────────────────────────
+
+/** The beat interval the head fixtures below run at (s). */
+const BeatSeconds = 90
+
+test("the head is frozen only when two read beats show the same block", () => {
+  Assert.equal(isHeadFrozen(120, 120), true)
+  Assert.equal(isHeadFrozen(120, 300), false)
+  Assert.equal(isHeadFrozen(null, 120), false)
+  Assert.equal(isHeadFrozen(120, null), false)
+})
+
+test("a frozen head with a due chain bails, though the frozen head time hides the stall from the epoch bails", () => {
+  // The chain fell due just before the producers stopped: the head time froze with it, so the
+  // chain reads due but never overdue by the grace, and the epoch-stall rule never re-probes it.
+  const frozenHeadTimeMs = DueAtMs + 1_000,
+    states = { ETHEREUM: epochRow(4, DueAt) }
+  Assert.equal(chainTraffic(states.ETHEREUM, frozenHeadTimeMs), ChainTraffic.due)
+  Assert.deepEqual(overdueChains(["ETHEREUM"], states, frozenHeadTimeMs, BeatSeconds), [])
+  Assert.equal(isStallReprobeDue(chainOverdueSeconds(states.ETHEREUM, frozenHeadTimeMs), 60), false)
+  Assert.match(headStallBailReason(500, 500, 500, BeatSeconds), /depot head frozen at block 500 for 105s/)
+})
+
+test("a frozen head with only idle chains bails too: idle never excuses stopped producers", () => {
+  const states = { ETHEREUM: epochRow(4), SOLANA: epochRow(2) }
+  Assert.deepEqual(overdueChains(Chains, states, DueAtMs, BeatSeconds), [])
+  Assert.match(headStallBailReason(500, 500, 500, BeatSeconds), /the producers stopped/)
+  // A failed re-probe keeps the beat's head, so it never clears the bail.
+  Assert.match(headStallBailReason(500, 500, null, BeatSeconds), /frozen at block 500/)
+})
+
+test("a head that moves again by the re-probe does not bail", () => {
+  Assert.equal(headStallBailReason(500, 500, 530, BeatSeconds), null)
+})
+
+test("a live head with idle chains never bails", () => {
+  const states = { ETHEREUM: epochRow(4), SOLANA: epochRow(2) },
+    consensus = { ETHEREUM: { epoch_index: 4 }, SOLANA: { epoch_index: 2 } },
+    since = { ETHEREUM: { epochIndex: 4, sinceMs: 0 }, SOLANA: { epochIndex: 2, sinceMs: 0 } },
+    duration = () => 60,
+    // Hours of idleness on a live head.
+    headTimeMs = DueAtMs + 6 * 3_600_000
+  Assert.equal(headStallBailReason(500, 700, null, BeatSeconds), null)
+  Assert.deepEqual(overdueChains(Chains, states, headTimeMs, BeatSeconds), [])
+  Assert.deepEqual(
+    stallReprobeDueChains(Chains, { ETHEREUM: 4, SOLANA: 2 }, { ETHEREUM: 4, SOLANA: 2 }, chain => chainOverdueSeconds(states[chain], headTimeMs), duration),
+    []
+  )
+  Assert.equal(undecidedEpochBailReason(Chains, states, consensus, since, headTimeMs, duration), null)
+  Assert.equal(oppGrowthBailReason(true, 0, 9, headTimeMs, 0, false, []), null)
+})
+
+// ── undecided too long ─────────────────────────────────────────────────────
+
+/** The fixtures' epoch start (`epochRow`'s `current_epoch_start`) in ms. */
+const EpochStartMs = Date.parse("2026-10-01T00:00:00.000Z")
+
+test("an epoch may stay undecided 8 minimums, never under the 7-minute single-hop floor", () => {
+  Assert.equal(undecidedEpochAllowanceSeconds(60), 480)
+  Assert.equal(undecidedEpochAllowanceSeconds(150), 1_200)
+  Assert.equal(undecidedEpochAllowanceSeconds(30), 420)
+  Assert.equal(undecidedEpochAllowanceSeconds(10), 420)
+  // Every minimum gets at least the time a live chain needs to decide or dispute an epoch:
+  // the genesis gate's max(3 x (minimum + 30), 240) s round trip plus a 3-minimum dispute fallback.
+  ;[10, 30, 45, 50, 60, 90, 150, 360, 3_600].forEach(minimum =>
+    Assert.ok(
+      undecidedEpochAllowanceSeconds(minimum) >= Math.max(3 * (minimum + 30), 240) + 3 * minimum,
+      `minimum ${minimum}s`
+    )
+  )
+})
+
+test("the undecided clock carries over within an epoch, restarts at a seen advance, and skips a downtime", () => {
+  const headTimeMs = EpochStartMs + 3_600_000
+  // First sight of the chain (late attach, relaunch): no earlier than this beat's head.
+  Assert.deepEqual(undecidedEpochSince(undefined, epochRow(4), headTimeMs), { epochIndex: 4, sinceMs: headTimeMs })
+  Assert.deepEqual(undecidedEpochSince(undefined, epochRow(4), null), { epochIndex: 4, sinceMs: EpochStartMs })
+  // An advance the monitor saw: from the new epoch's start.
+  Assert.deepEqual(undecidedEpochSince({ epochIndex: 3, sinceMs: 7 }, epochRow(4), headTimeMs), {
+    epochIndex: 4,
+    sinceMs: EpochStartMs
+  })
+  // The same epoch: unchanged.
+  const record = { epochIndex: 4, sinceMs: 11 }
+  Assert.equal(undecidedEpochSince(record, epochRow(4), headTimeMs), record)
+  // No row, or an unreadable start: no record.
+  Assert.equal(undecidedEpochSince(record, undefined, headTimeMs), null)
+  Assert.equal(undecidedEpochSince(record, { current_epoch_index: 4, current_epoch_start: "x" }, headTimeMs), null)
+})
+
+test("a chain whose current epoch, genesis included, stays undecided past its allowance bails", () => {
+  const states = { ETHEREUM: epochRow(1), SOLANA: epochRow(2) },
+    since = { ETHEREUM: { epochIndex: 1, sinceMs: EpochStartMs }, SOLANA: { epochIndex: 2, sinceMs: EpochStartMs } },
+    consensus = { SOLANA: { epoch_index: 2 } },
+    duration = () => 60
+  Assert.match(
+    undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 481_000, duration),
+    /ETHEREUM epoch 1 undecided for 481s \(allowance 480s; outpcons last decided none\)/
+  )
+  Assert.equal(undecidedEpochBailReason(Chains, states, consensus, since, EpochStartMs + 480_000, duration), null)
+  // Traffic plays no part: an idle chain and a due one bail alike.
+  const busy = { ...states, ETHEREUM: epochRow(1, DueAt) }
+  Assert.match(undecidedEpochBailReason(Chains, busy, consensus, since, EpochStartMs + 481_000, duration), /ETHEREUM/)
+})
+
+test("a decided, paused or unstarted chain, an unread outpcons or head, or --expect-epoch-freeze never bails", () => {
+  const since = { ETHEREUM: { epochIndex: 4, sinceMs: EpochStartMs } },
+    late = EpochStartMs + 3_600_000,
+    duration = () => 60,
+    chains = ["ETHEREUM"]
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, { ETHEREUM: { epoch_index: 4 } }, since, late, duration), null)
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4, NoTraffic, true) }, {}, since, late, duration), null)
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(0) }, {}, since, late, duration), null)
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, null, since, late, duration), null)
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, null, duration), null)
+  Assert.equal(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, late, duration, true), null)
+  Assert.match(undecidedEpochBailReason(chains, { ETHEREUM: epochRow(4) }, {}, since, late, duration), /ETHEREUM epoch 4/)
 })

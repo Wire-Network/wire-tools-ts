@@ -105,8 +105,10 @@ export namespace MsgchContractSteps {
   }
 
   /**
-   * `sysio.msgch::chkcons` — crank one outpost chain's envelope consensus: advances that
-   * chain's epoch once its outpost has consensus and its boundary has passed.
+   * `sysio.msgch::chkcons` — crank one outpost chain's envelope consensus: re-tallies an
+   * undecided current epoch, and advances a decided one once the chain is due (`sysio.epoch`
+   * `due_at`: it has traffic and its minimum duration has passed since the later of its epoch
+   * start and that traffic). A decided epoch on an idle chain stays current.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).

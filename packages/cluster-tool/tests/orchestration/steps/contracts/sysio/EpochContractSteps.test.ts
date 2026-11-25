@@ -27,7 +27,10 @@ function contextWithChainRows(
   return { ctx, contract, stateQuery, configQuery }
 }
 
-/** One chain's whole `epochstate` row: its index, window and rotation cursor. */
+/** A zero `time_point` as the chain renders it: `traffic_since` / `due_at` with no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+
+/** One chain's whole `epochstate` row: its index, window and rotation cursor; idle. */
 function epochStateRow(
   chain: Constants.OutpostChainCodename,
   currentEpochIndex: number,
@@ -39,7 +42,8 @@ function epochStateRow(
     chain_code: packedCode(chain),
     current_epoch_index: currentEpochIndex,
     current_epoch_start: "2026-11-24T00:00:00.000",
-    next_epoch_start: "2026-11-24T00:01:00.000",
+    traffic_since: NoTraffic,
+    due_at: NoTraffic,
     current_batch_op_group: currentBatchOpGroup,
     batch_op_groups: batchOperatorGroups,
     is_paused: isPaused,
@@ -215,6 +219,68 @@ describe("Steps.contracts.sysio.epoch", () => {
     })
   })
 
+  it("planResendroster carries its chain and runResendroster signs it as sysio.epoch", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.resendroster, "invoke").mockResolvedValue(undefined),
+      data = { code: Ethereum },
+      step = Steps.contracts.sysio.epoch.planResendroster(
+        Report.Actor.Sysio,
+        "resendroster",
+        "governance traffic",
+        {},
+        data
+      )
+    expect(Steps.contracts.sysio.epoch.ResendrosterAccount).toBe("sysio.epoch")
+    expect(step.input).toEqual({ kind: "EpochContractSteps.ResendrosterInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runResendroster)
+    await Steps.contracts.sysio.epoch.runResendroster(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "sysio.epoch", permission: "active" }]
+    })
+  })
+
+  it("an aborted resendroster step pushes nothing", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.resendroster, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planResendroster(Report.Actor.Sysio, "resendroster", "resendroster", {}, {
+        code: Solana
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("planNotetraffic carries its chain and since, and runNotetraffic signs it as sysio.msgch", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.notetraffic, "invoke").mockResolvedValue(undefined),
+      data = { chain_code: Ethereum, since: Steps.contracts.sysio.epoch.TrafficSinceNow },
+      step = Steps.contracts.sysio.epoch.planNotetraffic(Report.Actor.Sysio, "notetraffic", "traffic", {}, data)
+    expect(Steps.contracts.sysio.epoch.NotetrafficAccount).toBe("sysio.msgch")
+    expect(step.input).toEqual({ kind: "EpochContractSteps.NotetrafficInput", data })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runNotetraffic)
+    await Steps.contracts.sysio.epoch.runNotetraffic(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data, {
+      authorization: [{ actor: "sysio.msgch", permission: "active" }]
+    })
+  })
+
+  it("TrafficSinceNow is the zero time_point the contract reads as now", () => {
+    expect(Steps.contracts.sysio.epoch.TrafficSinceNow).toBe(NoTraffic)
+    expect(Date.parse(`${Steps.contracts.sysio.epoch.TrafficSinceNow}Z`)).toBe(
+      Steps.contracts.sysio.epoch.NoTrafficMs
+    )
+  })
+
+  it("an aborted notetraffic step pushes nothing", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      invoke = jest.spyOn(contract.actions.notetraffic, "invoke").mockResolvedValue(undefined),
+      step = Steps.contracts.sysio.epoch.planNotetraffic(Report.Actor.Sysio, "notetraffic", "traffic", {}, {
+        chain_code: Solana,
+        since: Steps.contracts.sysio.epoch.TrafficSinceNow
+      })
+    await expect(step.runner(ctx, step.input, AbortSignal.abort())).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it("an aborted schbatchgps step pushes nothing", async () => {
     const { ctx, contract } = contextWithChainRows([]),
       invoke = jest.spyOn(contract.actions.schbatchgps, "invoke").mockResolvedValue(undefined),
@@ -283,6 +349,23 @@ describe("Steps.contracts.sysio.epoch per-chain epochstate / epochcfg reads", ()
     const { ctx, stateQuery } = contextWithChainRows(rows)
     stateQuery.mockResolvedValue({ rows, more: true })
     await expect(Steps.contracts.sysio.epoch.readEpochStates(ctx)).rejects.toThrow(/truncated/)
+  })
+
+  it("readRostersSent keys each chain's last-queued roster hash from one bounded read, absent once erased", async () => {
+    const { ctx, contract } = contextWithChainRows([]),
+      sent = [{ chain_code: packedCode(Solana), roster_hash: "ab".repeat(32) }],
+      query = jest.spyOn(contract.tables.rostersent, "query").mockResolvedValue({ rows: sent, more: false })
+    await expect(Steps.contracts.sysio.epoch.readRostersSent(ctx)).resolves.toEqual({
+      [Ethereum]: undefined,
+      [Solana]: sent[0]
+    })
+    expect(query).toHaveBeenCalledWith({ limit: Steps.contracts.sysio.epoch.ChainRowLimit })
+  })
+
+  it("readRostersSent refuses a truncated read", async () => {
+    const { ctx, contract } = contextWithChainRows([])
+    jest.spyOn(contract.tables.rostersent, "query").mockResolvedValue({ rows: [], more: true })
+    await expect(Steps.contracts.sysio.epoch.readRostersSent(ctx)).rejects.toThrow(/rostersent.*truncated/)
   })
 
   it("readEpochState picks the chain's own row", async () => {
@@ -371,6 +454,61 @@ describe("Steps.contracts.sysio.epoch per-chain epochstate / epochcfg reads", ()
     await expect(
       Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx, Ethereum)
     ).resolves.toBeUndefined()
+  })
+})
+
+describe("Steps.contracts.sysio.epoch traffic predicates", () => {
+  const epoch = Steps.contracts.sysio.epoch,
+    StartMs = Date.parse("2026-11-24T00:00:00.000Z"),
+    DueAt = "2026-11-24T00:01:30.000",
+    DueAtMs = Date.parse(`${DueAt}Z`)
+
+  /** A started chain's row with traffic since `since`, due at `dueAt`. */
+  function withTraffic(
+    since: string,
+    dueAt: string,
+    index = 4
+  ): SysioContracts.SysioEpochEpochStateType {
+    return { ...epochStateRow(Ethereum, index, 0, []), traffic_since: since, due_at: dueAt }
+  }
+
+  it("reads a zero time_point as no traffic and a set one as its instant", () => {
+    const idle = epochStateRow(Ethereum, 4, 0, []),
+      busy = withTraffic("2026-11-24T00:00:30.000", DueAt)
+    expect(epoch.dueAtMs(idle)).toBe(epoch.NoTrafficMs)
+    expect(epoch.trafficSinceMs(idle)).toBe(epoch.NoTrafficMs)
+    expect(epoch.dueAtMs(busy)).toBe(DueAtMs)
+    expect(epoch.trafficSinceMs(busy)).toBe(StartMs + 30_000)
+  })
+
+  it("isIdle holds for a started chain with no traffic", () => {
+    expect(epoch.isIdle(epochStateRow(Ethereum, 1, 0, []))).toBe(true)
+    expect(epoch.isIdle(epochStateRow(Solana, 9, 0, [], true))).toBe(true)
+  })
+
+  it("isIdle is false with traffic, before the genesis advance, or without a row", () => {
+    expect(epoch.isIdle(withTraffic("2026-11-24T00:00:30.000", DueAt))).toBe(false)
+    expect(epoch.isIdle(epochStateRow(Ethereum, 0, 0, []))).toBe(false)
+    expect(epoch.isIdle(undefined)).toBe(false)
+  })
+
+  it("isIdle fails closed on a due_at that is absent or does not parse", () => {
+    const { due_at: _dueAt, ...withoutDueAt } = epochStateRow(Ethereum, 3, 0, [])
+    expect(epoch.isIdle(withoutDueAt as SysioContracts.SysioEpochEpochStateType)).toBe(false)
+    expect(epoch.isIdle({ ...epochStateRow(Ethereum, 3, 0, []), due_at: "not a time" })).toBe(false)
+  })
+
+  it("msUntilDue counts down to due_at and goes non-positive once due", () => {
+    const busy = withTraffic("2026-11-24T00:00:30.000", DueAt)
+    expect(epoch.msUntilDue(busy, StartMs)).toBe(90_000)
+    expect(epoch.msUntilDue(busy, DueAtMs)).toBe(0)
+    expect(epoch.msUntilDue(busy, DueAtMs + 5_000)).toBe(-5_000)
+  })
+
+  it("msUntilDue is infinite with no traffic: an idle chain is never due", () => {
+    expect(epoch.msUntilDue(epochStateRow(Ethereum, 4, 0, []), StartMs)).toBe(
+      Number.POSITIVE_INFINITY
+    )
   })
 })
 

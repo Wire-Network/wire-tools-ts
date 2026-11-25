@@ -1470,11 +1470,13 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // Bootstrap success gate. LOCAL mode watches the depot's own epoch advance
-    // past the bootstrap epoch; EXTERNAL mode has no local chain to advance an
-    // epoch on, so it proves the depot is producing blocks (head advance) AND
-    // that the bootstrap actually queued an outbound envelope for every
-    // registered outpost.
+    // Bootstrap success gate. LOCAL mode watches each outpost chain's genesis
+    // epoch become decided: the outpost answered the bootstrap envelope and the
+    // depot accepted its reply, a full OPP round trip that needs no traffic (a
+    // depot-paced chain with none stays in epoch 1). EXTERNAL mode has no local
+    // outpost to answer, so it proves the depot is producing blocks (head
+    // advance) AND that the bootstrap actually queued an outbound envelope for
+    // every registered outpost.
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
@@ -1521,14 +1523,14 @@ export namespace ClusterBuildDefaults {
     } else {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
-        "EpochAdvance",
-        "Verify every outpost chain's epoch advances past the bootstrap epoch"
+        "EpochDecided",
+        "Verify every outpost chain's genesis epoch is decided (an OPP round trip)"
       ).push(
         ...OutpostChainCodenames.map(chain =>
-          Steps.epochAdvance.planAwaitEpochAdvanced<C>(
+          Steps.epochAdvance.planAwaitEpochDecided<C>(
             Actor.Sysio,
-            `verify-epoch-advance-${chain.toLowerCase()}`,
-            `the ${chain} current_epoch_index reaches ${Steps.epochAdvance.BootstrapAdvanceTargetIndex}`,
+            `verify-epoch-decided-${chain.toLowerCase()}`,
+            `the ${chain} epoch ${Steps.epochAdvance.BootstrapDecidedEpochIndex} is decided`,
             {},
             chain
           )

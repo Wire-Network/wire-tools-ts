@@ -234,7 +234,7 @@ export const WireOpregBootstrapChainSchema = z
       .int()
       .positive()
       .describe(
-        "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+        "The chain's minimum consensus epoch duration in seconds, the least time between two of its envelopes (its sysio.epoch::epochcfg.epoch_duration_sec)"
       ),
     batchOperatorGroups: WireOpregBootstrapBatchOperatorGroupsSchema
   })

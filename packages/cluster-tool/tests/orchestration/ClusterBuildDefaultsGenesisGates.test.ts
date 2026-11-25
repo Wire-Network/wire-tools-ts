@@ -75,12 +75,12 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
   }
 
   describe("bootstrap success gates", () => {
-    it("LOCAL mode gates on the depot advancing past the bootstrap epoch", async () => {
+    it("LOCAL mode gates on every chain's genesis epoch being decided", async () => {
       const cluster = await ClusterBuildDefaults.create(baseOptions()),
         names = collectPhaseNames(cluster.children)
       expect(names).toContain("EpochBootstrap")
       // unconditional, and directly after the bootstrap phase
-      expect(names.indexOf("EpochAdvance")).toBe(
+      expect(names.indexOf("EpochDecided")).toBe(
         names.indexOf("EpochBootstrap") + 1
       )
       expect(names).not.toContain("HeadBlockAdvance")
@@ -92,8 +92,8 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
         names = collectPhaseNames(cluster.children)
       expect(names).toContain("HeadBlockAdvance")
       expect(names).toContain("OutboundEnvelopesQueued")
-      // there is no local chain to advance an epoch on
-      expect(names).not.toContain("EpochAdvance")
+      // there is no local outpost to answer the genesis envelope
+      expect(names).not.toContain("EpochDecided")
     })
 
     it("the gate's budget reuses ProtocolTiming's epoch-liveness envelope with each chain's duration", async () => {
@@ -129,20 +129,22 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       )
     })
 
-    it("gates on every outpost chain's own epoch advance, one verify per chain", async () => {
+    it("gates on every outpost chain's own genesis epoch decided, one verify per chain, with no traffic", async () => {
       const cluster = await ClusterBuildDefaults.create(baseOptions()),
-        gate = findPhase(cluster.children, "EpochAdvance")
+        gate = findPhase(cluster.children, "EpochDecided")
       expect(gate.steps.map(step => step.name)).toEqual(
-        OutpostChainCodenames.map(chain => `verify-epoch-advance-${chain.toLowerCase()}`)
+        OutpostChainCodenames.map(chain => `verify-epoch-decided-${chain.toLowerCase()}`)
       )
       expect(gate.steps.map(step => step.description)).toEqual(
         OutpostChainCodenames.map(
-          chain =>
-            `the ${chain} current_epoch_index reaches ${Steps.epochAdvance.BootstrapAdvanceTargetIndex}`
+          chain => `the ${chain} epoch ${Steps.epochAdvance.BootstrapDecidedEpochIndex} is decided`
         )
       )
       expect(gate.steps.map(step => step.input)).toEqual(
-        OutpostChainCodenames.map(chain => ({ kind: "EpochAdvanceSteps.AwaitEpochAdvancedInput", chain }))
+        OutpostChainCodenames.map(chain => ({ kind: "EpochAdvanceSteps.AwaitEpochDecidedInput", chain }))
+      )
+      expect(gate.steps.map(step => step.runner)).toEqual(
+        OutpostChainCodenames.map(() => Steps.epochAdvance.runAwaitEpochDecided)
       )
     })
   })

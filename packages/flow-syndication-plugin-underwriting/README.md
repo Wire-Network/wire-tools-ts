@@ -43,7 +43,8 @@ a later envelope WAITING with no request, and an unlinked envelope held before
 its bond. A running underwriter may already have moved each one on.
 
 Each run uses a fresh cluster with mock liquidity pools, the syndication import
-and 60-second epochs. The pair configuration is restored at the end. The run
+and a 60-second minimum epoch (each Solana → depot intake wait keeps its chain due with
+keep-due traffic). The pair configuration is restored at the end. The run
 requires a nodeop built with the `batch_operator_plugin` underwriter role
 (wire-sysio PR #671: `--batch-underwriter-account`,
 `--batch-underwriter-max-exposure`).

@@ -24,7 +24,6 @@ import {
   SyndicationScenario,
   WireSyndicationTool,
   pollUntil,
-  matchesProtoEnum,
   readEnvelopeAttestations,
   verifyStep,
   type ClusterBuild,
@@ -399,34 +398,41 @@ export class EmergencyStopScenario extends SyndicationScenario {
       verifyStep(
         Actor.BatchOperator,
         "frozen-epochs-and-buckets",
-        "envelopes keep circulating and bucket levels stay fixed",
-        async ctx => {
-          await pollUntil(
-            "epoch advance under depot cord",
+        "kept due, envelopes keep circulating and bucket levels stay fixed",
+        async (ctx, signal) => {
+          // Nothing is queued to Solana under the cord: keep-due traffic keeps it due until it
+          // advances and the depot accepts the outpost's answer.
+          const readAudit = async () => {
+            const audit = await ctx.wire
+              .getSysioContract(SysioContractName.msgch)
+              .tables.envlog.query({ limit: SyndicationScenario.QueryLimit })
+            Assert.ok(!audit.more)
+            return audit.rows
+          }
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [SyndicationScenario.Chain],
+            "epoch advance and an accepted Solana envelope under depot cord",
             async () =>
               (await SyndicationScenario.readEpoch(ctx)) >
-              ctx.outputs.assert(Constants.FreezeEpoch),
+                ctx.outputs.assert(Constants.FreezeEpoch) &&
+              EmergencyStopSteps.hasSolanaEnvelopeSince(
+                await readAudit(),
+                ctx.outputs.assert(Constants.EnvelopeLogId)
+              ),
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
           const { rows, more } = await ctx.wire
             .getSysioContract(SysioContractName.synd)
             .tables.buckets.query({ limit: SyndicationScenario.QueryLimit })
           Assert.ok(!more)
           Assert.deepStrictEqual(rows, ctx.outputs.assert(Constants.Buckets))
-          const audit = await ctx.wire
-            .getSysioContract(SysioContractName.msgch)
-            .tables.envlog.query({ limit: SyndicationScenario.QueryLimit })
-          Assert.ok(!audit.more)
           Assert.ok(
-            audit.rows.some(
-              row =>
-                BigInt(row.id) > ctx.outputs.assert(Constants.EnvelopeLogId) &&
-                matchesProtoEnum(
-                  row.endpoints.start.kind,
-                  SysioContracts.SysioMsgchChainkind,
-                  SysioContracts.SysioMsgchChainkind.CHAIN_KIND_SVM
-                )
+            EmergencyStopSteps.hasSolanaEnvelopeSince(
+              await readAudit(),
+              ctx.outputs.assert(Constants.EnvelopeLogId)
             ),
             "msgch accepted no new Solana envelope while pulled"
           )
@@ -727,7 +733,7 @@ export class EmergencyStopScenario extends SyndicationScenario {
         Actor.Sysio,
         "repair-message-admitted",
         "cursor admits repaired custody before the depot cord clears",
-        async ctx => {
+        async (ctx, signal) => {
           const messages = (
               await readEnvelopeAttestations(
                 oppDebuggingPath(ctx.config.clusterPath),
@@ -742,7 +748,9 @@ export class EmergencyStopScenario extends SyndicationScenario {
             )
           Assert.ok(message, "missing post-repair syndication attestation")
           ctx.outputs.set(Constants.RecoverySequence, message.sequence)
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [SyndicationScenario.Chain],
             "depot cursor reaches post-repair Solana sequence",
             async () => {
               const { rows, more } = await ctx.wire
@@ -767,7 +775,8 @@ export class EmergencyStopScenario extends SyndicationScenario {
               return true
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
           const rows = await WireSyndicationTool.readMismatches(ctx)
           StepExtraRecorder.note(

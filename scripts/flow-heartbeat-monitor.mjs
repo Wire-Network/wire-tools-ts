@@ -8,10 +8,14 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
- * (`epoch=` lists every outpost chain's own consensus epoch, a `p` suffix marking a paused
- * chain) plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
+ * (`epoch=` lists every outpost chain's own consensus epoch: a `p` suffix marks a paused
+ * chain, then `i` an idle chain (no traffic, so it legitimately stays in its epoch), `w` a
+ * chain with traffic waiting for its `due_at`, `d` a chain that is due and should advance, `?` a
+ * chain whose `due_at` does not read — unknown, never treated as idle; then `u` while its
+ * current epoch is still undecided)
+ * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
  * once it appears: `executables.clio` (the resolved clio binary) and the URL
  * from `bind.nodeop.ports.producers[0].http` (NEVER bios — its port dies after
@@ -21,8 +25,9 @@
  * The six probes, per beat:
  *   1. chain liveness            — `clio get info` → head_block_num
  *   2. operators table           — `sysio.opreg::operators` (v6 `-S` scope, fields under `.value`)
- *   3. epoch state per chain     — `sysio.epoch::epochstate`, one row per outpost chain → index + start/next timestamps + pause,
- *                                  and `sysio.epoch::epochcfg` → each chain's epoch duration (the depot's value)
+ *   3. epoch state per chain     — `sysio.epoch::epochstate`, one row per outpost chain → index, start, traffic_since, due_at + pause,
+ *                                  `sysio.epoch::epochcfg` → each chain's epoch duration (the depot's value),
+ *                                  and `sysio.msgch::outpcons` → the epoch each chain decided last
  *   4. msgch outbound envelopes  — `sysio.msgch::envelopes` row count
  *   5. opp-debugging artifacts   — total + per-direction `.metadata` counts + delta
  *   6. aggregate cluster log     — action-receipt top-3 + the TWO failure classes:
@@ -30,28 +35,52 @@
  *      persistent growth) and NOISE (chain `assertion failure` gate rejections —
  *      counted + quoted, NEVER a bail).
  *
- * The bails (print `BAIL: <reason>`, SIGINT the watched flow, exit 1):
- *   - bootstrap never completes — a chain's epoch still null/0 past the deadline since first
- *     liveness (the deadline scales with that chain's duration)
- *   - epoch stall — a chain at the same epoch as the previous beat, unchanged for close to
- *     2 x its own epoch duration, AND still unchanged after a re-probe
- *   - opp-debugging zero delta on the FIRST beat at/past the first epoch
- *     boundary of every chain — the latest of each chain's first epoch start +
- *     its duration (controller ruling for self-check 6). Before that wall-clock
- *     boundary, zero delta is marked growth=first-epoch-boundary in HB and does
- *     not bail. The boundary never resets on epoch advance. It comes from each
- *     chain's epochstate.current_epoch_start / next_epoch_start and its epoch
- *     duration (or --epoch-duration-seconds). The bootstrap-never-completes rule
- *     is unchanged.
+ * Epochs are depot-paced: a chain advances only once it is due — it has traffic
+ * (`traffic_since`) and its `due_at` (the later of its epoch start and that
+ * traffic, plus its minimum duration) has passed — so an IDLE chain (no traffic,
+ * `due_at` zero) legitimately stays in its epoch for as long as it is idle, and an
+ * idle cluster legitimately grows no OPP artifacts. Idle is never a stall: the
+ * epoch-stall, zero-growth and plateau bails fire only on a chain that is DUE and
+ * overdue, measured on the depot's own clock (`head_block_time`). That clock stops
+ * when the producers stop, so two bails do not lean on it alone: the head-advance
+ * bail measures block production on the monitor's wall clock, and the
+ * undecided-epoch bail catches a chain whose current epoch never gets decided,
+ * traffic or not.
  *
- * A chain's epoch duration is its `sysio.epoch::epochcfg.epoch_duration_sec`, read
- * every beat; before the chain's row exists it is the cluster-config
+ * The bails (print `BAIL: <reason>`, SIGINT the watched flow, exit 1):
+ *   - head frozen — the depot head block number unchanged across a beat, and
+ *     still unchanged after a re-probe (wall clock): producers stopped while
+ *     HTTP still answers. Fires with or without `--expect-epoch-freeze` (a
+ *     dispute pause freezes epochs, never blocks)
+ *   - epoch undecided too long — a started, unpaused chain whose current epoch
+ *     (the genesis epoch included) is still undecided (`outpcons`) more than
+ *     `max(UndecidedEpochFloorSeconds, UndecidedEpochDurations × its minimum)`
+ *     after the later of its `current_epoch_start` and the first beat that saw
+ *     it in that epoch (on the head clock); suppressed by `--expect-epoch-freeze`
+ *   - bootstrap never completes — a chain's epoch still null/0 past the deadline since first
+ *     liveness (the deadline scales with that chain's duration); the genesis advance
+ *     needs no traffic
+ *   - epoch stall — a chain at the same epoch as the previous beat whose `due_at` is set
+ *     and lies about 2 x its own minimum duration behind the head, AND still at that
+ *     epoch after a re-probe
+ *   - opp-debugging zero delta on a beat at/past the first epoch boundary of
+ *     every chain (the latest of each chain's first epoch start + its duration,
+ *     controller ruling for self-check 6) while some chain has been due for at
+ *     least a whole beat. Before that wall-clock boundary, zero delta is marked
+ *     growth=first-epoch-boundary in HB and does not bail. The boundary never
+ *     resets on epoch advance. It comes from each chain's
+ *     epochstate.current_epoch_start and its duration (or
+ *     --epoch-duration-seconds).
+ *   - one direction frozen for 2 consecutive beats while the total advances —
+ *     a direction counts only while its chain is due, and only after all four
+ *     directions have a non-zero baseline
+ *   - FATAL count growing across 2 consecutive beats
+ *
+ * A chain's epoch duration is its minimum, `sysio.epoch::epochcfg.epoch_duration_sec`,
+ * read every beat; before the chain's row exists it is the cluster-config
  * `outpostEpochDurationSec` its bootstrap will write there, and before that names
  * the chain the cluster's `epochDurationSec` (60 s when that is `null`).
  * `--epoch-duration-seconds` overrides every chain's.
- *   - one direction frozen for 2 consecutive beats while the others advance
- *     (only after all four directions have a non-zero baseline)
- *   - FATAL count growing across 2 consecutive beats
  *
  * Exits 0 with a `FLOW-EXITED` line when the watched flow process disappears.
  *
@@ -63,6 +92,10 @@
  *                     (0x17c7), EnforcedPause and NoPendingDesyndication
  *                     recovery refusals as NOISE. Default: FATAL.
  *                     Does not disable any liveness bail.
+ *   --expect-epoch-freeze  the flow deliberately holds a chain that is due (a
+ *                     pause, an undeliverable group): suppresses the epoch-stall,
+ *                     undecided-epoch, zero-growth and direction-plateau bails. An
+ *                     idle chain needs no flag. The head-advance bail stays on.
  */
 
 import { createInterface } from "node:readline"
@@ -73,8 +106,11 @@ import {
   chainEpochConfigs,
   chainEpochDurations,
   chainEpochStates,
+  chainOutpostConsensus,
   EpochStateRowLimit,
-  kvRowValue
+  isCurrentEpochDecided,
+  kvRowValue,
+  timePointMs
 } from "./common/epoch-state.mjs"
 
 // ---------------------------------------------------------------------------
@@ -83,17 +119,18 @@ import {
 
 /**
  * Seconds between heartbeats. Raising it slows detection of every bail;
- * lowering it below the epoch duration makes zero-delta beats normal on a
- * HEALTHY cluster (the zero-delta bail assumes interval > epoch duration).
+ * it is also the time a chain must have been due before a zero-delta beat
+ * bails (a due chain ships an envelope within its delivery extension).
  * Overridable via `--interval-seconds`.
  */
 const DefaultIntervalSeconds = 90
 
 /**
- * An outpost chain's epoch duration when neither its `epochcfg` row nor the
- * cluster config names one. Each chain's duration scales its bootstrap-deadline
- * bail (`max(BootstrapDeadlineFloorSeconds, BootstrapDeadlineEpochs × duration)`)
- * and its epoch-stall window. `--epoch-duration-seconds` overrides every chain's.
+ * An outpost chain's minimum epoch duration when neither its `epochcfg` row nor
+ * the cluster config names one. Each chain's duration scales its
+ * bootstrap-deadline bail (`max(BootstrapDeadlineFloorSeconds,
+ * BootstrapDeadlineEpochs × duration)`) and its epoch-stall grace past `due_at`.
+ * `--epoch-duration-seconds` overrides every chain's.
  */
 const DefaultEpochDurationSeconds = 60
 
@@ -113,10 +150,11 @@ const BootstrapDeadlineEpochs = 3
 const NoEpochStateLabel = "(no epochstate row)"
 
 /**
- * A chain's epoch is stalled once it has not advanced for this many of its own
- * epoch durations (`epoch-stall-is-fatal.md`: about 2 ×). Raising it delays
- * the stall bail; lowering it below the consensus cadence false-bails a
- * healthy chain.
+ * A DUE chain's epoch is stalled once its `due_at` lies this many of its own
+ * minimum durations behind the depot head with no advance
+ * (`epoch-stall-is-fatal.md`: about 2 ×). An idle chain is never stalled.
+ * Raising it delays the stall bail; lowering it below the delivery extension
+ * (~30 s past due) false-bails a healthy chain.
  */
 const EpochStallDurations = 2
 
@@ -145,21 +183,59 @@ const BootstrapDeadlineFloorSeconds = 300
 const BootstrapPerIdentitySeconds = 60
 
 /**
- * Delay before the epoch-stall re-probe. A same-epoch heartbeat at 60s epochs
- * is the fatal signal, but consensus latency makes the effective cadence
- * ~90–105s — re-probe once after this delay and bail only if STILL unchanged
- * (a true stall = dead cluster). A chain with a longer epoch is re-probed only
- * once its unchanged time plus this delay reaches its stall window. Raising it
- * delays the stall bail; lowering it re-introduces cadence-jitter false
- * positives.
+ * Delay before the epoch-stall re-probe. A due chain still at its previous
+ * epoch is re-probed once its overdue time plus this delay reaches its stall
+ * grace, and bails only if STILL at that epoch after it (a due chain that
+ * cannot advance = dead cluster). Raising it delays the stall bail; lowering
+ * it re-introduces delivery-jitter false positives.
  */
 const EpochStallReprobeDelaySeconds = 45
 
 /**
+ * Delay (wall clock) before the head-advance re-probe. A head block number
+ * unchanged across a whole beat is re-read once after this delay, and the
+ * monitor bails only if it is STILL unchanged: the depot produces a block every
+ * half second, so a head that stands still that long means the producers have
+ * stopped, whatever the HTTP endpoint still answers. Raising it delays the bail;
+ * lowering it risks bailing on one slow `get info` round trip.
+ */
+const HeadStallReprobeDelaySeconds = 15
+
+/**
+ * Minimum durations of a chain after which its current epoch, still undecided,
+ * is a stall (`max(UndecidedEpochFloorSeconds, this × minimum)`, counted from the
+ * later of the epoch's start and the first beat that saw it). The value is the
+ * time a live chain needs to decide or dispute an epoch, from the harness's
+ * timing constants: the bootstrap gate allows the epoch's round trip
+ * `ProtocolTiming.EpochVerifyEpochCount` (3) effective epochs of
+ * `minimum + ProtocolTiming.EpochExtensionMaxSec` (30 s), never under
+ * `ProtocolTiming.OppCirculationRestartMs` (240 s), and a split whose silent
+ * members never answer disputes — pausing the chain, which this bail skips —
+ * `sysio.msgch::DISPUTE_FALLBACK_EPOCHS` (3) minimums after its last delivery.
+ * From a 50 s minimum up (where `3 × (minimum + 30)` passes the 240 s floor) that
+ * is `3 × (minimum + 30) + 3 × minimum = 6 × minimum + 90 s`, which 8 × minimum
+ * covers; {@link UndecidedEpochFloorSeconds} covers the shorter minimums. A normal
+ * round trip decides an epoch within seconds, far inside it.
+ * Lowering it below 7 false-bails a dispute still on its fallback timer.
+ */
+const UndecidedEpochDurations = 8
+
+/**
+ * Floor (seconds) of the undecided-epoch bail: `ProtocolTiming.SingleHopBudgetMs`,
+ * the 7 minutes one OPP hop is budgeted. It covers every chain whose minimum is
+ * too short for {@link UndecidedEpochDurations} alone: for a minimum up to 50 s
+ * the decision-or-dispute time is at most `240 s + 3 × minimum` = 390 s, which
+ * the floor exceeds. Lowering it below that false-bails a short-epoch chain
+ * restarting OPP circulation.
+ */
+const UndecidedEpochFloorSeconds = 420
+
+/**
  * Consecutive frozen beats (a direction's count unchanged while the total
- * advances) before the direction-plateau bail. Evaluated only once EVERY
- * direction has a non-zero baseline; lowering to 1 flags the normal
- * post-baseline ramp as a plateau.
+ * advances AND the direction's chain is due) before the direction-plateau bail.
+ * Evaluated only once EVERY direction has a non-zero baseline; an idle chain's
+ * directions never count. Lowering to 1 flags the normal post-baseline ramp as
+ * a plateau.
  */
 const DirectionFreezeBailStreak = 2
 
@@ -190,13 +266,36 @@ const TopActionReceipts = 3
 /** Row limit for the operators / envelopes probes — the envelope count caps here. */
 const TableQueryLimit = 50
 
-/** The four OPP directions in heartbeat-line order, with their short labels. */
-const OppDirections = [
-  { name: "DEPOT_OUTPOST_ETHEREUM", short: "D>E" },
-  { name: "OUTPOST_ETHEREUM_DEPOT", short: "E>D" },
-  { name: "DEPOT_OUTPOST_SOLANA", short: "D>S" },
-  { name: "OUTPOST_SOLANA_DEPOT", short: "S>D" }
+/**
+ * The four OPP directions in heartbeat-line order, with their short labels and
+ * the outpost chain each runs on (the chain whose traffic paces it).
+ */
+export const OppDirections = [
+  { name: "DEPOT_OUTPOST_ETHEREUM", short: "D>E", chain: "ETHEREUM" },
+  { name: "OUTPOST_ETHEREUM_DEPOT", short: "E>D", chain: "ETHEREUM" },
+  { name: "DEPOT_OUTPOST_SOLANA", short: "D>S", chain: "SOLANA" },
+  { name: "OUTPOST_SOLANA_DEPOT", short: "S>D", chain: "SOLANA" }
 ]
+
+/**
+ * A started chain's traffic, as the heartbeat marks it and the bails gate on:
+ * `idle` (no traffic: it stays in its epoch, never a stall), `waiting` (traffic,
+ * its `due_at` still ahead of the head), `due` (it should advance) and `unknown`
+ * (its `due_at` is absent or does not parse: never read as idle, never as due).
+ * Identity values; frozen so a probe can never redefine one.
+ */
+export const ChainTraffic = Object.freeze({ idle: "idle", waiting: "waiting", due: "due", unknown: "unknown" })
+
+/** The heartbeat's `epoch=` suffix of each {@link ChainTraffic} value. */
+const ChainTrafficMarks = Object.freeze({
+  [ChainTraffic.idle]: "i",
+  [ChainTraffic.waiting]: "w",
+  [ChainTraffic.due]: "d",
+  [ChainTraffic.unknown]: "?"
+})
+
+/** The heartbeat's `epoch=` suffix of a started chain whose current epoch is still undecided. */
+const UndecidedMark = "u"
 
 // Failure classing (probe 6) — TWO classes, per the probing rule:
 //   FATAL — plugin-layer / execution failures that stop OPP circulation; the
@@ -204,7 +303,8 @@ const OppDirections = [
 //   NOISE — chain `assertion failure` rejections: the depot's own gates
 //   bouncing retrying/unscheduled crankers (duplicate deliver, stale nonce,
 //   not-in-active-group, ...). Counted + quoted, NEVER a bail — the liveness
-//   probes (epoch advance, opp delta, per-direction growth) are the gates.
+//   probes (a due chain's epoch advance, opp delta while a chain is due,
+//   per-direction growth of due chains) are the gates.
 
 /**
  * FATAL signatures (ERE): chain-execution + WIRE plugin-layer failures.
@@ -299,6 +399,7 @@ const SysioOpregAccount = "sysio.opreg"
 const OperatorsTable = "operators"
 const SysioMsgchAccount = "sysio.msgch"
 const EnvelopesTable = "envelopes"
+const OutpostConsensusTable = "outpcons"
 
 // Cluster-path-relative surfaces.
 const ClusterConfigFilename = "cluster-config.json"
@@ -637,8 +738,9 @@ async function clioGetTableRows(clioExecutable, url, code, table, scope, limit) 
  *
  * @param {string} clioExecutable resolved clio binary.
  * @param {string} url the producer HTTP URL.
- * @return {Promise<{ headBlockNumber: number, libBlockNumber: number } | null>}
- *   the head + LIB block numbers, or null while unreachable.
+ * @return {Promise<{ headBlockNumber: number, libBlockNumber: number, headBlockTimeMs: number | null } | null>}
+ *   the head + LIB block numbers and the head block's time (the depot's clock every
+ *   `due_at` is measured against; null when unparseable), or null while unreachable.
  */
 async function probeChainLiveness(clioExecutable, url) {
   const stdout = await runClio(clioExecutable, url, ["get", "info"])
@@ -649,7 +751,8 @@ async function probeChainLiveness(clioExecutable, url) {
   if (typeof headBlockNumber !== "number") return null
   return {
     headBlockNumber,
-    libBlockNumber: typeof libBlockNumber === "number" ? libBlockNumber : 0
+    libBlockNumber: typeof libBlockNumber === "number" ? libBlockNumber : 0,
+    headBlockTimeMs: timePointMs(info?.head_block_time)
   }
 }
 
@@ -766,20 +869,96 @@ export function chainEpochDurationSeconds(durations, chain, overrideSeconds, def
 }
 
 /**
+ * When a chain may next advance (`epochstate.due_at`) in epoch ms on the depot's clock, or null
+ * while it has no traffic (a zero `time_point`) or the cell is absent or does not parse — a
+ * deadline that cannot be read is never measured against ({@link chainTraffic} tells the two
+ * apart).
+ *
+ * @param {object} state the chain's epoch row.
+ * @return {number | null} the chain's `due_at` (ms), or null with no readable deadline.
+ */
+export function chainDueAtMs(state) {
+  const dueAt = timePointMs(state?.due_at)
+  return dueAt == null || dueAt === 0 ? null : dueAt
+}
+
+/**
+ * A started chain's traffic at the depot head ({@link ChainTraffic}): `idle` with a zero
+ * `due_at`, `unknown` when its `due_at` is absent or does not parse (fail closed: never idle),
+ * `due` once the head has reached it, else `waiting`. Null before the chain's genesis advance
+ * (which needs no traffic) or without a row; a chain with traffic reads `waiting` while the
+ * head time is unknown, so an unknown clock never makes it due.
+ *
+ * @param {object} state the chain's epoch row.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @return {string | null} the chain's {@link ChainTraffic} value, or null.
+ */
+export function chainTraffic(state, headBlockTimeMs) {
+  if (state == null || !(state.current_epoch_index >= 1)) return null
+  const dueAt = timePointMs(state.due_at)
+  if (dueAt == null) return ChainTraffic.unknown
+  if (dueAt === 0) return ChainTraffic.idle
+  return headBlockTimeMs != null && headBlockTimeMs >= dueAt ? ChainTraffic.due : ChainTraffic.waiting
+}
+
+/**
+ * How long a chain has been due at the depot head (s): head time minus `due_at`, negative
+ * while still waiting. Null while the chain is idle, before its genesis, or with the head time
+ * unknown — an idle chain is never overdue.
+ *
+ * @param {object} state the chain's epoch row.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @return {number | null} the seconds past `due_at`, or null.
+ */
+export function chainOverdueSeconds(state, headBlockTimeMs) {
+  const dueAt = chainDueAtMs(state)
+  return dueAt == null || headBlockTimeMs == null || !(state?.current_epoch_index >= 1)
+    ? null
+    : (headBlockTimeMs - dueAt) / 1000
+}
+
+/**
+ * The chains due for at least `graceSeconds` ({@link chainOverdueSeconds}), in watch order —
+ * the chains whose silence is a liveness signal.
+ *
+ * @param {string[]} chains the watched chains.
+ * @param {Record<string, object>} states each chain's epoch row.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @param {number} graceSeconds how long a chain must have been due.
+ * @return {string[]} the overdue chains.
+ */
+export function overdueChains(chains, states, headBlockTimeMs, graceSeconds) {
+  return chains.filter(chain => {
+    const overdue = chainOverdueSeconds(states?.[chain], headBlockTimeMs)
+    return overdue != null && overdue >= graceSeconds
+  })
+}
+
+/**
  * Every outpost chain's epoch, in codename order, for the heartbeat line —
- * `ETHEREUM:4,SOLANA:2p` (`p`: the chain is paused).
+ * `ETHEREUM:4i,SOLANA:2pdu` (`p`: the chain is paused; then its {@link chainTraffic}:
+ * `i` idle, `w` waiting for its `due_at`, `d` due, `?` unknown; then `u` while its current
+ * epoch is undecided — marked only when the beat read `outpcons`).
  *
  * @param {Record<string, object>} states each chain's epoch row.
  * @param {string[]} chains the chains to list.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @param {Record<string, object> | null} consensus each chain's `outpcons` row, or null when the
+ *   beat could not read them.
  * @return {string} the fragment, `?` for a chain without a row.
  */
-export function describeChainEpochs(states, chains) {
+export function describeChainEpochs(states, chains, headBlockTimeMs = null, consensus = null) {
   return chains.length === 0
     ? "?"
     : chains
         .map(chain => {
-          const state = states?.[chain]
-          return `${chain}:${state?.current_epoch_index ?? "?"}${state?.is_paused === true ? "p" : ""}`
+          const state = states?.[chain],
+            traffic = chainTraffic(state, headBlockTimeMs),
+            undecided = traffic != null && consensus != null && !isCurrentEpochDecided(state, consensus[chain])
+          return (
+            `${chain}:${state?.current_epoch_index ?? "?"}${state?.is_paused === true ? "p" : ""}` +
+            `${traffic == null ? "" : ChainTrafficMarks[traffic]}${undecided ? UndecidedMark : ""}`
+          )
         })
         .join(",")
 }
@@ -841,37 +1020,78 @@ export function bootstrapBailReason(
 }
 
 /**
- * Whether a chain that showed the same epoch as the previous beat should be
- * re-probed for a stall now: its unchanged time plus the re-probe delay reaches
- * {@link EpochStallDurations} of its own epoch duration. At 60 s epochs every
- * same-epoch beat qualifies (90 + 45 >= 120); a longer epoch waits for more beats.
+ * Whether a DUE chain that showed the same epoch as the previous beat should be
+ * re-probed for a stall now: its time past `due_at` plus the re-probe delay
+ * reaches {@link EpochStallDurations} of its own minimum duration. At a 60 s
+ * minimum a chain 75 s past due qualifies (75 + 45 >= 120). An idle chain
+ * (null overdue time) is never re-probed.
  *
- * @param {number} unchangedSeconds seconds since the chain was last seen to advance.
- * @param {number} durationSeconds the chain's epoch duration.
+ * @param {number | null} overdueSeconds seconds the chain has been due ({@link chainOverdueSeconds}).
+ * @param {number} durationSeconds the chain's minimum epoch duration.
  * @return {boolean} true when the re-probe is due.
  */
-export function isStallReprobeDue(unchangedSeconds, durationSeconds) {
-  return unchangedSeconds + EpochStallReprobeDelaySeconds >= EpochStallDurations * durationSeconds
+export function isStallReprobeDue(overdueSeconds, durationSeconds) {
+  return (
+    overdueSeconds != null &&
+    overdueSeconds + EpochStallReprobeDelaySeconds >= EpochStallDurations * durationSeconds
+  )
 }
 
 /**
- * The chains due a stall re-probe this beat: each at the same epoch as the
- * previous beat whose re-probe is due ({@link isStallReprobeDue}).
+ * The chains due a stall re-probe this beat: each due chain at the same epoch as
+ * the previous beat whose re-probe is due ({@link isStallReprobeDue}).
  *
  * @param {string[]} chains the watched chains.
  * @param {Record<string, number | undefined>} epochIndices each chain's epoch index this beat.
  * @param {Record<string, number>} previousEpochIndices each chain's index at the previous beat.
- * @param {(chain: string) => number} unchangedSeconds seconds since a chain was last seen to advance.
+ * @param {(chain: string) => number | null} overdueSeconds seconds a chain has been due, null while idle.
  * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
  * @return {string[]} the due chains, in watch order.
  */
-export function stallReprobeDueChains(chains, epochIndices, previousEpochIndices, unchangedSeconds, durationSeconds) {
+export function stallReprobeDueChains(chains, epochIndices, previousEpochIndices, overdueSeconds, durationSeconds) {
   return chains.filter(
     chain =>
       epochIndices[chain] != null &&
       epochIndices[chain] === previousEpochIndices[chain] &&
-      isStallReprobeDue(unchangedSeconds(chain), durationSeconds(chain))
+      isStallReprobeDue(overdueSeconds(chain), durationSeconds(chain))
   )
+}
+
+/**
+ * Each OPP direction's freeze streak after this beat: a direction whose count did not move
+ * while the total advanced grows its streak, but only while EVERY direction has a non-zero
+ * baseline and the direction's chain is due — an idle or waiting chain's directions
+ * legitimately stand still while the other chain flows. Any other direction resets to 0.
+ *
+ * @param {Record<string, number>} streaks each direction's streak before this beat.
+ * @param {Record<string, number>} previousCounts each direction's count at the previous beat.
+ * @param {Record<string, number>} counts each direction's count this beat.
+ * @param {number} oppDelta artifacts added since the previous beat.
+ * @param {string[]} dueChains the chains due this beat ({@link chainTraffic}).
+ * @return {Record<string, number>} each direction's streak after this beat.
+ */
+export function directionFreezeStreaks(streaks, previousCounts, counts, oppDelta, dueChains) {
+  const allDirectionsHaveBaseline = OppDirections.every(direction => counts[direction.name] > 0)
+  return Object.fromEntries(
+    OppDirections.map(direction => {
+      const frozenWhileDue =
+        allDirectionsHaveBaseline &&
+        oppDelta > 0 &&
+        dueChains.includes(direction.chain) &&
+        counts[direction.name] === previousCounts[direction.name]
+      return [direction.name, frozenWhileDue ? (streaks[direction.name] ?? 0) + 1 : 0]
+    })
+  )
+}
+
+/**
+ * The first direction frozen for {@link DirectionFreezeBailStreak} beats, in heartbeat order.
+ *
+ * @param {Record<string, number>} streaks each direction's streak ({@link directionFreezeStreaks}).
+ * @return {string | null} the plateaued direction's name, or null.
+ */
+export function plateauDirection(streaks) {
+  return OppDirections.find(direction => streaks[direction.name] >= DirectionFreezeBailStreak)?.name ?? null
 }
 
 /**
@@ -895,19 +1115,142 @@ export function stalledChain(dueChains, reprobedStates, epochIndices, previousEp
 /**
  * The network's first-epoch growth deadline: the latest of every chain's
  * {@link firstEpochGrowthDeadlineMs}, so zero growth is tolerated until every
- * chain is past its first epoch boundary. Null while any chain has not started.
+ * chain is one minimum past its genesis advance. Null while any chain has not
+ * started.
  *
  * @param {Record<string, object>} states each chain's epoch row.
  * @param {string[]} chains the chains the network runs.
  * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
- * @param {(chain: string) => number} configuredSeconds a chain's configured duration.
  * @return {number | null} the deadline (ms), or null before every chain started.
  */
-export function networkGrowthDeadlineMs(states, chains, durationSeconds, configuredSeconds) {
-  const deadlines = chains.map(chain =>
-    firstEpochGrowthDeadlineMs(states?.[chain], durationSeconds(chain), configuredSeconds(chain))
-  )
+export function networkGrowthDeadlineMs(states, chains, durationSeconds) {
+  const deadlines = chains.map(chain => firstEpochGrowthDeadlineMs(states?.[chain], durationSeconds(chain)))
   return chains.length === 0 || deadlines.some(deadline => deadline == null) ? null : Math.max(...deadlines)
+}
+
+/**
+ * Whether the depot head stood still across a beat: the same block number at the previous beat
+ * and at this one, both read. A beat whose probe failed (null) is never a frozen head.
+ *
+ * @param {number | null} previousHeadBlockNumber the head at the previous beat.
+ * @param {number | null} headBlockNumber the head at this beat.
+ * @return {boolean} true when both beats read the same head.
+ */
+export function isHeadFrozen(previousHeadBlockNumber, headBlockNumber) {
+  return previousHeadBlockNumber != null && headBlockNumber != null && headBlockNumber === previousHeadBlockNumber
+}
+
+/**
+ * The head-advance bail reason: the head stood still across a beat ({@link isHeadFrozen}) and
+ * the re-probe, {@link HeadStallReprobeDelaySeconds} later on the monitor's wall clock, still
+ * reads it there. A failed re-probe keeps the beat's head, so it never clears the bail. Chain
+ * traffic plays no part: a stopped producer freezes the head time every `due_at` is measured on,
+ * so a due chain and an idle one look alike there.
+ *
+ * @param {number | null} previousHeadBlockNumber the head at the previous beat.
+ * @param {number | null} headBlockNumber the head at this beat.
+ * @param {number | null} reprobedHeadBlockNumber the head at the re-probe, null when it failed.
+ * @param {number} beatSeconds the wall-clock seconds between the two beats.
+ * @return {string | null} the bail reason, or null while the head advances.
+ */
+export function headStallBailReason(previousHeadBlockNumber, headBlockNumber, reprobedHeadBlockNumber, beatSeconds) {
+  if (!isHeadFrozen(previousHeadBlockNumber, headBlockNumber)) return null
+  const reprobed = reprobedHeadBlockNumber ?? headBlockNumber
+  return reprobed === previousHeadBlockNumber
+    ? `depot head frozen at block ${previousHeadBlockNumber} for ${beatSeconds + HeadStallReprobeDelaySeconds}s of wall clock ` +
+        `(${HeadStallReprobeDelaySeconds}s re-probe included): the producers stopped`
+    : null
+}
+
+/**
+ * How long a chain's current epoch may stay undecided (s) before it is a stall:
+ * `max(UndecidedEpochFloorSeconds, UndecidedEpochDurations × minimum)`.
+ *
+ * @param {number} durationSeconds the chain's minimum epoch duration.
+ * @return {number} the allowance in seconds.
+ */
+export function undecidedEpochAllowanceSeconds(durationSeconds) {
+  return Math.max(UndecidedEpochFloorSeconds, UndecidedEpochDurations * durationSeconds)
+}
+
+/**
+ * The instant (ms, depot clock) a chain's current epoch has been undecided since, for the
+ * undecided-epoch bail: carried over while the chain stays in the epoch the previous beat saw;
+ * the epoch's `current_epoch_start` once the monitor saw the chain move into it; and, on the
+ * first beat that sees the chain at all (a monitor attached late, or a relaunched cluster whose
+ * head jumped past its downtime), the later of that start and the beat's head time — a downtime
+ * is not undecided time.
+ *
+ * @param {{ epochIndex: number, sinceMs: number } | undefined} previous the chain's record from
+ *   the previous beat, absent on the first.
+ * @param {object} state the chain's epoch row.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @return {{ epochIndex: number, sinceMs: number } | null} the chain's record for this beat, or
+ *   null without a row or a readable start.
+ */
+export function undecidedEpochSince(previous, state, headBlockTimeMs) {
+  const epochIndex = state?.current_epoch_index,
+    startMs = timePointMs(state?.current_epoch_start)
+  if (epochIndex == null || startMs == null) return null
+  if (previous != null && previous.epochIndex === epochIndex) return previous
+  const sinceMs = previous == null && headBlockTimeMs != null ? Math.max(startMs, headBlockTimeMs) : startMs
+  return { epochIndex, sinceMs }
+}
+
+/**
+ * The undecided-epoch bail reason: the first watched chain that is started and unpaused, whose
+ * current epoch (the genesis epoch included) `outpcons` does not record as decided, and whose
+ * undecided time ({@link undecidedEpochSince}, on the depot head clock) exceeds its
+ * {@link undecidedEpochAllowanceSeconds}. Never fires while the beat could not read `outpcons`
+ * or the head time, nor with `--expect-epoch-freeze`. A paused chain is skipped: a dispute holds
+ * it undecided on purpose.
+ *
+ * @param {string[]} chains the watched chains.
+ * @param {Record<string, object>} states each chain's epoch row.
+ * @param {Record<string, object> | null} consensus each chain's `outpcons` row, or null when unread.
+ * @param {Record<string, { epochIndex: number, sinceMs: number }>} undecidedSince each chain's record.
+ * @param {number | null} headBlockTimeMs the depot head block's time (ms).
+ * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
+ * @param {boolean} expectEpochFreeze whether the flow deliberately holds an epoch.
+ * @return {string | null} the bail reason, or null.
+ */
+export function undecidedEpochBailReason(
+  chains, states, consensus, undecidedSince, headBlockTimeMs, durationSeconds, expectEpochFreeze = false
+) {
+  if (expectEpochFreeze || consensus == null || headBlockTimeMs == null) return null
+  const undecidedSeconds = chain => (headBlockTimeMs - undecidedSince[chain].sinceMs) / 1000
+  const stalled = chains.find(chain => {
+    const state = states?.[chain]
+    return (
+      state != null &&
+      state.current_epoch_index >= 1 &&
+      state.is_paused !== true &&
+      undecidedSince?.[chain] != null &&
+      !isCurrentEpochDecided(state, consensus[chain]) &&
+      undecidedSeconds(chain) > undecidedEpochAllowanceSeconds(durationSeconds(chain))
+    )
+  })
+  return stalled == null
+    ? null
+    : `${stalled} epoch ${states[stalled].current_epoch_index} undecided for ${Math.round(undecidedSeconds(stalled))}s ` +
+        `(allowance ${undecidedEpochAllowanceSeconds(durationSeconds(stalled))}s; ` +
+        `outpcons last decided ${consensus[stalled]?.epoch_index ?? "none"})`
+}
+
+/**
+ * Probe 3 (consensus) — every outpost chain's `sysio.msgch::outpcons` row: the epoch whose
+ * winner the depot accepted last on each chain.
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @return {Promise<Record<string, object> | null>} each chain's row keyed by its codename
+ *   (`chainOutpostConsensus`), or null while the table cannot be read.
+ */
+async function probeOutpostConsensus(clioExecutable, url) {
+  const rows = await clioGetTableRows(
+    clioExecutable, url, SysioMsgchAccount, OutpostConsensusTable, SysioMsgchAccount, EpochStateRowLimit
+  )
+  return rows == null ? null : chainOutpostConsensus(rows)
 }
 
 /**
@@ -1046,31 +1389,41 @@ ${chalk.bold("Options:")}
   --cluster-path <path>          cluster data dir of the flow run under watch
                                  (or pass it as the first positional arg). Required.
   --interval-seconds <n>         seconds between heartbeats (default: ${DefaultIntervalSeconds})
-  --epoch-duration-seconds <n>   every outpost chain's epoch duration (default: each
-                                 chain's sysio.epoch::epochcfg epoch_duration_sec,
+  --epoch-duration-seconds <n>   every outpost chain's minimum epoch duration (default:
+                                 each chain's sysio.epoch::epochcfg epoch_duration_sec,
                                  read every beat; its cluster-config
                                  outpostEpochDurationSec until that row exists);
-                                 scales each chain's bootstrap-deadline bail and
-                                 epoch-stall window
+                                 scales each chain's bootstrap-deadline bail and its
+                                 epoch-stall grace past due_at
   --expect-freeze                ONLY flow-emergency-stop: exact OutpostFrozen
                                  (0x17c7), EnforcedPause and NoPendingDesyndication
                                  recovery refusals become NOISE.
                                  Default FATAL. All liveness bails remain enabled.
-  --expect-epoch-freeze          the flow INTENTIONALLY freezes a chain's epoch as its
+  --expect-epoch-freeze          the flow INTENTIONALLY holds a chain that is due as its
                                  mechanism (flow-batch-operator-slashing holds the
                                  contested chain's epoch across the dispute lifecycle;
                                  flow-economic-clock and flow-per-chain-epochs pause
-                                 Ethereum's epoch while Solana keeps advancing);
-                                 suppresses the epoch-stall / opp-zero-growth /
-                                 direction-plateau bails (FATAL + bootstrap bails
-                                 still fire). Default off.
+                                 Ethereum's epoch while Solana is kept due);
+                                 suppresses the epoch-stall / undecided-epoch /
+                                 opp-zero-growth / direction-plateau bails (FATAL,
+                                 bootstrap and head-advance bails still fire: a pause
+                                 freezes epochs, never blocks). Default off. An IDLE
+                                 chain (no traffic) needs no flag: idle is never a stall.
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
-                            (one epoch per outpost chain; p = paused)
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+                            (one epoch per outpost chain; p = paused; i = idle, no
+                            traffic, never a stall; w = traffic, waiting for due_at;
+                            d = due, must advance; ? = due_at unreadable, never idle;
+                            u = current epoch still undecided)
+  Liveness bails beside the epoch ones: the depot head block frozen across a beat and
+                            a ${HeadStallReprobeDelaySeconds}s re-probe (wall clock); a chain's epoch undecided past
+                            max(${UndecidedEpochFloorSeconds}s, ${UndecidedEpochDurations} x its minimum)
   growth=first-epoch-boundary(until=<UTC>): zero delta before every chain's first
-                            epoch start + configured duration; reported without a bail
+                            epoch start + configured duration; reported without a bail.
+                            Past it, zero delta bails only while a chain has been due
+                            for a whole beat
   NOISE-TAIL: / FAIL-TAIL:  quote lines when the class deltas are positive
   BAIL: <reason>            a red flag fired → SIGINTs the flow, exits 1
                             (cluster dir preserved for forensics)
@@ -1119,35 +1472,33 @@ function resolveNumberOption(flagName, defaultValue) {
   return value
 }
 
-/** Parse ABI time_point strings as UTC, including strings without a zone suffix. */
-function epochTimestampMs(value) {
-  if (typeof value !== "string" || value.length === 0) return null
-  const timestamp = Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`)
-  return Number.isFinite(timestamp) ? timestamp : null
-}
-
 /**
  * Establish the one-time initial growth boundary from chain time, never the
- * monitor's observation time. A late attachment at epoch > 1 is already past
- * the first epoch; missing timestamps fail closed rather than grant new grace.
- * next_epoch_start can recover the start using the configured chain duration;
- * an explicit monitor duration override then applies to that recovered start.
+ * monitor's observation time: the chain's genesis epoch start plus its
+ * minimum duration (the genesis round trip ships with no traffic). A late
+ * attachment at epoch > 1 is already past the first epoch; a missing or
+ * unparseable start fails closed rather than grant new grace.
+ *
+ * @param {object} epochState the chain's epoch row.
+ * @param {number} epochDurationSeconds the chain's monitored minimum duration.
+ * @return {number | null} the deadline (ms), 0 past the first epoch, or null before
+ *   the chain started.
  */
-export function firstEpochGrowthDeadlineMs(epochState, epochDurationSeconds, configuredDurationSeconds = epochDurationSeconds) {
+export function firstEpochGrowthDeadlineMs(epochState, epochDurationSeconds) {
   const index = epochState?.current_epoch_index
   if (index == null || index < 1) return null
   if (index > 1) return 0
-  const currentStart = epochTimestampMs(epochState.current_epoch_start)
-  const nextStart = epochTimestampMs(epochState.next_epoch_start)
-  const start = currentStart ?? (nextStart == null ? null : nextStart - configuredDurationSeconds * 1000)
+  const start = timePointMs(epochState.current_epoch_start)
   return start == null ? 0 : start + epochDurationSeconds * 1000
 }
 
 /**
- * Self-check 6: mark the initial partial-epoch cycle, then bail on the FIRST
- * zero-growth cycle at/past its chain-time boundary. The caller retains the
- * first deadline across epoch changes. Before the network has started (some
- * chain's epoch still null/0) the bootstrap rule applies instead.
+ * Self-check 6 under depot pacing: mark the initial partial-epoch cycle, then
+ * bail on a zero-growth cycle at/past its chain-time boundary ONLY while some
+ * chain has been due for a whole beat (`overdue`) — an idle cluster grows no
+ * artifacts and is healthy. The caller retains the first deadline across epoch
+ * changes. Before the network has started (some chain's epoch still null/0)
+ * the bootstrap rule applies instead.
  *
  * @param {boolean} networkStarted whether every watched chain has reached epoch >= 1.
  * @param {number} oppDelta opp-debugging artifacts added since the previous beat.
@@ -1156,12 +1507,16 @@ export function firstEpochGrowthDeadlineMs(epochState, epochDurationSeconds, con
  * @param {number | null} deadlineMs the first-epoch growth deadline (ms), or null
  *   before it is known.
  * @param {boolean} expectEpochFreeze whether the flow deliberately freezes an epoch.
+ * @param {string[]} overdue the chains due for at least a beat ({@link overdueChains}).
  * @return {string | null} the bail reason, or null when the beat is healthy.
  */
-export function oppGrowthBailReason(networkStarted, oppDelta, oppTotal, nowMs, deadlineMs, expectEpochFreeze = false) {
-  if (!networkStarted || oppDelta > 0 || expectEpochFreeze) return null
+export function oppGrowthBailReason(
+  networkStarted, oppDelta, oppTotal, nowMs, deadlineMs, expectEpochFreeze = false, overdue = []
+) {
+  if (!networkStarted || oppDelta > 0 || expectEpochFreeze || overdue.length === 0) return null
   if (deadlineMs != null && nowMs < deadlineMs) return null
-  return `opp-debugging zero growth (total=${oppTotal}) on a post-bootstrap heartbeat`
+  return `opp-debugging zero growth (total=${oppTotal}) on a post-bootstrap heartbeat while ${overdue.join(", ")} ` +
+    "is due and overdue"
 }
 
 /** Run the CLI heartbeat; importing the log probe does not start a monitor. */
@@ -1178,17 +1533,20 @@ async function main() {
     ? null
     : resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
   /**
-   * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes a chain's epoch
-   * as part of its mechanism — flow-batch-operator-slashing holds the contested
-   * epoch index across the entire dispute → vote → resolve → slash lifecycle by
-   * making the sole active batch-op group SBP-less (it never delivers, so depot
-   * consensus cannot advance and the epoch is paused for the dispute), and
-   * flow-economic-clock and flow-per-chain-epochs pause Ethereum's consensus epoch
-   * through `sysio.epoch::pause` while Solana keeps advancing. Suppresses the three
-   * epoch-ADVANCEMENT bails (epoch-stall, opp zero-growth, direction-plateau) that
-   * would otherwise false-kill such a flow. The FATAL-signature and
-   * bootstrap-never-completes bails STILL fire — a real plugin/execution failure
-   * is still caught. Default off; every other flow's monitoring is unchanged.
+   * `--expect-epoch-freeze`: the watched flow INTENTIONALLY holds a chain that is
+   * due as part of its mechanism — flow-batch-operator-slashing holds the
+   * contested epoch index across the entire dispute → vote → resolve → slash
+   * lifecycle by making the sole active batch-op group SBP-less (it never
+   * delivers, so depot consensus cannot advance and the epoch is paused for the
+   * dispute), and flow-economic-clock and flow-per-chain-epochs pause Ethereum's
+   * consensus epoch through `sysio.epoch::pause` while Solana is kept due.
+   * Suppresses the four epoch-ADVANCEMENT bails (epoch-stall, undecided-epoch,
+   * opp zero-growth, direction-plateau) that would otherwise false-kill such a
+   * flow when the held chain has traffic or an undeliverable group. An idle chain
+   * needs no flag: the stall bails only ever fire on a due chain. The
+   * FATAL-signature, bootstrap-never-completes and head-advance bails STILL fire
+   * — a real plugin/execution failure, or stopped producers, are still caught.
+   * Default off.
    */
   const expectEpochFreeze = argv["expect-epoch-freeze"] === true
   const expectFreeze = argv["expect-freeze"] === true
@@ -1203,15 +1561,19 @@ async function main() {
   let firstGrowthDeadlineMs = null
   /** Each chain's epoch index at the previous beat, by codename. */
   const previousEpochIndices = {}
-  /** When each chain was last seen to advance (monitor clock, ms), by codename. */
-  const lastAdvanceMs = {}
+  /** Each chain's current epoch and the instant it has been undecided since ({@link undecidedEpochSince}). */
+  let undecidedSince = {}
+  /** The depot head block number at the previous beat (null when that beat's probe failed). */
+  let previousHeadBlockNumber = null
+  /** The wall clock (ms) of the previous beat. */
+  let previousBeatTimestamp = null
   let previousOppTotal = 0
   let previousFatalCount = 0
   let previousNoiseCount = 0
   let fatalGrowthStreak = 0
   let firstLivenessTimestamp = null
-  const previousDirectionCounts = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
-  const directionFreezeStreaks = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
+  let previousDirectionCounts = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
+  let freezeStreaks = Object.fromEntries(OppDirections.map(direction => [direction.name, 0]))
   const startTimestamp = Date.now()
 
   while (true) {
@@ -1234,7 +1596,8 @@ async function main() {
     // Probe 1 — chain liveness (also starts the bootstrap-deadline clock).
     const liveness = await probeChainLiveness(clioExecutable, producerUrl),
       headBlockNumber = liveness?.headBlockNumber,
-      libBlockNumber = liveness?.libBlockNumber
+      libBlockNumber = liveness?.libBlockNumber,
+      headBlockTimeMs = liveness?.headBlockTimeMs ?? null
     if (headBlockNumber != null && firstLivenessTimestamp == null) {
       firstLivenessTimestamp = now
     }
@@ -1242,52 +1605,50 @@ async function main() {
     // Probe 2 — operators (queried every beat; see probeOperators for why unprinted).
     await probeOperators(clioExecutable, producerUrl)
 
-    // Probe 3 — every outpost chain's epoch state, and its epoch duration from
-    // the depot's epochcfg row (the cluster config's until the row exists).
+    // Probe 3 — every outpost chain's epoch state, its epoch duration from the
+    // depot's epochcfg row (the cluster config's until the row exists), and the
+    // epoch each chain decided last (outpcons; null while unreadable).
     const epochStates = (await probeEpochStates(clioExecutable, producerUrl)) ?? {}
     const epochConfigs = (await probeEpochConfigs(clioExecutable, producerUrl)) ?? {}
+    const outpostConsensus = await probeOutpostConsensus(clioExecutable, producerUrl)
     const chainDurations = resolveChainEpochDurations(clusterConfig.chainEpochDurationSeconds, epochConfigs)
     const chains = monitoredChains(clusterConfig.chainEpochDurationSeconds, epochConfigs, epochStates)
-    const configuredDuration = chain => chainEpochDurationSeconds(
-      chainDurations, chain, null, clusterConfig.defaultEpochDurationSeconds
-    )
     const monitoredDuration = chain => chainEpochDurationSeconds(
       chainDurations, chain, epochDurationOverrideSeconds, clusterConfig.defaultEpochDurationSeconds
     )
     const epochIndices = Object.fromEntries(
       chains.map(chain => [chain, epochStates[chain]?.current_epoch_index])
     )
+    undecidedSince = Object.fromEntries(
+      chains
+        .map(chain => [chain, undecidedEpochSince(undecidedSince[chain], epochStates[chain], headBlockTimeMs)])
+        .filter(([, record]) => record != null)
+    )
     // The network is past bootstrap once EVERY chain has started its epoch 1; the
     // post-bootstrap gates (FATAL tail, FATAL growth, stalls) wait for that.
     const networkStarted = chains.length > 0 && chains.every(chain => epochIndices[chain] >= 1)
     if (firstGrowthDeadlineMs == null) {
-      firstGrowthDeadlineMs = networkGrowthDeadlineMs(epochStates, chains, monitoredDuration, configuredDuration)
+      firstGrowthDeadlineMs = networkGrowthDeadlineMs(epochStates, chains, monitoredDuration)
     }
+    // Depot pacing: only a DUE chain's silence is a liveness signal; an idle one
+    // legitimately stays in its epoch and grows no artifacts.
+    const dueChains = chains.filter(chain => chainTraffic(epochStates[chain], headBlockTimeMs) === ChainTraffic.due)
+    const overdueForBeat = overdueChains(chains, epochStates, headBlockTimeMs, intervalSeconds)
 
     // Probe 4 — msgch outbound envelopes.
     const envelopeCount = await probeEnvelopes(clioExecutable, producerUrl)
 
     // Probe 5 — opp-debugging artifacts + per-direction freeze accounting.
     // A plateau = a direction FROZEN for DirectionFreezeBailStreak consecutive
-    // beats while the total advances — evaluated only once EVERY direction has a
-    // non-zero baseline. A single same-count beat right after the baselines
-    // appear is normal ramp, not a plateau.
+    // beats while the total advances and its chain is due — evaluated only once
+    // EVERY direction has a non-zero baseline. A single same-count beat right
+    // after the baselines appear is normal ramp, not a plateau, and an idle
+    // chain's directions never count.
     const opp = await probeOppArtifacts(oppDebuggingDir)
     const oppDelta = opp.total - previousOppTotal
-    const allDirectionsHaveBaseline = OppDirections.every(direction => opp.byDirection[direction.name] > 0)
-    let plateauDirection = null
-    OppDirections.forEach(direction => {
-      const count = opp.byDirection[direction.name]
-      const frozenWhileOthersAdvance =
-        allDirectionsHaveBaseline && count === previousDirectionCounts[direction.name] && oppDelta > 0
-      directionFreezeStreaks[direction.name] = frozenWhileOthersAdvance
-        ? directionFreezeStreaks[direction.name] + 1
-        : 0
-      if (directionFreezeStreaks[direction.name] >= DirectionFreezeBailStreak) {
-        plateauDirection = direction.name
-      }
-      previousDirectionCounts[direction.name] = count
-    })
+    freezeStreaks = directionFreezeStreaks(freezeStreaks, previousDirectionCounts, opp.byDirection, oppDelta, dueChains)
+    previousDirectionCounts = { ...opp.byDirection }
+    const plateaued = plateauDirection(freezeStreaks)
 
     // Probe 6 — aggregate cluster log.
     const clusterLogFile = await resolveClusterLogFile(clusterPath)
@@ -1310,7 +1671,7 @@ async function main() {
     console.log(
       `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
         `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
-        `epoch=${describeChainEpochs(epochStates, chains)} ` +
+        `epoch=${describeChainEpochs(epochStates, chains, headBlockTimeMs, outpostConsensus)} ` +
         `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
         `acts=[${logProbe.actionReceipts.join(" ")}] ` +
         `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})${growthMarker}`
@@ -1323,6 +1684,24 @@ async function main() {
     }
 
     // ── bails ──
+    // Head advance, on the monitor's wall clock: a head block number unchanged
+    // across the beat is re-probed once, and a head still there is a stopped
+    // producer — whatever HTTP still answers, and whatever the chains' traffic
+    // (their due_at is measured on the frozen head time, so no epoch bail sees
+    // it). Never suppressed: a dispute pause freezes epochs, not blocks.
+    if (isHeadFrozen(previousHeadBlockNumber, headBlockNumber)) {
+      await sleep(HeadStallReprobeDelaySeconds * 1000)
+      const reprobed = await probeChainLiveness(clioExecutable, producerUrl)
+      const headBail = headStallBailReason(
+        previousHeadBlockNumber,
+        headBlockNumber,
+        reprobed?.headBlockNumber ?? null,
+        Math.round((now - previousBeatTimestamp) / 1000)
+      )
+      if (headBail != null) await bail(headBail, clusterPath)
+    }
+    previousHeadBlockNumber = headBlockNumber ?? null
+    previousBeatTimestamp = now
     // Bootstrap fallback: chain answering but a chain's epoch still null/0 past
     // its deadline. Every other bail is gated on every chain at epoch >= 1 —
     // without this fallback a monitor against a dead-during-bootstrap chain
@@ -1339,30 +1718,31 @@ async function main() {
       if (bootstrapBail != null) await bail(bootstrapBail, clusterPath)
     }
     const growthBail = oppGrowthBailReason(
-      networkStarted, oppDelta, opp.total, growthNowMs, firstGrowthDeadlineMs, expectEpochFreeze
+      networkStarted, oppDelta, opp.total, growthNowMs, firstGrowthDeadlineMs, expectEpochFreeze, overdueForBeat
     )
     if (growthBail != null) await bail(growthBail, clusterPath)
     if (networkStarted) {
-      // Epoch stall, per chain: a chain at the same epoch as the previous beat
-      // is re-probed once its unchanged time plus EpochStallReprobeDelaySeconds
-      // reaches EpochStallDurations of its own duration (at 60 s epochs: every
-      // same-epoch beat), and bails only if STILL unchanged (a true stall = dead
-      // cluster). Every due chain shares ONE re-probe per beat. Epoch-ADVANCEMENT
-      // bails (epoch-stall + opp zero-growth) — skipped when the flow
-      // intentionally freezes an epoch (see {@link expectEpochFreeze}).
-      const unchangedSeconds = chain => (now - (lastAdvanceMs[chain] ?? now)) / 1000
+      // Epoch stall, per chain: a DUE chain at the same epoch as the previous
+      // beat is re-probed once its time past due_at (depot head clock) plus
+      // EpochStallReprobeDelaySeconds reaches EpochStallDurations of its own
+      // minimum, and bails only if STILL unchanged (a due chain that cannot
+      // advance = dead cluster). An idle chain is never re-probed. Every due
+      // chain shares ONE re-probe per beat. Epoch-ADVANCEMENT bails (epoch-stall
+      // + opp zero-growth) — skipped when the flow intentionally holds a due
+      // chain (see {@link expectEpochFreeze}).
+      const overdueSeconds = chain => chainOverdueSeconds(epochStates[chain], headBlockTimeMs)
       const stallDue = expectEpochFreeze
         ? []
-        : stallReprobeDueChains(chains, epochIndices, previousEpochIndices, unchangedSeconds, monitoredDuration)
+        : stallReprobeDueChains(chains, epochIndices, previousEpochIndices, overdueSeconds, monitoredDuration)
       if (stallDue.length > 0) {
         await sleep(EpochStallReprobeDelaySeconds * 1000)
         const reprobedStates = (await probeEpochStates(clioExecutable, producerUrl)) ?? {}
         const stalled = stalledChain(stallDue, reprobedStates, epochIndices, previousEpochIndices)
         if (stalled != null) {
           await bail(
-            `${stalled} epoch stalled at ${epochIndices[stalled]} for ` +
-              `${Math.round(unchangedSeconds(stalled)) + EpochStallReprobeDelaySeconds}s across heartbeats + ` +
-              `${EpochStallReprobeDelaySeconds}s re-probe (epoch_duration=${monitoredDuration(stalled)}s)`,
+            `${stalled} epoch stalled at ${epochIndices[stalled]} while due: ` +
+              `${Math.round(overdueSeconds(stalled)) + EpochStallReprobeDelaySeconds}s past due_at ` +
+              `(${EpochStallReprobeDelaySeconds}s re-probe included; epoch_duration=${monitoredDuration(stalled)}s)`,
             clusterPath
           )
         }
@@ -1370,6 +1750,14 @@ async function main() {
           epochIndices[chain] = reprobedStates[chain]?.current_epoch_index ?? epochIndices[chain]
         })
       }
+      // Undecided epoch, per chain: a started, unpaused chain whose current
+      // epoch (genesis included) outpcons still shows undecided past its
+      // allowance — traffic or not, so a dead relay group on an idle chain is
+      // caught too. Skipped with --expect-epoch-freeze (see expectEpochFreeze).
+      const undecidedBail = undecidedEpochBailReason(
+        chains, epochStates, outpostConsensus, undecidedSince, headBlockTimeMs, monitoredDuration, expectEpochFreeze
+      )
+      if (undecidedBail != null) await bail(undecidedBail, clusterPath)
       // FATAL growth: bail on PERSISTENT growth only — one-off transients (nonce
       // retries, momentary table-read races) occur in PASSING runs; persistent
       // plugin breakage grows every cycle.
@@ -1379,9 +1767,9 @@ async function main() {
           clusterPath
         )
       }
-      if (!expectEpochFreeze && plateauDirection != null) {
+      if (!expectEpochFreeze && plateaued != null) {
         await bail(
-          `direction ${plateauDirection} frozen for ${DirectionFreezeBailStreak}+ heartbeats while total advanced`,
+          `direction ${plateaued} frozen for ${DirectionFreezeBailStreak}+ heartbeats while its chain was due and total advanced`,
           clusterPath
         )
       }
@@ -1389,9 +1777,7 @@ async function main() {
 
     chains.forEach(chain => {
       const index = epochIndices[chain]
-      if (index == null) return
-      if (index !== previousEpochIndices[chain]) lastAdvanceMs[chain] = Date.now()
-      previousEpochIndices[chain] = index
+      if (index != null) previousEpochIndices[chain] = index
     })
     previousOppTotal = opp.total
     previousFatalCount = logProbe.fatalCount

@@ -4,8 +4,10 @@ import { PublicKey } from "@solana/web3.js"
 import { PublicKey as SdkPublicKey } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { OperatorType, OperatorStatus } from "@wireio/opp-typescript-models"
+import type { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  Constants,
   DefaultBatchOperatorGroupCount,
   EthereumRoundTripScenario,
   EthereumOutpostBootstrapper,
@@ -13,10 +15,10 @@ import {
   EthereumSyndicationTool,
   OperatorDaemonTool,
   outputKey,
-  pollUntil,
   ProtocolTiming,
   Report,
   SolanaOutpostBootstrapper,
+  Steps,
   SolanaOutpostProgramTool,
   SyndicationScenario,
   verifyStep,
@@ -72,6 +74,19 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
       "AdmitReplacement",
       "Bond the replacement and start its actual relay daemon"
     ).push(
+      verifyStep(
+        Actor.Sysio,
+        "record-roster-sent",
+        "record the roster hash each outpost was last queued (sysio.epoch::rostersent) before the replacement is admitted",
+        async ctx => {
+          ctx.outputs.set(
+            BatchRosterReplacementScenario.RosterHashesBefore,
+            BatchRosterReplacementScenario.rosterHashes(
+              await Steps.contracts.sysio.epoch.readRostersSent(ctx)
+            )
+          )
+        }
+      ),
       ...WireCollateralTool.planDeposit(
         Actor.BatchOperator,
         "bond-replacement",
@@ -92,11 +107,22 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
       verifyStep(
         Actor.BatchOperator,
         "both-outposts-consumed-replacement",
-        "Ethereum authorizes the replacement for its next delivery; Solana installed its live key and group",
-        async ctx => {
-          await pollUntil(
+        "the depot queued the changed roster to both outposts by itself (rostersent, never erased by the pump); Ethereum authorizes the replacement for its next delivery; Solana installed its live key and group",
+        async (ctx, signal) => {
+          // The pump gives traffic with notetraffic, which leaves rostersent alone, so every roster the
+          // outposts receive here was queued by the depot's own diff against rostersent: a row erased
+          // mid-wait (a resendroster) would mask a roster-propagation regression and fails at once.
+          const rosterHashesBefore = ctx.outputs.assert(
+            BatchRosterReplacementScenario.RosterHashesBefore
+          )
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            BatchRosterReplacementScenario.OutpostChains,
             "replacement installed by both real outposts",
             async () => {
+              BatchRosterReplacementScenario.assertRosterSentKept(
+                await Steps.contracts.sysio.epoch.readRostersSent(ctx)
+              )
               const operator = ctx.keyStore.assertOperator(
                   BatchRosterReplacementScenario.Label
                 ),
@@ -122,7 +148,12 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
               )
             },
             ProtocolTiming.DoubleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
+          )
+          BatchRosterReplacementScenario.assertRostersRequeued(
+            rosterHashesBefore,
+            await Steps.contracts.sysio.epoch.readRostersSent(ctx)
           )
           ctx.outputs.set(
             BatchRosterReplacementScenario.EthereumEpochBefore,
@@ -156,37 +187,53 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
         Actor.BatchOperator,
         "replacement-relayed-ethereum",
         "the replacement submitted an accepted Ethereum envelope after roster consumption",
-        async ctx => {
-          const inbound = BatchRosterReplacementScenario.inbound(ctx),
-            last = Number(await inbound.nextEpochIndex()),
-            first = ctx.outputs.assert(
-              BatchRosterReplacementScenario.EthereumEpochBefore
-            )
-          let delivered = false
-          for (let epoch = first; epoch < last; epoch++) {
-            const digest = await inbound.epochDeliveries(
-              epoch,
-              BatchRosterReplacementScenario.ethereumAddress(ctx)
-            )
-            const accepted = await inbound.getInboundEnvelope(epoch)
-            if (
-              BatchRosterReplacementScenario.isAcceptedEthereumDelivery(
-                epoch,
-                digest,
-                accepted
-              )
-            )
-              delivered = true
-          }
-          Assert.ok(delivered, "replacement never delivered on Ethereum")
-        }
+        async (ctx, signal) => {
+          // The replacement's group comes on duty only as Ethereum advances, so the wait keeps
+          // Ethereum due with governance traffic until one of its epochs carries an accepted
+          // delivery by the replacement.
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.ETHEREUM_CHAIN_CODENAME],
+            "replacement accepted on Ethereum",
+            async () => {
+              const inbound = BatchRosterReplacementScenario.inbound(ctx),
+                last = Number(await inbound.nextEpochIndex()),
+                first = ctx.outputs.assert(
+                  BatchRosterReplacementScenario.EthereumEpochBefore
+                )
+              let delivered = false
+              for (let epoch = first; epoch < last; epoch++) {
+                const digest = await inbound.epochDeliveries(
+                  epoch,
+                  BatchRosterReplacementScenario.ethereumAddress(ctx)
+                )
+                const accepted = await inbound.getInboundEnvelope(epoch)
+                if (
+                  BatchRosterReplacementScenario.isAcceptedEthereumDelivery(
+                    epoch,
+                    digest,
+                    accepted
+                  )
+                )
+                  delivered = true
+              }
+              return delivered
+            },
+            ProtocolTiming.SingleHopBudgetMs,
+            SyndicationScenario.PollMs,
+            signal
+          )
+        },
+        SyndicationScenario.VerifyOptions
       ),
       verifyStep(
         Actor.BatchOperator,
         "replacement-relayed-solana",
         "the replacement recorded the canonical vote for a fully dispatched post-roster Solana envelope",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.SOLANA_CHAIN_CODENAME],
             "replacement accepted on Solana",
             async () => {
               const config =
@@ -219,7 +266,8 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
               return false
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
         },
         SyndicationScenario.VerifyOptions
@@ -244,6 +292,72 @@ export namespace BatchRosterReplacementScenario {
     "BatchRosterReplacement.solanaEpoch",
     "first replacement Solana delivery epoch"
   )
+  /** The two real outposts the replacement must reach, in the order the flow checks them. */
+  export const OutpostChains = [
+    Constants.ETHEREUM_CHAIN_CODENAME,
+    Constants.SOLANA_CHAIN_CODENAME
+  ] as const
+  /** One value per outpost chain the replacement must reach. */
+  export type PerChain<T> = Record<(typeof OutpostChains)[number], T>
+  /**
+   * The roster hash each outpost was last queued (`sysio.epoch::rostersent`) before the
+   * replacement was admitted; absent for a chain no roster had been queued to.
+   */
+  export const RosterHashesBefore = outputKey<PerChain<string>>(
+    "BatchRosterReplacement.rosterHashesBefore",
+    "each outpost's last-queued roster hash before the replacement is admitted"
+  )
+  /**
+   * Each outpost chain's last-queued roster hash from one `rostersent` read — pure.
+   * @param rows - Each chain's `rostersent` row (`EpochContractSteps.readRostersSent`).
+   * @returns Each chain's `roster_hash`, absent for a chain without a row.
+   */
+  export function rosterHashes(
+    rows: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): PerChain<string> {
+    return Object.fromEntries(
+      OutpostChains.map(chain => [chain, rows[chain]?.roster_hash])
+    ) as PerChain<string>
+  }
+  /**
+   * Every outpost chain still has its `rostersent` row — pure. Only governance `resendroster`
+   * erases one, and the keep-due pump never pushes it, so a missing row means something re-shipped
+   * the roster regardless of a diff and would mask a roster-propagation regression.
+   * @param rows - Each chain's `rostersent` row.
+   * @throws When a chain has no row.
+   */
+  export function assertRosterSentKept(
+    rows: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): void {
+    OutpostChains.forEach(chain =>
+      Assert.ok(
+        rows[chain] != null,
+        `sysio.epoch::rostersent lost its ${chain} row: the roster was resent rather than queued by its diff`
+      )
+    )
+  }
+  /**
+   * The depot queued the changed roster to every outpost by itself — pure: each chain's
+   * `rostersent` row is present (never erased, {@link assertRosterSentKept}) and its hash differs
+   * from the one recorded before the replacement was admitted, so an advance's own diff found the
+   * roster changed and queued it.
+   * @param before - Each chain's hash before the admission ({@link RosterHashesBefore}).
+   * @param after - Each chain's `rostersent` row now.
+   * @throws When a row is missing or a chain's roster hash did not change.
+   */
+  export function assertRostersRequeued(
+    before: Readonly<PerChain<string>>,
+    after: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): void {
+    assertRosterSentKept(after)
+    OutpostChains.forEach(chain =>
+      Assert.notStrictEqual(
+        after[chain].roster_hash,
+        before[chain],
+        `the depot never queued a changed roster to the ${chain} outpost: rostersent still holds ${before[chain]}`
+      )
+    )
+  }
   /** Accepted Ethereum audit metadata decoded by the deployed ABI. */
   export interface AcceptedEthereumEnvelope {
     epochIndex: bigint

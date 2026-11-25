@@ -26,10 +26,17 @@ const { SysioContractAccount, SysioContractName } = SysioContracts
  * `getSysioContract(SysioContractName.epoch).actions.<action>`. Action factory
  * names match the ABI action name exactly. Each outpost chain runs its own
  * consensus epoch, so every consensus action (`setconfig`, `schbatchgps`,
- * `advance`, `pause`, `unpause`) names its chain in its data. The trailing
- * "Reads" section holds the per-chain consensus (`epochstate`, `epochcfg`) and
- * the economic clock (`economycfg`, `economystate`, `blocklog`) accessors every
- * runner / verify step shares — reads are execution details, not Steps.
+ * `advance`, `pause`, `unpause`, `resendroster`, `notetraffic`) names its chain
+ * in its data. A
+ * chain's epochs are depot-paced: `epochcfg.epoch_duration_sec` is its minimum
+ * time between two envelopes, and it advances only once it is due — it has
+ * traffic (`epochstate.traffic_since`) and `epochstate.due_at` has passed — so
+ * an idle chain stays in its epoch. The trailing "Reads" section holds the
+ * per-chain consensus (`epochstate`, `epochcfg`, `rostersent`) and the economic clock
+ * (`economycfg`, `economystate`, `blocklog`) accessors every runner / verify
+ * step shares, and the pure traffic predicates over an `epochstate` row
+ * ({@link EpochContractSteps.isIdle}, {@link EpochContractSteps.msUntilDue}) —
+ * reads are execution details, not Steps.
  */
 export namespace EpochContractSteps {
   /** Input for {@link planSetconfig} — the generated `epoch::setconfig` data. */
@@ -194,12 +201,15 @@ export namespace EpochContractSteps {
    * The account `sysio.epoch::advance` is signed by: the contract itself. Every advance of a
    * chain, its genesis advance included, needs `sysio.msgch` (its `chkcons`) or `sysio.epoch`
    * authority, and a chain's genesis advance also needs its schedule (`schbatchgps`) to exist.
+   * Past its genesis a chain advances only once it is due, under either authority; otherwise
+   * the action returns without effect.
    */
   export const AdvanceAccount = SysioContractAccount[SysioContractName.epoch]
 
   /**
-   * `sysio.epoch::advance` — advance one outpost chain's consensus epoch once its duration has
-   * elapsed. Signed by {@link AdvanceAccount}.
+   * `sysio.epoch::advance` — advance one outpost chain's consensus epoch once it is due (it has
+   * traffic and `due_at` has passed; the genesis advance needs no traffic), opening the next
+   * epoch at the advance time. Signed by {@link AdvanceAccount}.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -345,6 +355,130 @@ export namespace EpochContractSteps {
       })
   }
 
+  /**
+   * The account `sysio.epoch::resendroster` requires: the contract itself, whose `active` is
+   * `sysio@active` governance.
+   */
+  export const ResendrosterAccount = SysioContractAccount[SysioContractName.epoch]
+
+  /** Input for {@link planResendroster} — the generated `epoch::resendroster` data. */
+  export interface ResendrosterInput extends StepInput {
+    readonly kind: "EpochContractSteps.ResendrosterInput"
+    /** The action data: the outpost chain whose roster is queued again. */
+    readonly data: SysioContracts.SysioEpochResendrosterAction
+  }
+
+  /**
+   * `sysio.epoch::resendroster` — forget the roster last queued to one outpost chain, so its next
+   * advance queues the roster again, and record traffic for the chain at now: governance traffic,
+   * which makes an idle chain due one minimum duration later. Refused when no roster has been
+   * queued to the outpost since its last advance. Signed by {@link ResendrosterAccount}.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param data - The chain given traffic.
+   * @returns The `sysio.epoch` step.
+   */
+  export function planResendroster<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioEpochResendrosterAction
+  ): ClusterBuildStep<C, ResendrosterInput> {
+    return ClusterBuildStep.create<C, ResendrosterInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "EpochContractSteps.ResendrosterInput", data },
+      runResendroster
+    )
+  }
+
+  /** Named runner — `sysio.epoch::resendroster` for the input's chain, signed `sysio.epoch@active`. */
+  export async function runResendroster<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ResendrosterInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .actions.resendroster.invoke(input.data, {
+        authorization: WireClient.activeAuthorization(ResendrosterAccount)
+      })
+  }
+
+  /**
+   * The account `sysio.epoch::notetraffic` requires: `sysio.msgch`, which records a chain's
+   * traffic itself (`queueout`, `buildenv`). Its `active` authority is `sysio@active`, so on a local
+   * cluster the harness signs it with the same key that signs `sysio.epoch@active`.
+   */
+  export const NotetrafficAccount = SysioContractAccount[SysioContractName.msgch]
+
+  /**
+   * The `since` that `sysio.epoch::notetraffic` reads as now: a zero `time_point` (the contract
+   * takes a zero or future `since` as the current time), so the traffic is stamped with the time of
+   * the block it lands in, on the chain's own clock.
+   */
+  export const TrafficSinceNow = "1970-01-01T00:00:00.000"
+
+  /** Input for {@link planNotetraffic} — the generated `epoch::notetraffic` data. */
+  export interface NotetrafficInput extends StepInput {
+    readonly kind: "EpochContractSteps.NotetrafficInput"
+    /** The action data: the outpost chain given traffic and when that traffic began. */
+    readonly data: SysioContracts.SysioEpochNotetrafficAction
+  }
+
+  /**
+   * `sysio.epoch::notetraffic` — record traffic for one outpost chain since `data.since`
+   * ({@link TrafficSinceNow} for now): `traffic_since` keeps the earliest, and the chain is due
+   * one minimum duration after the later of its epoch start and that traffic. Unlike
+   * {@link planResendroster} it leaves the chain's `rostersent` alone, so the next advance queues
+   * the roster only when it changed. No effect before the chain's genesis advance. Signed by
+   * {@link NotetrafficAccount}.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param data - The chain given traffic and when that traffic began.
+   * @returns The `sysio.epoch` step.
+   */
+  export function planNotetraffic<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioEpochNotetrafficAction
+  ): ClusterBuildStep<C, NotetrafficInput> {
+    return ClusterBuildStep.create<C, NotetrafficInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "EpochContractSteps.NotetrafficInput", data },
+      runNotetraffic
+    )
+  }
+
+  /** Named runner — `sysio.epoch::notetraffic` for the input's chain, signed `sysio.msgch@active`. */
+  export async function runNotetraffic<C extends ClusterBuildContext>(
+    ctx: C,
+    input: NotetrafficInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .actions.notetraffic.invoke(input.data, {
+        authorization: WireClient.activeAuthorization(NotetrafficAccount)
+      })
+  }
+
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
 
   /**
@@ -418,7 +552,8 @@ export namespace EpochContractSteps {
 
   /**
    * Every outpost chain's `sysio.epoch::epochstate` row from ONE read — each chain's consensus
-   * epoch index, its boundaries, its schedule window and its pause.
+   * epoch index, its start, its pending traffic and when it is due, its schedule window and its
+   * pause.
    *
    * @param ctx - The build context.
    * @returns Each outpost chain's epoch-state row (absent for a chain before its `setconfig`).
@@ -431,6 +566,28 @@ export namespace EpochContractSteps {
       .getSysioContract(SysioContractName.epoch)
       .tables.epochstate.query({ limit: ChainRowLimit })
     return toChainRows(EpochStateTable, rows, more)
+  }
+
+  /** The per-chain table of the roster last queued to each outpost, as a truncated read names it. */
+  const RosterSentTable = "rostersent"
+
+  /**
+   * Every outpost chain's `sysio.epoch::rostersent` row from ONE read — the hash of the
+   * `OPERATORS` roster last queued to that outpost. An advance queues the roster again only when
+   * its hash differs; `resendroster` erases the row so the next advance queues it regardless.
+   *
+   * @param ctx - The build context.
+   * @returns Each outpost chain's row (absent for a chain no roster has been queued to, or whose
+   *   row `resendroster` erased).
+   * @throws When the read is truncated at {@link ChainRowLimit}.
+   */
+  export async function readRostersSent<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<SysioContracts.SysioEpochRosterSentType>> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.epoch)
+      .tables.rostersent.query({ limit: ChainRowLimit })
+    return toChainRows(RosterSentTable, rows, more)
   }
 
   /**
@@ -560,6 +717,67 @@ export namespace EpochContractSteps {
     chain: Constants.OutpostChainCodename
   ): Promise<string[][]> {
     return (await readEpochState(ctx, chain))?.batch_op_groups ?? []
+  }
+
+  /**
+   * The epoch ms of a zero `time_point` cell — `epochstate.traffic_since` and `due_at` while the
+   * chain has no traffic (the chain renders them as the Unix epoch).
+   */
+  export const NoTrafficMs = 0
+
+  /**
+   * When a chain may next advance (`epochstate.due_at`), in epoch ms on the chain's clock —
+   * {@link NoTrafficMs} while the chain has no traffic. Pure.
+   *
+   * @param state - The chain's `epochstate` row.
+   * @returns The chain's `due_at` (ms).
+   */
+  export function dueAtMs(state: SysioContracts.SysioEpochEpochStateType): number {
+    return WireClient.chainTimeMs(state.due_at)
+  }
+
+  /**
+   * When a chain's pending traffic began (`epochstate.traffic_since`), in epoch ms on the chain's
+   * clock — {@link NoTrafficMs} while the chain has none. Pure.
+   *
+   * @param state - The chain's `epochstate` row.
+   * @returns The chain's `traffic_since` (ms).
+   */
+  export function trafficSinceMs(state: SysioContracts.SysioEpochEpochStateType): number {
+    return WireClient.chainTimeMs(state.traffic_since)
+  }
+
+  /**
+   * Whether a chain is idle: past its genesis advance with no traffic (`due_at` zero), so it
+   * never advances until traffic arrives — a depot general-lane outbound message, rows its last
+   * envelope left behind ({@link planNotetraffic}, which `sysio.msgch` pushes), or a governance
+   * {@link planResendroster}. Idle is not a stall: an idle chain's decided epoch simply stays
+   * current. A row whose `due_at` does not parse is not idle. Pure.
+   *
+   * @param state - The chain's `epochstate` row (absent before its `setconfig`).
+   * @returns True for a started chain with no traffic; false for a missing row, a chain before
+   *   its genesis advance (which needs no traffic), or a chain with traffic.
+   */
+  export function isIdle(state: SysioContracts.SysioEpochEpochStateType): boolean {
+    return state != null && state.current_epoch_index > 0 && dueAtMs(state) === NoTrafficMs
+  }
+
+  /**
+   * How long until a chain is due its next advance at `nowMs` (ms) — `due_at` minus now, zero or
+   * negative once due, and `Infinity` while the chain has no traffic (it is never due). Being due
+   * is necessary, not sufficient: the chain also advances only once its current epoch is decided
+   * and it is not paused. Pure.
+   *
+   * @param state - The chain's `epochstate` row.
+   * @param nowMs - The instant measured from, in epoch ms on the chain's clock (its head time).
+   * @returns The wait until due (ms), or `Infinity` with no traffic.
+   */
+  export function msUntilDue(
+    state: SysioContracts.SysioEpochEpochStateType,
+    nowMs: number
+  ): number {
+    const due = dueAtMs(state)
+    return due === NoTrafficMs ? Number.POSITIVE_INFINITY : due - nowMs
   }
 
   /**

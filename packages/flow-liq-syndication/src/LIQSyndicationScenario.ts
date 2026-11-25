@@ -177,13 +177,16 @@ export class LIQSyndicationScenario extends FlowScenario {
         Actor.BatchOperator,
         "syndicate-liq-circulates",
         "SYNDICATE_LIQ appears in an OUTPOST_SOLANA_DEPOT envelope artifact",
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             "SYNDICATE_LIQ in an OUTPOST_SOLANA_DEPOT envelope",
             async () =>
               containsSyndicateLIQ(oppDebuggingPath(ctx.config.clusterPath)),
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
         },
         circulationStepOptions
@@ -199,14 +202,16 @@ export class LIQSyndicationScenario extends FlowScenario {
         Actor.Sysio,
         "syndication-remains-held",
         "the closed envelope is WAITING or REQUESTED and the unlinked user has no shadow",
-        async ctx => {
+        async (ctx, signal) => {
           const pubkey = SolanaFundingTool.loadKeypair(
             ctx.config.dataPath,
             Constants.UserKeypairName
           )
             .publicKey.toBuffer()
             .toString("hex")
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             "held syndication envelope",
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
@@ -225,7 +230,8 @@ export class LIQSyndicationScenario extends FlowScenario {
               return true
             },
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
           Assert.strictEqual(
             await WireSyndicationTool.readParked(
@@ -355,7 +361,7 @@ export class LIQSyndicationScenario extends FlowScenario {
         Actor.BatchOperator,
         "liq-yield-circulates",
         "the circulated LIQ_YIELD decodes to exactly the delta report_liq_yield reported",
-        async ctx => {
+        async (ctx, signal) => {
           const before = ctx.outputs.assert(
               LIQSyndicationScenario.LiqYieldStateBeforeKey
             ),
@@ -371,7 +377,9 @@ export class LIQSyndicationScenario extends FlowScenario {
             1n,
             "report_liq_yield must consume exactly one value of the shared liq sequence"
           )
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             `LIQ_YIELD for ${reportedAmount} (sequence ${after.liqSequence}) in an OUTPOST_SOLANA_DEPOT envelope`,
             async () =>
               containsLIQYield(oppDebuggingPath(ctx.config.clusterPath)) &&
@@ -383,7 +391,8 @@ export class LIQSyndicationScenario extends FlowScenario {
                   report.amount?.amount === reportedAmount
               ),
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
         },
         circulationStepOptions
@@ -399,14 +408,16 @@ export class LIQSyndicationScenario extends FlowScenario {
         Actor.Sysio,
         "yield-intake",
         "capture the held yield envelope",
-        async ctx => {
+        async (ctx, signal) => {
           const before = ctx.outputs.assert(
               LIQSyndicationScenario.LiqYieldStateBeforeKey
             ),
             after = await SolanaLiqSyndicationTool.readLiqYieldState(ctx),
             amount = after.liqYieldReported - before.liqYieldReported
           ctx.outputs.set(LIQSyndicationScenario.ReportedYieldKey, amount)
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [HarnessConstants.SOLANA_CHAIN_CODENAME],
             "reported yield intake",
             async () => {
               const envelope = await WireSyndicationTool.readHeldEnvelope(
@@ -424,7 +435,8 @@ export class LIQSyndicationScenario extends FlowScenario {
               return true
             },
             Constants.CirculationTimeoutMs,
-            Constants.CirculationPollMs
+            Constants.CirculationPollMs,
+            signal
           )
         },
         circulationStepOptions
@@ -473,12 +485,12 @@ export class LIQSyndicationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "DepotKeepsAdvancing",
-      "The depot advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
+      "Kept due, every chain advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
     ).push(
       Steps.epochAdvance.planVerifyEpochIndicesAdvanced(
         Actor.Sysio,
         "epoch-index-advances",
-        "every outpost chain's sysio.epoch::epochstate.current_epoch_index advances past its pre-syndication snapshot",
+        "every outpost chain, given keep-due traffic while idle, advances its sysio.epoch::epochstate.current_epoch_index past its pre-syndication snapshot",
         epochAdvanceStepOptions,
         Constants.PreSyndicationEpochSnapshot
       )

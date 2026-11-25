@@ -1133,14 +1133,16 @@ describe("WireCollateralTool consensus waits", () => {
     [Ethereum]: {
       epochIndex: indices[Ethereum],
       epochStartMs: 0,
-      nextEpochStartMs: 0,
+      trafficSinceMs: 0,
+      dueAtMs: 0,
       paused: false,
       decided: decided.includes(Ethereum)
     },
     [Solana]: {
       epochIndex: indices[Solana],
       epochStartMs: 0,
-      nextEpochStartMs: 0,
+      trafficSinceMs: 0,
+      dueAtMs: 0,
       paused: false,
       decided: decided.includes(Solana)
     }
