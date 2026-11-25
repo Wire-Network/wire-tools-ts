@@ -35,7 +35,9 @@ held envelope. Each write is a Report Step and state assertions are verify Steps
   the actual ratio at settlement, including any custody changes since measurement.
   The tolerated payout must transfer exactly once without pausing or storing a
   pending record. Each stored redemption is paid after recovery in
-  native wei (depot units times 1,000,000,000), and a second call refuses. Before
+  native wei, with a nominal amount of depot units times 1,000,000,000. The
+  receipt must show a single transfer whose pool debit matches liqETH's share
+  rounding at the payout transaction. A second call refuses. Before
   each unpause, a pending-payment call must refuse with `EnforcedPause`, preserving
   the complete record and holder balance. The donor and permissionless cranker is a
   random per-cluster Ethereum wallet, created and funded (`anvil_setBalance`) by

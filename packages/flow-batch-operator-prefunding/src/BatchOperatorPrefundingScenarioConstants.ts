@@ -5,6 +5,7 @@ import {
   Constants as HarnessConstants,
   SyndicationScenario,
   WireLcoImportTool,
+  outputKey,
   type ClusterBuildOptions,
   type WireLcoExportTool
 } from "@wireio/cluster-tool"
@@ -111,7 +112,7 @@ export namespace BatchOperatorPrefundingScenarioConstants {
   }
 
   /**
-   * The user's syndication, in depot (LIQETH) subunits: two LIQETH — below each operator's
+   * The user's nominal send, in depot (LIQETH) subunits: two LIQETH — below each operator's
    * four LIQETH of imported credit and the role's ten LIQETH cap, so one operator can bond
    * it whole.
    */
@@ -125,11 +126,17 @@ export namespace BatchOperatorPrefundingScenarioConstants {
   export const EthereumUser = "prefund.user"
   /** Durable handle of the syndicator's persisted wallet — random, distinct from every operator. */
   export const EthereumWalletName = "batch-operator-prefunding-ethereum-user"
+  /** The actual credit from the pool event, in depot units. */
+  export const CreditedAmount = outputKey<bigint>(
+    "batchOperatorPrefunding.creditedAmount",
+    "Ethereum syndication credit in depot units"
+  )
   /** The user whose syndication the pre-funded operators underwrite. */
   export const Syndicator: BatchOperatorUnderwritingSteps.EthereumSyndicator = {
     account: EthereumUser,
     walletName: EthereumWalletName,
-    amount: Plan.amount
+    amount: Plan.amount,
+    creditedAmount: CreditedAmount
   }
   /** The outpost the syndication comes from. */
   export const Chain = HarnessConstants.ETHEREUM_CHAIN_CODENAME

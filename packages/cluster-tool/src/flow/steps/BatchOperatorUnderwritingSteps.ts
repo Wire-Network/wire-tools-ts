@@ -1,5 +1,8 @@
 import Assert from "node:assert"
 
+import { identity } from "lodash"
+import { match, P } from "ts-pattern"
+
 import type { BatchOperatorUnderwritingConfig } from "@wireio/cluster-tool-shared"
 import { AttestationType } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
@@ -421,7 +424,7 @@ export namespace BatchOperatorUnderwritingSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step options (above the request budget).
-   * @param amount - The envelope's syndicated total.
+   * @param amount - The envelope's syndicated total, or its key when a Step records it.
    * @param after - The epoch the envelope must follow, or `null` for the first.
    * @param epoch - Where the envelope's epoch is recorded.
    * @param request - Where its request id is recorded.
@@ -434,7 +437,7 @@ export namespace BatchOperatorUnderwritingSteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    amount: bigint,
+    amount: bigint | OutputKey<bigint>,
     after: OutputKey<number> | null,
     epoch: OutputKey<number>,
     request: WireSyndicationTool.RequestKey,
@@ -447,12 +450,16 @@ export namespace BatchOperatorUnderwritingSteps {
       description,
       async ctx => {
         const floor = after == null ? -1 : ctx.outputs.assert(after),
+          syndicatedTotal = match(amount)
+            .with(P.bigint, identity)
+            .with({ name: P.string }, key => ctx.outputs.assert(key))
+            .exhaustive(),
           envelope = await pollFor(
             `${name}: the envelope has an issued request`,
             async () =>
               findRecordedEnvelope(
                 await WireSyndicationTool.readEnvelopes(ctx, chain, token),
-                amount,
+                syndicatedTotal,
                 floor
               ),
             UnderwriterRequestIssuedBudgetMs,
@@ -1450,8 +1457,10 @@ export namespace BatchOperatorUnderwritingSteps {
     readonly account: string
     /** Durable handle of the user's persisted Ethereum wallet. */
     readonly walletName: string
-    /** The syndicated amount, in depot (LIQETH) subunits. */
+    /** The nominal send amount, expressed in depot (LIQETH) subunits. */
     readonly amount: bigint
+    /** Where to record the actual credited amount in depot units, when requested. */
+    readonly creditedAmount?: OutputKey<bigint>
   }
 
   /** Acquire this many times the syndicated liqETH, so a share price above one cannot leave the wallet short. */
@@ -1513,7 +1522,7 @@ export namespace BatchOperatorUnderwritingSteps {
     description: string,
     syndicator: EthereumSyndicator
   ): ClusterBuildPhase<C> {
-    const { account, walletName, amount } = syndicator,
+    const { account, walletName, amount, creditedAmount } = syndicator,
       nativeAmount = ethereumNativeAmount(amount)
     return ClusterBuildPhase.create<C>(parent, name, description).push(
       Steps.account.planCreateKeyed<C>(
@@ -1570,7 +1579,9 @@ export namespace BatchOperatorUnderwritingSteps {
         "syndicate to the holder's linked WIRE account",
         SyndicationScenario.OutpostOptions,
         walletName,
-        nativeAmount
+        nativeAmount,
+        undefined,
+        creditedAmount
       )
     )
   }

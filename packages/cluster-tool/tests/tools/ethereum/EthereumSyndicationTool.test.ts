@@ -5,7 +5,9 @@ import { ethers } from "ethers"
 import { EthereumWallet } from "@wireio/cluster-tool/clients/ethereum"
 import {
   EthereumOutpostBootstrapper,
-  Steps
+  OutputStore,
+  Steps,
+  outputKey
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import {
@@ -140,7 +142,8 @@ describe("EthereumSyndicationTool", () => {
   ): Parameters<typeof EthereumSyndicationTool.readPaused>[0] {
     return {
       config: { ethereumPath, dataPath },
-      ethereum: { provider: runner }
+      ethereum: { provider: runner },
+      outputs: new OutputStore()
     } as unknown as Parameters<typeof EthereumSyndicationTool.readPaused>[0]
   }
 
@@ -597,11 +600,13 @@ describe("EthereumSyndicationTool", () => {
       function desyndicatedLog(
         requestId: bigint,
         blockNumber: number,
-        transactionIndex: number
+        transactionIndex: number,
+        nativeAmount = NetReturn * 10n ** 9n,
+        index = 2
       ): ethers.Log {
         const { data, topics } = poolInterface.encodeEventLog("Desyndicated", [
           holder,
-          NetReturn * 10n ** 9n,
+          nativeAmount,
           NetReturn,
           requestId
         ])
@@ -611,11 +616,45 @@ describe("EthereumSyndicationTool", () => {
           blockNumber,
           data,
           topics,
-          index: 0,
+          index,
           removed: false,
           transactionHash: ethers.ZeroHash,
           transactionIndex
         } as unknown as ethers.Log
+      }
+
+      /** Emulate the transaction prestate and the token getters under its storage override. */
+      function payoutRpc(supply = 1n, shares = 1n) {
+        const storage = { [ethers.ZeroHash]: ethers.ZeroHash }
+        return jest.fn(
+          async (method: string, params: unknown[]): Promise<unknown> => {
+            if (method === "debug_traceTransaction") {
+              expect(params).toEqual([
+                ethers.ZeroHash,
+                { tracer: "prestateTracer" }
+              ])
+              return { [LiqEthAddress]: { storage } }
+            }
+            expect(method).toBe("eth_call")
+            const [call, block, override] = params,
+              { to, data } = call as ethers.TransactionRequest
+            expect(to).toBe(ethers.getAddress(LiqEthAddress))
+            expect(block).toEqual({
+              blockHash: ethers.ZeroHash,
+              requireCanonical: true
+            })
+            expect(override).toEqual({
+              [ethers.getAddress(LiqEthAddress)]: { state: storage }
+            })
+            const supplySelector = selector("totalSupply()"),
+              sharesSelector = selector("totalShares()")
+            expect([supplySelector, sharesSelector]).toContain(data)
+            return ethers.AbiCoder.defaultAbiCoder().encode(
+              ["uint256"],
+              [data === supplySelector ? supply : shares]
+            )
+          }
+        )
       }
 
       /** A runner whose provider answers `getLogs` with `logs`, recording each filter. */
@@ -623,7 +662,8 @@ describe("EthereumSyndicationTool", () => {
         logs: ReadonlyArray<ethers.Log>,
         filters: ethers.Filter[] = [],
         receiptLogs: ReadonlyArray<ethers.Log> = [transferLog()],
-        status = 1
+        status = 1,
+        send = payoutRpc()
       ): ethers.ContractRunner {
         const provider = {
           getLogs: async (filter: ethers.Filter) => {
@@ -634,11 +674,12 @@ describe("EthereumSyndicationTool", () => {
           },
           getTransactionReceipt: async () => ({
             status,
+            hash: ethers.ZeroHash,
             blockHash: ethers.ZeroHash,
             logs: receiptLogs
           })
         }
-        return { provider } as unknown as ethers.ContractRunner
+        return { provider, send } as unknown as ethers.ContractRunner
       }
 
       /** A real ABI-encoded token transfer, independent of the pool event. */
@@ -646,7 +687,8 @@ describe("EthereumSyndicationTool", () => {
         from = PoolAddress,
         to = holder,
         value = NetReturn * 10n ** 9n,
-        address = LiqEthAddress
+        address = LiqEthAddress,
+        index = 1
       ): ethers.Log {
         const { data, topics } = liqEthInterface.encodeEventLog(
           EthereumSyndicationTool.LiqEthEvent.Transfer,
@@ -661,7 +703,7 @@ describe("EthereumSyndicationTool", () => {
             blockNumber: 120,
             transactionHash: ethers.ZeroHash,
             transactionIndex: 1,
-            index: 0,
+            index,
             removed: false
           },
           null
@@ -675,14 +717,164 @@ describe("EthereumSyndicationTool", () => {
         )
         expect(payment.transactionIndex).toBe(3)
         expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
+        expect(payment.transferredAmount).toBe(payment.nativeAmount)
+      })
+
+      it("verifies each payout when a transaction pays the same holder twice", async () => {
+        const first = desyndicatedLog(6n, 120, 3, 9n),
+          second = desyndicatedLog(7n, 120, 3, 10n, 4),
+          ctx = context(
+            loggingRunner(
+              [first, second],
+              [],
+              [
+                transferLog(PoolAddress, holder, 9n),
+                first,
+                transferLog(PoolAddress, holder, 10n, LiqEthAddress, 3),
+                second
+              ]
+            )
+          )
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(ctx, 6n)
+        ).resolves.toHaveProperty("transferredAmount", 9n)
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(ctx, 7n)
+        ).resolves.toHaveProperty("transferredAmount", 10n)
+      })
+
+      it.each([8n, 9n])(
+        "accepts the share-rounded debit of %s wei",
+        async value => {
+          const send = payoutRpc(11n, 4n),
+            payment = await EthereumSyndicationTool.readDesyndicationPayment(
+              context(
+                loggingRunner(
+                  [desyndicatedLog(7n, 120, 3, 10n)],
+                  [],
+                  [transferLog(PoolAddress, holder, value)],
+                  1,
+                  send
+                )
+              ),
+              7n
+            )
+          expect(payment.nativeAmount).toBe(10n)
+          expect(payment.transferredAmount).toBe(value)
+          expect(send).toHaveBeenCalledTimes(3)
+        }
+      )
+
+      it.each([7n, 10n])(
+        "refuses a debit outside the share-rounded range of 8–9 wei (%s)",
+        async value => {
+          await expect(
+            EthereumSyndicationTool.readDesyndicationPayment(
+              context(
+                loggingRunner(
+                  [desyndicatedLog(7n, 120, 3, 10n)],
+                  [],
+                  [transferLog(PoolAddress, holder, value)],
+                  1,
+                  payoutRpc(11n, 4n)
+                )
+              ),
+              7n
+            )
+          ).rejects.toThrow(/expected 8–9 wei for 10 wei nominal/)
+        }
+      )
+
+      it("ignores unrelated approvals and transfers and later changes in the receipt", async () => {
+        const approval = liqEthInterface.encodeEventLog(
+          EthereumSyndicationTool.LiqEthEvent.Approval,
+          [holder, PoolAddress, 1n]
+        )
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(
+              loggingRunner(
+                [desyndicatedLog(7n, 120, 3, NetReturn * 10n ** 9n, 3)],
+                [],
+                [
+                  new ethers.Log(
+                    { ...transferLog(), ...approval, index: 0 },
+                    null
+                  ),
+                  transferLog(holder, PoolAddress, 1n),
+                  transferLog(
+                    PoolAddress,
+                    holder,
+                    NetReturn * 10n ** 9n,
+                    LiqEthAddress,
+                    2
+                  ),
+                  transferLog(ethers.ZeroAddress, holder, 1n, LiqEthAddress, 4)
+                ]
+              )
+            ),
+            7n
+          )
+        ).resolves.toHaveProperty("transferredAmount", NetReturn * 10n ** 9n)
+      })
+
+      it("refuses to price a payout from prestate after an earlier mint in the same transaction", async () => {
+        const send = payoutRpc()
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(
+              loggingRunner(
+                [desyndicatedLog(7n, 120, 3)],
+                [],
+                [
+                  transferLog(ethers.ZeroAddress, holder, 1n, LiqEthAddress, 0),
+                  transferLog()
+                ],
+                1,
+                send
+              )
+            ),
+            7n
+          )
+        ).rejects.toThrow(/share rate may have changed before payout/)
+        expect(send).not.toHaveBeenCalled()
+      })
+
+      it("refuses a trace with missing liqETH prestate", async () => {
+        const send = payoutRpc().mockResolvedValueOnce({})
+        await expect(
+          EthereumSyndicationTool.readDesyndicationPayment(
+            context(
+              loggingRunner(
+                [desyndicatedLog(7n, 120, 3)],
+                [],
+                [transferLog()],
+                1,
+                send
+              )
+            ),
+            7n
+          )
+        ).rejects.toThrow(/missing liqETH prestate/)
       })
 
       it.each([
         ["missing", []],
-        ["duplicate", [transferLog(), transferLog()]],
+        ["duplicate", [transferLog(), transferLog(PoolAddress, holder, 1n)]],
+        [
+          "later",
+          [
+            transferLog(
+              PoolAddress,
+              holder,
+              NetReturn * 10n ** 9n,
+              LiqEthAddress,
+              3
+            )
+          ]
+        ],
         ["wrong sender", [transferLog(holder)]],
         ["wrong recipient", [transferLog(PoolAddress, PoolAddress)]],
-        ["wrong amount", [transferLog(PoolAddress, holder, 1n)]],
         [
           "wrong token",
           [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n, PoolAddress)]
@@ -729,6 +921,7 @@ describe("EthereumSyndicationTool", () => {
         ).resolves.toEqual({
           recipient: holder,
           nativeAmount: NetReturn * 10n ** 9n,
+          transferredAmount: NetReturn * 10n ** 9n,
           depotAmount: NetReturn,
           requestId: 7n,
           blockNumber: 120,
@@ -1295,7 +1488,8 @@ describe("EthereumSyndicationTool", () => {
   describe("runSyndicate — the holder's own key", () => {
     const signal = new AbortController().signal,
       /** A 33-byte compressed key a flow might present instead of the holder's. */
-      PresentedKey = `0x02${"ab".repeat(32)}`
+      PresentedKey = `0x02${"ab".repeat(32)}`,
+      creditedAmount = outputKey<bigint>("syndicate.credit", "depot credit")
 
     /**
      * A signer double satisfying the nonce helper — an address, a provider
@@ -1384,6 +1578,64 @@ describe("EthereumSyndicationTool", () => {
           signal
         )
       ).rejects.toThrow(/planSyndicate: reverted \(status=0\)/)
+    })
+
+    it.each([1_999_999_999n, 2_000_000_000n])(
+      "records the receipt's actual credit of %s depot units",
+      async depotAmount => {
+        const ctx = context(),
+          { sendTransaction } = fakeSigner(),
+          amount = 2n * ethers.WeiPerEther,
+          holderKey = EthereumFundingTool.compressedPubkey(
+            ctx,
+            HolderWalletName
+          ),
+          event = poolInterface.encodeEventLog(
+            EthereumSyndicationTool.PoolEvent.Syndicated,
+            [HolderPair.address, holderKey, amount, depotAmount, 1n]
+          )
+        sendTransaction.mockResolvedValue({
+          wait: async () => ({
+            status: 1,
+            logs: [{ ...event, address: PoolAddress }]
+          })
+        })
+
+        await EthereumSyndicationTool.runSyndicate(
+          ctx,
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount,
+            creditedAmount
+          },
+          signal
+        )
+
+        expect(ctx.outputs.assert(creditedAmount)).toBe(depotAmount)
+      }
+    )
+
+    it("fails to record credit when the successful receipt lacks the pool event", async () => {
+      const ctx = context(),
+        { sendTransaction } = fakeSigner()
+      sendTransaction.mockResolvedValue({
+        wait: async () => ({ status: 1, logs: [] })
+      })
+
+      await expect(
+        EthereumSyndicationTool.runSyndicate(
+          ctx,
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount: 5n,
+            creditedAmount
+          },
+          signal
+        )
+      ).rejects.toThrow("Expected one Syndicated event")
+      expect(ctx.outputs.has(creditedAmount)).toBe(false)
     })
   })
 

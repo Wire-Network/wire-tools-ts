@@ -47,6 +47,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
+import type { OutputKey } from "../../orchestration/OutputStore.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
@@ -173,6 +174,7 @@ export namespace EthereumSyndicationTool {
 
   /** ERC-20 events used to verify a pool payment's receipt. */
   export enum LiqEthEvent {
+    Approval = "Approval",
     Transfer = "Transfer"
   }
 
@@ -213,6 +215,23 @@ export namespace EthereumSyndicationTool {
     unit(overrides?: ethers.Overrides): Promise<bigint>
   }
 
+  interface PrestateAccount {
+    storage?: Record<string, string>
+  }
+
+  const EthCallMethod = "eth_call",
+    DebugTraceTransactionMethod = "debug_traceTransaction",
+    LiqEthPrestateTracer = "prestateTracer",
+    LiqEthSupplyFunctions = ["totalSupply", "totalShares"] as const
+
+  // The deployed proxy is upgraded to V4, but the address-book loader uses
+  // the V1 artifact, whose ABI does not include totalShares().
+  const LiqEthSupplyInterface = new ethers.Interface(
+    LiqEthSupplyFunctions.map(
+      name => `function ${name}() view returns (uint256)`
+    )
+  )
+
   /**
    * One `SyndicationPool.Desyndicated` event — a depot release the pool PAID,
    * verified against the liqETH transfer in its successful receipt.
@@ -220,8 +239,10 @@ export namespace EthereumSyndicationTool {
   export interface DesyndicationPayment {
     /** The payout address. */
     recipient: string
-    /** liqETH wei the pool transferred. */
+    /** Nominal payout in wei from the pool event. */
     nativeAmount: bigint
+    /** Actual pool debit in wei from the liqETH transfer. */
+    transferredAmount: bigint
     /** The depot units (9 decimals) the release carried. */
     depotAmount: bigint
     /** The depot request id. */
@@ -598,13 +619,14 @@ export namespace EthereumSyndicationTool {
    * @param signer - The signing wallet (connected).
    * @param request - The call to send.
    * @param label - What is being sent, for the failure message.
+   * @returns The successful transaction receipt.
    * @throws If the transaction reverts.
    */
   async function send(
     signer: ethers.Signer,
     request: ethers.TransactionRequest,
     label: string
-  ): Promise<void> {
+  ): Promise<ethers.TransactionReceipt> {
     const nonce = await resolveLatestNonce(signer),
       response = await signer.sendTransaction({ ...request, nonce }),
       receipt = await response.wait(Confirmations)
@@ -612,6 +634,7 @@ export namespace EthereumSyndicationTool {
       receipt?.status === 1,
       `${label}: reverted (status=${receipt?.status ?? "null"})`
     )
+    return receipt
   }
 
   // ── reads ────────────────────────────────────────────────────────────────
@@ -860,6 +883,7 @@ export namespace EthereumSyndicationTool {
   /**
    * The ONE `Desyndicated` event for `requestId`, backed by exactly one matching
    * liqETH transfer in its successful receipt. A READ, independent of block position.
+   * Requires a provider with transaction prestate tracing and call state overrides.
    *
    * @param source - The build context, or a target.
    * @param requestId - The depot request id.
@@ -898,11 +922,12 @@ export namespace EthereumSyndicationTool {
       `EthereumSyndicationTool: expected exactly one ${PoolEvent.Desyndicated} event for request ` +
         `${requestId}, found ${payments.length}`
     )
-    const [payment] = payments
-    await assertDesyndicationTransfer(source, pool, payment)
+    const [payment] = payments,
+      transferredAmount = await readDesyndicationTransfer(source, pool, payment)
     return {
       recipient: payment.args.recipient,
       nativeAmount: BigInt(payment.args.nativeAmount),
+      transferredAmount,
       depotAmount: BigInt(payment.args.depotAmount),
       requestId: BigInt(payment.args.requestId),
       blockNumber: payment.blockNumber,
@@ -910,35 +935,48 @@ export namespace EthereumSyndicationTool {
     }
   }
 
-  /** Verify the pool's payment against the actual token transfer in its receipt. */
-  async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
+  /** Verify and return the actual token debit in the pool payment's receipt. */
+  async function readDesyndicationTransfer<C extends ClusterBuildContext>(
     source: EthereumOutpostSource<C>,
     pool: ReturnType<typeof loadSyndicationPool>,
     payment: ethers.EventLog
-  ): Promise<void> {
+  ): Promise<bigint> {
     const receipt = await payment.getTransactionReceipt()
-    Assert.ok(
+    Assert.strictEqual(
       receipt?.status,
+      1,
       `EthereumSyndicationTool: payment ${payment.transactionHash} has no successful receipt`
     )
     Assert.strictEqual(receipt.blockHash, payment.blockHash)
-    const token = loadLiqEthToken(source, providerOf(source)),
+    const provider = providerOf(source),
+      token = loadLiqEthToken(source, provider),
       tokenAddress = ethers.getAddress(await token.getAddress()),
       poolAddress = ethers.getAddress(await pool.getAddress()),
+      paymentTopic = pool.interface.getEvent(PoolEvent.Desyndicated).topicHash,
       transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
-      transfers = receipt.logs
+      recipient = ethers.getAddress(payment.args.recipient),
+      previousPayment = receipt.logs.findLast(
+        log =>
+          log.index < payment.index &&
+          ethers.getAddress(log.address) === poolAddress &&
+          log.topics[0] === paymentTopic
+      ),
+      tokenLogs = receipt.logs.filter(
+        event => ethers.getAddress(event.address) === tokenAddress
+      ),
+      // One batch can settle several requests for the same holder.
+      transfers = tokenLogs
         .filter(
-          event =>
-            ethers.getAddress(event.address) === tokenAddress &&
-            event.topics[0] === transferTopic
+          log =>
+            log.index > (previousPayment?.index ?? -1) &&
+            log.index < payment.index &&
+            log.topics[0] === transferTopic
         )
-        .map(event => token.interface.parseLog(event))
+        .map(log => ({ log, args: token.interface.parseLog(log).args }))
         .filter(
-          event =>
-            ethers.getAddress(event.args.from) === poolAddress &&
-            ethers.getAddress(event.args.to) ===
-              ethers.getAddress(payment.args.recipient) &&
-            BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+          ({ args }) =>
+            ethers.getAddress(args.from) === poolAddress &&
+            ethers.getAddress(args.to) === recipient
         )
     Assert.strictEqual(
       transfers.length,
@@ -946,6 +984,91 @@ export namespace EthereumSyndicationTool {
       `EthereumSyndicationTool: expected exactly one matching liqETH transfer for request ` +
         `${payment.args.requestId}, found ${transfers.length}`
     )
+    const [{ log, args }] = transfers
+    // Ordinary transfers and approvals leave both global supplies unchanged.
+    // Any earlier token operation that may change the rate invalidates prestate.
+    tokenLogs
+      .filter(event => event.index < log.index)
+      .forEach(earlier => {
+        const event = token.interface.parseLog(earlier)
+        Assert.ok(
+          event?.name === LiqEthEvent.Approval ||
+            (event?.name === LiqEthEvent.Transfer &&
+              event.args.from !== ethers.ZeroAddress &&
+              event.args.to !== ethers.ZeroAddress),
+          `EthereumSyndicationTool: liqETH share rate may have changed before payout in ${receipt.hash}`
+        )
+      })
+    const [supply, shares] = await readLiqEthTransferSupplies(
+        provider,
+        tokenAddress,
+        receipt
+      ),
+      nativeAmount = BigInt(payment.args.nativeAmount),
+      movedShares = (nativeAmount * shares) / supply,
+      movedValue = movedShares * supply,
+      minimum = movedValue / shares,
+      maximum = ceilDiv(movedValue, shares),
+      actual = BigInt(args.value)
+    // WNE-118 transfers floor the share count. The difference between the
+    // sender's two floor-rounded balances is either floor or ceil of the
+    // exact value of those shares, depending on its remaining shares.
+    Assert.ok(
+      movedShares > 0n && actual >= minimum && actual <= maximum,
+      `EthereumSyndicationTool: liqETH transfer for request ${payment.args.requestId} ` +
+        `debited ${actual} wei, expected ${minimum}–${maximum} wei for ${nativeAmount} wei nominal`
+    )
+    return actual
+  }
+
+  /** Read the raw token supply and share supply as of the payment transaction. */
+  async function readLiqEthTransferSupplies(
+    provider: ethers.Provider,
+    tokenAddress: string,
+    receipt: ethers.TransactionReceipt
+  ): Promise<[bigint, bigint]> {
+    const rpc = provider as ethers.JsonRpcApiProvider
+    Assert.strictEqual(
+      typeof rpc.send,
+      "function",
+      "EthereumSyndicationTool: liqETH payout verification requires JSON-RPC tracing"
+    )
+    // The prestate tracer replays any earlier transactions in this block. The
+    // token getters read the exact ratio without relying on storage slot offsets
+    // or the truncated index(). A full storage override makes missing slots fail
+    // closed instead of falling through to end-of-block storage.
+    const trace = (await rpc.send(DebugTraceTransactionMethod, [
+        receipt.hash,
+        { tracer: LiqEthPrestateTracer }
+      ])) as Record<string, PrestateAccount>,
+      storage = trace[tokenAddress.toLowerCase()]?.storage
+    Assert.ok(
+      storage,
+      `EthereumSyndicationTool: missing liqETH prestate in ${receipt.hash}`
+    )
+    const block = { blockHash: receipt.blockHash, requireCanonical: true },
+      stateOverride = { [tokenAddress]: { state: storage } },
+      [supply, shares] = await Promise.all(
+        LiqEthSupplyFunctions.map(async name => {
+          const result = await rpc.send(EthCallMethod, [
+            {
+              to: tokenAddress,
+              data: LiqEthSupplyInterface.encodeFunctionData(name)
+            },
+            block,
+            stateOverride
+          ])
+          Assert.ok(typeof result === "string")
+          return BigInt(
+            LiqEthSupplyInterface.decodeFunctionResult(name, result)[0]
+          )
+        })
+      )
+    Assert.ok(
+      supply > 0n && shares > 0n,
+      `EthereumSyndicationTool: invalid liqETH prestate supplies in ${receipt.hash}`
+    )
+    return [supply, shares]
   }
 
   /**
@@ -1310,6 +1433,8 @@ export namespace EthereumSyndicationTool {
      * presents another.
      */
     readonly compressedPubkey?: string
+    /** Where to record the pool's credited amount in depot units, when requested. */
+    readonly creditedAmount?: OutputKey<bigint>
   }
 
   /**
@@ -1328,6 +1453,7 @@ export namespace EthereumSyndicationTool {
    * @param walletName - Durable handle of the holder's persisted wallet.
    * @param amount - Wei to syndicate.
    * @param compressedPubkey - A compressed key to present instead of the holder's own.
+   * @param creditedAmount - Where to record the credited amount from the receipt.
    * @returns The definition step.
    */
   export function planSyndicate<
@@ -1339,7 +1465,8 @@ export namespace EthereumSyndicationTool {
     options: ClusterBuildStepOptions,
     walletName: string,
     amount: bigint,
-    compressedPubkey?: string
+    compressedPubkey?: string,
+    creditedAmount?: OutputKey<bigint>
   ): ClusterBuildStep<C, SyndicateInput> {
     return ClusterBuildStep.create<C, SyndicateInput>(
       actor,
@@ -1350,10 +1477,29 @@ export namespace EthereumSyndicationTool {
         kind: "EthereumSyndicationTool.SyndicateInput",
         walletName,
         amount,
-        ...(compressedPubkey != null ? { compressedPubkey } : {})
+        ...(compressedPubkey != null ? { compressedPubkey } : {}),
+        ...(creditedAmount != null ? { creditedAmount } : {})
       },
       runSyndicate
     )
+  }
+
+  /** Read the depot credit emitted by the pool for this transaction. */
+  function readCreditedAmount(
+    pool: ethers.BaseContract,
+    receipt: ethers.TransactionReceipt
+  ): bigint {
+    const poolAddress = String(pool.target).toLowerCase(),
+      events = receipt.logs
+        .filter(log => log.address.toLowerCase() === poolAddress)
+        .map(log => pool.interface.parseLog(log))
+        .filter(event => event?.name === PoolEvent.Syndicated)
+    Assert.strictEqual(
+      events.length,
+      1,
+      `Expected one ${PoolEvent.Syndicated} event in ${receipt.hash}`
+    )
+    return BigInt(events[0].args.depotAmount)
   }
 
   /** Named runner — ONE `SyndicationPool.syndicate`, signed by the holder. */
@@ -1373,16 +1519,16 @@ export namespace EthereumSyndicationTool {
           ctx,
           input.walletName
         )
-      } = input
-    await send(
-      holder,
-      syndicateRequest(
-        loadSyndicationPool(ctx, holder),
-        input.amount,
-        compressedPubkey
-      ),
-      "EthereumSyndicationTool.planSyndicate"
-    )
+      } = input,
+      pool = loadSyndicationPool(ctx, holder),
+      receipt = await send(
+        holder,
+        syndicateRequest(pool, input.amount, compressedPubkey),
+        "EthereumSyndicationTool.planSyndicate"
+      )
+    if (input.creditedAmount != null) {
+      ctx.outputs.set(input.creditedAmount, readCreditedAmount(pool, receipt))
+    }
   }
 
   // ── Step: donate liqETH to the pool (an ERC-20 transfer) ─────────────────

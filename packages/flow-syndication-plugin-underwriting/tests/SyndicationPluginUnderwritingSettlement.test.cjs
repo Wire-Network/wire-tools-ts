@@ -148,6 +148,7 @@ test("Ethereum acquisition has share-price headroom while syndication stays exac
   Assert.equal(deposit.amountWei, Constants.EthereumDepositAmount)
   Assert.ok(deposit.amountWei > syndicate.amount)
   Assert.equal(syndicate.amount, Constants.EthereumNativeAmount)
+  Assert.equal(syndicate.creditedAmount, Constants.EthereumCreditedAmount)
   Assert.equal(
     Constants.EthereumNativeAmount,
     Constants.EthereumPlan.amount * 1_000_000_000n
@@ -703,13 +704,45 @@ test("Ethereum setup verifies funded capital and refuses a one-unit custody shor
   await Assert.rejects(runner(ctx, all, "ethereum-underwriting-funded"))
 })
 
+const plannedEthereumCredit = Constants.EthereumPlan.amount,
+  roundedEthereumCredit = plannedEthereumCredit - 1n
+
+test("Ethereum request lookup uses the one-unit-short receipt credit", async () => {
+  const { ctx, all } = planned(),
+    plan = Constants.EthereumPlan
+  ctx.outputs.set(Constants.EthereumCreditedAmount, roundedEthereumCredit)
+  mock.method(WireSyndicationTool, "readEnvelopes", async () => [
+    {
+      epoch_index: 2,
+      synd_total: plannedEthereumCredit.toString(),
+      state: SysioSyndEnvelopeState.REQUESTED,
+      request_id: 1
+    },
+    {
+      epoch_index: 3,
+      synd_total: roundedEthereumCredit.toString(),
+      state: SysioSyndEnvelopeState.REQUESTED,
+      request_id: 2
+    }
+  ])
+  await runner(ctx, all, "ethereum-requested")()
+  Assert.equal(ctx.outputs.assert(plan.firstEpoch), 3)
+  Assert.equal(ctx.outputs.assert(plan.firstRequest), 2)
+})
+
 // The envelope may already be pruned by then, so settlement waits on the holder's credit.
-for (const fault of ["none", "over-credit", "capital"]) {
-  test(`Ethereum settlement waits for the holder's principal without reading the envelope: ${fault}`, async () => {
+for (const [credit, fault] of [
+  [plannedEthereumCredit, "none"],
+  [roundedEthereumCredit, "none"],
+  [roundedEthereumCredit, "over-credit"],
+  [plannedEthereumCredit, "capital"]
+]) {
+  test(`Ethereum settlement with ${credit} credited units waits on the holder's balance: ${fault}`, async () => {
     const { ctx, all } = planned(),
       plan = Constants.EthereumPlan,
       capital = 100_000_000_000n,
-      outstanding = 410_000_000_000n + plan.amount
+      outstanding = 410_000_000_000n + credit
+    ctx.outputs.set(Constants.EthereumCreditedAmount, credit)
     ctx.outputs.set(Constants.EthereumBefore, {
       holder: 0n,
       operators: capital * BigInt(operatorCount)
@@ -721,7 +754,7 @@ for (const fault of ["none", "over-credit", "capital"]) {
       account === Constants.EthereumUser
         ? holderReads++ === 0
           ? 0n
-          : plan.amount + (fault === "over-credit" ? 1n : 0n)
+          : credit + (fault === "over-credit" ? 1n : 0n)
         : capital -
           (fault === "capital" && account === operatorAccount(2) ? 1n : 0n)
     )

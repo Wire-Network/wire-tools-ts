@@ -15,6 +15,11 @@ export namespace SyndicationPluginUnderwritingScenarioConstants {
     "pluginUnderwritingEthereum",
     { amount: 2_000_000_000n, feeBps: 0 }
   )
+  /** The actual LIQETH credit from the Ethereum syndication receipt, in depot units. */
+  export const EthereumCreditedAmount = outputKey<bigint>(
+    "pluginUnderwritingEthereum.creditedAmount",
+    "Ethereum syndication credit in depot units"
+  )
   /**
    * Durable handle of the independent Ethereum syndicator's persisted wallet — a random
    * per-cluster wallet, distinct from every operator and bootstrap actor.

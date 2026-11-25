@@ -1,9 +1,135 @@
-import type { Connection } from "@solana/web3.js"
+import Assert from "node:assert"
+
+import type {
+  ConfirmedSignatureInfo,
+  Connection,
+  Finality,
+  PublicKey,
+  VersionedTransactionResponse
+} from "@solana/web3.js"
 import { getLogger } from "@wireio/shared"
 import { scaleTimeoutMs, sleep } from "../../../utils/asyncUtils.js"
 import { SolanaClient } from "../SolanaClient.js"
 
-const log = getLogger("signatureUtils")
+const log = getLogger(__filename)
+
+/** A failed history RPC, distinguished from invalid inputs or incomplete scans. */
+export class SolanaHistoryRpcError extends Error {
+  /**
+   * Retain the RPC operation, account/signature and original transport error.
+   * @param message - The failed request and its diagnostic message.
+   * @param options - The original RPC error as the native error cause.
+   */
+  constructor(message: string, options: ErrorOptions) {
+    super(message, options)
+    this.name = SolanaHistoryRpcError.name
+  }
+}
+
+/**
+ * Page signatures newest first until the slot window is complete or its cap is exceeded.
+ * @param getSignaturesForAddress - The connection's bound signature-page RPC.
+ * @param address - Account whose transaction history is being read.
+ * @param asOfSlot - Inclusive oldest slot; zero requests the entire retained history.
+ * @param commitment - Required finality for every page.
+ * @param maxPages - Maximum full pages before refusing an incomplete scan.
+ * @returns All signatures in the completed window, newest first.
+ * @throws SolanaHistoryRpcError for RPC failures; other errors for invalid inputs or a page cap.
+ */
+export async function readSignaturesSince(
+  getSignaturesForAddress: Connection["getSignaturesForAddress"],
+  address: PublicKey,
+  asOfSlot = 0,
+  commitment: Finality = SolanaClient.ConfirmationStatus.confirmed,
+  maxPages = readSignaturesSince.MaxPages
+): Promise<ConfirmedSignatureInfo[]> {
+  Assert.ok(
+    Number.isSafeInteger(asOfSlot) && asOfSlot >= 0,
+    "History marker must be a slot"
+  )
+  Assert.ok(
+    Number.isSafeInteger(maxPages) && maxPages > 0,
+    "History page cap must be positive"
+  )
+  const signatures: ConfirmedSignatureInfo[] = []
+  let before: string
+  for (let pagesRead = 0; pagesRead < maxPages; pagesRead++) {
+    const page = await getSignaturesForAddress(
+        address,
+        {
+          limit: readSignaturesSince.PageSize,
+          ...(before != null ? { before } : {})
+        },
+        commitment
+      ).catch(error => {
+        throw new SolanaHistoryRpcError(
+          `getSignaturesForAddress(${address.toBase58()}, before=${before ?? "latest"}): ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        )
+      }),
+      firstBefore = page.findIndex(info => info.slot < asOfSlot)
+    signatures.push(...(firstBefore < 0 ? page : page.slice(0, firstBefore)))
+    if (firstBefore >= 0 || page.length < readSignaturesSince.PageSize)
+      return signatures
+    before = page[page.length - 1].signature
+  }
+  const message = `${address.toBase58()}'s history since slot ${asOfSlot} runs past ${maxPages} pages of ${readSignaturesSince.PageSize} signatures; narrow the history window or increase the page cap`
+  log.debug(message)
+  throw new Error(message)
+}
+
+export namespace readSignaturesSince {
+  /** Solana's maximum signature page size; shared by all history readers. */
+  export const PageSize = 1_000
+  /** Default wallet-history cap; callers may select a smaller bounded window. */
+  export const MaxPages = 50
+}
+
+/**
+ * Read complete account history serially and return transactions oldest first.
+ * @param connection - The destination RPC connection.
+ * @param address - Account whose transaction history is being read.
+ * @param commitment - Required finality for both signature and transaction reads.
+ * @param maxPages - Maximum signature pages before refusing an incomplete scan.
+ * @returns Complete transactions, or undefined for a missing transaction or metadata.
+ * @throws SolanaHistoryRpcError only for a failed RPC; page-limit errors propagate separately.
+ */
+export async function readTransactionHistory(
+  connection: Connection,
+  address: PublicKey,
+  commitment: Finality,
+  maxPages: number
+): Promise<VersionedTransactionResponse[]> {
+  const signatures = await readSignaturesSince(
+      connection.getSignaturesForAddress.bind(connection),
+      address,
+      0,
+      commitment,
+      maxPages
+    ),
+    transactions: VersionedTransactionResponse[] = []
+  for (const { signature } of signatures.toReversed()) {
+    const transaction = await connection
+      .getTransaction(signature, {
+        commitment,
+        maxSupportedTransactionVersion: 0
+      })
+      .catch(error => {
+        throw new SolanaHistoryRpcError(
+          `getTransaction(${signature}) for ${address.toBase58()}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        )
+      })
+    if (!transaction?.meta) {
+      log.debug(
+        `History transaction or metadata unavailable: address=${address.toBase58()} signature=${signature}`
+      )
+      return undefined
+    }
+    transactions.push(transaction)
+  }
+  return transactions
+}
 
 /**
  * Reject if `promise` does not settle within `ms`. Bounds an otherwise-unbounded

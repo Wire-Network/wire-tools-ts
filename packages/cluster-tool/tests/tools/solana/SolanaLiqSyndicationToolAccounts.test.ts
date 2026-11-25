@@ -12,6 +12,7 @@ import {
   type TokenBalance
 } from "@solana/web3.js"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { readSignaturesSince } from "@wireio/cluster-tool/clients/solana"
 import {
   AnchorEnumVariant,
   PendingPayoutReason,
@@ -715,7 +716,8 @@ describe("SolanaLiqSyndicationTool instruction account maps", () => {
     /** The marker a document carries — the slot a campaign's `synd`s count from. */
     const AsOfSlot = 10
     /** The page size + cap the scan is bounded by. */
-    const { SignatureScanPageSize, SignatureScanMaxPages } = SolanaLiqSyndicationTool
+    const { PageSize: SignatureScanPageSize, MaxPages: SignatureScanMaxPages } =
+      readSignaturesSince
 
     /**
      * A context whose connection serves `accounts` to `getAccountInfo`, the
