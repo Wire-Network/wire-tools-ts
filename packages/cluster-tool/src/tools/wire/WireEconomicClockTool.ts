@@ -16,12 +16,14 @@
 
 import Assert from "node:assert"
 
+import { asOption } from "@3fv/prelude-ts"
 import type { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
 import {
   describeOutpostChains,
   mapOutpostChains,
+  OutpostChainCodenames,
   type PerOutpostChain
 } from "@wireio/cluster-tool-shared"
 
@@ -35,7 +37,9 @@ import {
 import { outputKey, type OutputKey } from "../../orchestration/OutputStore.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { pollFor, pollUntil } from "../../orchestration/StepTools.js"
+import { ChalgContractSteps } from "../../orchestration/steps/contracts/sysio/ChalgContractSteps.js"
 import { EpochContractSteps } from "../../orchestration/steps/contracts/sysio/EpochContractSteps.js"
+import { MsgchContractSteps } from "../../orchestration/steps/contracts/sysio/MsgchContractSteps.js"
 import { Report } from "../../report/Report.js"
 
 const log = getLogger(__filename)
@@ -59,6 +63,11 @@ export namespace WireEconomicClockTool {
     readonly nextEpochStartMs: number
     /** The chain's `epochstate.is_paused` — a pause stops that chain's consensus epoch only. */
     readonly paused: boolean
+    /**
+     * Whether the chain's current epoch is decided: `sysio.msgch::outpcons` records its accepted
+     * winner and no `sysio.chalg` dispute on it is open.
+     */
+    readonly decided: boolean
   }
 
   /** Every outpost chain's consensus epoch at one instant, keyed by its codename. */
@@ -109,15 +118,22 @@ export namespace WireEconomicClockTool {
   }
 
   /**
-   * Every outpost chain's consensus epoch from one `epochstate` read — pure over the rows.
+   * Every outpost chain's consensus epoch from its `epochstate` and `outpcons` rows and the dispute
+   * on its current epoch — pure over the rows.
    *
    * @param states - Each outpost chain's `sysio.epoch::epochstate` row
    *   (`EpochContractSteps.readEpochStates`).
+   * @param outpostConsensus - Each outpost chain's `sysio.msgch::outpcons` row, absent before its
+   *   first accepted winner (`MsgchContractSteps.readOutpostConsensus`).
+   * @param currentDisputes - Each outpost chain's `sysio.chalg::disputes` row on its current epoch,
+   *   absent when that epoch was never disputed (`ChalgContractSteps.readEpochDispute`).
    * @returns Each outpost chain's consensus reading.
    * @throws When an outpost chain has no `epochstate` row.
    */
   export function toConsensusReadings(
-    states: Readonly<PerOutpostChain<SysioContracts.SysioEpochEpochStateType>>
+    states: Readonly<PerOutpostChain<SysioContracts.SysioEpochEpochStateType>>,
+    outpostConsensus: Readonly<PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType>>,
+    currentDisputes: Readonly<PerOutpostChain<SysioContracts.SysioChalgDisputeEntryType>>
   ): ConsensusReadings {
     return mapOutpostChains(chain => {
       const row = states[chain]
@@ -125,13 +141,48 @@ export namespace WireEconomicClockTool {
         row != null,
         `WireEconomicClockTool: sysio.epoch::epochstate has no ${chain} row`
       )
+      const epochIndex = row.current_epoch_index,
+        accepted = outpostConsensus[chain]?.epoch_index === epochIndex,
+        dispute = currentDisputes[chain],
+        disputed = dispute != null && ChalgContractSteps.isOpenDispute(dispute, chain, epochIndex)
       return {
-        epochIndex: row.current_epoch_index,
+        epochIndex,
         epochStartMs: WireClient.chainTimeMs(row.current_epoch_start),
         nextEpochStartMs: WireClient.chainTimeMs(row.next_epoch_start),
-        paused: row.is_paused
+        paused: row.is_paused,
+        decided: accepted && !disputed
       }
     })
+  }
+
+  /**
+   * READ every outpost chain's consensus epoch: its `epochstate` and `outpcons` rows, then the
+   * dispute on its current epoch through the `byoutepoch` index, so the read stays one row per chain
+   * however many disputes the depot holds.
+   *
+   * @param ctx - The build context.
+   * @returns Each outpost chain's consensus reading.
+   * @throws When an outpost chain has no `epochstate` row, or a read is truncated.
+   */
+  export async function readConsensusReadings<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<ConsensusReadings> {
+    const [states, outpostConsensus] = await Promise.all([
+        EpochContractSteps.readEpochStates(ctx),
+        MsgchContractSteps.readOutpostConsensus(ctx)
+      ]),
+      disputes = await Promise.all(
+        OutpostChainCodenames.map(chain =>
+          asOption(states[chain])
+            .map(state => ChalgContractSteps.readEpochDispute(ctx, chain, state.current_epoch_index))
+            .getOrUndefined()
+        )
+      )
+    return toConsensusReadings(
+      states,
+      outpostConsensus,
+      mapOutpostChains(chain => disputes[OutpostChainCodenames.indexOf(chain)])
+    )
   }
 
   /**
@@ -145,9 +196,9 @@ export namespace WireEconomicClockTool {
   export async function readReading<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<Reading> {
-    const [economy, epochStates, info] = await Promise.all([
+    const [economy, consensus, info] = await Promise.all([
       EpochContractSteps.readEconomyState(ctx),
-      EpochContractSteps.readEpochStates(ctx),
+      readConsensusReadings(ctx),
       ctx.wire.getInfo()
     ])
     return {
@@ -160,7 +211,7 @@ export namespace WireEconomicClockTool {
         economy != null
           ? WireClient.chainTimeMs(economy.next_epoch_start)
           : await readGridStartMs(ctx),
-      consensus: toConsensusReadings(epochStates),
+      consensus,
       headBlockTimeMs: WireClient.chainTimeMs(info.head_block_time)
     }
   }

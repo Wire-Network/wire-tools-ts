@@ -22,12 +22,15 @@ Each phase group asserts its own claim, so a failure names the phase:
    it stays `UNKNOWN`, no schedule seats it, and it needs no relay. It withdraws 0.5 WIRE as an
    economic epoch opens. The queue row's `eligible_at_economic_epoch` is two economic epochs past
    the request, and its `consensus_waits` name every chain it serves, each two of that chain's
-   epochs past the request. When every chain reaches its wait the row is still queued, and the
-   remit claim is credited only once the economic wait has passed too. Governance then pauses
-   Ethereum (`sysio.epoch::pause(ETHEREUM)`, signed `sysio.chalg@active`, as an open dispute on it
-   does) and the operator withdraws again. When the economic clock reaches its field the row is
-   still queued, held by the paused Ethereum wait. After `unpause` it matures and the claim holds
-   both withdrawals.
+   epochs past the request. A chain's wait passes once the chain reaches that epoch or decides its
+   current epoch (its winner accepted, no dispute open on it). When every chain has passed its wait
+   the row is still queued, and the remit claim is credited only once the economic wait has passed
+   too. Once Ethereum's current epoch is decided at least 20 s before its boundary, governance
+   pauses Ethereum (`sysio.epoch::pause(ETHEREUM)`, signed `sysio.chalg@active`) on that epoch and
+   the operator withdraws again. When the economic clock reaches its field the row has already
+   matured: Ethereum is still paused on its decided epoch, at its index from before the request and
+   short of the request's epoch for it, and the claim holds both withdrawals. Governance then
+   unpauses Ethereum.
 3. **HeldEmissions** — as an economic epoch opens, `sysio`'s spendable WIRE (balance less
    `payclaimtot.outstanding` and `t5state.unsettled_batch_emission`) moves to `econ.holder`. The next
    pay epoch opens a `BALANCE_INSUFFICIENT` `blocklog` episode. `t5state` still accrues the attempted

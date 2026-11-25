@@ -1,4 +1,9 @@
+import Assert from "node:assert"
+
 import { SysioContracts } from "@wireio/sdk-core"
+
+import { mapOutpostChains, type PerOutpostChain } from "@wireio/cluster-tool-shared"
+
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -6,6 +11,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
+import { EpochContractSteps } from "./EpochContractSteps.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -135,5 +141,34 @@ export namespace MsgchContractSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await ctx.wire.getSysioContract(SysioContractName.msgch).actions.chkcons.invoke(input.data)
+  }
+
+  // ── Reads (execute freely inside runners / verify steps) ─────────────────
+
+  /**
+   * Row ceiling of the `outpcons` read: the table holds one row per outpost chain, so a read
+   * that still reports `more` is refused rather than trusted.
+   */
+  export const OutpostConsensusRowLimit = 16
+
+  /**
+   * Every outpost chain's `sysio.msgch::outpcons` row from ONE read: the epoch whose winner it
+   * accepted last, that winner's checksum and the chain's inbound tips.
+   *
+   * @param ctx - The build context.
+   * @returns Each outpost chain's row (absent for a chain whose first winner is not yet accepted).
+   * @throws When the read is truncated at {@link OutpostConsensusRowLimit}.
+   */
+  export async function readOutpostConsensus<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType>> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.outpcons.query({ limit: OutpostConsensusRowLimit })
+    Assert.ok(
+      !more,
+      `MsgchContractSteps: sysio.msgch::outpcons has more than ${OutpostConsensusRowLimit} rows; the read is truncated`
+    )
+    return mapOutpostChains(chain => EpochContractSteps.findChainRow(rows, chain))
   }
 }

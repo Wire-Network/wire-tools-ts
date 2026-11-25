@@ -93,3 +93,57 @@ describe("Steps.contracts.sysio.msgch", () => {
     })
   })
 })
+
+describe("Steps.contracts.sysio.msgch outpcons read", () => {
+  afterEach(() => jest.restoreAllMocks())
+
+  const { ETHEREUM_CHAIN_CODENAME: Ethereum, SOLANA_CHAIN_CODENAME: Solana } = Constants
+
+  /** One chain's `outpcons` row, recording the accepted winner of its epoch `epochIndex`. */
+  function outpostConsensusRow(
+    chain: Constants.OutpostChainCodename,
+    epochIndex: number
+  ): SysioContracts.SysioMsgchOutpostConsensusEntryType {
+    return {
+      chain_code: String(SlugName.from(chain)),
+      epoch_index: epochIndex,
+      consensus_reached: true,
+      winning_checksum: "",
+      envelope_digest: "",
+      message_tip: ""
+    }
+  }
+
+  /** A real context whose `sysio.msgch` client serves `rows` from its `outpcons` table. */
+  function outpostConsensusContext(rows: SysioContracts.SysioMsgchOutpostConsensusEntryType[], more = false) {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.msgch)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    const query = jest.spyOn(contract.tables.outpcons, "query").mockResolvedValue({ rows, more })
+    return { ctx, query }
+  }
+
+  it("readOutpostConsensus keys every chain's row from one bounded read", async () => {
+    const rows = [outpostConsensusRow(Solana, 3), outpostConsensusRow(Ethereum, 8)],
+      { ctx, query } = outpostConsensusContext(rows)
+    await expect(Steps.contracts.sysio.msgch.readOutpostConsensus(ctx)).resolves.toEqual({
+      [Ethereum]: rows[1],
+      [Solana]: rows[0]
+    })
+    expect(query).toHaveBeenCalledWith({ limit: Steps.contracts.sysio.msgch.OutpostConsensusRowLimit })
+  })
+
+  it("readOutpostConsensus leaves a chain with no accepted winner absent", async () => {
+    const rows = [outpostConsensusRow(Ethereum, 8)],
+      { ctx } = outpostConsensusContext(rows)
+    await expect(Steps.contracts.sysio.msgch.readOutpostConsensus(ctx)).resolves.toEqual({
+      [Ethereum]: rows[0],
+      [Solana]: undefined
+    })
+  })
+
+  it("readOutpostConsensus refuses a truncated read", async () => {
+    const { ctx } = outpostConsensusContext([outpostConsensusRow(Ethereum, 8)], true)
+    await expect(Steps.contracts.sysio.msgch.readOutpostConsensus(ctx)).rejects.toThrow(/truncated/)
+  })
+})

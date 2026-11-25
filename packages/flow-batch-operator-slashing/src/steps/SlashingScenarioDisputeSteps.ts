@@ -261,23 +261,8 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * Every `sysio.chalg::disputes` row.
-   *
-   * @param ctx - The build context.
-   * @returns The dispute rows.
-   */
-  export async function readDisputes(
-    ctx: ClusterBuildContext
-  ): Promise<SysioContracts.SysioChalgDisputeEntryType[]> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .tables.disputes.query({ limit: Constants.DisputeTableReadLimit })
-    return rows
-  }
-
-  /**
-   * The OPEN dispute row for the contested chain's `epochIndex`, if any. Each chain
-   * counts its own epochs, so the row is matched on the chain as well as the epoch.
+   * The OPEN dispute row for the contested chain's `epochIndex`, if any, read through the
+   * `byoutepoch` index (`Steps.contracts.sysio.chalg.readEpochDispute`).
    *
    * @param ctx - The build context.
    * @param epochIndex - The contested chain's contested epoch.
@@ -287,16 +272,15 @@ export namespace SlashingScenarioDisputeSteps {
     ctx: ClusterBuildContext,
     epochIndex: number
   ): Promise<SysioContracts.SysioChalgDisputeEntryType> {
-    return (await readDisputes(ctx)).find(
-      row =>
-        isPackedCode(row.chain_code, Constants.ContestedChain) &&
-        Number(row.epoch_index) === epochIndex &&
-        matchesProtoEnum(
-          row.status,
-          SysioChalgDisputestatus,
-          SysioChalgDisputestatus.DISPUTE_STATUS_OPEN
-        )
+    const dispute = await Steps.contracts.sysio.chalg.readEpochDispute(
+      ctx,
+      Constants.ContestedChain,
+      epochIndex
     )
+    return dispute != null &&
+      Steps.contracts.sysio.chalg.isOpenDispute(dispute, Constants.ContestedChain, epochIndex)
+      ? dispute
+      : undefined
   }
 
   /**
@@ -310,7 +294,9 @@ export namespace SlashingScenarioDisputeSteps {
     ctx: ClusterBuildContext,
     disputeId: number
   ): Promise<SysioContracts.SysioChalgDisputeEntryType> {
-    return (await readDisputes(ctx)).find(row => Number(row.id) === disputeId)
+    return (await Steps.contracts.sysio.chalg.readDisputes(ctx)).find(
+      row => Number(row.id) === disputeId
+    )
   }
 
   /**

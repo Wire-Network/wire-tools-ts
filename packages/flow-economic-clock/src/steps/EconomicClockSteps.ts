@@ -686,6 +686,18 @@ export namespace EconomicClockSteps {
     return mapOutpostChains(chain => reading.consensus[chain].epochIndex)
   }
 
+  /**
+   * Whether each outpost chain's current consensus epoch is decided at one reading — pure.
+   *
+   * @param reading - Both clocks at one instant.
+   * @returns Each chain's `decided` as read.
+   */
+  export function consensusDecisions(
+    reading: WireEconomicClockTool.Reading
+  ): PerOutpostChain<boolean> {
+    return mapOutpostChains(chain => reading.consensus[chain].decided)
+  }
+
   /** Input of {@link planAwaitWithdrawalWaitPassed}. */
   export interface AwaitWithdrawalWaitInput extends StepInput {
     readonly kind: "EconomicClockSteps.AwaitWithdrawalWaitInput"
@@ -699,8 +711,8 @@ export namespace EconomicClockSteps {
 
   /**
    * Poll until the withdrawal's `wait` has passed — the economic index reached
-   * `eligible_at_economic_epoch`, or every waited-on chain's consensus index its
-   * `consensus_waits` epoch — and store
+   * `eligible_at_economic_epoch`, or every waited-on chain passed its consensus wait
+   * (`WireCollateralTool.consensusWaitsPassed`) — and store
    * an {@link EconomicClockWithdrawalSnapshot} of that instant ({@link withdrawalSnapshotKey}).
    * Pair it with {@link withdrawalWaitStepTimeoutMs}.
    */
@@ -766,8 +778,8 @@ export namespace EconomicClockSteps {
 
   /**
    * READ a withdrawal snapshot: both clocks, the queue and the remit claim, then both clocks
-   * again. Absent when the clocks moved between the two readings, so a snapshot never mixes two
-   * states.
+   * again. Absent when the clocks moved or a chain's decision changed between the two readings,
+   * so a snapshot never mixes two states.
    */
   async function readWithdrawalSnapshot<C extends ClusterBuildContext>(
     ctx: C,
@@ -785,7 +797,8 @@ export namespace EconomicClockSteps {
       ),
       confirm = await WireEconomicClockTool.readReading(ctx)
     return confirm.economicEpochIndex === reading.economicEpochIndex &&
-      isDeepStrictEqual(consensusEpochIndices(confirm), consensusEpochIndices(reading))
+      isDeepStrictEqual(consensusEpochIndices(confirm), consensusEpochIndices(reading)) &&
+      isDeepStrictEqual(consensusDecisions(confirm), consensusDecisions(reading))
       ? { reading, queued, remitClaim }
       : null
   }
@@ -809,17 +822,14 @@ export namespace EconomicClockSteps {
         () => reading.economicEpochIndex >= request.eligible_at_economic_epoch
       )
       .with(WithdrawalWait.consensus, () =>
-        WireCollateralTool.consensusWaitsPassed(
-          request,
-          consensusEpochIndices(reading)
-        )
+        WireCollateralTool.consensusWaitsPassed(request, reading.consensus)
       )
       .exhaustive()
   }
 
   /**
    * The deadline of {@link planAwaitWithdrawalWaitPassed} (ms): the wait's epochs of its clock —
-   * for the consensus guard, of the slowest outpost chain — plus
+   * for the consensus guard, its longest, of the slowest outpost chain — plus
    * {@link EconomicClockScenarioConstants.RequestEpochs} for the epoch the request fell in.
    *
    * @param config - The resolved cluster config.
@@ -968,15 +978,14 @@ export namespace EconomicClockSteps {
   /** Input of {@link planVerifyWithdrawalMatured}. */
   export interface WithdrawalMaturedInput extends StepInput {
     readonly kind: "EconomicClockSteps.WithdrawalMaturedInput"
-    /** The withdrawing operator's durable label. */
-    readonly label: string
-    /** The verified request ({@link withdrawalKey}). */
+    /** The verified request ({@link withdrawalKey}); its economic-wait snapshot is asserted. */
     readonly withdrawalName: string
   }
 
   /**
-   * Assert the withdrawal left the queue only once both waits had passed
-   * ({@link assertWithdrawalMatured}).
+   * Assert the withdrawal matured on the economic tick that flushed it, with both waits passed at
+   * that tick's snapshot ({@link assertWithdrawalMatured}). Pair it after an economic
+   * {@link planAwaitWithdrawalWaitPassed} of the same request.
    */
   export function planVerifyWithdrawalMatured<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -985,7 +994,6 @@ export namespace EconomicClockSteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    label: string,
     withdrawalName: string
   ): ClusterBuildStep<C, WithdrawalMaturedInput> {
     return ClusterBuildStep.create<C, WithdrawalMaturedInput>(
@@ -995,51 +1003,272 @@ export namespace EconomicClockSteps {
       options,
       {
         kind: "EconomicClockSteps.WithdrawalMaturedInput",
-        label,
         withdrawalName
       },
       runVerifyWithdrawalMatured
     )
   }
 
-  /** Named runner — read the queue and both clocks, then assert. */
+  /** Named runner — assert the stored economic-wait snapshot with {@link assertWithdrawalMatured}. */
   export async function runVerifyWithdrawalMatured<
     C extends ClusterBuildContext
   >(ctx: C, input: WithdrawalMaturedInput, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
-    const request = ctx.outputs.assert(withdrawalKey(input.withdrawalName)),
-      account = ctx.keyStore.assertOperator(input.label).account,
-      queue = await WireCollateralTool.readWithdrawRequests(ctx, account)
     assertWithdrawalMatured(
-      request,
-      queue,
-      await WireEconomicClockTool.readReading(ctx)
+      ctx.outputs.assert(withdrawalKey(input.withdrawalName)),
+      ctx.outputs.assert(
+        withdrawalSnapshotKey(input.withdrawalName, WithdrawalWait.economic)
+      )
     )
   }
 
   /**
-   * Assert a withdrawal matured: it is no longer queued, and both clocks have reached its
-   * eligibility.
+   * Assert a withdrawal matured at the snapshot taken as its economic wait passed, the tick whose
+   * flush released it: it had left the queue, and both waits had passed at that reading. The
+   * consensus wait is judged there, not on a later reading, since a chain's decision resets at each
+   * advance.
    *
    * @param request - The `wtdwqueue` row as requested.
-   * @param queue - The operator's queued withdrawals now.
-   * @param reading - Both clocks now.
-   * @throws When the request is still queued, or either clock is short of its eligibility.
+   * @param snapshot - The snapshot taken as the economic wait passed.
+   * @throws When the request was still queued, or either wait had not passed at the snapshot.
    */
   export function assertWithdrawalMatured(
     request: SysioContracts.SysioOpregWithdrawRequestType,
-    queue: readonly SysioContracts.SysioOpregWithdrawRequestType[],
-    reading: WireEconomicClockTool.Reading
+    snapshot: EconomicClockWithdrawalSnapshot
   ): void {
     Assert.ok(
-      !queue.some(row => BigInt(row.request_id) === BigInt(request.request_id)),
-      `withdrawal ${request.request_id} is still queued`
+      !snapshot.queued,
+      `withdrawal ${request.request_id} was still queued when its economic wait passed`
     )
     Object.values(WithdrawalWait).forEach(wait =>
       Assert.ok(
-        waitPassed(request, reading, wait),
+        waitPassed(request, snapshot.reading, wait),
         `withdrawal ${request.request_id} left the queue before its ${wait} wait passed`
       )
+    )
+  }
+
+  /** Input of {@link planAwaitEpochDecided}. */
+  export interface AwaitEpochDecidedInput extends StepInput {
+    readonly kind: "EconomicClockSteps.AwaitEpochDecidedInput"
+    /** The outpost chain whose current epoch is awaited. */
+    readonly chain: OutpostChainCodename
+  }
+
+  /**
+   * Poll until `chain`'s current consensus epoch is decided with at least
+   * {@link EconomicClockScenarioConstants.DecidedEpochBoundaryMarginMs} left before its boundary
+   * ({@link decidedBeforeBoundary}), so a write right after lands on that decided epoch. Pair it
+   * with {@link epochDecidedStepTimeoutMs}.
+   */
+  export function planAwaitEpochDecided<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    chain: OutpostChainCodename
+  ): ClusterBuildStep<C, AwaitEpochDecidedInput> {
+    return ClusterBuildStep.create<C, AwaitEpochDecidedInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "EconomicClockSteps.AwaitEpochDecidedInput", chain },
+      runAwaitEpochDecided
+    )
+  }
+
+  /** Named runner — poll both clocks until the chain's epoch is decided before its boundary. */
+  export async function runAwaitEpochDecided<C extends ClusterBuildContext>(
+    ctx: C,
+    input: AwaitEpochDecidedInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const reading = await pollFor(
+      `the ${input.chain} consensus epoch is decided before its boundary`,
+      async () => {
+        const current = await WireEconomicClockTool.readReading(ctx)
+        return decidedBeforeBoundary(current, input.chain) ? current : null
+      },
+      epochDecidedDeadlineMs(ctx.config, input.chain),
+      WireEconomicClockTool.PollIntervalMs
+    )
+    log.info(
+      `[economic-clock] ${input.chain} epoch ${reading.consensus[input.chain].epochIndex} is decided, ` +
+        `${reading.consensus[input.chain].nextEpochStartMs - reading.headBlockTimeMs} ms before its boundary`
+    )
+  }
+
+  /**
+   * Whether `chain`'s current consensus epoch is decided at `reading` with at least
+   * {@link EconomicClockScenarioConstants.DecidedEpochBoundaryMarginMs} left before its boundary
+   * on the chain head — pure.
+   *
+   * @param reading - Both clocks.
+   * @param chain - The outpost chain.
+   * @returns True when the epoch is decided and its boundary is far enough ahead.
+   */
+  export function decidedBeforeBoundary(
+    reading: WireEconomicClockTool.Reading,
+    chain: OutpostChainCodename
+  ): boolean {
+    const consensus = reading.consensus[chain]
+    return (
+      consensus.decided &&
+      consensus.nextEpochStartMs - reading.headBlockTimeMs >=
+        Constants.DecidedEpochBoundaryMarginMs
+    )
+  }
+
+  /**
+   * The deadline of {@link planAwaitEpochDecided} (ms):
+   * {@link EconomicClockScenarioConstants.DecidedEpochAwaitEpochs} effective epochs of the chain.
+   *
+   * @param config - The resolved cluster config.
+   * @param chain - The outpost chain awaited.
+   * @returns The poll deadline (ms).
+   */
+  export function epochDecidedDeadlineMs(
+    config: ClusterConfig,
+    chain: OutpostChainCodename
+  ): number {
+    return ProtocolTiming.effectiveEpochsMs(
+      config.outpostEpochDurationSec[chain],
+      Constants.DecidedEpochAwaitEpochs
+    )
+  }
+
+  /**
+   * The Step ceiling of {@link planAwaitEpochDecided} (ms): its deadline plus the poll margin.
+   * Pass the config the runner reads — `cluster.context.config` at plan time.
+   *
+   * @param config - The resolved cluster config.
+   * @param chain - The outpost chain awaited.
+   * @returns The Step's `timeoutMs`.
+   */
+  export function epochDecidedStepTimeoutMs(
+    config: ClusterConfig,
+    chain: OutpostChainCodename
+  ): number {
+    return epochDecidedDeadlineMs(config, chain) + ProtocolTiming.PollDeadlineBufferMs
+  }
+
+  /** Input of {@link planVerifyReleasedOnDecidedEpoch}. */
+  export interface ReleasedOnDecidedEpochInput extends StepInput {
+    readonly kind: "EconomicClockSteps.ReleasedOnDecidedEpochInput"
+    /** The verified request ({@link withdrawalKey}); its economic-wait snapshot is asserted. */
+    readonly withdrawalName: string
+    /** The paused chain whose decided epoch passed the request's wait on it. */
+    readonly chain: OutpostChainCodename
+    /** The clocks recorded right before the request ({@link WireEconomicClockTool.observationKey}). */
+    readonly observationName: string
+    /** The operator's WIRE remit claim the snapshot must show (base units). */
+    readonly remitClaim: bigint
+  }
+
+  /**
+   * Assert that when the economic wait passed, the request had already matured while `chain`
+   * stood paused on its decided epoch below the request's index for it
+   * ({@link assertReleasedOnDecidedEpoch}).
+   */
+  export function planVerifyReleasedOnDecidedEpoch<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    withdrawalName: string,
+    chain: OutpostChainCodename,
+    observationName: string,
+    remitClaim: bigint
+  ): ClusterBuildStep<C, ReleasedOnDecidedEpochInput> {
+    return ClusterBuildStep.create<C, ReleasedOnDecidedEpochInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "EconomicClockSteps.ReleasedOnDecidedEpochInput",
+        withdrawalName,
+        chain,
+        observationName,
+        remitClaim
+      },
+      runVerifyReleasedOnDecidedEpoch
+    )
+  }
+
+  /** Named runner — assert the stored economic-wait snapshot with {@link assertReleasedOnDecidedEpoch}. */
+  export async function runVerifyReleasedOnDecidedEpoch<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    input: ReleasedOnDecidedEpochInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    assertReleasedOnDecidedEpoch(
+      ctx.outputs.assert(withdrawalKey(input.withdrawalName)),
+      WireEconomicClockTool.latestReading(
+        ctx.outputs.assert(WireEconomicClockTool.observationKey(input.observationName))
+      ),
+      ctx.outputs.assert(withdrawalSnapshotKey(input.withdrawalName, WithdrawalWait.economic)),
+      input.chain,
+      input.remitClaim
+    )
+  }
+
+  /**
+   * Assert a withdrawal matured on its economic wait while `chain` stood paused on a decided
+   * epoch: at the snapshot the economic wait had passed, the request had left the queue and the
+   * remit claim held `remitClaim`, and `chain` was paused, decided and at its index from before
+   * the request, short of the request's `consensus_waits` epoch for it — so its decision, not its
+   * index, passed that wait.
+   *
+   * @param request - The `wtdwqueue` row.
+   * @param before - Both clocks right before the request.
+   * @param snapshot - The snapshot taken as the economic wait passed.
+   * @param chain - The paused chain.
+   * @param remitClaim - The remit claim the operator holds once the request matured.
+   * @throws When the request was still queued, the claim differs, or the chain moved, resumed,
+   *   was undecided or had reached the request's index for it.
+   */
+  export function assertReleasedOnDecidedEpoch(
+    request: SysioContracts.SysioOpregWithdrawRequestType,
+    before: WireEconomicClockTool.Reading,
+    snapshot: EconomicClockWithdrawalSnapshot,
+    chain: OutpostChainCodename,
+    remitClaim: bigint
+  ): void {
+    const held = snapshot.reading.consensus[chain],
+      waitedFor = WireCollateralTool.consensusWaitEpochs(request)[chain]
+    Assert.ok(
+      waitPassed(request, snapshot.reading, WithdrawalWait.economic),
+      "the snapshot was taken before the economic wait passed"
+    )
+    Assert.ok(
+      !snapshot.queued,
+      `the withdrawal was still queued when its economic wait passed, with ${chain} paused on a decided epoch`
+    )
+    Assert.strictEqual(
+      snapshot.remitClaim,
+      remitClaim,
+      "the remit claim does not hold the matured withdrawal"
+    )
+    Assert.ok(held.paused, `${chain} was no longer paused when the economic wait passed`)
+    Assert.ok(held.decided, `${chain} epoch ${held.epochIndex} was not decided when the economic wait passed`)
+    Assert.strictEqual(
+      held.epochIndex,
+      before.consensus[chain].epochIndex,
+      `${chain} moved from epoch ${before.consensus[chain].epochIndex} while it was paused`
+    )
+    Assert.ok(
+      waitedFor != null && held.epochIndex < waitedFor,
+      `${chain} was at epoch ${held.epochIndex}, not short of the request's epoch ${waitedFor} for it`
     )
   }
 

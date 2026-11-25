@@ -254,9 +254,16 @@ describe("epoch configuration", () => {
     )
   })
 
+  /** Serve no accepted winner and no dispute, the reads beside `epochstate` in a consensus reading. */
+  function noDecisions() {
+    mock.method(Steps.contracts.sysio.msgch, "readOutpostConsensus", async () => ({}))
+    mock.method(Steps.contracts.sysio.chalg, "readEpochDispute", async () => undefined)
+  }
+
   test("the verify step reads epochcfg and epochstate and asserts them against the configured durations", async () => {
     mock.method(Steps.contracts.sysio.epoch, "readEpochConfigs", async () => epochConfigs())
     mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => epochStates())
+    noDecisions()
     const step = PerChainEpochsSteps.planVerifyEpochConfiguration("Sysio", "configuration", "probe", {}, Durations)
     Assert.equal(step.runner, PerChainEpochsSteps.runVerifyEpochConfiguration)
     await PerChainEpochsSteps.runVerifyEpochConfiguration(context(), step.input, signal)
@@ -275,6 +282,7 @@ describe("epoch configuration", () => {
     mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({
       [OutpostChainCodename.ETHEREUM]: epochStateRow(OutpostChainCodename.ETHEREUM, 4, EthereumSec)
     }))
+    noDecisions()
     await Assert.rejects(
       PerChainEpochsSteps.runVerifyEpochConfiguration(
         context(),

@@ -38,14 +38,17 @@ const GridStartMs = Date.UTC(2026, 10, 23, 0, 0, 0),
 
 /**
  * A reading of economic epoch `index`, `LagMs` after it opened, with every chain at consensus
- * epoch `consensus` unless `chainIndices` names another; `paused` pauses the scenario's paused chain.
+ * epoch `consensus` unless `chainIndices` names another; `paused` pauses the scenario's paused chain,
+ * and a chain is decided only when `chainDecided` says so. Every chain's epoch boundary is one
+ * consensus epoch after the reading's head.
  */
 function reading(
   index,
   consensus,
   paused = false,
   headMs = GridStartMs + (index - 1) * EconomicMs + LagMs,
-  chainIndices = {}
+  chainIndices = {},
+  chainDecided = {}
 ) {
   return {
     economicEpochIndex: index,
@@ -53,7 +56,10 @@ function reading(
     economicNextEpochStartMs: GridStartMs + index * EconomicMs,
     consensus: mapOutpostChains(chain => ({
       epochIndex: chainIndices[chain] ?? consensus,
-      paused: paused && chain === PausedChain
+      epochStartMs: headMs,
+      nextEpochStartMs: headMs + ConsensusSec * 1_000,
+      paused: paused && chain === PausedChain,
+      decided: chainDecided[chain] ?? false
     })),
     headBlockTimeMs: headMs
   }
@@ -468,6 +474,34 @@ describe("withdrawal waits", () => {
     Assert.equal(EconomicClockSteps.waitPassed(row, reading(5, 20), WithdrawalWait.economic), false)
   })
 
+  test("a decided chain short of its index passes the consensus wait, an undecided one holds it", () => {
+    const decidedOnly = reading(5, 11, true, undefined, {}, { [PausedChain]: true })
+    Assert.equal(EconomicClockSteps.waitPassed(row, decidedOnly, WithdrawalWait.consensus), false)
+    Assert.equal(
+      EconomicClockSteps.waitPassed(
+        row,
+        reading(5, 11, true, undefined, {}, { [PausedChain]: true, [RunningChain]: true }),
+        WithdrawalWait.consensus
+      ),
+      true
+    )
+    Assert.equal(
+      EconomicClockSteps.waitPassed(
+        row,
+        reading(5, 12, true, undefined, { [PausedChain]: 10 }, { [PausedChain]: true }),
+        WithdrawalWait.consensus
+      ),
+      true
+    )
+  })
+
+  test("consensusDecisions reads each chain's decision from its own consensus reading", () => {
+    Assert.deepEqual(
+      EconomicClockSteps.consensusDecisions(reading(4, 10, false, undefined, {}, { [RunningChain]: true })),
+      { [PausedChain]: false, [RunningChain]: true }
+    )
+  })
+
   test("the consensus wait holds until every waited-on chain has passed its guard", () => {
     Assert.equal(
       EconomicClockSteps.waitPassed(row, reading(5, 12, true, undefined, { [PausedChain]: 11 }), WithdrawalWait.consensus),
@@ -549,19 +583,47 @@ describe("withdrawal waits", () => {
     )
   })
 
-  test("matured only once out of the queue with both clocks past their eligibility", () => {
-    EconomicClockSteps.assertWithdrawalMatured(row, [], reading(6, 12))
+  /** The snapshot as the economic wait passed: `value` read, the request `queued` or not. */
+  const flushSnapshot = (value, queued = false) => ({ reading: value, queued, remitClaim: Constants.WithdrawAmount })
+
+  test("matured only when the flush snapshot shows it out of the queue with both waits passed", () => {
+    EconomicClockSteps.assertWithdrawalMatured(row, flushSnapshot(reading(6, 12)))
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalMatured(row, [row], reading(6, 12)),
-      /still queued/
+      () => EconomicClockSteps.assertWithdrawalMatured(row, flushSnapshot(reading(6, 12), true)),
+      /still queued when its economic wait passed/
     )
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalMatured(row, [], reading(6, 11)),
+      () => EconomicClockSteps.assertWithdrawalMatured(row, flushSnapshot(reading(6, 11))),
       /before its consensus wait passed/
     )
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalMatured(row, [], reading(5, 12)),
+      () => EconomicClockSteps.assertWithdrawalMatured(row, flushSnapshot(reading(5, 12))),
       /before its economic wait passed/
+    )
+  })
+
+  test("a chain short of its index passes at the flush snapshot when its epoch was decided there", () => {
+    const decided = { [PausedChain]: true, [RunningChain]: true }
+    EconomicClockSteps.assertWithdrawalMatured(row, flushSnapshot(reading(6, 11, false, undefined, {}, decided)))
+  })
+
+  test("the matured verify asserts the stored economic-wait snapshot, not a later reading", async () => {
+    const step = EconomicClockSteps.planVerifyWithdrawalMatured("Sysio", "flushed", "probe", {}, "first"),
+      outputs = new OutputStore()
+        .set(EconomicClockSteps.withdrawalKey("first"), row)
+        .set(EconomicClockSteps.withdrawalSnapshotKey("first", WithdrawalWait.economic), flushSnapshot(reading(6, 12))),
+      read = mock.method(WireEconomicClockTool, "readReading", async () => reading(6, 11))
+    Assert.equal(step.runner, EconomicClockSteps.runVerifyWithdrawalMatured)
+    Assert.deepEqual(step.input, { kind: "EconomicClockSteps.WithdrawalMaturedInput", withdrawalName: "first" })
+    await EconomicClockSteps.runVerifyWithdrawalMatured({ outputs }, step.input, signal)
+    Assert.equal(read.mock.calls.length, 0)
+    outputs.set(
+      EconomicClockSteps.withdrawalSnapshotKey("first", WithdrawalWait.economic),
+      flushSnapshot(reading(6, 12), true)
+    )
+    await Assert.rejects(
+      EconomicClockSteps.runVerifyWithdrawalMatured({ outputs }, step.input, signal),
+      /still queued/
     )
   })
 
@@ -605,6 +667,207 @@ describe("withdrawal waits", () => {
     Assert.deepEqual(
       ctx.outputs.assert(EconomicClockSteps.withdrawalSnapshotKey("first", WithdrawalWait.consensus)),
       { reading: reading(5, 12), queued: true, remitClaim: 0n }
+    )
+  })
+
+  test("the await skips a snapshot whose decisions changed between its two readings", async () => {
+    const undecided = reading(5, 11),
+      decided = reading(5, 11, false, undefined, {}, { [PausedChain]: true, [RunningChain]: true }),
+      readings = [decided, undecided, decided, decided],
+      ctx = {
+        config: { economicEpochDurationSec: 120, outpostEpochDurationSec: ConsensusDurations },
+        outputs: new OutputStore().set(EconomicClockSteps.withdrawalKey("first"), row),
+        keyStore: { assertOperator: () => ({ account: "withdrawer" }) }
+      }
+    mock.method(WireEconomicClockTool, "readReading", async () => readings.shift())
+    mock.method(WireCollateralTool, "readWithdrawRequests", async () => [row])
+    mock.method(WireCollateralTool, "readRemitClaim", async () => 0n)
+    await EconomicClockSteps.runAwaitWithdrawalWaitPassed(
+      ctx,
+      {
+        kind: "EconomicClockSteps.AwaitWithdrawalWaitInput",
+        label: "withdrawer",
+        withdrawalName: "first",
+        wait: WithdrawalWait.consensus
+      },
+      signal
+    )
+    Assert.equal(readings.length, 0)
+    Assert.deepEqual(
+      ctx.outputs.assert(EconomicClockSteps.withdrawalSnapshotKey("first", WithdrawalWait.consensus)),
+      { reading: decided, queued: true, remitClaim: 0n }
+    )
+  })
+})
+
+describe("a paused chain's decided epoch", () => {
+  const row = request(4, 10),
+    headMs = GridStartMs + 3 * EconomicMs + LagMs,
+    config = { economicEpochDurationSec: 120, outpostEpochDurationSec: ConsensusDurations }
+
+  /** A reading at `headMs` whose paused chain is decided (when `decided`) with `leftMs` before its boundary. */
+  function boundaryReading(leftMs, decided = true) {
+    const value = reading(4, 10, true, headMs, {}, { [PausedChain]: decided })
+    return {
+      ...value,
+      consensus: {
+        ...value.consensus,
+        [PausedChain]: { ...value.consensus[PausedChain], nextEpochStartMs: headMs + leftMs }
+      }
+    }
+  }
+
+  test("decidedBeforeBoundary holds only for a decided epoch with the margin left before its boundary", () => {
+    Assert.equal(EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs), PausedChain), true)
+    Assert.equal(
+      EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs - 1), PausedChain),
+      false
+    )
+    Assert.equal(
+      EconomicClockSteps.decidedBeforeBoundary(boundaryReading(Constants.DecidedEpochBoundaryMarginMs, false), PausedChain),
+      false
+    )
+  })
+
+  test("the decided-epoch await spans its epochs of the awaited chain", () => {
+    Assert.equal(EconomicClockSteps.epochDecidedDeadlineMs(config, PausedChain), Constants.DecidedEpochAwaitEpochs * 90_000)
+    Assert.equal(
+      EconomicClockSteps.epochDecidedDeadlineMs(
+        { ...config, outpostEpochDurationSec: { ...ConsensusDurations, [PausedChain]: 120 } },
+        PausedChain
+      ),
+      Constants.DecidedEpochAwaitEpochs * 150_000
+    )
+    Assert.equal(
+      EconomicClockSteps.epochDecidedStepTimeoutMs(config, PausedChain),
+      Constants.DecidedEpochAwaitEpochs * 90_000 + 30_000
+    )
+  })
+
+  test("the decided-epoch await polls until the chain's epoch is decided before its boundary", async () => {
+    const readings = [
+        boundaryReading(Constants.DecidedEpochBoundaryMarginMs, false),
+        boundaryReading(Constants.DecidedEpochBoundaryMarginMs - 1),
+        boundaryReading(Constants.DecidedEpochBoundaryMarginMs)
+      ],
+      step = EconomicClockSteps.planAwaitEpochDecided("Sysio", "await-decided", "probe", {}, PausedChain)
+    Assert.equal(step.runner, EconomicClockSteps.runAwaitEpochDecided)
+    Assert.deepEqual(step.input, { kind: "EconomicClockSteps.AwaitEpochDecidedInput", chain: PausedChain })
+    mock.method(WireEconomicClockTool, "readReading", async () => readings.shift())
+    await EconomicClockSteps.runAwaitEpochDecided({ config }, step.input, signal)
+    Assert.equal(readings.length, 0)
+  })
+
+  test("an aborted decided-epoch await reads nothing", async () => {
+    const read = mock.method(WireEconomicClockTool, "readReading", async () => boundaryReading(0))
+    await Assert.rejects(
+      EconomicClockSteps.runAwaitEpochDecided(
+        { config },
+        { kind: "EconomicClockSteps.AwaitEpochDecidedInput", chain: PausedChain },
+        AbortSignal.abort()
+      )
+    )
+    Assert.equal(read.mock.calls.length, 0)
+  })
+
+  /** The snapshot as the economic wait passed: the paused chain held at `index`, `decided`, `paused`. */
+  function releasedSnapshot({ index = 10, decided = true, paused = true, queued = false, remitClaim = 2n } = {}) {
+    const value = reading(6, 13, true, undefined, { [PausedChain]: index }, { [PausedChain]: decided })
+    return {
+      reading: {
+        ...value,
+        consensus: { ...value.consensus, [PausedChain]: { ...value.consensus[PausedChain], paused } }
+      },
+      queued,
+      remitClaim
+    }
+  }
+
+  const before = reading(4, 10, true)
+
+  test("released on its economic wait while the paused chain stood on its decided epoch", () => {
+    EconomicClockSteps.assertReleasedOnDecidedEpoch(row, before, releasedSnapshot(), PausedChain, 2n)
+  })
+
+  test("a request still queued, or a claim without it, fails", () => {
+    Assert.throws(
+      () => EconomicClockSteps.assertReleasedOnDecidedEpoch(row, before, releasedSnapshot({ queued: true }), PausedChain, 2n),
+      /still queued when its economic wait passed/
+    )
+    Assert.throws(
+      () => EconomicClockSteps.assertReleasedOnDecidedEpoch(row, before, releasedSnapshot({ remitClaim: 1n }), PausedChain, 2n),
+      /does not hold the matured withdrawal/
+    )
+  })
+
+  test("a chain that resumed, was undecided or moved fails", () => {
+    Assert.throws(
+      () => EconomicClockSteps.assertReleasedOnDecidedEpoch(row, before, releasedSnapshot({ paused: false }), PausedChain, 2n),
+      /no longer paused/
+    )
+    Assert.throws(
+      () => EconomicClockSteps.assertReleasedOnDecidedEpoch(row, before, releasedSnapshot({ decided: false }), PausedChain, 2n),
+      /was not decided/
+    )
+    Assert.throws(
+      () => EconomicClockSteps.assertReleasedOnDecidedEpoch(row, reading(4, 9, true), releasedSnapshot(), PausedChain, 2n),
+      /moved from epoch 9/
+    )
+  })
+
+  test("a chain that reached the request's epoch for it shows no decision releasing it", () => {
+    Assert.throws(
+      () =>
+        EconomicClockSteps.assertReleasedOnDecidedEpoch(
+          row,
+          reading(4, 12, true),
+          releasedSnapshot({ index: 12 }),
+          PausedChain,
+          2n
+        ),
+      /not short of the request's epoch 12/
+    )
+  })
+
+  test("a snapshot taken before the economic wait passed fails", () => {
+    const early = releasedSnapshot()
+    Assert.throws(
+      () =>
+        EconomicClockSteps.assertReleasedOnDecidedEpoch(
+          row,
+          before,
+          { ...early, reading: { ...early.reading, economicEpochIndex: 5 } },
+          PausedChain,
+          2n
+        ),
+      /before the economic wait passed/
+    )
+  })
+
+  test("the release verify asserts the stored request, reading and economic-wait snapshot", async () => {
+    const step = EconomicClockSteps.planVerifyReleasedOnDecidedEpoch(
+        "Sysio",
+        "released",
+        "probe",
+        {},
+        "second",
+        PausedChain,
+        "before-second",
+        2n
+      ),
+      outputs = new OutputStore()
+        .set(EconomicClockSteps.withdrawalKey("second"), row)
+        .set(WireEconomicClockTool.observationKey("before-second"), { start: before, ticks: [] })
+        .set(EconomicClockSteps.withdrawalSnapshotKey("second", WithdrawalWait.economic), releasedSnapshot())
+    Assert.equal(step.runner, EconomicClockSteps.runVerifyReleasedOnDecidedEpoch)
+    await EconomicClockSteps.runVerifyReleasedOnDecidedEpoch({ outputs }, step.input, signal)
+    outputs.set(
+      EconomicClockSteps.withdrawalSnapshotKey("second", WithdrawalWait.economic),
+      releasedSnapshot({ queued: true })
+    )
+    await Assert.rejects(
+      EconomicClockSteps.runVerifyReleasedOnDecidedEpoch({ outputs }, step.input, signal),
+      /still queued/
     )
   })
 })

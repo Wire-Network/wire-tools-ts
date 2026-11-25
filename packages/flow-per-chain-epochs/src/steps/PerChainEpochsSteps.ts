@@ -147,7 +147,7 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Named runner — read every chain's `epochcfg` and `epochstate` and assert them.
+   * Named runner — read every chain's `epochcfg` and consensus reading and assert them.
    *
    * @param ctx - The build context.
    * @param input - The configured durations.
@@ -160,15 +160,11 @@ export namespace PerChainEpochsSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const [depotDurations, states] = await Promise.all([
+    const [depotDurations, consensus] = await Promise.all([
       readEpochDurations(ctx),
-      Steps.contracts.sysio.epoch.readEpochStates(ctx)
+      WireEconomicClockTool.readConsensusReadings(ctx)
     ])
-    assertEpochConfiguration(
-      depotDurations,
-      WireEconomicClockTool.toConsensusReadings(states),
-      input.durations
-    )
+    assertEpochConfiguration(depotDurations, consensus, input.durations)
   }
 
   /**

@@ -120,7 +120,7 @@ test("the producer's pay is recorded, claimed and verified, in that order, for t
 test("the first withdrawal is requested as an economic epoch opens and held by its economic wait", () => {
   const { build, config } = planned(),
     phase = child(child(build, "WithdrawalWaitsOnBothClocks"), "ConsensusGuardPassesFirst"),
-    [epoch, withdraw, eligibility, guard, held, matures, flushed] = phase.steps
+    [epoch, withdraw, eligibility, guard, held, economicWait, matures, flushed] = phase.steps
   Assert.equal(epoch.input.observationName, Constants.ConsensusFirstObservation)
   Assert.equal(withdraw.runner, WireCollateralTool.runWithdrawal)
   Assert.equal(withdraw.input.operatorLabel, Constants.WithdrawerLabel)
@@ -141,29 +141,49 @@ test("the first withdrawal is requested as an economic epoch opens and held by i
   Assert.equal(matures.runner, WireCollateralTool.runVerifyRemitClaim)
   Assert.equal(matures.input.claim.amount, Constants.WithdrawAmount)
   Assert.equal(matures.options.timeoutMs, WireCollateralTool.remitClaimStepTimeoutMs(config))
-  Assert.equal(flushed.input.withdrawalName, Constants.ConsensusFirstWithdrawal)
+  Assert.equal(economicWait.runner, EconomicClockSteps.runAwaitWithdrawalWaitPassed)
+  Assert.equal(economicWait.input.wait, WithdrawalWait.economic)
+  Assert.equal(economicWait.input.withdrawalName, Constants.ConsensusFirstWithdrawal)
+  Assert.equal(
+    economicWait.options.timeoutMs,
+    EconomicClockSteps.withdrawalWaitStepTimeoutMs(config, WithdrawalWait.economic)
+  )
+  Assert.deepEqual(flushed.input, {
+    kind: "EconomicClockSteps.WithdrawalMaturedInput",
+    withdrawalName: Constants.ConsensusFirstWithdrawal
+  })
 })
 
-test("the second withdrawal is requested under a consensus pause and held by its consensus guard", () => {
-  const { build } = planned(),
-    phase = child(child(build, "WithdrawalWaitsOnBothClocks"), "EconomicWaitPassesFirst"),
+test("the second withdrawal is requested with a chain paused on a decided epoch and matures at its economic wait", () => {
+  const { build, config } = planned(),
+    phase = child(child(build, "WithdrawalWaitsOnBothClocks"), "DecidedPausedChainReleases"),
     names = phase.steps.map(entry => entry.name),
+    decided = step(phase, "await-decided-epoch"),
     pause = step(phase, "pause-consensus"),
     unpause = step(phase, "unpause-consensus"),
     wait = step(phase, "economic-wait-passes"),
-    held = step(phase, "held-by-consensus-guard"),
-    matures = step(phase, "economic-first-matures")
+    released = step(phase, "released-on-decided-epoch"),
+    matures = step(phase, "paused-decided-matures")
+  Assert.equal(decided.runner, EconomicClockSteps.runAwaitEpochDecided)
+  Assert.deepEqual(decided.input, { kind: "EconomicClockSteps.AwaitEpochDecidedInput", chain: Constants.PausedChain })
+  Assert.equal(decided.options.timeoutMs, EconomicClockSteps.epochDecidedStepTimeoutMs(config, Constants.PausedChain))
   Assert.equal(pause.runner, Steps.contracts.sysio.epoch.runPause)
   Assert.equal(unpause.runner, Steps.contracts.sysio.epoch.runUnpause)
   Assert.deepEqual(pause.input.data, { chain_code: Constants.PausedChain })
   Assert.deepEqual(unpause.input.data, { chain_code: Constants.PausedChain })
-  Assert.deepEqual(step(phase, "economic-first-eligibility").input.chains, Constants.WithdrawerServedChains)
-  Assert.ok(names.indexOf("pause-consensus") < names.indexOf("withdraw-economic-first"))
-  Assert.ok(names.indexOf("held-by-consensus-guard") < names.indexOf("unpause-consensus"))
-  Assert.ok(names.indexOf("unpause-consensus") < names.indexOf("economic-first-matures"))
+  Assert.deepEqual(step(phase, "paused-decided-eligibility").input.chains, Constants.WithdrawerServedChains)
+  Assert.ok(names.indexOf("await-decided-epoch") < names.indexOf("pause-consensus"))
+  Assert.ok(names.indexOf("pause-consensus") < names.indexOf("withdraw-paused-decided"))
+  Assert.ok(names.indexOf("economic-wait-passes") < names.indexOf("released-on-decided-epoch"))
+  Assert.ok(names.indexOf("paused-decided-flushed") < names.indexOf("unpause-consensus"))
   Assert.equal(wait.input.wait, WithdrawalWait.economic)
-  Assert.equal(held.input.passed, WithdrawalWait.economic)
-  Assert.equal(held.input.remitClaim, Constants.WithdrawAmount)
+  Assert.deepEqual(released.input, {
+    kind: "EconomicClockSteps.ReleasedOnDecidedEpochInput",
+    withdrawalName: Constants.PausedDecidedWithdrawal,
+    chain: Constants.PausedChain,
+    observationName: Constants.PausedDecidedObservation,
+    remitClaim: Constants.MaturedClaimAmount
+  })
   Assert.equal(matures.input.claim.amount, Constants.MaturedClaimAmount)
 })
 

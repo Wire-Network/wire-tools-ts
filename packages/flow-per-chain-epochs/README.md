@@ -30,8 +30,9 @@ Each phase group asserts its own claim, so a failure names the phase:
    bonds 0.5 WIRE, below the minimum, so it stays `UNKNOWN` and no schedule seats it. Governance
    pauses Ethereum (`sysio.epoch::pause`, signed `sysio.chalg@active`, as an open dispute on
    Ethereum does). The operator withdraws 0.25 WIRE: the queue row's `consensus_waits` name Solana
-   alone, two Solana epochs past the request, and the request matures into
-   `remitclaims{solwithdraw, WIRE}` while Ethereum is still paused. Ethereum stayed paused at one
+   alone, two Solana epochs past the request (a wait that also passes once Solana's current epoch is
+   decided), and the request matures into `remitclaims{solwithdraw, WIRE}` while Ethereum is still
+   paused. Ethereum stayed paused at one
    index while the economic clock kept opening epochs, and Solana advanced as its envelope requires
    over the same readings. After `unpause` Ethereum advances again.
 

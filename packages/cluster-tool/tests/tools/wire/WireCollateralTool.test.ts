@@ -11,7 +11,7 @@ import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { Steps, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
-import { WireCollateralTool } from "@wireio/cluster-tool/tools/wire"
+import { WireCollateralTool, type WireEconomicClockTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
@@ -1125,21 +1125,64 @@ describe("WireCollateralTool consensus waits", () => {
     expect(WireCollateralTool.consensusWaitEpochs(waitingOn([]))).toEqual({})
   })
 
-  it("passes only once every waited-on chain reached its epoch", () => {
+  /** Every chain's consensus reading at `indices`, each decided when named in `decided`. */
+  const consensus = (
+    indices: Record<Constants.OutpostChainCodename, number>,
+    decided: readonly Constants.OutpostChainCodename[] = []
+  ): WireEconomicClockTool.ConsensusReadings => ({
+    [Ethereum]: {
+      epochIndex: indices[Ethereum],
+      epochStartMs: 0,
+      nextEpochStartMs: 0,
+      paused: false,
+      decided: decided.includes(Ethereum)
+    },
+    [Solana]: {
+      epochIndex: indices[Solana],
+      epochStartMs: 0,
+      nextEpochStartMs: 0,
+      paused: false,
+      decided: decided.includes(Solana)
+    }
+  })
+
+  it("passes once every waited-on chain reached its epoch", () => {
     const both = waitingOn([
       { chain_code: Ethereum, eligible_at_epoch: 5 },
       { chain_code: Solana, eligible_at_epoch: 3 }
     ])
-    expect(WireCollateralTool.consensusWaitsPassed(both, { [Ethereum]: 5, [Solana]: 3 })).toBe(true)
-    expect(WireCollateralTool.consensusWaitsPassed(both, { [Ethereum]: 4, [Solana]: 9 })).toBe(false)
+    expect(WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 5, [Solana]: 3 }))).toBe(true)
+    expect(WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 4, [Solana]: 9 }))).toBe(false)
     // A request that waits on one chain ignores the other chain's index.
     expect(
       WireCollateralTool.consensusWaitsPassed(
         waitingOn([{ chain_code: Solana, eligible_at_epoch: 3 }]),
-        { [Ethereum]: 0, [Solana]: 3 }
+        consensus({ [Ethereum]: 0, [Solana]: 3 })
       )
     ).toBe(true)
-    expect(WireCollateralTool.consensusWaitsPassed(waitingOn([]), { [Ethereum]: 0, [Solana]: 0 })).toBe(true)
+    expect(
+      WireCollateralTool.consensusWaitsPassed(waitingOn([]), consensus({ [Ethereum]: 0, [Solana]: 0 }))
+    ).toBe(true)
+  })
+
+  it("passes a chain short of its epoch once its current epoch is decided, and holds it while undecided", () => {
+    const both = waitingOn([
+      { chain_code: Ethereum, eligible_at_epoch: 5 },
+      { chain_code: Solana, eligible_at_epoch: 3 }
+    ])
+    expect(
+      WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 3, [Solana]: 1 }, [Ethereum, Solana]))
+    ).toBe(true)
+    expect(
+      WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 3, [Solana]: 3 }, [Ethereum]))
+    ).toBe(true)
+    // An undecided (or disputed) epoch short of the chain's wait holds the request.
+    expect(
+      WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 4, [Solana]: 9 }, [Solana]))
+    ).toBe(false)
+    expect(WireCollateralTool.consensusWaitsPassed(both, consensus({ [Ethereum]: 4, [Solana]: 2 }, [Ethereum]))).toBe(
+      false
+    )
   })
 
   it("mirrors sysio.opreg's WITHDRAW_WAIT_EPOCHS", () => {

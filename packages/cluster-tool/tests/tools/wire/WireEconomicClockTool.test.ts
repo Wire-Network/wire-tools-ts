@@ -40,13 +40,15 @@ function boundaryMs(index: number): number {
 /** One chain's consensus reading at `index`, on the fixture rows' boundaries ({@link chainRow}). */
 function consensusReading(
   index: number,
-  paused: boolean
+  paused: boolean,
+  decided = false
 ): WireEconomicClockTool.ConsensusReading {
   return {
     epochIndex: index,
     epochStartMs: GridStartMs,
     nextEpochStartMs: GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond,
-    paused
+    paused,
+    decided
   }
 }
 
@@ -106,6 +108,54 @@ function chainRow(
   }
 }
 
+/** The `outpcons` read of a depot that has accepted no winner on any chain yet. */
+const NoAcceptedWinner: PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType> = {
+  [Held]: undefined,
+  [Running]: undefined
+}
+
+/** No chain's current epoch was ever disputed. */
+const NoCurrentDisputes: PerOutpostChain<SysioContracts.SysioChalgDisputeEntryType> = {
+  [Held]: undefined,
+  [Running]: undefined
+}
+
+/** One chain's `outpcons` row, recording the accepted winner of its epoch `index`. */
+function outpostConsensusRow(
+  chain: Constants.OutpostChainCodename,
+  index: number
+): SysioContracts.SysioMsgchOutpostConsensusEntryType {
+  return {
+    chain_code: SlugName.from(chain),
+    epoch_index: index,
+    consensus_reached: true,
+    winning_checksum: "",
+    envelope_digest: "",
+    message_tip: ""
+  }
+}
+
+/** One `disputes` row on `chain`'s epoch `index`. */
+function disputeRow(
+  chain: Constants.OutpostChainCodename,
+  index: number,
+  status: SysioContracts.SysioChalgDisputestatus
+): SysioContracts.SysioChalgDisputeEntryType {
+  return {
+    id: 1,
+    chain_code: SlugName.from(chain),
+    epoch_index: index,
+    status,
+    winning_checksum: "",
+    opened_at: stamp(GridStartMs),
+    deadline: stamp(GridStartMs),
+    candidates: [],
+    network_gen: 0,
+    electorate: [],
+    quorum: 0
+  }
+}
+
 /** Every chain's `epochstate` row: the held chain at `index` (paused when `paused`), the running one at `index`. */
 function consensusRow(
   index: number,
@@ -133,6 +183,9 @@ function clockContext(
     economy = jest.spyOn(Steps.contracts.sysio.epoch, "readEconomyState"),
     consensus = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates"),
     info = jest.spyOn(ctx.wire, "getInfo")
+  // No chain has an accepted winner or a dispute, so no epoch reads as decided.
+  jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+  jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockResolvedValue(undefined)
   reads.forEach(([economyState, consensusState, headMs]) => {
     economy.mockResolvedValueOnce(economyState)
     consensus.mockResolvedValueOnce(consensusState)
@@ -202,28 +255,125 @@ describe("WireEconomicClockTool", () => {
           next_epoch_start: stamp(solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond)
         }
       expect(
-        WireEconomicClockTool.toConsensusReadings({
-          [Held]: chainRow(Held, 8, true),
-          [Running]: running
-        })
+        WireEconomicClockTool.toConsensusReadings(
+          {
+            [Held]: chainRow(Held, 8, true),
+            [Running]: running
+          },
+          NoAcceptedWinner,
+          NoCurrentDisputes
+        )
       ).toEqual({
         [Held]: consensusReading(8, true),
         [Running]: {
           epochIndex: 3,
           epochStartMs: solanaStartMs,
           nextEpochStartMs: solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond,
-          paused: false
+          paused: false,
+          decided: false
         }
+      })
+    })
+
+    describe("a chain's current epoch is decided", () => {
+      const { DISPUTE_STATUS_OPEN: Open, DISPUTE_STATUS_RESOLVED: Resolved } =
+          SysioContracts.SysioChalgDisputestatus,
+        states = { [Held]: chainRow(Held, 8, false), [Running]: chainRow(Running, 3, false) },
+        decided = (
+          outpostConsensus: PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType>,
+          currentDisputes: PerOutpostChain<SysioContracts.SysioChalgDisputeEntryType> = NoCurrentDisputes
+        ): PerOutpostChain<boolean> => {
+          const readings = WireEconomicClockTool.toConsensusReadings(states, outpostConsensus, currentDisputes)
+          return { [Held]: readings[Held].decided, [Running]: readings[Running].decided }
+        },
+        accepted = { [Held]: outpostConsensusRow(Held, 8), [Running]: outpostConsensusRow(Running, 3) }
+
+      it("once outpcons records the winner of that epoch", () => {
+        expect(decided(accepted)).toEqual({ [Held]: true, [Running]: true })
+      })
+
+      it("not while outpcons records the winner of an earlier epoch, or none", () => {
+        expect(decided({ [Held]: outpostConsensusRow(Held, 7), [Running]: undefined })).toEqual({
+          [Held]: false,
+          [Running]: false
+        })
+      })
+
+      it("not while a dispute on that epoch is open, but again once it is resolved", () => {
+        expect(decided(accepted, { [Held]: disputeRow(Held, 8, Open), [Running]: undefined })).toEqual({
+          [Held]: false,
+          [Running]: true
+        })
+        expect(decided(accepted, { [Held]: disputeRow(Held, 8, Resolved), [Running]: undefined })).toEqual({
+          [Held]: true,
+          [Running]: true
+        })
+      })
+
+      it("whatever open dispute is read for another chain or another epoch", () => {
+        expect(
+          decided(accepted, { [Held]: disputeRow(Held, 7, Open), [Running]: disputeRow(Held, 3, Open) })
+        ).toEqual({ [Held]: true, [Running]: true })
       })
     })
 
     it("toConsensusReadings refuses a chain without an epochstate row", () => {
       expect(() =>
-        WireEconomicClockTool.toConsensusReadings({
-          [Held]: undefined,
-          [Running]: chainRow(Running, 3, false)
-        })
+        WireEconomicClockTool.toConsensusReadings(
+          {
+            [Held]: undefined,
+            [Running]: chainRow(Running, 3, false)
+          },
+          NoAcceptedWinner,
+          NoCurrentDisputes
+        )
       ).toThrow(new RegExp(`epochstate has no ${Held} row`))
+    })
+
+    it("readConsensusReadings reads epochstate and outpcons, then each chain's current-epoch dispute", async () => {
+      const ctx = fixtureContext()
+      jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
+        [Held]: chainRow(Held, 6, true),
+        [Running]: chainRow(Running, 4, false)
+      })
+      jest
+        .spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus")
+        .mockResolvedValue({ [Held]: outpostConsensusRow(Held, 6), [Running]: outpostConsensusRow(Running, 4) })
+      const epochDispute = jest
+        .spyOn(Steps.contracts.sysio.chalg, "readEpochDispute")
+        .mockImplementation(async (_ctx, chain, epochIndex) =>
+          chain === Running
+            ? disputeRow(Running, epochIndex, SysioContracts.SysioChalgDisputestatus.DISPUTE_STATUS_OPEN)
+            : undefined
+        )
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).resolves.toEqual({
+        [Held]: consensusReading(6, true, true),
+        [Running]: consensusReading(4, false, false)
+      })
+      expect(epochDispute).toHaveBeenCalledTimes(2)
+      expect(epochDispute).toHaveBeenCalledWith(ctx, Held, 6)
+      expect(epochDispute).toHaveBeenCalledWith(ctx, Running, 4)
+    })
+
+    it("readConsensusReadings reads no dispute for a chain without an epochstate row, and refuses it", async () => {
+      const ctx = fixtureContext()
+      jest
+        .spyOn(Steps.contracts.sysio.epoch, "readEpochStates")
+        .mockResolvedValue({ [Held]: chainRow(Held, 6, false), [Running]: undefined })
+      jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+      const epochDispute = jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockResolvedValue(undefined)
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).rejects.toThrow(
+        new RegExp(`epochstate has no ${Running} row`)
+      )
+      expect(epochDispute).toHaveBeenCalledTimes(1)
+    })
+
+    it("readConsensusReadings fails with the read that fails", async () => {
+      const ctx = fixtureContext()
+      jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue(consensusRow(6))
+      jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+      jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockRejectedValue(new Error("dispute read failed"))
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).rejects.toThrow(/dispute read failed/)
     })
 
     it("describes one chain's consensus for the log, marking a paused chain", () => {

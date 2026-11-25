@@ -75,10 +75,24 @@ export namespace EconomicClockScenarioConstants {
   export const WithdrawerServedChains = OutpostChainCodenames
 
   /**
-   * The outpost chain governance pauses for the second withdrawal: that chain's consensus guard
-   * holds the request after its economic wait passes, while the other chain keeps advancing.
+   * The outpost chain governance pauses on a decided epoch for the second withdrawal: its decided
+   * epoch passes the request's wait on it while its index stands still, and the other chain keeps
+   * advancing.
    */
   export const PausedChain = Constants.ETHEREUM_CHAIN_CODENAME
+
+  /**
+   * Time (ms) a decided epoch of {@link PausedChain} must still have before its boundary when the
+   * flow pauses the chain, so the pause lands on that epoch: a third of the 60 s epoch, far above
+   * the pause's own inclusion time. Raising it makes the await wait longer for a fitting epoch.
+   */
+  export const DecidedEpochBoundaryMarginMs = 20_000
+
+  /**
+   * Epochs of {@link PausedChain} the decided-epoch await allows: the one in progress, the next
+   * (its decision lands well before its boundary) and one of margin.
+   */
+  export const DecidedEpochAwaitEpochs = 3
 
   /** WIRE the withdrawer bonds — 2 WIRE. */
   export const BondAmount = 2_000_000_000n
@@ -122,8 +136,8 @@ export namespace EconomicClockScenarioConstants {
   export const ClockObservation = "clock-independence"
   /** The reading before the withdrawal whose consensus guard passes first. */
   export const ConsensusFirstObservation = "consensus-first-request"
-  /** The reading before the withdrawal whose economic wait passes first. */
-  export const EconomicFirstObservation = "economic-first-request"
+  /** The reading before the withdrawal made while {@link PausedChain} is paused on a decided epoch. */
+  export const PausedDecidedObservation = "paused-decided-request"
   /** The epoch the treasury drain lands in. */
   export const DrainObservation = "treasury-drain"
   /** An economic epoch that opens while emissions are held. */
@@ -133,8 +147,8 @@ export namespace EconomicClockScenarioConstants {
 
   /** The withdrawal whose consensus guard passes first. */
   export const ConsensusFirstWithdrawal = "consensus-first"
-  /** The withdrawal whose economic wait passes first. */
-  export const EconomicFirstWithdrawal = "economic-first"
+  /** The withdrawal made while {@link PausedChain} is paused on a decided epoch. */
+  export const PausedDecidedWithdrawal = "paused-decided"
 
   /** The producer pay claimed after the clock-independence phase. */
   export const ClockPayClaim = "clock-independence"
