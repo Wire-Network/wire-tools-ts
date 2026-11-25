@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import type { PageWindow } from "@wireio/ql-shared"
 
@@ -71,42 +71,42 @@ export const UiSlice = createSlice({
   initialState: createUiInitialState(),
   reducers: {
     /** Open a surface. */
-    surfaceOpened(state, action: PayloadAction<UiSurface>) {
+    surfaceOpened(state: Draft<UiState>, action: PayloadAction<UiSurface>) {
       if (!state.open.includes(action.payload)) state.open.push(action.payload)
     },
     /** Close a surface. */
-    surfaceClosed(state, action: PayloadAction<UiSurface>) {
+    surfaceClosed(state: Draft<UiState>, action: PayloadAction<UiSurface>) {
       state.open = state.open.filter(surface => surface !== action.payload)
     },
     /** Toggle a surface. */
-    surfaceToggled(state, action: PayloadAction<UiSurface>) {
+    surfaceToggled(state: Draft<UiState>, action: PayloadAction<UiSurface>) {
       state.open = state.open.includes(action.payload)
         ? state.open.filter(surface => surface !== action.payload)
         : [...state.open, action.payload]
     },
     /** Find text changed (resets the focused hit). */
-    findTextChanged(state, action: PayloadAction<string>) {
+    findTextChanged(state: Draft<UiState>, action: PayloadAction<string>) {
       state.findText = action.payload
       state.findHitIndex = 0
     },
     /** Focus another find hit. */
-    findHitSelected(state, action: PayloadAction<number>) {
+    findHitSelected(state: Draft<UiState>, action: PayloadAction<number>) {
       state.findHitIndex = action.payload
     },
     /** Open / close the value inspector. */
-    inspectorChanged(state, action: PayloadAction<InspectorTarget>) {
+    inspectorChanged(state: Draft<UiState>, action: PayloadAction<InspectorTarget>) {
       state.inspector = action.payload
     },
     /** Toolbar Offset / Limit edited. */
-    windowFieldsChanged(state, action: PayloadAction<WindowFields>) {
+    windowFieldsChanged(state: Draft<UiState>, action: PayloadAction<WindowFields>) {
       state.windowFields = action.payload
     },
     /** Grid cursor moved. */
-    cursorMoved(state, action: PayloadAction<InspectorTarget>) {
+    cursorMoved(state: Draft<UiState>, action: PayloadAction<InspectorTarget>) {
       state.cursor = action.payload
     },
     /** Show / clear a notice. */
-    noticeChanged(state, action: PayloadAction<string>) {
+    noticeChanged(state: Draft<UiState>, action: PayloadAction<string>) {
       state.notice = action.payload
     }
   }

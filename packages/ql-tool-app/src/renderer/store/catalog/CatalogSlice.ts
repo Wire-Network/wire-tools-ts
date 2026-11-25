@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import { CatalogSnapshot } from "@wireio/ql-shared"
 
@@ -50,29 +50,29 @@ export const CatalogSlice = createSlice({
   initialState: createCatalogInitialState(),
   reducers: {
     /** A profile was (re)selected: start from its unloaded owners. */
-    catalogReset(state, action: PayloadAction<CatalogSnapshot>) {
+    catalogReset(state: Draft<CatalogState>, action: PayloadAction<CatalogSnapshot>) {
       state.snapshot = action.payload
       state.loadingOwners = []
       state.error = null
       state.generation += 1
     },
     /** An owner's ABI load started. */
-    ownerLoading(state, action: PayloadAction<string>) {
+    ownerLoading(state: Draft<CatalogState>, action: PayloadAction<string>) {
       if (!state.loadingOwners.includes(action.payload)) state.loadingOwners.push(action.payload)
     },
     /** A load / describe answered. */
-    snapshotLoaded(state, action: PayloadAction<CatalogLoaded>) {
+    snapshotLoaded(state: Draft<CatalogState>, action: PayloadAction<CatalogLoaded>) {
       state.snapshot = action.payload.snapshot
       state.loadingOwners = state.loadingOwners.filter(owner => owner !== action.payload.owner)
       state.error = null
     },
     /** A load / describe failed. */
-    catalogFailed(state, action: PayloadAction<CatalogFailed>) {
+    catalogFailed(state: Draft<CatalogState>, action: PayloadAction<CatalogFailed>) {
       state.loadingOwners = state.loadingOwners.filter(owner => owner !== action.payload.owner)
       state.error = action.payload.message
     },
     /** The user closed the error. */
-    errorDismissed(state) {
+    errorDismissed(state: Draft<CatalogState>) {
       state.error = null
     }
   }

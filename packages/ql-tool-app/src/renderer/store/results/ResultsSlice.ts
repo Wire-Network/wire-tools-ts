@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 
 import {
   PageSizeMode,
@@ -291,7 +291,7 @@ export const ResultsSlice = createSlice({
   initialState: createResultsInitialState(),
   reducers: {
     /** A run starts: reuse the focused UNPINNED tab, else open a new one (page 1, pager size kept). */
-    runStarted(state: ResultsState, action: PayloadAction<RunStart>) {
+    runStarted(state: Draft<ResultsState>, action: PayloadAction<RunStart>) {
       const { query, profileName, sourceEditorId, explicitWindow, requestId, at } = action.payload,
         active = findTab(state.tabs, state.activeResultId),
         message: ResultMessage = { at, severity: MessageSeverity.info, text: `Running: ${query}` }
@@ -315,7 +315,7 @@ export const ResultsSlice = createSlice({
       state.nextResultNumber = number + 1
     },
     /** Another page of an existing tab is requested. */
-    pageRequested(state: ResultsState, action: PayloadAction<PageRequest>) {
+    pageRequested(state: Draft<ResultsState>, action: PayloadAction<PageRequest>) {
       const tab = findTab(state.tabs, action.payload.resultId)
       if (tab == null) return
       tab.previousBlockId = Results.blockIdOf(tab.execution)
@@ -330,7 +330,7 @@ export const ResultsSlice = createSlice({
       })
     },
     /** A request answered (ignored when a newer request superseded it). */
-    executionFinished(state: ResultsState, action: PayloadAction<ExecutionFinish>) {
+    executionFinished(state: Draft<ResultsState>, action: PayloadAction<ExecutionFinish>) {
       const { resultId, requestId, execution, at } = action.payload,
         tab = findTab(state.tabs, resultId)
       if (tab == null || tab.requestId !== requestId) return
@@ -344,27 +344,27 @@ export const ResultsSlice = createSlice({
       })
     },
     /** Focus a result tab. */
-    resultActivated(state: ResultsState, action: PayloadAction<string>) {
+    resultActivated(state: Draft<ResultsState>, action: PayloadAction<string>) {
       if (findTab(state.tabs, action.payload) != null) state.activeResultId = action.payload
     },
     /** Close a result tab. */
-    resultClosed(state: ResultsState, action: PayloadAction<string>) {
+    resultClosed(state: Draft<ResultsState>, action: PayloadAction<string>) {
       const index = state.tabs.findIndex(tab => tab.id === action.payload)
       if (index < 0) return
       state.tabs.splice(index, 1)
       if (state.activeResultId === action.payload) state.activeResultId = nextActive(state.tabs, index)
     },
     /** Toggle a tab's pin. */
-    pinToggled(state: ResultsState, action: PayloadAction<string>) {
+    pinToggled(state: Draft<ResultsState>, action: PayloadAction<string>) {
       const tab = findTab(state.tabs, action.payload)
       if (tab != null) tab.pinned = !tab.pinned
     },
     /** Focus a view. */
-    panelSelected(state: ResultsState, action: PayloadAction<ResultPanelKind>) {
+    panelSelected(state: Draft<ResultsState>, action: PayloadAction<ResultPanelKind>) {
       state.activePanel = action.payload
     },
     /** Some of the sorts / filters / hidden columns changed (the rest are kept). */
-    viewPatched(state: ResultsState, action: PayloadAction<ViewPatch>) {
+    viewPatched(state: Draft<ResultsState>, action: PayloadAction<ViewPatch>) {
       const tab = findTab(state.tabs, action.payload.resultId)
       if (tab != null) tab.view = { ...tab.view, ...action.payload.patch }
     }

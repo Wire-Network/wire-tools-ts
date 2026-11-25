@@ -1,4 +1,4 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, type Draft, type PayloadAction } from "@reduxjs/toolkit"
 import { DefaultStatus, SliceName } from "../StoreTypes.js"
 
 /** UI-level ephemera shown in the header. */
@@ -15,7 +15,7 @@ export const uiSlice = createSlice({
   initialState,
   reducers: {
     /** Replace the status string — clamped to a single line by convention. */
-    setStatus: (state, action: PayloadAction<string>) => {
+    setStatus: (state: Draft<UIState>, action: PayloadAction<string>) => {
       state.status = action.payload
     }
   }
