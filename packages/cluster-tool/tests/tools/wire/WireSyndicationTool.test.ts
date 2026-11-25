@@ -39,6 +39,8 @@ const Solana = "SOLANA",
   Liqeth = "LIQETH",
   Bonder = "bonder.a",
   RequestId = FixtureRequestId,
+  /** The consensus epoch duration the bootstrap pair rows are sized for here (s). */
+  EpochDurationSec = 60,
   signal = new AbortController().signal
 
 /**
@@ -94,7 +96,9 @@ afterEach(() => jest.restoreAllMocks())
 describe("WireSyndicationTool — sysio.synd reads", () => {
   it("derives a floored fee plus flat charge from the live pair, including a changed charge", async () => {
     const { ctx, clients } = stubbedContext(),
-      config = Steps.registry.SyndicationConfigRegistrations.find(row => row.token_code === Liqsol)
+      config = Steps.registry.syndicationConfigRegistrations(EpochDurationSec).find(
+        row => row.token_code === Liqsol
+      )
     serve(clients.liq.tables.stat, [stat("2.000000001 LIQSOL")])
     const query = jest.spyOn(clients.synd.tables.syndconfig, "query")
       .mockResolvedValue({ rows: [config], more: false })
@@ -175,7 +179,7 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
   it("readLedger and readSyndicationConfig find the pair's row", async () => {
     const { ctx, clients } = stubbedContext(),
       config: SysioContracts.SysioSyndSyndConfigType = {
-        ...Steps.registry.SyndicationConfigRegistrations[1]
+        ...Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[1]
       }
     serve(clients.synd.tables.ledger, [
       {
@@ -187,7 +191,7 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
       }
     ])
     serve(clients.synd.tables.syndconfig, [
-      Steps.registry.SyndicationConfigRegistrations[0],
+      Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[0],
       config
     ])
     expect(
@@ -209,14 +213,14 @@ describe("WireSyndicationTool — sysio.synd reads", () => {
         token_code: Liqsol,
         direction: "SYNDICATION",
         level: 10,
-        last_epoch: 4
+        last_refill: "2026-01-01T00:00:04"
       },
       {
         chain_code: Solana,
         token_code: Liqsol,
         direction: SysioSyndBucketDirection.DESYNDICATION,
         level: 20,
-        last_epoch: 4
+        last_refill: "2026-01-01T00:00:04"
       }
     ])
     const syndication = await WireSyndicationTool.readBucket(

@@ -941,4 +941,21 @@ export namespace ProtocolTiming {
   export function effectiveEpochSec(epochDurationSec: number): number {
     return epochDurationSec + EpochExtensionMaxSec
   }
+
+  /**
+   * Effective duration of the slower clock, for N-epoch deadlines that wait on both (s): a
+   * collateral withdrawal matures only once its economic wait AND its consensus guard have
+   * passed. Consensus never extends an economic epoch, but its tick lands up to a crank poll
+   * after the boundary, which the same extension margin covers.
+   *
+   * @param epochDurationSec - The cluster's consensus epoch duration (s).
+   * @param economicEpochDurationSec - The cluster's economic epoch duration (s).
+   * @returns The extension-inclusive duration of the slower clock (s).
+   */
+  export function effectiveSlowerEpochSec(
+    epochDurationSec: number,
+    economicEpochDurationSec: number
+  ): number {
+    return effectiveEpochSec(Math.max(epochDurationSec, economicEpochDurationSec))
+  }
 }

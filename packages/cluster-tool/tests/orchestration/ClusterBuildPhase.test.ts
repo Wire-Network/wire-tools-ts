@@ -8,7 +8,8 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
-import { sleep } from "@wireio/cluster-tool/utils"
+import { MaxTimerDelayMs, sleep } from "@wireio/cluster-tool/utils"
+import { Deferred } from "@wireio/shared"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 import {
   ConcurrencyProbeKey,
@@ -219,6 +220,62 @@ describe("ClusterBuildPhase executor", () => {
       Report.StepStatus.ok
     ])
     expect(result.succeeded).toBe(true)
+  })
+
+  it("a step ceiling past Node's timer limit neither fires early nor leaves a timer behind", async () => {
+    jest.useFakeTimers()
+    try {
+      // A seven-day economic epoch's remit Step ceiling.
+      const ceilingMs = 2_419_350_000,
+        body = new Deferred<void>(),
+        step = ClusterBuildStep.create(
+          Report.Actor.Sysio,
+          "long",
+          "long",
+          { timeoutMs: ceilingMs },
+          null,
+          () => body.promise
+        ),
+        result = runOne(
+          ClusterBuildPhase.create(newBuild(), "P", "d").push(step)
+        )
+      expect(ceilingMs).toBeGreaterThan(MaxTimerDelayMs)
+      // A native setTimeout of this length overflows and fails the step after 1 ms.
+      await jest.advanceTimersByTimeAsync(MaxTimerDelayMs + 1_000)
+      body.resolve()
+      expect((await result).steps[0].status).toBe(Report.StepStatus.ok)
+      expect(jest.getTimerCount()).toBe(0)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it("a step past a ceiling longer than Node's timer limit still times out at its ceiling", async () => {
+    jest.useFakeTimers()
+    try {
+      const ceilingMs = 2 * MaxTimerDelayMs + 5,
+        step = ClusterBuildStep.create(
+          Report.Actor.Sysio,
+          "stuck",
+          "stuck",
+          { timeoutMs: ceilingMs },
+          null,
+          () => new Deferred<void>().promise
+        ),
+        result = runOne(
+          ClusterBuildPhase.create(newBuild(), "P", "d").push(step)
+        )
+      await jest.advanceTimersByTimeAsync(ceilingMs - 1)
+      expect(jest.getTimerCount()).toBe(1)
+      await jest.advanceTimersByTimeAsync(1)
+      const [stepResult] = (await result).steps
+      expect(stepResult.status).toBe(Report.StepStatus.failed)
+      expect(stepResult.error?.message).toContain(
+        `step exceeded ${ceilingMs}ms`
+      )
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("captures actor + typed input into the StepResult", async () => {

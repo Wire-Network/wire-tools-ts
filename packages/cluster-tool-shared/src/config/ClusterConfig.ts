@@ -1,5 +1,7 @@
-import { Level } from "@wireio/shared"
+import { identity } from "lodash"
 import { z } from "zod"
+
+import { Level } from "@wireio/shared"
 
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
@@ -154,13 +156,10 @@ export const DefaultChainStateDbSizeMb = 1_024
 export const DefaultSolanaSlotsPerEpoch = 100
 
 /**
- * THE canonical cluster configuration — the plain JSON shape persisted to
- * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
- * the harness at runtime. `ClusterConfigProvider` (cluster-tool) resolves,
- * loads, and saves it (via {@link ClusterConfigSchemaCodec}); the debugging
- * server, TUI, and flows consume it read-only.
+ * Every member of a cluster config — the decoded side of {@link ClusterConfigSchema},
+ * which validates a persisted config against it once a missing economic duration is filled.
  */
-export const ClusterConfigSchema = z.object({
+const ClusterConfigShape = z.object({
   /** wire-sysio build directory (binaries + contract artifacts). */
   buildPath: z.string(),
   /** Root directory of this cluster's on-disk state. */
@@ -185,6 +184,20 @@ export const ClusterConfigSchema = z.object({
   apiCount: z.number(),
   /** Depot epoch duration, seconds (global — see the epoch-duration rule). */
   epochDurationSec: z.number(),
+  /**
+   * Economic epoch duration, seconds — the `sysio.epoch` clock emissions, collateral
+   * withdrawals and producer pay run on, independent of consensus. A config saved without
+   * it decodes with `epochDurationSec`, the value `ClusterConfigProvider.resolve` writes
+   * when the caller sets none.
+   */
+  economicEpochDurationSec: z.number(),
+  /**
+   * Start of economic epoch 1 as the zone-less UTC stamp `YYYY-MM-DDTHH:MM:SS` that
+   * `ClusterConfigProvider.resolve` normalizes it to, or `null` to anchor it at the chain
+   * head when the bootstrap configures the clock. `null` (not absence) so the slot
+   * round-trips through JSON persistence.
+   */
+  economicStartTime: z.string().nullable().default(null),
   /**
    * `operators_per_epoch` (batch-op group SIZE) override, or `null` to derive
    * it from `batchOperatorCount` at bootstrap. `null` (not absence) so the slot
@@ -364,6 +377,43 @@ export const ClusterConfigSchema = z.object({
    */
   solanaSlotsPerEpoch: z.number()
 })
+
+/**
+ * The members of a persisted config that {@link ClusterConfigSchema} reads before
+ * {@link ClusterConfigShape} validates the rest: the consensus epoch duration, and the
+ * economic one it stands in for when absent. Every other member passes through untouched.
+ */
+const ClusterConfigEpochDurationsSchema = z.looseObject({
+  /** Depot epoch duration, seconds — the default of a missing economic duration. */
+  epochDurationSec: z.number(),
+  /** Economic epoch duration, seconds — absent in a config saved before the economic clock. */
+  economicEpochDurationSec: z.number().optional()
+})
+
+/**
+ * THE canonical cluster configuration — the plain JSON shape persisted to
+ * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
+ * the harness at runtime. `ClusterConfigProvider` (cluster-tool) resolves,
+ * loads, and saves it (via {@link ClusterConfigSchemaCodec}); the debugging
+ * server, TUI, and flows consume it read-only.
+ *
+ * Decoding defaults a missing `economicEpochDurationSec` to the saved
+ * `epochDurationSec` — a field default cannot read a sibling, so the codec fills it
+ * before {@link ClusterConfigShape} validates. Encoding writes the config as it is.
+ */
+export const ClusterConfigSchema = z.codec(
+  ClusterConfigEpochDurationsSchema,
+  ClusterConfigShape,
+  {
+    decode: (persisted): z.input<typeof ClusterConfigShape> =>
+      ({
+        ...persisted,
+        economicEpochDurationSec:
+          persisted.economicEpochDurationSec ?? persisted.epochDurationSec
+      }) as z.input<typeof ClusterConfigShape>,
+    encode: identity
+  }
+)
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>
 

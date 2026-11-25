@@ -111,11 +111,49 @@ describe("Steps.contracts.sysio.system", () => {
     const step = Steps.contracts.sysio.system.planInitt5(
       Report.Actor.Sysio,
       "init-t5",
-      "seed t5_state at chain head time",
+      "seed t5_state from the economic clock",
       {}
     )
     expect(step.input).toBeNull()
-    expect(typeof step.runner).toBe("function")
+    expect(step.runner).toBe(Steps.contracts.sysio.system.runInitt5)
+  })
+
+  describe("start-time runners", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    /** A real context whose system contract client is memoized for spying. */
+    function systemContext() {
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      return { ctx, contract }
+    }
+
+    it("runInitt5 pushes an empty payload: the economic clock supplies its start", async () => {
+      const { ctx, contract } = systemContext(),
+        invoke = jest.spyOn(contract.actions.initt5, "invoke").mockResolvedValue(undefined),
+        head = jest.spyOn(ctx.wire, "chainHeadTimestamp")
+      await Steps.contracts.sysio.system.runInitt5(ctx, null, new AbortController().signal)
+      expect(invoke).toHaveBeenCalledWith({})
+      expect(head).not.toHaveBeenCalled()
+    })
+
+    it("runSetinittime anchors node-owner vesting at the chain head", async () => {
+      const { ctx, contract } = systemContext(),
+        invoke = jest.spyOn(contract.actions.setinittime, "invoke").mockResolvedValue(undefined)
+      jest.spyOn(ctx.wire, "chainHeadTimestamp").mockResolvedValue("2026-11-19T10:20:30")
+      await Steps.contracts.sysio.system.runSetinittime(ctx, null, new AbortController().signal)
+      expect(invoke).toHaveBeenCalledWith({ no_reward_init_time: "2026-11-19T10:20:30" })
+    })
+
+    it("an aborted runInitt5 pushes nothing", async () => {
+      const { ctx, contract } = systemContext(),
+        invoke = jest.spyOn(contract.actions.initt5, "invoke").mockResolvedValue(undefined)
+      await expect(
+        Steps.contracts.sysio.system.runInitt5(ctx, null, AbortSignal.abort())
+      ).rejects.toThrow()
+      expect(invoke).not.toHaveBeenCalled()
+    })
   })
 
   it("init carries the system::init data", () => {

@@ -304,6 +304,8 @@ options, is the `create` table in the repo root `README.md`):
 | `--producer-count` / `-p` | Producer accounts to register (default 1) |
 | `--batch-operator-count` / `-b` | Batch operators (default 3) |
 | `--epoch-duration-sec` | Minimum epoch duration in seconds (default 300) |
+| `--economic-epoch-duration-sec` | Economic epoch duration in seconds — emissions, collateral withdrawals and producer pay (default: the epoch duration) |
+| `--economic-start-time` | Start of economic epoch 1, ISO-8601 UTC (default: the chain head when the bootstrap configures it) |
 | `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero — forced on by a local `create` |
 | `--enable-mock-syndication-import` | Import the mock bonder's LIQ positions during epoch zero — forced on by a local `create` |
 | `--enable-batch-operator-underwriting` | Run the underwriter role on every batch operator; with the mock import, fund each operator with 100 LIQSOL and 100 LIQETH — forced on by a local `create` |

@@ -249,10 +249,10 @@ export class ProducerRegistrationScenario extends FlowScenario {
           Constants.demotionDeadlineMs(ScheduleSize) +
           ProtocolTiming.PollDeadlineBufferMs
       },
-      // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`).
+      // The same config the claim verify's runner reads (`ctx.config`).
       remitClaimStepOptions = {
         timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
-          cluster.context.config.epochDurationSec
+          cluster.context.config
         )
       }
 

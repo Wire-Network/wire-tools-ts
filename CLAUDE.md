@@ -547,7 +547,8 @@ on `sysio.andon`, whose RAM a `sysio`-signed `setacctram` covers), `JudgeAccount
 declares its linked permission, which the judge or `sysio@active` satisfies) and
 `SyndicationConfig` (after `ShadowLiqTokens`:
 `sysio.bond::setconfig` and one `sysio.synd::setconfig` per shadow pair, from
-`Steps.registry.SyndicationConfigRegistrations`: free syndication;
+`Steps.registry.syndicationConfigRegistrations(epochDurationSec)`: free syndication;
+one-million-token buckets whose per-second refill restores a full burst each consensus epoch;
 desyndication = floor(quantity × 5 / 10000) + flat fee, recovering gas for both
 round-trip legs (Ethereum ≈507k gas; Solana 9k–104k lamports). At 9 decimals,
 LIQETH flat/minimum = 5,000,000/100,000,000 and LIQSOL = 100,000/50,000,000;

@@ -49,6 +49,8 @@ function fullConfig(clusterPath: string) {
     underwriterCount: 0,
     apiCount: 0,
     epochDurationSec: 60,
+    economicEpochDurationSec: 60,
+    economicStartTime: null,
     solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
     warmupEpochs: 1,
     cooldownEpochs: 1,

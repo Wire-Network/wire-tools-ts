@@ -60,6 +60,109 @@ describe("Steps.contracts.sysio.epoch", () => {
     expect(typeof step.runner).toBe("function")
   })
 
+  it("seteconomy carries the economic clock's duration and start", () => {
+    const step = Steps.contracts.sysio.epoch.planSeteconomy(
+      Report.Actor.Sysio,
+      "configure-economy",
+      "set the economic clock",
+      {},
+      300,
+      "2026-11-19T00:00:00"
+    )
+    expect(step.input).toEqual({
+      kind: "EpochContractSteps.SeteconomyInput",
+      epochDurationSec: 300,
+      startTime: "2026-11-19T00:00:00"
+    })
+    expect(step.runner).toBe(Steps.contracts.sysio.epoch.runSeteconomy)
+  })
+
+  describe("runSeteconomy", () => {
+    afterEach(() => jest.restoreAllMocks())
+
+    /** A real context whose epoch contract client is memoized for spying. */
+    function epochContext() {
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.epoch)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      const invoke = jest.spyOn(contract.actions.seteconomy, "invoke").mockResolvedValue(undefined),
+        head = jest.spyOn(ctx.wire, "chainHeadTimestamp").mockResolvedValue("2026-11-19T10:20:30")
+      return { ctx, invoke, head }
+    }
+
+    it("anchors a null start at the chain head", async () => {
+      const { ctx, invoke, head } = epochContext()
+      await Steps.contracts.sysio.epoch.runSeteconomy(
+        ctx,
+        { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec: 60, startTime: null },
+        new AbortController().signal
+      )
+      expect(head).toHaveBeenCalledTimes(1)
+      expect(invoke).toHaveBeenCalledWith({
+        epoch_duration_sec: 60,
+        start_time: "2026-11-19T10:20:30"
+      })
+    })
+
+    it("passes a configured past start as the second it falls in, without reading the head", async () => {
+      const { ctx, invoke, head } = epochContext()
+      await Steps.contracts.sysio.epoch.runSeteconomy(
+        ctx,
+        {
+          kind: "EpochContractSteps.SeteconomyInput",
+          epochDurationSec: 360,
+          startTime: "2026-11-01T06:00:00.750Z"
+        },
+        new AbortController().signal
+      )
+      expect(head).not.toHaveBeenCalled()
+      expect(invoke).toHaveBeenCalledWith({
+        epoch_duration_sec: 360,
+        start_time: "2026-11-01T06:00:00"
+      })
+    })
+
+    it.each([
+      ["a +00:00 offset", "2026-11-20T12:34:56+00:00"],
+      ["the normalized form ClusterConfigProvider.resolve persists", "2026-11-20T12:34:56"]
+    ])("pushes a start with %s as the UTC second it falls in", async (_form, startTime) => {
+      const { ctx, invoke } = epochContext()
+      await Steps.contracts.sysio.epoch.runSeteconomy(
+        ctx,
+        { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec: 60, startTime },
+        new AbortController().signal
+      )
+      expect(invoke).toHaveBeenCalledWith({
+        epoch_duration_sec: 60,
+        start_time: "2026-11-20T12:34:56"
+      })
+    })
+
+    it("refuses an unparseable start before pushing", async () => {
+      const { ctx, invoke } = epochContext()
+      await expect(
+        Steps.contracts.sysio.epoch.runSeteconomy(
+          ctx,
+          { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec: 60, startTime: "yesterday" },
+          new AbortController().signal
+        )
+      ).rejects.toThrow(/unparseable timestamp/)
+      expect(invoke).not.toHaveBeenCalled()
+    })
+
+    it("an aborted step pushes nothing", async () => {
+      const { ctx, invoke } = epochContext()
+      await expect(
+        Steps.contracts.sysio.epoch.runSeteconomy(
+          ctx,
+          { kind: "EpochContractSteps.SeteconomyInput", epochDurationSec: 60, startTime: null },
+          AbortSignal.abort()
+        )
+      ).rejects.toThrow()
+      expect(invoke).not.toHaveBeenCalled()
+    })
+  })
+
   it.each(["planSchbatchgps", "planAdvance"] as const)(
     "%s builds an input-less step with a runner",
     action => {

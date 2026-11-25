@@ -63,9 +63,9 @@ async function assertDepositorActive(ctx: ClusterBuildContext): Promise<void> {
  *    ACTIVE.
  * 4. **WithdrawRequest** — `opreg::withdraw` queues half the bond; the remainder still meets
  *    the minimum, so the operator stays ACTIVE.
- * 5. **WaitAndFlush** — after the withdraw wait, `flushwtdw` (inline from
- *    `sysio.epoch::advance`) drains the queue row, debits the balance row and credits
- *    `remitclaims{depositor, WIRE}`.
+ * 5. **WaitAndFlush** — once the withdraw wait has passed on both the economic and the
+ *    consensus clock, `flushwtdw` (inline from `sysio.epoch::tickeconomy`) drains the queue
+ *    row, debits the balance row and credits `remitclaims{depositor, WIRE}`.
  * 6. **ClaimRemit** — `opreg::claimremit` pays the claim out through `sysio.token`; the
  *    depositor's liquid WIRE rises by exactly the withdrawal and the claim row is gone.
  */
@@ -87,11 +87,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    // The same epoch duration the claim verify's runner reads (`ctx.config.epochDurationSec`),
+    // The same config the claim verify's runner reads (`ctx.config`),
     // so the Step ceiling cannot diverge from the poll deadline it wraps.
     const remitClaimStepOptions = {
       timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(
-        cluster.context.config.epochDurationSec
+        cluster.context.config
       )
     }
 

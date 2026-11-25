@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks"
 import Bluebird from "bluebird"
 import { match } from "ts-pattern"
-import { eachSeries } from "../utils/asyncUtils.js"
+import { eachSeries, setLongTimeout, type LongTimeout } from "../utils/asyncUtils.js"
 import { pollUntil } from "./StepTools.js"
 import { Report } from "../report/Report.js"
 import { StepExtraRecorder } from "../report/tools/StepExtraRecorder.js"
@@ -180,26 +180,22 @@ export class ClusterBuildPhase<
 /**
  * Race a step body against its timeout while threading the phase's AbortSignal.
  * A `null` budget means "no timeout". The body receives the signal so a
- * well-behaved step can bail cooperatively.
+ * well-behaved step can bail cooperatively. The timer is a {@link setLongTimeout},
+ * so a ceiling past Node's 32-bit timer limit still fires on time.
  */
-/** A step/phase ceiling multiplied by the flow-wide timing scale (null passes through). */
-function scaledTimeoutMs(timeoutMs: number | null): number {
-  return timeoutMs != null ? Math.round(timeoutMs * pollUntil.timeoutScale()) : null
-}
-
 function runWithTimeout(
   body: (signal: AbortSignal) => Promise<void>,
   timeoutMs: number | null,
   controller: AbortController
 ): Promise<void> {
   if (!timeoutMs) return body(controller.signal)
-  let handle: NodeJS.Timeout
+  let timeout: LongTimeout
   const timer = new Promise<never>((_resolve, reject) => {
-    handle = setTimeout(() => {
+    timeout = setLongTimeout(() => {
       controller.abort()
       reject(new Error(`step exceeded ${timeoutMs}ms`))
     }, timeoutMs)
-    controller.signal.addEventListener("abort", () => clearTimeout(handle), {
+    controller.signal.addEventListener("abort", () => timeout.clear(), {
       once: true
     })
   })
@@ -207,8 +203,13 @@ function runWithTimeout(
   // completed step would later fire and abort the SHARED phase controller,
   // silently skipping every remaining step in the phase.
   return Promise.race([body(controller.signal), timer]).finally(() =>
-    clearTimeout(handle)
+    timeout.clear()
   )
+}
+
+/** A step/phase ceiling multiplied by the flow-wide timing scale (null passes through). */
+function scaledTimeoutMs(timeoutMs: number | null): number {
+  return timeoutMs != null ? Math.round(timeoutMs * pollUntil.timeoutScale()) : null
 }
 
 export namespace ClusterBuildPhase {

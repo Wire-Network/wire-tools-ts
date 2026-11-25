@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import {
   KeyType,
   PrivateKey,
@@ -18,6 +19,7 @@ import {
 } from "../outputs/MockSyndicationBonderOutput.js"
 import { KeySteps } from "./KeySteps.js"
 import { eachSeries } from "../../utils/asyncUtils.js"
+import { ceilDiv } from "../../utils/bigintUtils.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -122,11 +124,30 @@ export namespace RegistrySteps {
     LIQSOL: 50_000_000
   } as const
   /**
-   * Size and per-epoch refill of each pair's syndication and desyndication buckets
-   * (shadow base units): one million tokens at the depot's 9 decimals, far above any
-   * amount a flow moves, so no existing flow waits on a bucket.
+   * Size (burst) of each pair's syndication and desyndication buckets (shadow base units):
+   * one million tokens at the depot's 9 decimals, far above any amount a flow moves, so no
+   * existing flow waits on a bucket. {@link syndicationRefillPerSecond} refills a whole one
+   * per consensus epoch.
    */
   export const SyndicationBucketSize = 1_000_000_000_000_000
+
+  /**
+   * The refill of each pair's syndication and desyndication buckets (shadow base units per
+   * elapsed second — `sysio.synd` adds `refill × elapsed seconds`, capped at the burst): one
+   * {@link SyndicationBucketSize} per consensus epoch of the cluster, rounded up so one epoch
+   * of elapsed time restores a whole emptied bucket. 16,666,666,666,667 (about 16,667 tokens
+   * a second) at 60 s epochs.
+   *
+   * @param epochDurationSec - The cluster's consensus epoch duration (s).
+   * @returns The per-second refill.
+   */
+  export function syndicationRefillPerSecond(
+    epochDurationSec: ClusterConfig["epochDurationSec"]
+  ): number {
+    return Number(
+      ceilDiv(BigInt(SyndicationBucketSize), BigInt(epochDurationSec))
+    )
+  }
   /** Bounty posted on each envelope's `sysio.bond` request (shadow base units): none. */
   export const SyndicationBounty = 0
   /**
@@ -722,17 +743,24 @@ export namespace RegistrySteps {
    * row releases no syndication and accepts no desyndication, so a real depot configures
    * every pair too: {@link planSyndicationConfig} writes these unconditionally. Shared by
    * that phase (one Report step per row) and its unit test.
+   *
+   * @param epochDurationSec - The cluster's consensus epoch duration (s), which sizes the
+   *   buckets' per-second refill ({@link syndicationRefillPerSecond}).
+   * @returns The rows, one per shadow pair.
    */
-  export const SyndicationConfigRegistrations: SysioContracts.SysioSyndSetconfigAction[] =
-    Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
+  export function syndicationConfigRegistrations(
+    epochDurationSec: ClusterConfig["epochDurationSec"]
+  ): SysioContracts.SysioSyndSetconfigAction[] {
+    const refill = syndicationRefillPerSecond(epochDurationSec)
+    return Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename]) => ({
       chain_code: chainCodename,
       token_code: tokenCodename,
       synd_fee_bps: SyndicationFeeBps,
       desynd_fee_bps: DesyndicationFeeBps,
       synd_burst: SyndicationBucketSize,
-      synd_refill: SyndicationBucketSize,
+      synd_refill: refill,
       desynd_burst: SyndicationBucketSize,
-      desynd_refill: SyndicationBucketSize,
+      desynd_refill: refill,
       window_sec: ProtocolTiming.SyndicationChallengeWindowSec,
       bounty: SyndicationBounty,
       challenge_extra: SyndicationChallengeExtra,
@@ -740,6 +768,7 @@ export namespace RegistrySteps {
       desynd_fee_flat: DesyndicationFlatFees[tokenCodename],
       custody_shortfall_bps: tokenCodename === LiqEthCodename ? LiqEthCustodyShortfallBps : 0
     }))
+  }
 
   /** Seed chains + tokens + chain-token bindings. */
   export function planSeedRegistry<
@@ -866,7 +895,7 @@ export namespace RegistrySteps {
   /**
    * ONE phase configuring underwriting and syndication, after the shadow symbols exist:
    * `sysio.bond::setconfig` ({@link BondHoldBps}), one `sysio.synd::setconfig` per shadow
-   * pair ({@link SyndicationConfigRegistrations}), then the verify Steps of the
+   * pair ({@link syndicationConfigRegistrations}), then the verify Steps of the
    * syndication preconditions: one that every shadow is at the depot frame's precision,
    * and one per shadow that its `(chain, token)` is an active TOKEN_KIND_LIQ token with an
    * active binding (without it `sysio.msgch` drops every `SYNDICATE_LIQ` of the pair). Registry setup a
@@ -877,6 +906,8 @@ export namespace RegistrySteps {
    * @param name - Short phase name.
    * @param description - Human-readable phase description.
    * @param options - Step option overrides threaded to every step.
+   * @param epochDurationSec - The cluster's consensus epoch duration (s), which sizes the
+   *   buckets' per-second refill.
    * @returns The self-registered configuration phase.
    */
   export function planSyndicationConfig<
@@ -885,7 +916,8 @@ export namespace RegistrySteps {
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    epochDurationSec: ClusterConfig["epochDurationSec"]
   ): ClusterBuildPhase<C> {
     const steps: ClusterBuildStep.Any<C>[] = [
       BondContractSteps.planSetconfig<C>(
@@ -895,13 +927,13 @@ export namespace RegistrySteps {
         options,
         { hold_bps: BondHoldBps }
       ),
-      ...Constants.SHADOW_LIQ_TOKEN_PAIRS.map(([chainCodename, tokenCodename], index) =>
+      ...syndicationConfigRegistrations(epochDurationSec).map(registration =>
         SyndContractSteps.planSetconfig<C>(
           Report.Actor.Sysio,
-          `configure-syndication-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
-          `set the ${chainCodename}/${tokenCodename} syndication rules on sysio.synd`,
+          `configure-syndication-${registration.chain_code.toLowerCase()}-${registration.token_code.toLowerCase()}`,
+          `set the ${registration.chain_code}/${registration.token_code} syndication rules on sysio.synd`,
           options,
-          SyndicationConfigRegistrations[index]
+          registration
         )
       ),
       WireSyndicationTool.planVerifyShadowPrecision<C>(

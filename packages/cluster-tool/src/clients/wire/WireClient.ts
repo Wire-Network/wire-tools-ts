@@ -606,6 +606,17 @@ export class WireClient {
   }
 
   /**
+   * The chain's `head_block_time` as the stamp a `time_point_sec` action field takes.
+   *
+   * Every singleton anchored to a start instant reads it from here rather than from the local
+   * wall clock: the contracts measure elapsed time on the chain's own clock, so a local-clock
+   * anchor skews vesting and epoch accrual by the host's drift.
+   */
+  async chainHeadTimestamp(): Promise<string> {
+    return WireClient.toChainSeconds((await this.getInfo()).head_block_time)
+  }
+
+  /**
    * Whether `account` is privileged (GET /v1/chain/get_account's `privileged`).
    * A privileged contract's inline actions skip the authorization check, which
    * is what lets `sysio.kicker` draw from `sysio` under `sysio@active`.
@@ -758,7 +769,7 @@ export class WireClient {
   /**
    * Pull `account`'s credited epoch pay from `sysio.system` — a producer, standby or
    * batch-operator share. `payepoch` credits rather than transfers for the same reason as above:
-   * it runs inline from `sysio.epoch::advance`, which must never abort.
+   * it runs inline from `sysio.epoch::tickeconomy`, which must never abort.
    *
    * The T5 category buckets (`sysio.ops`, `sysio.gov`) are NOT claimable: `payepoch` transfers to
    * them directly, because ROA zeroes net/cpu for every `sysio`-prefixed account and neither
@@ -1305,15 +1316,46 @@ export namespace WireClient {
   }
 
   /**
-   * A chain timestamp (`head_block_time`, a table's `time_point` cell) in epoch ms. Chain
+   * A trailing ISO-8601 zone designator in the forms `Date.parse` reads: `Z`, or a
+   * `±HH:MM` offset.
+   */
+  export const ZoneDesignatorPattern = /(?:Z|[+-]\d{2}:\d{2})$/
+
+  /** The zone designator {@link chainTimeMs} appends to a zone-less stamp so it parses as UTC. */
+  export const UtcDesignator = "Z"
+
+  /**
+   * A timestamp in epoch ms — THE parser of every stamp the harness reads from the chain or
+   * hands it (`head_block_time`, a table's `time_point` cell, a configured start time). Chain
    * times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would read a bare stamp as
-   * LOCAL time, so the `Z` is appended explicitly.
+   * LOCAL time, so a stamp without a zone designator is read as UTC. A stamp with one (`Z`,
+   * `+00:00`, `-05:00`) keeps it.
    *
-   * @param stamp - The chain's ISO-8601 stamp, with or without a trailing `Z`.
+   * @param stamp - An ISO-8601 stamp, zone-less (read as UTC) or with a zone designator.
    * @returns The instant in epoch ms (`NaN` for an unparseable stamp).
    */
   export function chainTimeMs(stamp: string): number {
-    return Date.parse(`${stamp.replace(/Z$/, "")}Z`)
+    return Date.parse(
+      ZoneDesignatorPattern.test(stamp) ? stamp : `${stamp}${UtcDesignator}`
+    )
+  }
+
+  /** Chars of an ISO-8601 timestamp up to whole seconds (`YYYY-MM-DDTHH:MM:SS`). */
+  export const IsoSecondsLength = 19
+
+  /**
+   * A timestamp as the zone-less, second-precision UTC stamp a `time_point_sec` action field
+   * takes, parsed by {@link chainTimeMs}. Sub-second digits are dropped, as the contract drops
+   * them; an offset is converted to UTC.
+   *
+   * @param stamp - An ISO-8601 stamp, zone-less (read as UTC) or with a zone designator.
+   * @returns `YYYY-MM-DDTHH:MM:SS`.
+   * @throws If `stamp` does not parse.
+   */
+  export function toChainSeconds(stamp: string): string {
+    const ms = chainTimeMs(stamp)
+    Assert.ok(!Number.isNaN(ms), `unparseable timestamp: ${stamp}`)
+    return new Date(ms).toISOString().slice(0, IsoSecondsLength)
   }
 
   /**

@@ -1,18 +1,18 @@
 # flow-syndication-rate-limit
 
-A then B syndicate in one consensus envelope, totaling twice the burst. A's item
-exceeds the burst, making arrival order observable. After bonding, the first crank
-releases exactly the burst to A; a repeat crank is required to execute in the same
-epoch and release zero. The next crank releases exactly min(k × refill, burst),
-using the bucket's actual epoch difference. A later crank drains the remainder,
-and each observed bucket level stays within capacity.
+A then B syndicate in one consensus envelope, totaling two bursts and one second of
+refill. A's item exceeds the burst, making arrival order observable. After bonding,
+the first crank releases exactly the burst to A. The next crank releases exactly
+min(refill × elapsed seconds, burst), using the bucket's actual `last_refill`
+difference; since it can release at most one burst, it always leaves work behind.
+A crank a full refill later must release a positive tranche at a later bucket tick
+and drain the remainder, and each observed bucket level stays within capacity.
 
 A redemption above even a full desyndication bucket is refused without a balance,
 supply or queue change; a smaller redemption burns and queues the exact amount.
 The flow then waits for the external destination wallet to receive that exact
 amount. A queued instruction alone cannot pass the flow.
-The flow synchronizes writes at epoch boundaries and fails if the required
-same-epoch crank pair crosses a boundary; it never weakens finality.
+The flow aligns both arrivals to one epoch and never weakens finality.
 
 Each run uses a fresh cluster. Scenario defaults opt into mock liquidity pools and
 the imported bonder, with 60-second epochs. Pair configuration is set by governance

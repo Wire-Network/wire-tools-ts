@@ -37,9 +37,11 @@
     "@wireio/opp-typescript-models": "^1.0.56",
     "@wireio/sdk-core": "^1.0.110",
     "@wireio/shared": "^1.0.109",
+    "lodash": "^4.17.23",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/lodash": "^4.17.24",
     "@types/node": "25.5.0",
     "ajv": "^8.20.0",
     "ts-jest": "^29.4.6",

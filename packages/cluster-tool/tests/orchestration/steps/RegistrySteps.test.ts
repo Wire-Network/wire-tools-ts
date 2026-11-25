@@ -211,8 +211,36 @@ describe("Steps.registry", () => {
 })
 
 describe("Steps.registry — underwriting and syndication configuration", () => {
-  describe("SyndicationConfigRegistrations", () => {
-    const rows = Steps.registry.SyndicationConfigRegistrations
+  /** The consensus epoch duration the registration tests size the refill for (s). */
+  const EpochDurationSec = 60
+
+  describe("syndicationRefillPerSecond", () => {
+    it("refills one bucket per consensus epoch: about 16,667 tokens a second at 60 s", () => {
+      expect(Steps.registry.syndicationRefillPerSecond(60)).toBe(16_666_666_666_667)
+      expect(Steps.registry.syndicationRefillPerSecond(300)).toBe(3_333_333_333_334)
+    })
+
+    it("rounds up, so one epoch of elapsed seconds restores a whole emptied bucket", () => {
+      ;[60, 300, 7].forEach(epochDurationSec => {
+        const refill = Steps.registry.syndicationRefillPerSecond(epochDurationSec)
+        expect(refill * epochDurationSec).toBeGreaterThanOrEqual(
+          Steps.registry.SyndicationBucketSize
+        )
+        expect((refill - 1) * epochDurationSec).toBeLessThan(
+          Steps.registry.SyndicationBucketSize
+        )
+      })
+    })
+
+    it("is exact when the epoch divides the bucket", () => {
+      expect(Steps.registry.syndicationRefillPerSecond(100)).toBe(
+        Steps.registry.SyndicationBucketSize / 100
+      )
+    })
+  })
+
+  describe("syndicationConfigRegistrations", () => {
+    const rows = Steps.registry.syndicationConfigRegistrations(EpochDurationSec)
 
     it("configures every shadow pair: ETHEREUM/LIQETH and SOLANA/LIQSOL", () => {
       expect(rows.map(row => [row.chain_code, row.token_code])).toEqual([
@@ -255,13 +283,23 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       )
     })
 
-    it("sets both buckets far above any flow's amount, refilling in full each epoch", () => {
+    it("sets both buckets far above any flow's amount, refilling per second one burst each consensus epoch", () => {
+      const refill = Steps.registry.syndicationRefillPerSecond(EpochDurationSec)
       rows.forEach(row => {
         expect(row.synd_burst).toBe(Steps.registry.SyndicationBucketSize)
-        expect(row.synd_refill).toBe(Steps.registry.SyndicationBucketSize)
+        expect(row.synd_refill).toBe(refill)
         expect(row.desynd_burst).toBe(Steps.registry.SyndicationBucketSize)
-        expect(row.desynd_refill).toBe(Steps.registry.SyndicationBucketSize)
+        expect(row.desynd_refill).toBe(refill)
         expect(Number(row.synd_burst)).toBeGreaterThan(0)
+        // The contract adds the refill once per second: it must not restore a burst in one.
+        expect(Number(row.synd_refill)).toBeLessThan(Number(row.synd_burst))
+      })
+    })
+
+    it("sizes the refill from the epoch duration it is given", () => {
+      Steps.registry.syndicationConfigRegistrations(300).forEach(row => {
+        expect(row.synd_refill).toBe(3_333_333_333_334)
+        expect(row.desynd_refill).toBe(3_333_333_333_334)
       })
     })
 
@@ -305,7 +343,8 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       newBuild(),
       "SyndicationConfig",
       "configure sysio.bond + sysio.synd",
-      {}
+      {},
+      EpochDurationSec
     )
 
     it("returns one Sysio phase: bond config, one synd config per pair, then the verifies", () => {
@@ -332,15 +371,15 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       expect(Steps.registry.BondHoldBps).toBe(1000)
     })
 
-    it("writes each pair's row from SyndicationConfigRegistrations", () => {
+    it("writes each pair's row from syndicationConfigRegistrations at the given epoch duration", () => {
       const [, ethereum, solana] = phase.steps
       expect(ethereum.input).toEqual({
         kind: "SyndContractSteps.SetconfigInput",
-        data: Steps.registry.SyndicationConfigRegistrations[0]
+        data: Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[0]
       })
       expect(solana.input).toEqual({
         kind: "SyndContractSteps.SetconfigInput",
-        data: Steps.registry.SyndicationConfigRegistrations[1]
+        data: Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[1]
       })
     })
 
