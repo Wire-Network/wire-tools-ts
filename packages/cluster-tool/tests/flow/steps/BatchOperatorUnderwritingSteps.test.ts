@@ -264,6 +264,52 @@ describe("BatchOperatorUnderwritingSteps.shortestRetainingEpochSec", () => {
   })
 })
 
+describe("BatchOperatorUnderwritingSteps.findRecordedEnvelope", () => {
+  const { REQUESTED, WAITING } = SysioContracts.SysioSyndEnvelopeState,
+    amount = 2_000_000_000n
+
+  /** An Ethereum LIQETH envelope of `epoch` crediting `total`, in `state`. */
+  function envelope(epoch: number, total: bigint, state = REQUESTED): SysioContracts.SysioSyndEnvelopeRowType {
+    return {
+      ...syndEnvelopeRow(Constants.ETHEREUM_CHAIN_CODENAME, "LIQETH", epoch, state),
+      synd_total: total.toString()
+    }
+  }
+
+  it("allows one depot unit: a wei of liqETH share rounding floors the credit one unit lower", () => {
+    expect(BatchOperatorUnderwritingSteps.SyndicationCreditRoundingLoss).toBe(1n)
+  })
+
+  it.each([
+    ["the exact amount", amount],
+    ["the credit one unit short, the whole rounding loss", amount - 1n]
+  ])("matches an envelope crediting %s", (_label, total) => {
+    const row = envelope(4, total)
+    expect(BatchOperatorUnderwritingSteps.findRecordedEnvelope([row], amount, -1)).toBe(row)
+  })
+
+  it.each([
+    ["two units short", amount - 2n],
+    ["one unit over", amount + 1n]
+  ])("refuses an envelope crediting %s", (_label, total) => {
+    expect(BatchOperatorUnderwritingSteps.findRecordedEnvelope([envelope(4, total)], amount, -1)).toBeUndefined()
+  })
+
+  it("refuses an envelope at or before the floor epoch, or with no issued request", () => {
+    expect(BatchOperatorUnderwritingSteps.findRecordedEnvelope([envelope(4, amount)], amount, 4)).toBeUndefined()
+    expect(
+      BatchOperatorUnderwritingSteps.findRecordedEnvelope([envelope(5, amount, WAITING)], amount, 4)
+    ).toBeUndefined()
+  })
+
+  it("returns the first matching envelope after the floor", () => {
+    const later = envelope(6, amount - 1n)
+    expect(
+      BatchOperatorUnderwritingSteps.findRecordedEnvelope([envelope(3, amount), later, envelope(7, amount)], amount, 3)
+    ).toBe(later)
+  })
+})
+
 /**
  * The settlement verifies both plugin-underwriting flows share, against one funded
  * operator whose cap is exactly the first request's coverage.

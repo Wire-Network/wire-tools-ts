@@ -101,6 +101,8 @@ export namespace EthereumSyndicationTool {
   export const LiqEthTokenCodename = "LIQETH"
   /** liqETH's chain-native decimals — the pool's `liqTokenPrecision`. */
   export const LiqEthTokenPrecision = 18
+  /** Wei a liqETH transfer may move short of its value (never over): the token moves floored shares. */
+  export const LiqEthShareRoundingLossWei = 1n
   /** Confirmations every write waits for. */
   export const Confirmations = 1
 
@@ -911,7 +913,10 @@ export namespace EthereumSyndicationTool {
     }
   }
 
-  /** Verify the pool's payment against the actual token transfer in its receipt. */
+  /**
+   * Verify the pool's payment against the actual token transfer in its receipt: its value is the
+   * payment's `nativeAmount`, or up to {@link LiqEthShareRoundingLossWei} below it.
+   */
   async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
     source: EthereumOutpostSource<C>,
     pool: ReturnType<typeof loadSyndicationPool>,
@@ -927,6 +932,7 @@ export namespace EthereumSyndicationTool {
       tokenAddress = ethers.getAddress(await token.getAddress()),
       poolAddress = ethers.getAddress(await pool.getAddress()),
       transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
+      nativeAmount = BigInt(payment.args.nativeAmount),
       transfers = receipt.logs
         .filter(
           event =>
@@ -939,7 +945,9 @@ export namespace EthereumSyndicationTool {
             ethers.getAddress(event.args.from) === poolAddress &&
             ethers.getAddress(event.args.to) ===
               ethers.getAddress(payment.args.recipient) &&
-            BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+            BigInt(event.args.value) <= nativeAmount &&
+            nativeAmount - BigInt(event.args.value) <=
+              LiqEthShareRoundingLossWei
         )
     Assert.strictEqual(
       transfers.length,

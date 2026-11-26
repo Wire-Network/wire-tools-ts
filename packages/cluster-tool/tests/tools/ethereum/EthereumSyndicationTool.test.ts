@@ -677,12 +677,43 @@ describe("EthereumSyndicationTool", () => {
         expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
       })
 
+      it("tolerates liqETH share rounding of one wei below the payment, the whole loss allowed", async () => {
+        expect(EthereumSyndicationTool.LiqEthShareRoundingLossWei).toBe(1n)
+        const payment = await EthereumSyndicationTool.readDesyndicationPayment(
+          context(
+            loggingRunner(
+              [desyndicatedLog(7n, 120, 1)],
+              [],
+              [
+                transferLog(
+                  PoolAddress,
+                  holder,
+                  NetReturn * 10n ** 9n -
+                    EthereumSyndicationTool.LiqEthShareRoundingLossWei
+                )
+              ]
+            )
+          ),
+          7n
+        )
+        // The payment reports the event's amount; only the transfer may fall short.
+        expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
+      })
+
       it.each([
         ["missing", []],
         ["duplicate", [transferLog(), transferLog()]],
         ["wrong sender", [transferLog(holder)]],
         ["wrong recipient", [transferLog(PoolAddress, PoolAddress)]],
         ["wrong amount", [transferLog(PoolAddress, holder, 1n)]],
+        [
+          "two-wei-short",
+          [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n - 2n)]
+        ],
+        [
+          "one-wei-over",
+          [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n + 1n)]
+        ],
         [
           "wrong token",
           [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n, PoolAddress)]

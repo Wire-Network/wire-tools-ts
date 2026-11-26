@@ -33,6 +33,7 @@ import {
   WireSyndicationTool
 } from "../../tools/wire/index.js"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
+import { ceilDiv } from "../../utils/bigintUtils.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { SyndicationScenario } from "../SyndicationScenario.js"
 
@@ -423,7 +424,7 @@ export namespace BatchOperatorUnderwritingSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step options (above the request budget).
-   * @param amount - The envelope's syndicated total.
+   * @param amount - The syndicated amount ({@link findRecordedEnvelope} matches its credit).
    * @param after - The epoch the envelope must follow, or `null` for the first.
    * @param epoch - Where the envelope's epoch is recorded.
    * @param request - Where its request id is recorded.
@@ -469,11 +470,22 @@ export namespace BatchOperatorUnderwritingSteps {
   }
 
   /**
-   * The envelope a syndication of `amount` landed in: after the `floor` epoch, with exactly
-   * that syndicated total and an issued request.
+   * Depot units a syndication's credit may fall short of its amount: the Ethereum pool credits the
+   * liqETH it measured arriving, floored to the depot frame, so a transfer short by up to
+   * `EthereumSyndicationTool.LiqEthShareRoundingLossWei` credits one unit less.
+   */
+  export const SyndicationCreditRoundingLoss = ceilDiv(
+    EthereumSyndicationTool.LiqEthShareRoundingLossWei,
+    Steps.mockShadowBacking.EthereumWeiPerDepotUnit
+  )
+
+  /**
+   * The envelope a syndication of `amount` landed in: after the `floor` epoch, with an issued
+   * request and a syndicated total of the credit the outpost recorded for it — `amount`, or up to
+   * {@link SyndicationCreditRoundingLoss} below it.
    *
    * @param envelopes - The pair's envelope rows.
-   * @param amount - The syndicated total.
+   * @param amount - The syndicated amount.
    * @param floor - The epoch the envelope must follow (-1 for none).
    * @return The envelope, or nothing yet.
    */
@@ -485,7 +497,8 @@ export namespace BatchOperatorUnderwritingSteps {
     return envelopes.find(
       row =>
         row.epoch_index > floor &&
-        BigInt(row.synd_total) === amount &&
+        BigInt(row.synd_total) <= amount &&
+        amount - BigInt(row.synd_total) <= SyndicationCreditRoundingLoss &&
         WireSyndicationTool.isRequestIssued(row)
     )
   }

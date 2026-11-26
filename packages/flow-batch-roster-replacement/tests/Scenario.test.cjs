@@ -140,70 +140,182 @@ test("stale entries, missing groups and inactive replacement cannot pass the SOL
     false
   )
 })
-test("chunk staging, stale retries and minority SOL votes cannot prove accepted delivery", () => {
-  const key = () =>
-    Scenario.solanaAddress({
-      keyStore: {
-        assertOperator: () => ({
-          solana: {
-            publicKey: PrivateKey.generate(KeyType.ED).toPublic().toString()
-          }
-        })
-      }
-    })
-  const signer = key(),
-    other = key(),
-    checksum = Array(32).fill(7),
-    wrong = Array(32).fill(8),
-    accepted = { epochIndex: 4, checksum },
-    votes = {
-      epochIndex: 4,
-      consensusReached: true,
-      consensusHash: checksum,
-      deliveries: [{ operator: signer, envelopeHash: checksum }]
+/** A random Solana key, as the replacement's persisted ED public key derives it. */
+function solanaKey() {
+  return Scenario.solanaAddress({
+    keyStore: {
+      assertOperator: () => ({
+        solana: {
+          publicKey: PrivateKey.generate(KeyType.ED).toPublic().toString()
+        }
+      })
     }
-  Assert.equal(Scenario.isAcceptedSolanaDelivery(votes, accepted, signer), true)
-  Assert.equal(
-    Scenario.isAcceptedSolanaDelivery(
-      { ...votes, deliveries: [] },
-      accepted,
-      signer
-    ),
-    false
+  })
+}
+
+/**
+ * Stage a `liqsol_core` IDL declaring `epoch_in` and one other instruction under a fresh
+ * `solanaPath`, and load it read-only (no RPC: the connection is never dialed).
+ */
+function stageProgram() {
+  const Fs = require("node:fs"),
+    Os = require("node:os"),
+    Path = require("node:path"),
+    solanaPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "roster-replacement-idl-")),
+    idlFile = SolanaOutpostProgramTool.programIdlFile(solanaPath)
+  Fs.mkdirSync(Path.dirname(idlFile), { recursive: true })
+  Fs.writeFileSync(
+    idlFile,
+    JSON.stringify({
+      address: solanaKey().toBase58(),
+      metadata: { name: SolanaOutpostProgramTool.ProgramName, version: "0.1.0", spec: "0.1.0" },
+      instructions: [
+        {
+          name: "epoch_in",
+          discriminator: [85, 70, 55, 132, 50, 198, 135, 115],
+          accounts: [
+            { name: "operator", writable: true, signer: true },
+            { name: "config", writable: true },
+            { name: "epoch_deliveries", writable: true }
+          ],
+          args: [
+            { name: "epoch_index", type: "u32" },
+            { name: "chunk_index", type: "u16" },
+            { name: "total_chunks", type: "u16" },
+            { name: "total_bytes", type: "u32" },
+            { name: "chunk_data", type: "bytes" }
+          ]
+        },
+        {
+          name: "cleanup_epoch_deliveries",
+          discriminator: [1, 2, 3, 4, 5, 6, 7, 8],
+          accounts: [{ name: "reaper", writable: true, signer: true }],
+          args: [{ name: "epoch_index", type: "u32" }]
+        }
+      ]
+    })
   )
-  Assert.equal(
-    Scenario.isAcceptedSolanaDelivery(
-      { ...votes, consensusReached: false },
-      accepted,
-      signer
-    ),
-    false
+  return {
+    solanaPath,
+    program: SolanaOutpostProgramTool.loadReadOnlyProgram({}, solanaPath),
+    remove: () => Fs.rmSync(solanaPath, { recursive: true, force: true })
+  }
+}
+
+/** An `epoch_in` call's data, encoded by the staged program's own coder. */
+function epochIn(program, epochIndex, chunkIndex, totalChunks) {
+  return program.coder.instruction.encode(Scenario.EpochInMethodName, {
+    epochIndex,
+    chunkIndex,
+    totalChunks,
+    totalBytes: 3,
+    chunkData: chunkIndex === totalChunks ? Buffer.alloc(0) : Buffer.from([1, 2, 3])
+  })
+}
+
+/**
+ * A confirmed transaction as `getTransaction` returns it: `keys` are its static account keys and
+ * each instruction names its program and accounts by index into them.
+ */
+function transaction(keys, instructions) {
+  return {
+    transaction: {
+      message: {
+        staticAccountKeys: keys,
+        compiledInstructions: instructions.map(({ program, accounts, data }) => ({
+          programIdIndex: program,
+          accountKeyIndexes: accounts,
+          data
+        }))
+      }
+    },
+    meta: { loadedAddresses: undefined }
+  }
+}
+
+test("only the replacement's own terminal epoch_in to the outpost program delivers an epoch", t => {
+  const { program, remove } = stageProgram()
+  t.after(remove)
+  const signer = solanaKey(),
+    other = solanaKey(),
+    keys = [signer, other, solanaKey(), program.programId, solanaKey()],
+    [signerIndex, otherIndex, configIndex, programIndex, foreignProgramIndex] = keys.keys(),
+    call = (data, operator = signerIndex, target = programIndex) => ({
+      program: target,
+      accounts: [operator, configIndex, configIndex],
+      data
+    }),
+    delivered = instructions =>
+      Scenario.deliveredEpochsOf(transaction(keys, instructions), program, signer)
+  Assert.deepEqual(delivered([call(epochIn(program, 4, 2, 2))]), [4])
+  // A data chunk only stages bytes; the terminal call is the delivery.
+  Assert.deepEqual(delivered([call(epochIn(program, 4, 1, 2))]), [])
+  Assert.deepEqual(delivered([call(epochIn(program, 4, 2, 2), otherIndex)]), [])
+  Assert.deepEqual(delivered([call(epochIn(program, 4, 2, 2), signerIndex, foreignProgramIndex)]), [])
+  Assert.deepEqual(
+    delivered([
+      call(program.coder.instruction.encode("cleanupEpochDeliveries", { epochIndex: 4 }))
+    ]),
+    []
   )
-  Assert.equal(
-    Scenario.isAcceptedSolanaDelivery(
-      { ...votes, epochIndex: 3 },
-      accepted,
-      signer
-    ),
-    false
+  Assert.deepEqual(
+    delivered([call(epochIn(program, 4, 1, 2)), call(epochIn(program, 4, 2, 2)), call(epochIn(program, 5, 1, 1))]),
+    [4, 5]
   )
-  Assert.equal(
-    Scenario.isAcceptedSolanaDelivery(
-      { ...votes, consensusHash: wrong },
-      accepted,
-      signer
-    ),
-    false
+})
+
+test("an outpost IDL without epoch_in refuses to read deliveries", () => {
+  Assert.throws(
+    () =>
+      Scenario.deliveredEpochsOf(
+        transaction([], []),
+        { idl: { instructions: [] } },
+        solanaKey()
+      ),
+    /the outpost IDL has no epochIn instruction/
   )
-  Assert.equal(
-    Scenario.isAcceptedSolanaDelivery(
-      { ...votes, deliveries: [{ operator: signer, envelopeHash: wrong }] },
-      accepted,
-      signer
-    ),
-    false
-  )
-  Assert.equal(Scenario.isAcceptedSolanaDelivery(votes, accepted, other), false)
+})
+
+test("the Solana delivery read decodes only the replacement's successful transactions", async t => {
+  const { solanaPath, program, remove } = stageProgram()
+  t.after(remove)
+  const key = PrivateKey.generate(KeyType.ED),
+    signer = Scenario.solanaAddress({
+      keyStore: { assertOperator: () => ({ solana: { publicKey: key.toPublic().toString() } }) }
+    }),
+    keys = [signer, solanaKey(), program.programId],
+    responses = {
+      delivered: transaction(keys, [{ program: 2, accounts: [0, 1, 1], data: epochIn(program, 6, 1, 1) }]),
+      staged: transaction(keys, [{ program: 2, accounts: [0, 1, 1], data: epochIn(program, 7, 0, 1) }])
+    },
+    scans = [],
+    fetched = [],
+    connection = {
+      getSignaturesForAddress: async (address, options, commitment) => {
+        scans.push({ address, options, commitment })
+        return [
+          { signature: "delivered", err: null },
+          { signature: "failed", err: { InstructionError: [0, "Custom"] } },
+          { signature: "staged", err: null }
+        ]
+      },
+      getTransaction: async signature => {
+        fetched.push(signature)
+        return responses[signature]
+      }
+    },
+    ctx = {
+      config: { solanaPath },
+      solana: { connection },
+      keyStore: { assertOperator: () => ({ solana: { publicKey: key.toPublic().toString() } }) }
+    }
+  Assert.deepEqual(await Scenario.readSolanaDeliveredEpochs(ctx), [6])
+  Assert.equal(scans.length, 1)
+  Assert.ok(scans[0].address.equals(signer))
+  Assert.deepEqual(scans[0].options, { limit: Scenario.SolanaSignatureScanLimit })
+  Assert.deepEqual(fetched, ["delivered", "staged"])
+  responses.staged = null
+  await Assert.rejects(Scenario.readSolanaDeliveredEpochs(ctx), /Solana transaction staged of the replacement is unavailable/)
 })
 for (const exists of [true, false])
   test(`SOL destination cursor read uses deployed program decoder: ${exists}`, async () => {
@@ -356,6 +468,30 @@ test("the Solana delivery check keeps Solana alone due while no post-roster epoc
   await Assert.rejects(step.runner(ctx, step.input, new AbortController().signal), /replacement accepted on Solana/)
   Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [Constants.SOLANA_CHAIN_CODENAME])
 })
+
+for (const [delivered, passes] of [
+  [[5], true],
+  // Epoch 2 precedes the roster, epoch 6 is not yet fully dispatched, epoch 4 left no audit record.
+  [[2, 4, 6], false]
+])
+  test(`the Solana delivery check needs the replacement's delivery of a settled post-roster accepted epoch: ${delivered}`, async () => {
+    const { OutputStore } = require("@wireio/cluster-tool"),
+      StepTools = require("@wireio/cluster-tool/lib/cjs/orchestration/StepTools.js"),
+      step = plannedStep("replacement-relayed-solana"),
+      ctx = { outputs: new OutputStore().set(Scenario.SolanaEpochBefore, 3) }
+    idleChains()
+    mock.method(Scenario, "solanaConfig", async () => ({ nextEpochIndex: 6 }))
+    mock.method(Scenario, "solanaInbound", async () => ({
+      envelopes: [2, 3, 5, 6].map(epochIndex => ({ epochIndex, checksum: [] }))
+    }))
+    mock.method(Scenario, "readSolanaDeliveredEpochs", async () => delivered)
+    mock.method(StepTools, "pollUntil", async (label, predicate) => {
+      Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
+    })
+    const run = step.runner(ctx, step.input, new AbortController().signal)
+    if (passes) await run
+    else await Assert.rejects(run, /replacement accepted on Solana/)
+  })
 
 test("the inherited Ethereum intake wait pushes no traffic until the held envelope appears: the intake's backlog report drives Ethereum", async () => {
   const { OutputStore, Constants, EthereumRoundTripScenario, EthereumFundingTool, WireSyndicationTool } = require("@wireio/cluster-tool"),

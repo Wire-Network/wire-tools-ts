@@ -305,6 +305,22 @@ export namespace SolanaOutpostProgramTool {
   }
 
   /**
+   * Decode one instruction's data by the program's own camelCase IDL — the instruction read a
+   * `Program`'s `coder.instruction` cannot type (its interface only encodes). A pure value helper.
+   *
+   * @param program - The program, from {@link loadReadOnlyProgram} or {@link loadProgram}.
+   * @param data - The instruction's data.
+   * @returns The decoded instruction (camelCase name and arguments), or null for data that is
+   *   none of the program's instructions.
+   */
+  export function decodeInstruction(
+    program: anchor.Program<anchor.Idl>,
+    data: Buffer
+  ): anchor.Instruction {
+    return new anchor.BorshInstructionCoder(program.idl).decode(data)
+  }
+
+  /**
    * Derive a program-derived address from its ordered seeds — THE one PDA
    * derivation for this program. A pure read, so it is called freely inside
    * step runners and bootstrapper methods rather than being a Step.

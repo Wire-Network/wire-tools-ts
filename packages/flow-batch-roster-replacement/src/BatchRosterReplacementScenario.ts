@@ -1,6 +1,10 @@
 import Assert from "node:assert"
 
-import { PublicKey } from "@solana/web3.js"
+import {
+  MessageAccountKeys,
+  PublicKey,
+  type VersionedTransactionResponse
+} from "@solana/web3.js"
 import { PublicKey as SdkPublicKey } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { OperatorType, OperatorStatus } from "@wireio/opp-typescript-models"
@@ -13,10 +17,12 @@ import {
   EthereumOutpostBootstrapper,
   loadOutpostContract,
   EthereumSyndicationTool,
+  mapSeries,
   OperatorDaemonTool,
   outputKey,
   ProtocolTiming,
   Report,
+  SolanaClient,
   SolanaOutpostBootstrapper,
   Steps,
   SolanaOutpostProgramTool,
@@ -229,7 +235,7 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
       verifyStep(
         Actor.BatchOperator,
         "replacement-relayed-solana",
-        "the replacement recorded the canonical vote for a fully dispatched post-roster Solana envelope",
+        "the replacement's own terminal epoch_in delivered a post-roster Solana envelope the outpost accepted and fully dispatched",
         async (ctx, signal) => {
           await Steps.epochAdvance.pollUntilKeepingDue(
             ctx,
@@ -238,32 +244,24 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
             async () => {
               const config =
                   await BatchRosterReplacementScenario.solanaConfig(ctx),
-                accepted =
-                  await BatchRosterReplacementScenario.solanaInbound(ctx),
                 first = ctx.outputs.assert(
                   BatchRosterReplacementScenario.SolanaEpochBefore
-                )
-              for (const record of accepted.envelopes.filter(
-                record =>
-                  record.epochIndex >= first &&
-                  record.epochIndex < config.nextEpochIndex
-              )) {
-                const deliveries =
-                  await BatchRosterReplacementScenario.solanaDeliveries(
-                    ctx,
-                    record.epochIndex
+                ),
+                settled = (
+                  await BatchRosterReplacementScenario.solanaInbound(ctx)
+                ).envelopes
+                  .map(record => record.epochIndex)
+                  .filter(
+                    epoch => epoch >= first && epoch < config.nextEpochIndex
                   )
-                if (
-                  deliveries &&
-                  BatchRosterReplacementScenario.isAcceptedSolanaDelivery(
-                    deliveries,
-                    record,
-                    BatchRosterReplacementScenario.solanaAddress(ctx)
-                  )
+              if (settled.length === 0) return false
+              // The relay reaps a settled epoch's EpochDeliveries tally within seconds, so the
+              // delivery is read from the replacement's own transactions, which outlive it.
+              const delivered =
+                await BatchRosterReplacementScenario.readSolanaDeliveredEpochs(
+                  ctx
                 )
-                  return true
-              }
-              return false
+              return settled.some(epoch => delivered.includes(epoch))
             },
             ProtocolTiming.SingleHopBudgetMs,
             SyndicationScenario.PollMs,
@@ -374,11 +372,6 @@ export namespace BatchRosterReplacementScenario {
     memberCount: number
     members: PublicKey[]
   }
-  /** One actual recorded Solana operator vote. */
-  export interface SolanaOperatorDelivery {
-    operator: PublicKey
-    envelopeHash: number[]
-  }
   /** Fully dispatched Solana destination cursor. */
   export interface SolanaConfigView {
     nextEpochIndex: number
@@ -487,39 +480,98 @@ export namespace BatchRosterReplacementScenario {
     epochIndex: number
     checksum: number[]
   }
-  /** Actual on-chain votes; chunk staging and stale retries do not write these records. */
-  export interface SolanaDeliveries {
+  /** The outpost's delivery instruction (`epoch_in`), as the deployed program's coder names it. */
+  export const EpochInMethodName = "epochIn"
+  /** The {@link EpochInMethodName} account that signs the delivery. */
+  export const EpochInOperatorAccount = "operator"
+  /** Newest signatures of the replacement's Solana key the delivery read decodes: one RPC page. */
+  export const SolanaSignatureScanLimit = 1_000
+  /** `epoch_in`'s arguments the delivery read consumes, as the deployed program's coder decodes them. */
+  export interface EpochInArguments {
     epochIndex: number
-    consensusReached: boolean
-    consensusHash: number[]
-    deliveries: SolanaOperatorDelivery[]
+    chunkIndex: number
+    totalChunks: number
   }
   /**
-   * Only the replacement's canonical consensus vote proves accepted delivery.
-   * @param deliveries - The epoch’s actual recorded Solana votes and consensus state.
-   * @param accepted - The canonical accepted envelope audit record.
-   * @param signer - The replacement’s Solana signing key.
-   * @returns Whether the replacement’s canonical vote matches accepted consensus.
+   * The epochs `signer` delivered in one confirmed transaction: its instructions to the program,
+   * decoded by the program's own coder, that are a terminal `epoch_in` (`chunkIndex ==
+   * totalChunks`, the call that records a delivery; data chunks only stage bytes) with `signer`
+   * as the `operator` account.
+   * @param response - The confirmed transaction.
+   * @param program - The deployed outpost program.
+   * @param signer - The replacement's Solana signing key.
+   * @returns The delivered epochs.
    */
-  export function isAcceptedSolanaDelivery(
-    deliveries: SolanaDeliveries,
-    accepted: EnvelopeRecord,
+  export function deliveredEpochsOf(
+    response: VersionedTransactionResponse,
+    program: ReturnType<typeof SolanaOutpostProgramTool.loadReadOnlyProgram>,
     signer: PublicKey
-  ): boolean {
-    return (
-      deliveries.epochIndex === accepted.epochIndex &&
-      deliveries.consensusReached &&
-      Buffer.from(deliveries.consensusHash).equals(
-        Buffer.from(accepted.checksum)
-      ) &&
-      deliveries.deliveries.some(
-        delivery =>
-          delivery.operator.equals(signer) &&
-          Buffer.from(delivery.envelopeHash).equals(
-            Buffer.from(accepted.checksum)
-          )
-      )
+  ): number[] {
+    const epochIn = program.idl.instructions.find(
+      instruction => instruction.name === EpochInMethodName
     )
+    Assert.ok(epochIn, `the outpost IDL has no ${EpochInMethodName} instruction`)
+    const { message } = response.transaction,
+      keys = new MessageAccountKeys(
+        message.staticAccountKeys,
+        response.meta.loadedAddresses
+      ),
+      operatorAccount = epochIn.accounts.findIndex(
+        account => account.name === EpochInOperatorAccount
+      )
+    return message.compiledInstructions
+      .filter(
+        instruction =>
+          keys.get(instruction.programIdIndex)?.equals(program.programId) &&
+          keys.get(instruction.accountKeyIndexes[operatorAccount])?.equals(signer)
+      )
+      .map(instruction =>
+        SolanaOutpostProgramTool.decodeInstruction(
+          program,
+          Buffer.from(instruction.data)
+        )
+      )
+      .filter(decoded => decoded?.name === EpochInMethodName)
+      .map(decoded => decoded.data as EpochInArguments)
+      .filter(call => call.chunkIndex === call.totalChunks)
+      .map(call => call.epochIndex)
+  }
+  /**
+   * The epochs the replacement delivered on Solana, from its own successful transactions (the
+   * newest {@link SolanaSignatureScanLimit}), which outlive each settled epoch's reaped
+   * `EpochDeliveries` tally.
+   * @param ctx - The live cluster context and its deployed chain clients.
+   * @returns The delivered epochs.
+   * @throws When a confirmed transaction of the replacement is unavailable.
+   */
+  export async function readSolanaDeliveredEpochs(
+    ctx: ClusterBuildContext
+  ): Promise<number[]> {
+    const { connection } = ctx.solana,
+      program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+        connection,
+        ctx.config.solanaPath
+      ),
+      signer = solanaAddress(ctx),
+      signatures = (
+        await connection.getSignaturesForAddress(
+          signer,
+          { limit: SolanaSignatureScanLimit },
+          SolanaClient.ConfirmationStatus.confirmed
+        )
+      ).filter(info => info.err == null),
+      delivered = await mapSeries(signatures, async info => {
+        const response = await connection.getTransaction(info.signature, {
+          commitment: SolanaClient.ConfirmationStatus.confirmed,
+          maxSupportedTransactionVersion: 0
+        })
+        Assert.ok(
+          response != null,
+          `Solana transaction ${info.signature} of the replacement is unavailable`
+        )
+        return deliveredEpochsOf(response, program, signer)
+      })
+    return delivered.flat()
   }
   /**
    * Read the destination's fully-dispatched epoch cursor using its own account coder.
@@ -554,24 +606,7 @@ export namespace BatchRosterReplacementScenario {
     return value
   }
   /**
-   * Read one epoch's actual recorded votes, not successful chunk staging transactions.
-   * @param ctx - The live cluster context and its deployed chain clients.
-   * @param epoch - The inbound epoch whose accepted delivery must be proved.
-   * @returns The recorded epoch votes, or undefined when no delivery exists.
-   */
-  export async function solanaDeliveries(
-    ctx: ClusterBuildContext,
-    epoch: number
-  ): Promise<SolanaDeliveries> {
-    const index = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT)
-    index.writeUInt32LE(epoch)
-    return readSolanaAccount<SolanaDeliveries>(ctx, "epochDeliveries", [
-      Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
-      index
-    ])
-  }
-  /**
-   * Load an account through the deployed IDL; absent epoch votes remain absent evidence.
+   * Load an account through the deployed IDL; an absent account reads as undefined.
    * @param ctx - The live cluster context and its deployed chain clients.
    * @param accountName - The value used by this scenario.
    * @param seeds - The value used by this scenario.
