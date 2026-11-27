@@ -31,12 +31,6 @@
       ],
       "description": "The AWS account (environment) the cluster's nodes run in — awsClusterNodeConfig.account of the cluster config; null when the cluster has no AWS placement"
     },
-    "epochDurationSec": {
-      "type": "integer",
-      "exclusiveMinimum": 0,
-      "maximum": 9007199254740991,
-      "description": "The depot's global epoch duration in seconds (sysio.epoch::epochcfg.epoch_duration_sec)"
-    },
     "operators": {
       "minItems": 1,
       "type": "array",
@@ -344,45 +338,117 @@
       },
       "description": "Every bootstrapped operator, ordered by operator type then account name"
     },
-    "batchOperatorGroups": {
+    "chains": {
       "type": "object",
       "properties": {
-        "activeGroupIndex": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991,
-          "description": "Index into groups of the first active group — sysio.epoch epochstate.current_batch_op_group when the file is written (0: the front of the window is always the current group)"
-        },
-        "groups": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "minItems": 1,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^(?:|[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5])$",
-              "description": "WIRE account name"
+        "ETHEREUM": {
+          "type": "object",
+          "properties": {
+            "epochDurationSec": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "description": "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+            },
+            "batchOperatorGroups": {
+              "type": "object",
+              "properties": {
+                "activeGroupIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Index into groups of the first active group — the chain's sysio.epoch epochstate.current_batch_op_group when the file is written (0: the front of the window is always the current group)"
+                },
+                "groups": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^(?:|[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5])$",
+                      "description": "WIRE account name"
+                    }
+                  },
+                  "description": "The chain's batch-operator window in slot order (its sysio.epoch epochstate.batch_op_groups): groups[k] serves the chain's epoch k + 1; each member is the accountName of a BATCH operator in operators"
+                }
+              },
+              "required": [
+                "activeGroupIndex",
+                "groups"
+              ],
+              "description": "One outpost chain's initial batch-operator schedule, built by sysio.epoch::schbatchgps"
             }
           },
-          "description": "The batch-operator window in slot order (sysio.epoch epochstate.batch_op_groups): groups[k] serves epoch k + 1; each member is the accountName of a BATCH operator in operators"
+          "required": [
+            "epochDurationSec",
+            "batchOperatorGroups"
+          ],
+          "description": "One outpost chain's consensus epoch duration and initial batch-operator schedule"
+        },
+        "SOLANA": {
+          "type": "object",
+          "properties": {
+            "epochDurationSec": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "description": "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+            },
+            "batchOperatorGroups": {
+              "type": "object",
+              "properties": {
+                "activeGroupIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Index into groups of the first active group — the chain's sysio.epoch epochstate.current_batch_op_group when the file is written (0: the front of the window is always the current group)"
+                },
+                "groups": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^(?:|[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5])$",
+                      "description": "WIRE account name"
+                    }
+                  },
+                  "description": "The chain's batch-operator window in slot order (its sysio.epoch epochstate.batch_op_groups): groups[k] serves the chain's epoch k + 1; each member is the accountName of a BATCH operator in operators"
+                }
+              },
+              "required": [
+                "activeGroupIndex",
+                "groups"
+              ],
+              "description": "One outpost chain's initial batch-operator schedule, built by sysio.epoch::schbatchgps"
+            }
+          },
+          "required": [
+            "epochDurationSec",
+            "batchOperatorGroups"
+          ],
+          "description": "One outpost chain's consensus epoch duration and initial batch-operator schedule"
         }
       },
       "required": [
-        "activeGroupIndex",
-        "groups"
+        "ETHEREUM",
+        "SOLANA"
       ],
-      "description": "The initial batch-operator schedule built by sysio.epoch::schbatchgps"
+      "description": "Every outpost chain's consensus epoch, keyed by its sysio.chains code: each chain runs its own epoch counter, duration and batch-operator schedule"
     }
   },
   "required": [
     "label",
     "awsAccount",
-    "epochDurationSec",
     "operators",
-    "batchOperatorGroups"
+    "chains"
   ],
   "title": "WIRE opreg bootstrap",
-  "description": "The cluster's build label and AWS account, the bootstrapped operator roster (every sysio.opreg operator registered with is_bootstrapped: WIRE account name, operator type, public keys) and the initial batch-operator schedule sysio.epoch::schbatchgps built, written by the cluster-tool bootstrap to <clusterPath>/wire-opreg-bootstrap.json."
+  "description": "The cluster's build label and AWS account, the bootstrapped operator roster (every sysio.opreg operator registered with is_bootstrapped: WIRE account name, operator type, public keys) and, for each outpost chain, its consensus epoch duration and the initial batch-operator schedule sysio.epoch::schbatchgps built for it, written by the cluster-tool bootstrap to <clusterPath>/wire-opreg-bootstrap.json."
 }

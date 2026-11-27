@@ -9,6 +9,11 @@ const {
   WireEconomicClockTool,
   formatWireAsset
 } = require("@wireio/cluster-tool")
+const {
+  createUniformOutpostEpochDurations,
+  mapOutpostChains,
+  OutpostChainCodenames
+} = require("@wireio/cluster-tool-shared")
 
 const { EconomicClockSteps } = require("../lib/steps/EconomicClockSteps.js")
 const {
@@ -21,20 +26,35 @@ const { WithdrawalWait } = EconomicClockSteps,
 
 afterEach(() => mock.restoreAll())
 
-/** The fixture grid: 120 s economic epochs, 60 s consensus epochs. */
+/** The fixture grid: 120 s economic epochs, 60 s consensus epochs on every chain. */
 const GridStartMs = Date.UTC(2026, 10, 23, 0, 0, 0),
   EconomicMs = 120_000,
   ConsensusSec = 60,
-  LagMs = 5_000
+  ConsensusDurations = createUniformOutpostEpochDurations(ConsensusSec),
+  LagMs = 5_000,
+  Chains = OutpostChainCodenames,
+  { PausedChain } = Constants,
+  RunningChain = Chains.find(chain => chain !== PausedChain)
 
-/** A reading of economic epoch `index`, `LagMs` after it opened. */
-function reading(index, consensus, paused = false, headMs = GridStartMs + (index - 1) * EconomicMs + LagMs) {
+/**
+ * A reading of economic epoch `index`, `LagMs` after it opened, with every chain at consensus
+ * epoch `consensus` unless `chainIndices` names another; `paused` pauses the scenario's paused chain.
+ */
+function reading(
+  index,
+  consensus,
+  paused = false,
+  headMs = GridStartMs + (index - 1) * EconomicMs + LagMs,
+  chainIndices = {}
+) {
   return {
     economicEpochIndex: index,
     economicEpochStartMs: GridStartMs + (index - 1) * EconomicMs,
     economicNextEpochStartMs: GridStartMs + index * EconomicMs,
-    consensusEpochIndex: consensus,
-    consensusPaused: paused,
+    consensus: mapOutpostChains(chain => ({
+      epochIndex: chainIndices[chain] ?? consensus,
+      paused: paused && chain === PausedChain
+    })),
     headBlockTimeMs: headMs
   }
 }
@@ -44,7 +64,7 @@ function payment(index, count, total = 1_000n) {
   return { economic_epoch_index: index, epoch_count: String(count), total_emission: String(total) }
 }
 
-/** A queued withdrawal requested at economic epoch `economic`, consensus epoch `consensus`. */
+/** A queued withdrawal requested at economic epoch `economic`, every chain at consensus epoch `consensus`. */
 function request(economic, consensus, amount = Constants.WithdrawAmount, id = 7) {
   return {
     request_id: String(id),
@@ -54,7 +74,10 @@ function request(economic, consensus, amount = Constants.WithdrawAmount, id = 7)
     amount: amount.toString(),
     requested_at_economic_epoch: economic,
     eligible_at_economic_epoch: economic + Constants.WithdrawWaitEconomicEpochs,
-    eligible_at_consensus_epoch: consensus + Constants.WithdrawWaitConsensusEpochs
+    consensus_waits: Chains.map(chain => ({
+      chain_code: chain,
+      eligible_at_epoch: consensus + WireCollateralTool.WithdrawWaitConsensusEpochs
+    }))
   }
 }
 
@@ -89,6 +112,80 @@ function t5(last, pending, periodStart, lastShare = 100n, unsettled = 0n) {
 function envelope(id, start, end, epoch) {
   return { id: String(id), endpoints: { start: { kind: start, id: 0 }, end: { kind: end, id: 0 } }, epoch_index: epoch }
 }
+
+describe("clock configuration", () => {
+  const config = {
+      economicEpochDurationSec: EconomicMs / 1_000,
+      outpostEpochDurationSec: ConsensusDurations
+    },
+    startTime = new Date(GridStartMs).toISOString().slice(0, 19)
+
+  /** Serve the four rows the verify reads, each overridable. */
+  function rows({
+    economy = { epoch_duration_sec: EconomicMs / 1_000, start_time: startTime },
+    epochConfigs = mapOutpostChains(() => ({ epoch_duration_sec: ConsensusSec })),
+    emission = { pay_cadence_epochs: Constants.PayCadenceEpochs },
+    t5 = { start_time: startTime }
+  } = {}) {
+    mock.method(Steps.contracts.sysio.epoch, "readEconomyConfig", async () => economy)
+    mock.method(Steps.contracts.sysio.epoch, "readEpochConfigs", async () => epochConfigs)
+    mock.method(Steps.contracts.sysio.system, "readEmissionConfig", async () => emission)
+    mock.method(Steps.contracts.sysio.system, "readT5State", async () => t5)
+  }
+
+  /** Run the verify against the fixture config. */
+  function verify() {
+    return EconomicClockSteps.runVerifyClockConfiguration({ config }, null, signal)
+  }
+
+  test("every chain's epochcfg at its configured duration, shorter than the economic epoch, passes", async () => {
+    rows()
+    await verify()
+  })
+
+  test("a missing economycfg row fails", async () => {
+    rows({ economy: null })
+    await Assert.rejects(verify(), /economycfg has no row/)
+  })
+
+  test("a chain without an epochcfg row fails", async () => {
+    rows({ epochConfigs: { [PausedChain]: { epoch_duration_sec: ConsensusSec } } })
+    await Assert.rejects(verify(), new RegExp(`epochcfg has no ${RunningChain} row`))
+  })
+
+  test("a chain's epochcfg at another duration fails", async () => {
+    rows({
+      epochConfigs: mapOutpostChains(chain => ({ epoch_duration_sec: chain === RunningChain ? ConsensusSec + 1 : ConsensusSec }))
+    })
+    await Assert.rejects(
+      verify(),
+      new RegExp(`the ${RunningChain} epochcfg.epoch_duration_sec is not the cluster's ${RunningChain} consensus epoch duration`)
+    )
+  })
+
+  test("a chain whose consensus epoch is not shorter than the economic epoch fails", async () => {
+    const economicSec = EconomicMs / 1_000
+    rows({ epochConfigs: mapOutpostChains(() => ({ epoch_duration_sec: economicSec })) })
+    await Assert.rejects(
+      EconomicClockSteps.runVerifyClockConfiguration(
+        { config: { ...config, outpostEpochDurationSec: createUniformOutpostEpochDurations(economicSec) } },
+        null,
+        signal
+      ),
+      /must be longer than the [A-Z]+ consensus epoch/
+    )
+  })
+
+  test("an economic epoch that is not a pay epoch fails", async () => {
+    rows({ emission: { pay_cadence_epochs: Constants.PayCadenceEpochs + 1 } })
+    await Assert.rejects(verify(), /every economic epoch must be a pay epoch/)
+  })
+
+  test("a treasury that starts off the economic grid fails", async () => {
+    rows({ t5: { start_time: new Date(GridStartMs + EconomicMs).toISOString().slice(0, 19) } })
+    await Assert.rejects(verify(), /t5state starts somewhere other than the economic clock's grid/)
+  })
+})
 
 describe("emissions per economic epoch", () => {
   const observation = { start: reading(3, 4), ticks: [reading(4, 6), reading(5, 8)] }
@@ -135,16 +232,24 @@ describe("emissions per economic epoch", () => {
 describe("consensus cadence", () => {
   test("consensus advancing twice per economic epoch passes", () => {
     const ticks = [1, 2, 3, 4, 5].map(index => reading(index, 2 * index))
-    Assert.equal(
-      EconomicClockSteps.assertConsensusCadence({ start: reading(1, 2), ticks }, ConsensusSec),
-      8
+    Assert.deepEqual(
+      EconomicClockSteps.assertConsensusCadence({ start: reading(1, 2), ticks }, ConsensusDurations),
+      mapOutpostChains(() => 8)
+    )
+  })
+
+  test("one chain no faster than the economic clock fails, naming it", () => {
+    const ticks = [1, 2, 3].map(index => reading(index, 2 * index, false, undefined, { [RunningChain]: index }))
+    Assert.throws(
+      () => EconomicClockSteps.assertConsensusCadence({ start: ticks[0], ticks }, ConsensusDurations),
+      new RegExp(`the ${RunningChain} consensus advanced 2 epoch\\(s\\) while the economic clock opened 2`)
     )
   })
 
   test("consensus no faster than the economic clock fails", () => {
     const ticks = [1, 2, 3].map(index => reading(index, index))
     Assert.throws(
-      () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusSec),
+      () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusDurations),
       /consensus advanced 2 epoch\(s\) while the economic clock opened 2/
     )
   })
@@ -152,7 +257,7 @@ describe("consensus cadence", () => {
   test("consensus behind its envelope fails", () => {
     const ticks = [reading(1, 1), reading(5, 4)]
     Assert.throws(
-      () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusSec),
+      () => EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks }, ConsensusDurations),
       /so at least 5/
     )
   })
@@ -160,7 +265,7 @@ describe("consensus cadence", () => {
   test("one economic epoch is too few to time consensus against", () => {
     Assert.throws(
       () =>
-        EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks: [reading(2, 3)] }, ConsensusSec),
+        EconomicClockSteps.assertConsensusCadence({ start: reading(1, 1), ticks: [reading(2, 3)] }, ConsensusDurations),
       /too few economic epochs/
     )
   })
@@ -235,19 +340,50 @@ describe("pay claims", () => {
 describe("withdrawal eligibility", () => {
   const row = request(4, 10)
 
-  test("both fields follow from the clocks bracketing the request", () => {
-    EconomicClockSteps.assertWithdrawalEligibility(row, Constants.WithdrawAmount, reading(4, 10), reading(4, 10))
-    EconomicClockSteps.assertWithdrawalEligibility(row, Constants.WithdrawAmount, reading(4, 9), reading(4, 11))
+  test("every wait follows from the clocks bracketing the request", () => {
+    EconomicClockSteps.assertWithdrawalEligibility(row, Constants.WithdrawAmount, Chains, reading(4, 10), reading(4, 10))
+    EconomicClockSteps.assertWithdrawalEligibility(row, Constants.WithdrawAmount, Chains, reading(4, 9), reading(4, 11))
+  })
+
+  test("each chain's guard counts from that chain's own consensus epoch", () => {
+    const perChain = {
+      ...row,
+      consensus_waits: [
+        { chain_code: PausedChain, eligible_at_epoch: 10 + WireCollateralTool.WithdrawWaitConsensusEpochs },
+        { chain_code: RunningChain, eligible_at_epoch: 3 + WireCollateralTool.WithdrawWaitConsensusEpochs }
+      ]
+    }
+    EconomicClockSteps.assertWithdrawalEligibility(
+      perChain,
+      Constants.WithdrawAmount,
+      Chains,
+      reading(4, 10, false, undefined, { [RunningChain]: 3 }),
+      reading(4, 10, false, undefined, { [RunningChain]: 3 })
+    )
   })
 
   test("a request in the epoch past an unticked boundary is in range", () => {
-    EconomicClockSteps.assertWithdrawalEligibility(request(5, 10), Constants.WithdrawAmount, reading(4, 10), reading(4, 10))
+    EconomicClockSteps.assertWithdrawalEligibility(request(5, 10), Constants.WithdrawAmount, Chains, reading(4, 10), reading(4, 10))
   })
 
   test("another amount fails", () => {
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalEligibility(row, 1n, reading(4, 10), reading(4, 10)),
+      () => EconomicClockSteps.assertWithdrawalEligibility(row, 1n, Chains, reading(4, 10), reading(4, 10)),
       /another amount/
+    )
+  })
+
+  test("a request waiting on other chains than the operator serves fails", () => {
+    Assert.throws(
+      () =>
+        EconomicClockSteps.assertWithdrawalEligibility(
+          { ...row, consensus_waits: row.consensus_waits.slice(0, 1) },
+          Constants.WithdrawAmount,
+          Chains,
+          reading(4, 10),
+          reading(4, 10)
+        ),
+      /waits on [A-Z]+, not on ETHEREUM, SOLANA/
     )
   })
 
@@ -257,6 +393,7 @@ describe("withdrawal eligibility", () => {
         EconomicClockSteps.assertWithdrawalEligibility(
           { ...row, eligible_at_economic_epoch: 7 },
           Constants.WithdrawAmount,
+          Chains,
           reading(4, 10),
           reading(4, 10)
         ),
@@ -266,15 +403,15 @@ describe("withdrawal eligibility", () => {
 
   test("a request dated outside the bracketing readings fails", () => {
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalEligibility(request(3, 10), Constants.WithdrawAmount, reading(4, 10), reading(4, 10)),
+      () => EconomicClockSteps.assertWithdrawalEligibility(request(3, 10), Constants.WithdrawAmount, Chains, reading(4, 10), reading(4, 10)),
       /outside 4..5/
     )
   })
 
   test("a consensus guard from outside the bracketing readings fails", () => {
     Assert.throws(
-      () => EconomicClockSteps.assertWithdrawalEligibility(request(4, 12), Constants.WithdrawAmount, reading(4, 10), reading(4, 11)),
-      /eligible_at_consensus_epoch 14/
+      () => EconomicClockSteps.assertWithdrawalEligibility(request(4, 12), Constants.WithdrawAmount, Chains, reading(4, 10), reading(4, 11)),
+      /waits for [A-Z]+ epoch 14, not 2 past a [A-Z]+ consensus epoch in 10\.\.11/
     )
   })
 
@@ -293,7 +430,8 @@ describe("withdrawal eligibility", () => {
       label: "withdrawer",
       amount: Constants.WithdrawAmount,
       observationName: "before",
-      withdrawalName: "first"
+      withdrawalName: "first",
+      chains: Chains
     }
     await EconomicClockSteps.runVerifyWithdrawalEligibility(ctx, input, signal)
     Assert.equal(ctx.outputs.assert(EconomicClockSteps.withdrawalKey("first")), row)
@@ -301,6 +439,21 @@ describe("withdrawal eligibility", () => {
     await Assert.rejects(
       EconomicClockSteps.runVerifyWithdrawalEligibility(ctx, input, signal),
       /exactly one queued withdrawal/
+    )
+  })
+})
+
+describe("consensus epoch indices", () => {
+  test("each chain's index is taken from its own consensus reading", () => {
+    Assert.deepEqual(
+      EconomicClockSteps.consensusEpochIndices(reading(4, 10, false, undefined, { [RunningChain]: 3 })),
+      { [PausedChain]: 10, [RunningChain]: 3 }
+    )
+  })
+
+  test("a reading missing a chain's consensus fails", () => {
+    Assert.throws(() =>
+      EconomicClockSteps.consensusEpochIndices({ ...reading(4, 10), consensus: { [PausedChain]: { epochIndex: 10 } } })
     )
   })
 })
@@ -313,6 +466,17 @@ describe("withdrawal waits", () => {
     Assert.equal(EconomicClockSteps.waitPassed(row, reading(5, 11), WithdrawalWait.consensus), false)
     Assert.equal(EconomicClockSteps.waitPassed(row, reading(6, 10), WithdrawalWait.economic), true)
     Assert.equal(EconomicClockSteps.waitPassed(row, reading(5, 20), WithdrawalWait.economic), false)
+  })
+
+  test("the consensus wait holds until every waited-on chain has passed its guard", () => {
+    Assert.equal(
+      EconomicClockSteps.waitPassed(row, reading(5, 12, true, undefined, { [PausedChain]: 11 }), WithdrawalWait.consensus),
+      false
+    )
+    Assert.equal(
+      EconomicClockSteps.waitPassed(row, reading(5, 12, false, undefined, { [PausedChain]: 12 }), WithdrawalWait.consensus),
+      true
+    )
   })
 
   test("held by its economic wait after the consensus guard passed", () => {
@@ -402,9 +566,16 @@ describe("withdrawal waits", () => {
   })
 
   test("deadlines cover the wait's epochs plus the epoch of the request", () => {
-    const config = { economicEpochDurationSec: 120, epochDurationSec: 60 }
+    const config = { economicEpochDurationSec: 120, outpostEpochDurationSec: ConsensusDurations }
     Assert.equal(EconomicClockSteps.withdrawalWaitDeadlineMs(config, WithdrawalWait.economic), 3 * 150_000)
     Assert.equal(EconomicClockSteps.withdrawalWaitDeadlineMs(config, WithdrawalWait.consensus), 3 * 90_000)
+    Assert.equal(
+      EconomicClockSteps.withdrawalWaitDeadlineMs(
+        { ...config, outpostEpochDurationSec: { ...ConsensusDurations, [RunningChain]: 120 } },
+        WithdrawalWait.consensus
+      ),
+      3 * 150_000
+    )
     Assert.equal(
       EconomicClockSteps.withdrawalWaitStepTimeoutMs(config, WithdrawalWait.consensus),
       3 * 90_000 + 30_000
@@ -414,7 +585,7 @@ describe("withdrawal waits", () => {
   test("the await stores the first consistent snapshot at which the wait passed", async () => {
     const readings = [reading(5, 11), reading(5, 11), reading(5, 12), reading(5, 12)],
       ctx = {
-        config: { economicEpochDurationSec: 120, epochDurationSec: 60 },
+        config: { economicEpochDurationSec: 120, outpostEpochDurationSec: ConsensusDurations },
         outputs: new OutputStore().set(EconomicClockSteps.withdrawalKey("first"), row),
         keyStore: { assertOperator: () => ({ account: "withdrawer" }) }
       }
@@ -624,12 +795,12 @@ describe("emissions hold", () => {
       ledger = { t5: t5(22, 1_500n, 20), blockLog: [blockRow(20, 22, 1_500n)] }
 
     test("one episode holding every epoch while consensus advanced passes", () => {
-      EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, ledger, [], ConsensusSec)
+      EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, ledger, [], ConsensusDurations)
     })
 
     test("a closed episode fails", () => {
       Assert.throws(
-        () => EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, { ...ledger, blockLog: [] }, [], ConsensusSec),
+        () => EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, { ...ledger, blockLog: [] }, [], ConsensusDurations),
         /episode closed/
       )
     })
@@ -642,7 +813,7 @@ describe("emissions hold", () => {
             observation,
             { ...ledger, blockLog: [blockRow(21, 22, 1_500n)] },
             [],
-            ConsensusSec
+            ConsensusDurations
           ),
         /another block episode replaced/
       )
@@ -656,7 +827,7 @@ describe("emissions hold", () => {
             observation,
             { ...ledger, blockLog: [{ ...blockRow(20, 22, 1_500n), blocked_epochs: 2 }] },
             [],
-            ConsensusSec
+            ConsensusDurations
           ),
         /was not held/
       )
@@ -670,7 +841,7 @@ describe("emissions hold", () => {
             observation,
             { t5: t5(22, 500n, 20), blockLog: [blockRow(20, 22, 500n)] },
             [],
-            ConsensusSec
+            ConsensusDurations
           ),
         /stopped accruing/
       )
@@ -678,7 +849,7 @@ describe("emissions hold", () => {
 
     test("a held epoch that paid fails", () => {
       Assert.throws(
-        () => EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, ledger, [payment(21, 6)], ConsensusSec),
+        () => EconomicClockSteps.assertEmissionsHeldAcross(hold, observation, ledger, [payment(21, 6)], ConsensusDurations),
         /a held economic epoch paid/
       )
     })
@@ -691,7 +862,7 @@ describe("emissions hold", () => {
             { start: reading(21, 40), ticks: [reading(22, 40)] },
             ledger,
             [],
-            ConsensusSec
+            ConsensusDurations
           ),
         /consensus advanced 0 epoch/
       )

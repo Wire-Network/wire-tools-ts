@@ -1,0 +1,23 @@
+{
+  "name": "@wireio/test-flow-per-chain-epochs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: each outpost chain runs its own consensus epoch — its own cadence, its own operator set, its own pause",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.56",
+    "@wireio/sdk-core": "^1.0.110",
+    "@wireio/shared": "^1.0.109"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -303,8 +303,9 @@ options, is the `create` table in the repo root `README.md`):
 | `--node-count` / `-n` | Producer node processes (default 1) |
 | `--producer-count` / `-p` | Producer accounts to register (default 1) |
 | `--batch-operator-count` / `-b` | Batch operators (default 3) |
-| `--epoch-duration-sec` | Minimum epoch duration in seconds (default 300) |
-| `--economic-epoch-duration-sec` | Economic epoch duration in seconds — emissions, collateral withdrawals and producer pay (default: the epoch duration) |
+| `--epoch-duration-sec` | Minimum consensus epoch duration in seconds of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>`, and the economic default (default: none — each chain takes its own default) |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | One outpost chain's own consensus epoch duration in seconds — each chain runs its own epoch on the depot (default: `--epoch-duration-sec`, else 60 for Ethereum and 15 for Solana) |
+| `--economic-epoch-duration-sec` | Economic epoch duration in seconds — emissions, collateral withdrawals and producer pay (default: `--epoch-duration-sec`, at least 60, else 300) |
 | `--economic-start-time` | Start of economic epoch 1, ISO-8601 UTC (default: the chain head when the bootstrap configures it) |
 | `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero — forced on by a local `create` |
 | `--enable-mock-syndication-import` | Import the mock bonder's LIQ positions during epoch zero — forced on by a local `create` |

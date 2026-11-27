@@ -20,7 +20,8 @@
  *   FLOW's operator only: publish each key, so the daemon's `SSM:` specs
  *   resolve — the bootstrap's own operators are published by its operator
  *   publish phase) → create the WIRE account with that K1 → (optional) fund
- *   ETH / airdrop SOL → authex-link both chains → `opreg::regoperator`.
+ *   ETH / airdrop SOL → authex-link both chains → `opreg::regoperator` → (batch
+ *   operator) `opreg::joinchain` once per outpost chain it serves.
  *
  * Every account is created by `sysio` (`sysio::newaccount`, signed
  * `sysio@active`) under the operator's `label`, so `account` equals `label` for
@@ -37,9 +38,12 @@ import Assert from "node:assert"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
-import { match } from "ts-pattern"
+import { match, P } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
-import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  OutpostChainCodenames,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
@@ -54,6 +58,7 @@ import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBa
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
+import { OpregContractSteps } from "../../orchestration/steps/contracts/sysio/OpregContractSteps.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import type { WireFinalizerKeyPair } from "../../types/KeyPair.js"
@@ -65,6 +70,7 @@ import {
   wireSigner
 } from "../../utils/keyPairUtils.js"
 import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
+import { Constants } from "../../Constants.js"
 
 const log = getLogger(__filename)
 
@@ -108,6 +114,13 @@ export namespace WireOperatorProvisioningTool {
     readonly fundEthereumWei?: bigint
     /** Batch / underwriter: lamports to airdrop the SOL keypair (omit to skip). */
     readonly airdropSolanaLamports?: bigint
+    /**
+     * Batch operator: the outpost chains it serves — one `sysio.opreg::joinchain` each, after
+     * its registration, so each chain's schedule can seat it. Default every outpost chain
+     * ({@link OutpostChainCodenames}); an empty list registers an operator that
+     * serves none. Other operator types serve no chain and must leave it unset.
+     */
+    readonly servedChains?: readonly Constants.OutpostChainCodename[]
   }
 
   // ── Composite: RETURNS a PhaseGroup — one Phase per operator ──────────────
@@ -302,7 +315,8 @@ export namespace WireOperatorProvisioningTool {
 
   /**
    * A batch-operator / underwriter Phase: materialize keys → account creation →
-   * (optional) fund ETH / airdrop SOL → authex-link both chains → register.
+   * (optional) fund ETH / airdrop SOL → authex-link both chains → register → (batch
+   * operator) join each served outpost chain ({@link resolveServedChains}).
    * Funding steps are included only when the spec supplies an amount (bootstrap
    * ops skip them; deposit flows opt in). Every step resolves the operator by its
    * durable `label` handle and reads `account` off the stored
@@ -321,6 +335,7 @@ export namespace WireOperatorProvisioningTool {
         fundEthereumWei,
         airdropSolanaLamports
       } = spec,
+      servedChains = resolveServedChains(spec),
       actor = operatorActor(type),
       // External-outpost mode: operators are pre-funded out-of-band on the REAL
       // chains — there is no anvil faucet / SOL faucet — so the outpost-chain
@@ -397,9 +412,49 @@ export namespace WireOperatorProvisioningTool {
         // A collateral-backed producer is on this route BECAUSE it is not a genesis one: a
         // bootstrapped registration would be ACTIVE at once and refused every deposit after.
         isBootstrapped ?? type !== OperatorType.PRODUCER
+      ),
+      ...servedChains.map(chain =>
+        planChainJoin<C>(
+          actor,
+          `${label}-join-${chain.toLowerCase()}`,
+          `${label} joins the ${chain} outpost chain`,
+          options,
+          label,
+          chain
+        )
       )
     ])
   }
+
+  /**
+   * The outpost chains a spec's operator joins: a batch operator's `servedChains`, every outpost
+   * chain when it names none; no chain for any other type, which may not name any.
+   *
+   * @param spec - The operator to provision.
+   * @returns The chains to plan one `joinchain` for, in outpost order.
+   * @throws When a non-batch operator names a chain.
+   */
+  export function resolveServedChains(
+    spec: OperatorProvisioningSpec
+  ): readonly Constants.OutpostChainCodename[] {
+    const { label, type, servedChains } = spec
+    return match(type)
+      .with(OperatorType.BATCH, () =>
+        match(servedChains)
+          .with(P.nullish, () => OutpostChainCodenames)
+          .otherwise(named => OutpostChainCodenames.filter(chain => named.includes(chain)))
+      )
+      .otherwise(() => {
+        Assert.ok(
+          servedChains == null || servedChains.length === 0,
+          `provision ${label}: only a batch operator serves outpost chains (type ${OperatorType[type]})`
+        )
+        return NoServedChains
+      })
+  }
+
+  /** The chains a non-batch operator serves: none. */
+  const NoServedChains: readonly Constants.OutpostChainCodename[] = []
 
   /**
    * The SSM publish steps for a FLOW-provisioned OPP operator's freshly
@@ -873,6 +928,130 @@ export namespace WireOperatorProvisioningTool {
         type: abiEnumValue(SysioContracts.SysioOpregOperatortype, input.type),
         is_bootstrapped: input.isBootstrapped
       })
+  }
+
+  // ── Steps: join / leave an outpost chain on sysio.opreg (writes) ─────────
+
+  /** Input for {@link planChainJoin}. */
+  export interface ChainJoinInput extends StepInput {
+    readonly kind: "WireOperatorProvisioningTool.ChainJoinInput"
+    /** The batch operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its account). */
+    readonly label: string
+    /** The outpost chain the operator joins. */
+    readonly chain: Constants.OutpostChainCodename
+  }
+
+  /**
+   * The batch operator joins one outpost chain (`sysio.opreg::joinchain`), so that chain's
+   * schedule can seat it. The operator's `account` is resolved from `ctx.keyStore` at RUN
+   * time, and the operator signs: the self-service path every operator takes, the bootstrap's
+   * included. Its `sysio.authex` link for the chain's kind must already exist.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param label - The operator's durable label.
+   * @param chain - The outpost chain it joins.
+   * @returns The `joinchain` step.
+   */
+  export function planChainJoin<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    chain: Constants.OutpostChainCodename
+  ): ClusterBuildStep<C, ChainJoinInput> {
+    return ClusterBuildStep.create<C, ChainJoinInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "WireOperatorProvisioningTool.ChainJoinInput", label, chain },
+      runChainJoin
+    )
+  }
+
+  /** Named runner — resolve the account, then delegate ONE join to `OpregContractSteps.runJoinchain`. */
+  export async function runChainJoin<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ChainJoinInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await OpregContractSteps.runJoinchain(
+      ctx,
+      {
+        kind: "OpregContractSteps.JoinchainInput",
+        data: {
+          account: ctx.keyStore.assertOperator(input.label).account,
+          chain_code: input.chain
+        }
+      },
+      signal
+    )
+  }
+
+  /** Input for {@link planChainLeave}. */
+  export interface ChainLeaveInput extends StepInput {
+    readonly kind: "WireOperatorProvisioningTool.ChainLeaveInput"
+    /** The batch operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its account). */
+    readonly label: string
+    /** The outpost chain the operator leaves. */
+    readonly chain: Constants.OutpostChainCodename
+  }
+
+  /**
+   * The batch operator leaves one outpost chain (`sysio.opreg::leavechain`): the chain draws no
+   * new seat from it, and it still owes every seat it holds there. The twin of
+   * {@link planChainJoin} — the operator's `account` is resolved from `ctx.keyStore` at RUN
+   * time, and the operator signs.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param label - The operator's durable label.
+   * @param chain - The outpost chain it leaves.
+   * @returns The `leavechain` step.
+   */
+  export function planChainLeave<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    chain: Constants.OutpostChainCodename
+  ): ClusterBuildStep<C, ChainLeaveInput> {
+    return ClusterBuildStep.create<C, ChainLeaveInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "WireOperatorProvisioningTool.ChainLeaveInput", label, chain },
+      runChainLeave
+    )
+  }
+
+  /** Named runner — resolve the account, then delegate ONE leave to `OpregContractSteps.runLeavechain`. */
+  export async function runChainLeave<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ChainLeaveInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await OpregContractSteps.runLeavechain(
+      ctx,
+      {
+        kind: "OpregContractSteps.LeavechainInput",
+        data: {
+          account: ctx.keyStore.assertOperator(input.label).account,
+          chain_code: input.chain
+        }
+      },
+      signal
+    )
   }
 
   // ── Step: fund the operator's ETH wallet (write) ─────────────────────────

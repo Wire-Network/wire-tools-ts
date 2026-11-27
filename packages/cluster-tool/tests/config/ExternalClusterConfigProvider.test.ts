@@ -6,6 +6,7 @@ import { KeyType } from "@wireio/sdk-core"
 import {
   ExternalClusterConfigSchemaCodec,
   SignatureProviderType,
+  createUniformOutpostEpochDurations,
   type ExternalClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { ExternalClusterConfigProvider } from "@wireio/cluster-tool/config"
@@ -52,7 +53,11 @@ const config: ExternalClusterConfig = {
       }
     ]
   },
-  wire: { epochDurationSec: 60, genesisFile: "genesis.json" },
+  wire: {
+    epochDurationSec: 60,
+    outpostEpochDurationSec: createUniformOutpostEpochDurations(60),
+    genesisFile: "genesis.json"
+  },
   ethereum: {
     addressFile: "outpost-addrs.json",
     abiFiles: ["eth-abis/OPP.json"],

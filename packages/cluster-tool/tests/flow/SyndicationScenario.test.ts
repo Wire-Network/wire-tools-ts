@@ -12,7 +12,8 @@ import {
   LIQYield,
   SyndicateLIQ
 } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { SyndicationScenario } from "@wireio/cluster-tool/flow"
 import {
   ClusterBuild,
@@ -143,7 +144,31 @@ describe("syndication scenario accounting", () => {
     })
     expect(await SyndicationScenario.readFees(ctx)).toBe(123n)
   })
-  it("refuses an absent epoch singleton", async () => {
+  it("pins one 60 s consensus epoch the scenarios give every outpost chain", () => {
+    expect(SyndicationScenario.EpochDurationSec).toBe(60)
+  })
+
+  it("reads the syndication chain's own epoch, never another chain's row", async () => {
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContractName.epoch),
+      row = (chain: string, index: number) => ({
+        chain_code: SlugName.from(chain),
+        current_epoch_index: index,
+        current_epoch_start: "2026-11-24T00:00:00.000",
+        next_epoch_start: "2026-11-24T00:01:00.000",
+        current_batch_op_group: 0,
+        batch_op_groups: [],
+        is_paused: false
+      })
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract as never)
+    jest.spyOn(contract.tables.epochstate, "query").mockResolvedValue({
+      rows: [row(Constants.ETHEREUM_CHAIN_CODENAME, 9), row(SyndicationScenario.Chain, 4)],
+      more: false
+    })
+    expect(SyndicationScenario.Chain).toBe(Constants.SOLANA_CHAIN_CODENAME)
+    await expect(SyndicationScenario.readEpoch(ctx)).resolves.toBe(4)
+  })
+  it("refuses a missing epoch row of the syndication chain", async () => {
     const ctx = fixtureContext(),
       contract = ctx.wire.getSysioContract(SysioContractName.epoch)
     jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract as never)
@@ -151,7 +176,7 @@ describe("syndication scenario accounting", () => {
       .spyOn(contract.tables.epochstate, "query")
       .mockResolvedValue({ rows: [], more: false })
     await expect(SyndicationScenario.readEpoch(ctx)).rejects.toThrow(
-      "missing epoch"
+      `missing the ${SyndicationScenario.Chain} epoch state`
     )
   })
   it("resolves runtime epochs and refuses a missing envelope", async () => {

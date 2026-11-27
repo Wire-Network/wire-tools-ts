@@ -9,6 +9,10 @@ import {
   SolanaAddressPattern
 } from "../types/chainAddressPatterns.js"
 import { OperatorTypeCodec } from "../types/OperatorTypeCodec.js"
+import {
+  mapOutpostChains,
+  OutpostChainCodenames
+} from "../types/outpostChainCodenames.js"
 
 /**
  * Constants of `wire-opreg-bootstrap.json` (`ClusterFiles.WireOpregBootstrapFilename`)
@@ -56,9 +60,9 @@ export namespace WireOpregBootstrap {
   export const Description =
     "The cluster's build label and AWS account, the bootstrapped operator roster " +
     "(every sysio.opreg operator registered with is_bootstrapped: WIRE account name, " +
-    "operator type, public keys) and the initial batch-operator schedule " +
-    "sysio.epoch::schbatchgps built, written by the cluster-tool bootstrap to " +
-    "<clusterPath>/wire-opreg-bootstrap.json."
+    "operator type, public keys) and, for each outpost chain, its consensus epoch " +
+    "duration and the initial batch-operator schedule sysio.epoch::schbatchgps built " +
+    "for it, written by the cluster-tool bootstrap to <clusterPath>/wire-opreg-bootstrap.json."
 }
 
 /** A WIRE account name — non-empty and canonical per sdk-core's `Name.pattern`. */
@@ -201,7 +205,7 @@ export const WireOpregBootstrapOperatorSchema = z
   ])
   .describe("One operator registered on sysio.opreg with is_bootstrapped")
 
-/** The initial batch-operator schedule `sysio.epoch::schbatchgps` built. */
+/** One outpost chain's initial batch-operator schedule, built by its `sysio.epoch::schbatchgps`. */
 export const WireOpregBootstrapBatchOperatorGroupsSchema = z
   .object({
     activeGroupIndex: z
@@ -209,18 +213,40 @@ export const WireOpregBootstrapBatchOperatorGroupsSchema = z
       .int()
       .nonnegative()
       .describe(
-        "Index into groups of the first active group — sysio.epoch epochstate.current_batch_op_group " +
+        "Index into groups of the first active group — the chain's sysio.epoch epochstate.current_batch_op_group " +
           "when the file is written (0: the front of the window is always the current group)"
       ),
     groups: z
       .array(z.array(AccountNameSchema).min(1))
       .min(1)
       .describe(
-        "The batch-operator window in slot order (sysio.epoch epochstate.batch_op_groups): " +
-          "groups[k] serves epoch k + 1; each member is the accountName of a BATCH operator in operators"
+        "The chain's batch-operator window in slot order (its sysio.epoch epochstate.batch_op_groups): " +
+          "groups[k] serves the chain's epoch k + 1; each member is the accountName of a BATCH operator in operators"
       )
   })
-  .describe("The initial batch-operator schedule built by sysio.epoch::schbatchgps")
+  .describe("One outpost chain's initial batch-operator schedule, built by sysio.epoch::schbatchgps")
+
+/** One outpost chain's consensus epoch: its duration and its initial batch-operator schedule. */
+export const WireOpregBootstrapChainSchema = z
+  .object({
+    epochDurationSec: z
+      .number()
+      .int()
+      .positive()
+      .describe(
+        "The chain's consensus epoch duration in seconds (its sysio.epoch::epochcfg.epoch_duration_sec)"
+      ),
+    batchOperatorGroups: WireOpregBootstrapBatchOperatorGroupsSchema
+  })
+  .describe("One outpost chain's consensus epoch duration and initial batch-operator schedule")
+
+/** Every outpost chain's consensus epoch, keyed by its depot codename. */
+export const WireOpregBootstrapChainsSchema = z
+  .object(mapOutpostChains(() => WireOpregBootstrapChainSchema))
+  .describe(
+    "Every outpost chain's consensus epoch, keyed by its sysio.chains code: each chain runs its own " +
+      "epoch counter, duration and batch-operator schedule"
+  )
 
 /** The document's fields before its cross-field consistency checks. */
 const WireOpregBootstrapShape = z.object({
@@ -240,18 +266,11 @@ const WireOpregBootstrapShape = z.object({
       "The AWS account (environment) the cluster's nodes run in — awsClusterNodeConfig.account " +
         "of the cluster config; null when the cluster has no AWS placement"
     ),
-  epochDurationSec: z
-    .number()
-    .int()
-    .positive()
-    .describe(
-      "The depot's global epoch duration in seconds (sysio.epoch::epochcfg.epoch_duration_sec)"
-    ),
   operators: z
     .array(WireOpregBootstrapOperatorSchema)
     .min(1)
     .describe("Every bootstrapped operator, ordered by operator type then account name"),
-  batchOperatorGroups: WireOpregBootstrapBatchOperatorGroupsSchema
+  chains: WireOpregBootstrapChainsSchema
 })
 
 /** The decoded fields {@link addConsistencyIssues} checks. */
@@ -301,55 +320,66 @@ function addDuplicateAccountIssues(
     )
 }
 
-/** An `activeGroupIndex` past the last group. */
+/** A chain's `activeGroupIndex` past its last group. */
 function addActiveGroupIssue(
-  { batchOperatorGroups }: WireOpregBootstrapFields,
+  { chains }: WireOpregBootstrapFields,
   ctx: WireOpregBootstrapRefinementContext
 ): void {
-  const { activeGroupIndex, groups } = batchOperatorGroups
-  if (activeGroupIndex >= groups.length) {
-    ctx.addIssue({
-      code: "custom",
-      message: `activeGroupIndex ${activeGroupIndex} is out of range for ${groups.length} group(s)`,
-      path: ["batchOperatorGroups", "activeGroupIndex"]
-    })
-  }
+  OutpostChainCodenames.forEach(chain => {
+    const { activeGroupIndex, groups } = chains[chain].batchOperatorGroups
+    if (activeGroupIndex >= groups.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: `${chain} activeGroupIndex ${activeGroupIndex} is out of range for ${groups.length} group(s)`,
+        path: ["chains", chain, "batchOperatorGroups", "activeGroupIndex"]
+      })
+    }
+  })
 }
 
-/** A group member that repeats within its group or is not a BATCH roster entry. */
+/** A chain's group member that repeats within its group or is not a BATCH roster entry. */
 function addGroupMemberIssues(
-  { operators, batchOperatorGroups }: WireOpregBootstrapFields,
+  { operators, chains }: WireOpregBootstrapFields,
   ctx: WireOpregBootstrapRefinementContext
 ): void {
   const typeByAccount = new Map<string, OperatorType>(
     operators.map(operator => [operator.accountName, operator.type])
   )
-  batchOperatorGroups.groups.forEach((group, groupIndex) =>
-    group.forEach((member, memberIndex) => {
-      const path = ["batchOperatorGroups", "groups", groupIndex, memberIndex]
-      if (group.indexOf(member) !== memberIndex) {
-        ctx.addIssue({
-          code: "custom",
-          message: `${member} appears more than once in group ${groupIndex}`,
-          path
-        })
-      }
-      if (typeByAccount.get(member) !== OperatorType.BATCH) {
-        ctx.addIssue({
-          code: "custom",
-          message: `group member ${member} is not a BATCH operator in operators`,
-          path
-        })
-      }
-    })
+  OutpostChainCodenames.forEach(chain =>
+    chains[chain].batchOperatorGroups.groups.forEach((group, groupIndex) =>
+      group.forEach((member, memberIndex) => {
+        const path = [
+          "chains",
+          chain,
+          "batchOperatorGroups",
+          "groups",
+          groupIndex,
+          memberIndex
+        ]
+        if (group.indexOf(member) !== memberIndex) {
+          ctx.addIssue({
+            code: "custom",
+            message: `${member} appears more than once in ${chain} group ${groupIndex}`,
+            path
+          })
+        }
+        if (typeByAccount.get(member) !== OperatorType.BATCH) {
+          ctx.addIssue({
+            code: "custom",
+            message: `${chain} group member ${member} is not a BATCH operator in operators`,
+            path
+          })
+        }
+      })
+    )
   )
 }
 
 /**
  * THE `wire-opreg-bootstrap.json` schema — the cluster's build label and AWS
- * account, the bootstrapped operator roster, the initial batch-operator schedule
- * and the depot's epoch duration, with the cross-field consistency checks
- * applied.
+ * account, the bootstrapped operator roster, and each outpost chain's consensus
+ * epoch duration and initial batch-operator schedule, with the cross-field
+ * consistency checks applied.
  */
 export const WireOpregBootstrapSchema = WireOpregBootstrapShape.superRefine(
   addConsistencyIssues
@@ -398,10 +428,14 @@ export type WireOpregBootstrapUnderwriter = z.infer<
 export type WireOpregBootstrapOperator = z.infer<
   typeof WireOpregBootstrapOperatorSchema
 >
-/** The initial batch-operator schedule — the shape of {@link WireOpregBootstrapBatchOperatorGroupsSchema}. */
+/** One outpost chain's initial batch-operator schedule — the shape of {@link WireOpregBootstrapBatchOperatorGroupsSchema}. */
 export type WireOpregBootstrapBatchOperatorGroups = z.infer<
   typeof WireOpregBootstrapBatchOperatorGroupsSchema
 >
+/** One outpost chain's consensus epoch — the shape of {@link WireOpregBootstrapChainSchema}. */
+export type WireOpregBootstrapChain = z.infer<typeof WireOpregBootstrapChainSchema>
+/** Every outpost chain's consensus epoch — the shape of {@link WireOpregBootstrapChainsSchema}. */
+export type WireOpregBootstrapChains = z.infer<typeof WireOpregBootstrapChainsSchema>
 /** THE `wire-opreg-bootstrap.json` document — the shape of {@link WireOpregBootstrapSchema}. */
 export type WireOpregBootstrap = z.infer<typeof WireOpregBootstrapSchema>
 

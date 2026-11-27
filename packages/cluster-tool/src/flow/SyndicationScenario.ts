@@ -37,7 +37,7 @@ import { FlowScenario } from "./FlowScenario.js"
 import { readEnvelopeAttestations } from "./oppEnvelopeScan.js"
 
 const { Actor } = Report
-const { SysioContractName, SysioSyndItemKind } = SysioContracts
+const { SysioSyndItemKind } = SysioContracts
 
 /** Common provisioning and reads for the live syndication scenarios. */
 export abstract class SyndicationScenario extends FlowScenario {
@@ -295,7 +295,10 @@ export namespace SyndicationScenario {
    * @return The fee in base units.
    */
   export import feeOf = WireSyndicationTool.feeOf
-  /** Shortest supported depot epoch. */
+  /**
+   * The consensus epoch duration (s) every syndication scenario pins as its `epochDurationSec`,
+   * so every outpost chain runs it rather than its own default.
+   */
   export const EpochDurationSec = 60
   /** Wallet funding including transaction headroom. */
   export const Funding = 20_000_000_000n
@@ -348,13 +351,18 @@ export namespace SyndicationScenario {
     const scale = 10n ** BigInt(Precision)
     return `${amount / scale}.${String(amount % scale).padStart(Precision, "0")} ${Token}`
   }
-  /** Current consensus epoch from the generated accessor. */
+  /**
+   * The current consensus epoch of the syndication's chain ({@link Chain}) — each outpost chain
+   * runs its own epoch, and this scenario's envelopes, buckets and freezes are that chain's.
+   *
+   * @param ctx - The build context.
+   * @returns The chain's `epochstate.current_epoch_index`.
+   * @throws When the chain has no `epochstate` row.
+   */
   export async function readEpoch(ctx: ClusterBuildContext): Promise<number> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.epoch)
-      .tables.epochstate.query({ limit: 1 })
-    Assert.ok(rows.length === 1, "missing epoch state")
-    return rows[0].current_epoch_index
+    const row = await Steps.contracts.sysio.epoch.readEpochState(ctx, Chain)
+    Assert.ok(row != null, `missing the ${Chain} epoch state`)
+    return row.current_epoch_index
   }
   /** Liquid shadow held by one account, zero before its first credit. */
   export async function readBalance(

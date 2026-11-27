@@ -83,7 +83,7 @@ export namespace EthereumOutpostSteps {
         batchOpGroups,
         batchOperatorMinimumActive
       ),
-      epochDurationSec: config.epochDurationSec
+      epochDurationSec: config.outpostEpochDurationSec[Constants.ETHEREUM_CHAIN_CODENAME]
     }
   }
 
@@ -238,7 +238,10 @@ export namespace EthereumOutpostSteps {
     )
   }
 
-  /** Named runner — `EthereumOutpostBootstrapper.oppBootstrap`. */
+  /**
+   * Named runner — `EthereumOutpostBootstrapper.oppBootstrap` over the Ethereum chain's schedule
+   * window and its `epochcfg` epoch duration.
+   */
   export async function runOppBootstrap<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -246,16 +249,21 @@ export namespace EthereumOutpostSteps {
   ): Promise<void> {
     signal.throwIfAborted()
 
-    const epochState = await EpochContractSteps.readEpochState(ctx)
+    const epochState = await EpochContractSteps.readEpochState(
+      ctx,
+      Constants.ETHEREUM_CHAIN_CODENAME
+    )
     Assert.ok(
       epochState?.batch_op_groups?.length > 0,
-      "runOppBootstrap: the depot has no batch-operator schedule yet — schbatchgps must precede the roster seed"
+      `runOppBootstrap: the depot has no ${Constants.ETHEREUM_CHAIN_CODENAME} batch-operator schedule yet — its schbatchgps must precede the roster seed`
     )
+    // The chain's epochcfg row already exists (its setconfig precedes the schedule): the depot's
+    // duration, not the config's seed of it, is what the outpost's roster must carry.
     const seed = resolveOppBootstrapSeed(
       ctx.keyStore.operatorsByType(OperatorType.BATCH),
       epochState.batch_op_groups,
       epochState.current_batch_op_group,
-      ctx.config.epochDurationSec
+      await EpochContractSteps.readEpochDurationSec(ctx, Constants.ETHEREUM_CHAIN_CODENAME)
     )
     await new EthereumOutpostBootstrapper(
       bootstrapperOptions(ctx, seed.window)
@@ -272,9 +280,9 @@ export namespace EthereumOutpostSteps {
    * serves epoch `1 + k` exactly as a delivered `BATCH_OPERATOR_GROUPS` would.
    *
    * @param batchOperators - every provisioned batch operator (from `ctx.keyStore`).
-   * @param window - the depot's `epochstate.batch_op_groups` (account names per slot).
-   * @param activeGroupIndex - the depot's `epochstate.current_batch_op_group`.
-   * @param epochDurationSec - the depot's epoch duration.
+   * @param window - the Ethereum chain's `epochstate.batch_op_groups` (account names per slot).
+   * @param activeGroupIndex - the Ethereum chain's `epochstate.current_batch_op_group`.
+   * @param epochDurationSec - the Ethereum chain's consensus epoch duration.
    * @return the seed for {@link EthereumOutpostBootstrapper.oppBootstrap}.
    * @throws if a scheduled account is not among the provisioned batch operators
    *   or its operator lacks an Ethereum key.

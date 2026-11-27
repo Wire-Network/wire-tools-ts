@@ -44,6 +44,7 @@ function fixture() {
       request: openRequest(), bonds: [], checkpoint: { ...checkpoint }, running: null },
     ctx = { outputs: new OutputStore(),
       config: { epochDurationSec: Constants.EpochDurationSec,
+        outpostEpochDurationSec: { ETHEREUM: Constants.EpochDurationSec, [SyndicationScenario.Chain]: Constants.EpochDurationSec },
         batchOperatorUnderwriting: { fundedOperatorCount: 1 } },
       processManager: { get: () => holder.running },
       keyStore: { assertOperator: () => ({ account: "provider" }) },
@@ -321,4 +322,17 @@ test("the planned flow stops before intake and proves pruning before the origina
   Assert.equal(scenario.defaults.batchOperatorUnderwriting.fundedOperatorCount, 1)
   Assert.equal(scenario.defaults.epochDurationSec, 60)
   Assert.equal(scenario.defaults.underwriterCount, 0)
+})
+
+test("the pruning wait is sized by the Solana chain's own consensus epoch, not Ethereum's", () => {
+  const { ctx } = fixture(),
+    scenario = new Scenario()
+  ctx.config.outpostEpochDurationSec = { ETHEREUM: 60, [SyndicationScenario.Chain]: 150 }
+  mock.method(SyndicationScenario.prototype, "planSetup", () => {})
+  mock.method(SyndicationScenario.prototype, "planFinish", () => {})
+  mock.method(Underwriting, "planConfigureUnderwriting", () => {})
+  const build = ClusterBuild.forContext(ctx)
+  scenario.plan(build)
+  const pruned = build.children.flatMap(phase => phase.steps).find(step => step.name === "original-digest-pruned")
+  Assert.equal(pruned.options.timeoutMs, Constants.pruningBudgetMs(150) + ProtocolTiming.PollDeadlineBufferMs)
 })

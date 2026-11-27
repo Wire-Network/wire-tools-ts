@@ -23,7 +23,7 @@ import Assert from "node:assert"
 
 import { identity } from "lodash"
 import { match, P } from "ts-pattern"
-import { Asset, SlugName, SysioContracts } from "@wireio/sdk-core"
+import { Asset, SysioContracts } from "@wireio/sdk-core"
 
 import { ProtocolTiming } from "../../Constants.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
@@ -40,7 +40,7 @@ import { pollUntil } from "../../orchestration/StepTools.js"
 import { BondContractSteps } from "../../orchestration/steps/contracts/sysio/BondContractSteps.js"
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
-import { slugValue } from "../../utils/slugUtils.js"
+import { isCode } from "../../utils/slugUtils.js"
 import { assetUnits } from "../../utils/index.js"
 
 const {
@@ -1213,11 +1213,6 @@ export namespace WireSyndicationTool {
         matchesProtoEnum(request.state, SysioBondRequestState, state)
       )
     )
-  }
-
-  /** Whether a slug cell names `codename`. */
-  function isCode(cell: string, codename: string): boolean {
-    return slugValue(cell) === SlugName.from(codename)
   }
 
   /** The `(chain_code, token_code)` cells of a pair-keyed row. */

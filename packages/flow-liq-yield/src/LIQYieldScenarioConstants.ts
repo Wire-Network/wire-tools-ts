@@ -12,7 +12,7 @@ import {
  * deadline derives from {@link ProtocolTiming} rather than a stopwatch.
  */
 export namespace LIQYieldScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
   /** Producer nodes stood up by the bootstrap. */
   export const ProducerCount = 3
@@ -98,26 +98,12 @@ export namespace LIQYieldScenarioConstants {
   export const DepotWriteTimeoutMs = ProtocolTiming.IrreversibilityBaseMs
 
   /**
-   * Effective-epoch windows budgeted for `current_epoch_index` to move past the
-   * pre-syndication snapshot — the shared epoch-advance liveness envelope.
+   * The snapshot of every outpost chain's `current_epoch_index` taken before any write
+   * (`EpochAdvanceSteps.epochIndicesKey`); consensus must keep closing epochs past it across
+   * every liq attestation.
    */
-  export const EpochAdvanceEpochBudget = ProtocolTiming.EpochVerifyEpochCount
-  /** Interval between epoch-state reads while waiting for the advance (ms). */
-  export const EpochAdvancePollMs = ProtocolTiming.EpochVerifyPollIntervalMs
+  export const PreSyndicationEpochSnapshot = "liq-yield.pre-syndication"
 
   /** Row page size for the depot table scans (every table read here is small). */
   export const TableQueryLimit = 100
-
-  /**
-   * Deadline for the depot to advance past the snapshotted epoch index (ms).
-   *
-   * @returns The deadline in milliseconds.
-   */
-  export function epochAdvanceDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      EpochAdvanceEpochBudget *
-      ProtocolTiming.MsPerSecond
-    )
-  }
 }

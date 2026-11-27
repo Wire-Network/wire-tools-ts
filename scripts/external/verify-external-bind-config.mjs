@@ -59,6 +59,13 @@ import Fs from "node:fs"
 import Os from "node:os"
 import { argv, chalk, echo, path, sleep, $ } from "zx"
 
+import {
+  chainEpochDurations,
+  chainEpochStates,
+  EpochStateRowLimit,
+  lowestChainEpochIndex
+} from "../common/epoch-state.mjs"
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -224,9 +231,24 @@ assertExists(
 // create-external-config wrote into cluster-config.json (`ClusterConfig.bind`) —
 // the SAME addresses/ports the depot itself dials. That is the single source of
 // truth; the script never reads a separate bind file.
-const bindConfig = readJson(clusterConfigFile, "cluster-config.json").bind
+const persistedConfig = readJson(clusterConfigFile, "cluster-config.json")
+const bindConfig = persistedConfig.bind
 if (bindConfig == null) {
   fail(`cluster-config.json has no .bind (ClusterConfig.bind): ${clusterConfigFile}`)
+}
+
+/**
+ * The outpost chains the epoch gate waits on: every chain the cluster config
+ * gives a consensus epoch duration (`ClusterConfig.outpostEpochDurationSec`),
+ * each running its own epoch. The gate reads null until every one of them has
+ * an `epochstate` row, so a chain that never started cannot pass it.
+ */
+const expectedChains = Object.keys(chainEpochDurations(persistedConfig))
+if (!excludeOutposts && expectedChains.length === 0) {
+  fail(
+    `cluster-config.json names no outpost chain (ClusterConfig.outpostEpochDurationSec): ${clusterConfigFile} — ` +
+      "the epoch gate cannot tell which chains must advance; re-run create-external-config, or pass --exclude-outposts"
+  )
 }
 for (const daemon of ["kiod", "anvil"]) {
   const entry = bindConfig[daemon]
@@ -584,24 +606,27 @@ async function readDepotHead(composeFile) {
 }
 
 /**
- * Read the depot's `current_epoch_index` via `clio` inside the depot container.
- * v6 promoted `sysio.epoch::epochstate` to a KV table — the fields live under
- * `.value` (see cluster-state-active-probing.md).
+ * Read the LOWEST `current_epoch_index` of the cluster's outpost chains
+ * ({@link expectedChains}) via `clio` inside the depot container: each outpost
+ * chain runs its own consensus epoch (one `sysio.epoch::epochstate` row per
+ * chain), so the epoch gate advances only once every chain's epoch has. v6
+ * promoted `epochstate` to a KV table — the fields live under `.value` (see
+ * cluster-state-active-probing.md).
  * @param {string} composeFile the generated compose file path.
- * @return {Promise<number|null>} current_epoch_index, or null when unreachable.
+ * @return {Promise<number|null>} the lowest chain's current_epoch_index, or null
+ *   when unreachable or any of the cluster's chains has no row yet.
  */
 async function readDepotEpoch(composeFile) {
   try {
     const result = await $({
       nothrow: true
-    })`docker compose -f ${composeFile} -p ${projectName} exec -T depot ${containerClio} -u http://${depotIp}:${producerHttpPort} get table sysio.epoch epochstate -S sysio.epoch -l 1`.timeout(
+    })`docker compose -f ${composeFile} -p ${projectName} exec -T depot ${containerClio} -u http://${depotIp}:${producerHttpPort} get table sysio.epoch epochstate -S sysio.epoch -l ${EpochStateRowLimit}`.timeout(
       ClioProbeTimeout
     )
     if (result.exitCode !== 0) return null
-    const row = JSON.parse(result.stdout).rows?.[0]
-    const index = row?.value?.current_epoch_index ?? row?.current_epoch_index
-    return typeof index === "number" ? index : null
-  } catch {
+    return lowestChainEpochIndex(chainEpochStates(JSON.parse(result.stdout).rows ?? []), expectedChains)
+  } catch (error) {
+    echo(chalk.dim(`epochstate read failed: ${error instanceof Error ? error.message : String(error)}`))
     return null
   }
 }
@@ -639,7 +664,7 @@ async function dumpDiagnostics(composeFile) {
 // Main
 // ---------------------------------------------------------------------------
 
-// The success gate: EPOCH ADVANCE by default (outposts loaded → OPP circulates),
+// The success gate: EPOCH ADVANCE of every outpost chain by default (outposts loaded → OPP circulates),
 // or depot HEAD BLOCKS under --exclude-outposts.
 const gate = excludeOutposts
   ? { name: "head", unit: "blocks", threshold: headAdvanceBlocks, read: readDepotHead }

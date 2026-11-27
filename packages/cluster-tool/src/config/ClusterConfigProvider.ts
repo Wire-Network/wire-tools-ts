@@ -8,12 +8,16 @@ import {
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
   ClusterFiles,
+  createUniformOutpostEpochDurations,
   DefaultChainStateDbSizeMb,
   DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
   isKMSCustodiableKeyType,
   isKMSCustodied,
   KMSCustodiedKeyTypes,
+  mapOutpostChains,
+  OutpostChainCodename,
+  OutpostChainCodenames,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type AWSClusterNodeConfig,
@@ -34,10 +38,11 @@ import {
   type LcoImportChainConfig,
   type LcoImportChainOptions,
   type LcoImportConfig,
+  type OutpostEpochDurations,
   type QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import { defaultsDeep } from "lodash"
-import { Either } from "@3fv/prelude-ts"
+import { asOption, Either } from "@3fv/prelude-ts"
 import { Level, NestedError } from "@wireio/shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { KeyType, PublicKey, SlugName } from "@wireio/sdk-core"
@@ -132,6 +137,61 @@ function assertApiCount(options: ClusterBuildOptions): number {
     `ClusterConfigProvider: apiCount must be a non-negative safe integer — got ${apiCount}`
   )
   return apiCount
+}
+
+/**
+ * Each outpost chain's consensus epoch duration: the caller's value for the chain; else the
+ * caller's `epochDurationSec`, which every chain it names no duration of its own for takes;
+ * else the chain's own default ({@link ClusterConfigProvider.DefaultOutpostEpochDurationSec}).
+ * Every duration must be a positive safe integer — the `uint32` the chain's
+ * `sysio.epoch::setconfig` takes; the contract owns the floor and ceiling.
+ *
+ * @param options - The caller's options (its `outpostEpochDurationSec` and
+ *   `epochDurationSec`, if any).
+ * @returns Every outpost chain's duration.
+ */
+function resolveOutpostEpochDurations(
+  options: ClusterBuildOptions
+): OutpostEpochDurations {
+  const { epochDurationSec, outpostEpochDurationSec = {} } = options,
+    unnamedChainDurations: OutpostEpochDurations = asOption(epochDurationSec)
+      .map(createUniformOutpostEpochDurations)
+      .getOrElse(ClusterConfigProvider.DefaultOutpostEpochDurationSec),
+    durations: OutpostEpochDurations = mapOutpostChains(
+      chain => outpostEpochDurationSec[chain] ?? unnamedChainDurations[chain]
+    )
+  OutpostChainCodenames.forEach(chain =>
+    Assert.ok(
+      Number.isSafeInteger(durations[chain]) && durations[chain] > 0,
+      `ClusterConfigProvider: the ${chain} consensus epoch duration must be a positive safe integer — got ${durations[chain]}`
+    )
+  )
+  return durations
+}
+
+/**
+ * The economic epoch duration: the caller's; else its `epochDurationSec` raised to the depot's
+ * economic floor ({@link ClusterConfigProvider.MinimumEconomicEpochDurationSec}); else the
+ * economic default ({@link ClusterConfigProvider.DefaultEconomicEpochDurationSec}), which no
+ * per-chain consensus default reaches.
+ *
+ * @param options - The caller's options (its `economicEpochDurationSec` and
+ *   `epochDurationSec`, if any).
+ * @returns The economic epoch duration (s).
+ */
+function resolveEconomicEpochDurationSec(options: ClusterBuildOptions): number {
+  const { economicEpochDurationSec, epochDurationSec } = options
+  return (
+    economicEpochDurationSec ??
+    asOption(epochDurationSec)
+      .map(durationSec =>
+        Math.max(
+          durationSec,
+          ClusterConfigProvider.MinimumEconomicEpochDurationSec
+        )
+      )
+      .getOrElse(ClusterConfigProvider.DefaultEconomicEpochDurationSec)
+  )
 }
 
 /**
@@ -435,11 +495,43 @@ export namespace ClusterConfigProvider {
   /** API nodes planned when a caller names no count — aliases the bind resolver's default. */
   export const DefaultApiCount = BindConfigProvider.DefaultApiCount
   /**
-   * The depot's minimum epoch duration (`sysio.epoch::epochcfg.epoch_duration_sec`) when a
-   * caller names none — the cadence a deployed cluster runs at. A flow pins its own, shorter,
-   * duration in its `Scenario.defaults`.
+   * The Ethereum outpost chain's consensus epoch duration (s) — its
+   * `sysio.epoch::epochcfg.epoch_duration_sec` — when a caller names neither the chain's own
+   * duration nor an `epochDurationSec`: the cadence a deployed cluster runs its Ethereum
+   * epochs at. Changing it changes the duration every such cluster's bootstrap writes for the
+   * chain, its outpost's initial roster window, and its shadow pair's syndication refill.
    */
-  export const DefaultEpochDurationSec = 300
+  export const DefaultEthereumEpochDurationSec = 60
+  /**
+   * The Solana outpost chain's consensus epoch duration (s) — its
+   * `sysio.epoch::epochcfg.epoch_duration_sec` — when a caller names neither the chain's own
+   * duration nor an `epochDurationSec`: the cadence a deployed cluster runs its Solana epochs
+   * at. Changing it changes the duration every such cluster's bootstrap writes for the chain,
+   * its outpost's `opp_bootstrap` window, and its shadow pair's syndication refill.
+   */
+  export const DefaultSolanaEpochDurationSec = 30
+  /**
+   * Each outpost chain's default consensus epoch duration (s), keyed by its depot codename:
+   * the duration of every chain a caller names neither its own duration nor an
+   * `epochDurationSec` for. Flows pin theirs in `Scenario.defaults`.
+   */
+  export const DefaultOutpostEpochDurationSec: Readonly<OutpostEpochDurations> = {
+    [OutpostChainCodename.ETHEREUM]: DefaultEthereumEpochDurationSec,
+    [OutpostChainCodename.SOLANA]: DefaultSolanaEpochDurationSec
+  }
+  /**
+   * The economic epoch duration (s) — `sysio.epoch::seteconomy`'s `epoch_duration_sec` —
+   * when a caller names neither it nor an `epochDurationSec`: the pay period a deployed
+   * cluster's emissions, collateral withdrawals and producer pay run on. Independent of every
+   * consensus default; changing it changes that period on every such cluster.
+   */
+  export const DefaultEconomicEpochDurationSec = 300
+  /**
+   * The shortest economic epoch duration (s) `sysio.epoch::seteconomy` accepts — the
+   * contract's `MIN_ECONOMIC_EPOCH_DURATION_SEC`. An economic duration derived from a
+   * caller's `epochDurationSec` is raised to it; it must track the contract's floor.
+   */
+  export const MinimumEconomicEpochDurationSec = 60
 
   /**
    * Resolve defaults → validate → return a ready config (the only forward
@@ -462,7 +554,7 @@ export namespace ClusterConfigProvider {
       batchOperatorCount = assertBatchOperatorSchedule(options),
       apiCount = assertApiCount(options),
       economicStartTime = resolveEconomicStartTime(options),
-      { epochDurationSec = DefaultEpochDurationSec } = options,
+      { epochDurationSec = null } = options,
       queryEngine = QueryEngineConfigProvider.resolve(
         assertQueryEngineUse(apiCount, options.queryEngine)
       ),
@@ -498,7 +590,8 @@ export namespace ClusterConfigProvider {
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
       apiCount,
       epochDurationSec,
-      economicEpochDurationSec: options.economicEpochDurationSec ?? epochDurationSec,
+      outpostEpochDurationSec: resolveOutpostEpochDurations(options),
+      economicEpochDurationSec: resolveEconomicEpochDurationSec(options),
       economicStartTime,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,
       batchOpGroups: options.batchOpGroups ?? null,
@@ -510,6 +603,8 @@ export namespace ClusterConfigProvider {
         options.terminateMaxConsecutiveMisses ?? null,
       terminateMaxPercentMisses24h:
         options.terminateMaxPercentMisses24h ?? null,
+      terminateMinimumPercentSamples:
+        options.terminateMinimumPercentSamples ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),

@@ -873,7 +873,8 @@ export namespace ExternalClusterConfigSteps {
    * Emit `external-cluster-config.json` — the fully self-described deployment
    * payload: the external bindings, every operator account's signature providers
    * (reflecting the SOURCE cluster's `signatureProvider.type` — see
-   * {@link keyProviderFor}), the depot `epochDurationSec` + genesis path, and the
+   * {@link keyProviderFor}), the cluster's `epochDurationSec` (`null` when its chains took
+   * their own defaults) and each outpost chain's `outpostEpochDurationSec` + genesis path, and the
    * ethereum/solana outpost artifacts derived from the cloned data dir (with the
    * chain id and RPC endpoints of `config.externalOutposts` when the local
    * cluster was created external).
@@ -938,6 +939,7 @@ export namespace ExternalClusterConfigSteps {
         },
         wire: {
           epochDurationSec: merged.epochDurationSec,
+          outpostEpochDurationSec: merged.outpostEpochDurationSec,
           genesisFile: ClusterConfigProvider.genesisFile(merged)
         },
         ethereum: ethereumSection(merged),

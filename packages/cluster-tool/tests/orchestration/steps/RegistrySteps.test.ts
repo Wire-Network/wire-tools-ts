@@ -1,3 +1,4 @@
+import { createUniformOutpostEpochDurations } from "@wireio/cluster-tool-shared"
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -6,7 +7,7 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
-import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
 /** A fresh build root (a `ClusterBuildParent`) for the reserve phase to register on. */
@@ -240,7 +241,7 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
   })
 
   describe("syndicationConfigRegistrations", () => {
-    const rows = Steps.registry.syndicationConfigRegistrations(EpochDurationSec)
+    const rows = Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec))
 
     it("configures every shadow pair: ETHEREUM/LIQETH and SOLANA/LIQSOL", () => {
       expect(rows.map(row => [row.chain_code, row.token_code])).toEqual([
@@ -296,8 +297,22 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       })
     })
 
+    it("sizes each pair's refill from its own chain's consensus epoch duration", () => {
+      const perChain = Steps.registry.syndicationConfigRegistrations({
+        ...createUniformOutpostEpochDurations(EpochDurationSec),
+        [Constants.SOLANA_CHAIN_CODENAME]: 300
+      })
+      perChain.forEach(row => {
+        const refill = Steps.registry.syndicationRefillPerSecond(
+          row.chain_code === Constants.SOLANA_CHAIN_CODENAME ? 300 : EpochDurationSec
+        )
+        expect(row.synd_refill).toBe(refill)
+        expect(row.desynd_refill).toBe(refill)
+      })
+    })
+
     it("sizes the refill from the epoch duration it is given", () => {
-      Steps.registry.syndicationConfigRegistrations(300).forEach(row => {
+      Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(300)).forEach(row => {
         expect(row.synd_refill).toBe(3_333_333_333_334)
         expect(row.desynd_refill).toBe(3_333_333_333_334)
       })
@@ -344,7 +359,7 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       "SyndicationConfig",
       "configure sysio.bond + sysio.synd",
       {},
-      EpochDurationSec
+      createUniformOutpostEpochDurations(EpochDurationSec)
     )
 
     it("returns one Sysio phase: bond config, one synd config per pair, then the verifies", () => {
@@ -375,11 +390,11 @@ describe("Steps.registry — underwriting and syndication configuration", () => 
       const [, ethereum, solana] = phase.steps
       expect(ethereum.input).toEqual({
         kind: "SyndContractSteps.SetconfigInput",
-        data: Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[0]
+        data: Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec))[0]
       })
       expect(solana.input).toEqual({
         kind: "SyndContractSteps.SetconfigInput",
-        data: Steps.registry.syndicationConfigRegistrations(EpochDurationSec)[1]
+        data: Steps.registry.syndicationConfigRegistrations(createUniformOutpostEpochDurations(EpochDurationSec))[1]
       })
     })
 

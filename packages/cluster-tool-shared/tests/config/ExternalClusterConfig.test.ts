@@ -3,7 +3,9 @@ import { KeyType } from "@wireio/sdk-core"
 import {
   ExternalClusterConfigSchema,
   ExternalClusterConfigSchemaCodec,
+  OutpostChainCodename,
   SignatureProviderType,
+  createUniformOutpostEpochDurations,
   type ExternalClusterConfig
 } from "@wireio/cluster-tool-shared"
 
@@ -50,7 +52,7 @@ describe("ExternalClusterConfig", () => {
         }
       ]
     },
-    wire: { epochDurationSec: 60 },
+    wire: { epochDurationSec: 60, outpostEpochDurationSec: createUniformOutpostEpochDurations(60) },
     ethereum: {
       addressFile: "outpost-addrs.json",
       abiFiles: ["eth-abis/OPP.json"],
@@ -98,6 +100,70 @@ describe("ExternalClusterConfig", () => {
           }
         }
       }
+    })
+  })
+
+  describe("wire.outpostEpochDurationSec", () => {
+    const perChain = { [OutpostChainCodename.ETHEREUM]: 60, [OutpostChainCodename.SOLANA]: 150 }
+
+    it("round-trips each outpost chain's own duration", () => {
+      const differing: ExternalClusterConfig = {
+          ...config,
+          wire: { ...config.wire, outpostEpochDurationSec: perChain }
+        },
+        rehydrated = ExternalClusterConfigSchemaCodec.deserialize(
+          ExternalClusterConfigSchemaCodec.serialize(differing)
+        )
+      expect(rehydrated.wire.outpostEpochDurationSec).toEqual(perChain)
+    })
+
+    it("decodes a config emitted before per-chain epochs with every chain at epochDurationSec", () => {
+      const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+      delete parsed.wire.outpostEpochDurationSec
+      parsed.wire.epochDurationSec = 90
+      expect(
+        ExternalClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed)).wire.outpostEpochDurationSec
+      ).toEqual(createUniformOutpostEpochDurations(90))
+    })
+
+    it("round-trips a null epochDurationSec beside each chain's own duration", () => {
+      const chainDefaults: ExternalClusterConfig = {
+          ...config,
+          wire: { ...config.wire, epochDurationSec: null, outpostEpochDurationSec: perChain }
+        },
+        rehydrated = ExternalClusterConfigSchemaCodec.deserialize(
+          ExternalClusterConfigSchemaCodec.serialize(chainDefaults)
+        )
+      expect(rehydrated.wire.epochDurationSec).toBeNull()
+      expect(rehydrated.wire.outpostEpochDurationSec).toEqual(perChain)
+    })
+
+    it("refuses a null epochDurationSec with no per-chain durations to decode", () => {
+      const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+      delete parsed.wire.outpostEpochDurationSec
+      parsed.wire.epochDurationSec = null
+      expect(() => ExternalClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow(
+        new RegExp(`wire\\.outpostEpochDurationSec\\.${OutpostChainCodename.ETHEREUM}`)
+      )
+    })
+
+    it("refuses a duration map that misses an outpost chain", () => {
+      const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+      parsed.wire.outpostEpochDurationSec = { [OutpostChainCodename.ETHEREUM]: 60 }
+      expect(() => ExternalClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))).toThrow(
+        new RegExp(`wire\\.outpostEpochDurationSec\\.${OutpostChainCodename.SOLANA}`)
+      )
+    })
+
+    it("refuses a non-positive or fractional chain duration, and a missing default", () => {
+      const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+      parsed.wire.outpostEpochDurationSec = { ...perChain, [OutpostChainCodename.SOLANA]: 0 }
+      expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
+      parsed.wire.outpostEpochDurationSec = { ...perChain, [OutpostChainCodename.SOLANA]: 1.5 }
+      expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
+      parsed.wire.outpostEpochDurationSec = perChain
+      delete parsed.wire.epochDurationSec
+      expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
     })
   })
 

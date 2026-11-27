@@ -1,8 +1,13 @@
+import { identity } from "lodash"
 import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
 import { OperatorTypeCodec } from "../types/OperatorTypeCodec.js"
 import { BindConfigSchema } from "./BindConfig.js"
+import {
+  createUniformOutpostEpochDurations,
+  OutpostEpochDurationsSchema
+} from "./ClusterConfig.js"
 import {
   ExternalOutpostConfigEthereumSchema,
   ExternalOutpostConfigSolanaSchema
@@ -38,18 +43,64 @@ export type ExternalClusterConfigAccounts = z.infer<
   typeof ExternalClusterConfigAccountsSchema
 >
 
-/**
- * The WIRE-depot section of an {@link ExternalClusterConfig}. `epochDurationSec`
- * is REQUIRED (flow budgets are compile-time; the config is the only transport
- * for a remote epoch); `genesisFile` is needed only by daemon-spawning
- * consumers.
- */
-export const ExternalClusterConfigWireSchema = z.object({
-  /** Depot epoch duration, seconds (global — the only remote-epoch transport). */
-  epochDurationSec: z.number().int().positive(),
+/** The WIRE-depot section's fields, as {@link ExternalClusterConfigWireSchema} decodes them. */
+const ExternalClusterConfigWireShape = z.object({
+  /**
+   * The source cluster's `epochDurationSec`: the consensus epoch duration, seconds, its caller
+   * gave every outpost chain it named no duration of its own for, or `null` when each such
+   * chain took its own default.
+   */
+  epochDurationSec: z.number().int().positive().nullable(),
+  /**
+   * Each outpost chain's consensus epoch duration, seconds — the source cluster's
+   * `outpostEpochDurationSec`, which its bootstrap wrote to each chain's `epochcfg` row: the
+   * transport of a remote cluster's epochs.
+   */
+  outpostEpochDurationSec: OutpostEpochDurationsSchema,
   /** Shared genesis document, when a consumer spawns nodeop. */
   genesisFile: z.string().optional()
 })
+
+/**
+ * The members of a persisted WIRE-depot section that {@link ExternalClusterConfigWireSchema}
+ * reads before {@link ExternalClusterConfigWireShape} validates the rest: the source cluster's
+ * consensus epoch duration, and the per-chain durations it stands in for when absent.
+ */
+const ExternalClusterConfigWireDurationsSchema = z.looseObject({
+  /**
+   * The source cluster's consensus epoch duration, seconds, or `null` — the default of missing
+   * per-chain durations, which only a config emitted before per-chain epochs lacks.
+   */
+  epochDurationSec: z.number().nullable(),
+  /** Each outpost chain's consensus epoch duration — absent in a config emitted before per-chain epochs. */
+  outpostEpochDurationSec: OutpostEpochDurationsSchema.optional()
+})
+
+/**
+ * The WIRE-depot section of an {@link ExternalClusterConfig}. `outpostEpochDurationSec` is
+ * REQUIRED once decoded (flow budgets are compile-time; the config is the only transport for
+ * a remote cluster's epochs); `genesisFile` is needed only by daemon-spawning consumers.
+ *
+ * Decoding defaults a missing `outpostEpochDurationSec` to every outpost chain at the
+ * section's `epochDurationSec` — the decode `ClusterConfigSchema` applies to its own
+ * per-chain durations, so a config emitted from a cluster saved before per-chain epochs
+ * reads as that cluster does. A present map must name every outpost chain; a missing one
+ * beside a `null` `epochDurationSec` is refused. Encoding writes the section as it is.
+ */
+export const ExternalClusterConfigWireSchema = z.codec(
+  ExternalClusterConfigWireDurationsSchema,
+  ExternalClusterConfigWireShape,
+  {
+    decode: (persisted): z.input<typeof ExternalClusterConfigWireShape> =>
+      ({
+        ...persisted,
+        outpostEpochDurationSec:
+          persisted.outpostEpochDurationSec ??
+          createUniformOutpostEpochDurations(persisted.epochDurationSec)
+      }) as z.input<typeof ExternalClusterConfigWireShape>,
+    encode: identity
+  }
+)
 /** The WIRE-depot section — the shape of {@link ExternalClusterConfigWireSchema}. */
 export type ExternalClusterConfigWire = z.infer<
   typeof ExternalClusterConfigWireSchema

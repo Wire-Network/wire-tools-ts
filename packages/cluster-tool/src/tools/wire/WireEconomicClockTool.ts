@@ -2,15 +2,16 @@
  * WireEconomicClockTool — the depot's two clocks, read and awaited together. The economic clock
  * (`sysio.epoch::economycfg` / `economystate`) is a fixed wall-clock grid the batch operators'
  * `tickeconomy` crank opens; emissions, collateral-withdrawal maturity and producer pay run on it,
- * and it never waits on outpost consensus. The consensus epoch (`epochstate`) advances only once
- * every active outpost has reached consensus, and stops while paused.
+ * and it never waits on outpost consensus. Each outpost chain runs its own consensus epoch (its
+ * `epochstate` row), which advances only once that outpost has reached consensus, on that chain's
+ * own cadence, and stops while that chain is paused.
  *
  * {@link WireEconomicClockTool.planAwaitEconomicEpochsOpened} observes economic epochs open,
  * recording a {@link WireEconomicClockTool.Reading} of both clocks at each one, and
  * {@link WireEconomicClockTool.planRecordClockReading} records a single reading. The verify Steps
  * assert over what was observed: {@link WireEconomicClockTool.planVerifyEconomicGrid} (each
  * economic epoch opened on its own grid) and {@link WireEconomicClockTool.planVerifyConsensusHeld}
- * (consensus stayed paused at one index while the economic clock kept opening epochs).
+ * (one chain's consensus stayed paused at one index while the economic clock kept opening epochs).
  */
 
 import Assert from "node:assert"
@@ -18,8 +19,14 @@ import Assert from "node:assert"
 import type { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 
+import {
+  describeOutpostChains,
+  mapOutpostChains,
+  type PerOutpostChain
+} from "@wireio/cluster-tool-shared"
+
 import { WireClient } from "../../clients/wire/WireClient.js"
-import { ProtocolTiming } from "../../Constants.js"
+import { Constants, ProtocolTiming } from "../../Constants.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -33,13 +40,29 @@ import { Report } from "../../report/Report.js"
 
 const log = getLogger(__filename)
 
-/** Reads, awaits and verify Steps over the depot's economic clock and consensus epoch. */
+/** Reads, awaits and verify Steps over the depot's economic clock and each chain's consensus epoch. */
 export namespace WireEconomicClockTool {
   /**
-   * Gap between clock reads (ms). Far below the 60 s floor of either clock, so an await sees
+   * Gap between clock reads (ms). Far below the economic clock's 60 s floor and a chain's 10 s
+   * consensus floor, so an await sees
    * every economic epoch open on its own and a reading lands within seconds of the tick.
    */
   export const PollIntervalMs = 2_000
+
+  /** One outpost chain's consensus epoch at one instant (its `epochstate` row). */
+  export interface ConsensusReading {
+    /** The chain's `epochstate.current_epoch_index`. */
+    readonly epochIndex: number
+    /** The chain's `epochstate.current_epoch_start` in epoch ms on the chain's clock. */
+    readonly epochStartMs: number
+    /** The chain's `epochstate.next_epoch_start` in epoch ms — the boundary its epoch may close at. */
+    readonly nextEpochStartMs: number
+    /** The chain's `epochstate.is_paused` — a pause stops that chain's consensus epoch only. */
+    readonly paused: boolean
+  }
+
+  /** Every outpost chain's consensus epoch at one instant, keyed by its codename. */
+  export type ConsensusReadings = Readonly<PerOutpostChain<ConsensusReading>>
 
   /** Both clocks at one instant, every time in epoch ms on the chain's own clock. */
   export interface Reading {
@@ -49,10 +72,8 @@ export namespace WireEconomicClockTool {
     readonly economicEpochStartMs: number
     /** When the next economic epoch may open: `economystate.next_epoch_start`, else `economycfg.start_time`. */
     readonly economicNextEpochStartMs: number
-    /** `epochstate.current_epoch_index`. */
-    readonly consensusEpochIndex: number
-    /** `epochstate.is_paused` — a pause stops the consensus epoch only. */
-    readonly consensusPaused: boolean
+    /** Every outpost chain's consensus epoch. */
+    readonly consensus: ConsensusReadings
     /** The chain's `head_block_time` when the reading was taken. */
     readonly headBlockTimeMs: number
   }
@@ -88,25 +109,47 @@ export namespace WireEconomicClockTool {
   }
 
   /**
+   * Every outpost chain's consensus epoch from one `epochstate` read — pure over the rows.
+   *
+   * @param states - Each outpost chain's `sysio.epoch::epochstate` row
+   *   (`EpochContractSteps.readEpochStates`).
+   * @returns Each outpost chain's consensus reading.
+   * @throws When an outpost chain has no `epochstate` row.
+   */
+  export function toConsensusReadings(
+    states: Readonly<PerOutpostChain<SysioContracts.SysioEpochEpochStateType>>
+  ): ConsensusReadings {
+    return mapOutpostChains(chain => {
+      const row = states[chain]
+      Assert.ok(
+        row != null,
+        `WireEconomicClockTool: sysio.epoch::epochstate has no ${chain} row`
+      )
+      return {
+        epochIndex: row.current_epoch_index,
+        epochStartMs: WireClient.chainTimeMs(row.current_epoch_start),
+        nextEpochStartMs: WireClient.chainTimeMs(row.next_epoch_start),
+        paused: row.is_paused
+      }
+    })
+  }
+
+  /**
    * READ both clocks and the chain head. Before the first economic epoch opens, the next
    * boundary is the grid's start (`economycfg.start_time`).
    *
    * @param ctx - The build context.
    * @returns The reading.
-   * @throws When the consensus epoch or the economic clock is not configured.
+   * @throws When an outpost chain's consensus epoch or the economic clock is not configured.
    */
   export async function readReading<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<Reading> {
-    const [economy, consensus, info] = await Promise.all([
+    const [economy, epochStates, info] = await Promise.all([
       EpochContractSteps.readEconomyState(ctx),
-      EpochContractSteps.readEpochState(ctx),
+      EpochContractSteps.readEpochStates(ctx),
       ctx.wire.getInfo()
     ])
-    Assert.ok(
-      consensus != null,
-      "WireEconomicClockTool: sysio.epoch::epochstate has no row"
-    )
     return {
       economicEpochIndex: economy?.current_epoch_index ?? 0,
       economicEpochStartMs:
@@ -117,8 +160,7 @@ export namespace WireEconomicClockTool {
         economy != null
           ? WireClient.chainTimeMs(economy.next_epoch_start)
           : await readGridStartMs(ctx),
-      consensusEpochIndex: consensus.current_epoch_index,
-      consensusPaused: Boolean(consensus.is_paused),
+      consensus: toConsensusReadings(epochStates),
       headBlockTimeMs: WireClient.chainTimeMs(info.head_block_time)
     }
   }
@@ -133,6 +175,21 @@ export namespace WireEconomicClockTool {
       "WireEconomicClockTool: the economic clock is not configured"
     )
     return WireClient.chainTimeMs(config.start_time)
+  }
+
+  /** The mark {@link describeConsensusReading} puts after a paused chain's epoch index. */
+  export const PausedMark = " (paused)"
+
+  /**
+   * One chain's consensus reading as text — its epoch index, marked when the chain is paused
+   * (`2 (paused)`). The per-chain describer of `describeOutpostChains`, which spells every
+   * chain's alike: `ETHEREUM 4, SOLANA 2 (paused)`.
+   *
+   * @param reading - One outpost chain's consensus reading.
+   * @returns The chain's fragment.
+   */
+  export function describeConsensusReading(reading: ConsensusReading): string {
+    return `${reading.epochIndex}${reading.paused ? PausedMark : ""}`
   }
 
   /**
@@ -336,8 +393,8 @@ export namespace WireEconomicClockTool {
           ticks.push(reading)
           log.info(
             `[economic-clock] economic epoch ${reading.economicEpochIndex} opened ` +
-              `(${new Date(reading.economicEpochStartMs).toISOString()}); consensus epoch ` +
-              `${reading.consensusEpochIndex}${reading.consensusPaused ? " (paused)" : ""}`
+              `(${new Date(reading.economicEpochStartMs).toISOString()}); consensus ` +
+              describeOutpostChains(reading.consensus, describeConsensusReading)
           )
         }
         return (
@@ -455,18 +512,20 @@ export namespace WireEconomicClockTool {
     })
   }
 
-  // ── Verify: consensus held while the economic clock runs ─────────────────
+  // ── Verify: one chain's consensus held while the economic clock runs ──────
 
   /** Input for {@link planVerifyConsensusHeld}. */
   export interface VerifyConsensusHeldInput extends StepInput {
     readonly kind: "WireEconomicClockTool.VerifyConsensusHeldInput"
-    /** The observations that must all show the same paused consensus epoch, in order. */
+    /** The outpost chain whose consensus epoch was held. */
+    readonly chain: Constants.OutpostChainCodename
+    /** The observations that must all show the chain's consensus paused at one epoch, in order. */
     readonly observationNames: readonly string[]
   }
 
   /**
-   * Assert consensus stayed paused at one index across every reading of the named observations,
-   * while the economic clock kept opening epochs ({@link assertConsensusHeld}).
+   * Assert one chain's consensus stayed paused at one index across every reading of the named
+   * observations, while the economic clock kept opening epochs ({@link assertConsensusHeld}).
    */
   export function planVerifyConsensusHeld<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -475,6 +534,7 @@ export namespace WireEconomicClockTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
+    chain: Constants.OutpostChainCodename,
     observationNames: readonly string[]
   ): ClusterBuildStep<C, VerifyConsensusHeldInput> {
     return ClusterBuildStep.create<C, VerifyConsensusHeldInput>(
@@ -484,6 +544,7 @@ export namespace WireEconomicClockTool {
       options,
       {
         kind: "WireEconomicClockTool.VerifyConsensusHeldInput",
+        chain,
         observationNames
       },
       runVerifyConsensusHeld
@@ -500,20 +561,23 @@ export namespace WireEconomicClockTool {
     assertConsensusHeld(
       input.observationNames.map(observationName =>
         ctx.outputs.assert(observationKey(observationName))
-      )
+      ),
+      input.chain
     )
   }
 
   /**
-   * Assert every reading of `observations`, taken in order, shows consensus paused at one index,
-   * while the economic epoch index never moved back and ended above where it started — the
-   * economic clock kept running while consensus was held.
+   * Assert every reading of `observations`, taken in order, shows `chain`'s consensus paused at
+   * one index, while the economic epoch index never moved back and ended above where it
+   * started — the economic clock kept running while the chain's consensus was held.
    *
    * @param observations - The observations, in the order they were taken.
-   * @throws When consensus was unpaused or moved, or the economic clock opened no epoch.
+   * @param chain - The outpost chain whose consensus was held.
+   * @throws When the chain's consensus was unpaused or moved, or the economic clock opened no epoch.
    */
   export function assertConsensusHeld(
-    observations: readonly Observation[]
+    observations: readonly Observation[],
+    chain: Constants.OutpostChainCodename
   ): void {
     const readings = observations.flatMap(readingsOf)
     Assert.ok(
@@ -524,13 +588,13 @@ export namespace WireEconomicClockTool {
       last = readings.at(-1)
     readings.forEach(reading => {
       Assert.ok(
-        reading.consensusPaused,
-        `consensus was not paused at economic epoch ${reading.economicEpochIndex}`
+        reading.consensus[chain].paused,
+        `the ${chain} consensus was not paused at economic epoch ${reading.economicEpochIndex}`
       )
       Assert.strictEqual(
-        reading.consensusEpochIndex,
-        first.consensusEpochIndex,
-        `consensus moved from epoch ${first.consensusEpochIndex} while it was held`
+        reading.consensus[chain].epochIndex,
+        first.consensus[chain].epochIndex,
+        `the ${chain} consensus moved from epoch ${first.consensus[chain].epochIndex} while it was held`
       )
     })
     readings
@@ -543,19 +607,100 @@ export namespace WireEconomicClockTool {
       )
     Assert.ok(
       last.economicEpochIndex > first.economicEpochIndex,
-      `the economic clock opened no epoch while consensus was held at epoch ${first.consensusEpochIndex}`
+      `the economic clock opened no epoch while the ${chain} consensus was held at epoch ${first.consensus[chain].epochIndex}`
+    )
+  }
+
+  // ── Verify: one chain's consensus advanced ────────────────────────────────
+
+  /** Input for {@link planVerifyConsensusAdvanced}. */
+  export interface VerifyConsensusAdvancedInput extends StepInput {
+    readonly kind: "WireEconomicClockTool.VerifyConsensusAdvancedInput"
+    /** The outpost chain whose consensus must have advanced. */
+    readonly chain: Constants.OutpostChainCodename
+    /** The earlier observation ({@link observationKey}); its latest reading opens the window. */
+    readonly fromObservationName: string
+    /** The later observation; its latest reading closes the window. */
+    readonly toObservationName: string
+  }
+
+  /**
+   * Assert one chain's consensus ran unpaused and advanced on its own cadence between two
+   * observations ({@link assertConsensusAdvanced}, measured against the chain's `epochcfg`
+   * duration) — e.g. while another chain's consensus was held.
+   *
+   * @param actor - The narrative subject.
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Step option overrides.
+   * @param chain - The outpost chain whose consensus must have advanced.
+   * @param fromObservationName - The earlier observation; its latest reading opens the window.
+   * @param toObservationName - The later observation; its latest reading closes the window.
+   * @returns The verify step.
+   */
+  export function planVerifyConsensusAdvanced<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    chain: Constants.OutpostChainCodename,
+    fromObservationName: string,
+    toObservationName: string
+  ): ClusterBuildStep<C, VerifyConsensusAdvancedInput> {
+    return ClusterBuildStep.create<C, VerifyConsensusAdvancedInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireEconomicClockTool.VerifyConsensusAdvancedInput",
+        chain,
+        fromObservationName,
+        toObservationName
+      },
+      runVerifyConsensusAdvanced
+    )
+  }
+
+  /**
+   * Named runner — assert the two stored observations' latest readings for the chain, against
+   * the chain's `epochcfg` duration.
+   *
+   * @param ctx - The build context.
+   * @param input - The chain and the two observations.
+   * @param signal - Abort signal.
+   * @throws When an observation was never recorded, the chain has no `epochcfg` row, or the
+   *   chain did not advance on its cadence ({@link assertConsensusAdvanced}).
+   */
+  export async function runVerifyConsensusAdvanced<C extends ClusterBuildContext>(
+    ctx: C,
+    input: VerifyConsensusAdvancedInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const advanced = assertConsensusAdvanced(
+      latestReading(ctx.outputs.assert(observationKey(input.fromObservationName))),
+      latestReading(ctx.outputs.assert(observationKey(input.toObservationName))),
+      input.chain,
+      await EpochContractSteps.readEpochDurationSec(ctx, input.chain)
+    )
+    log.info(
+      `[economic-clock] the ${input.chain} consensus advanced ${advanced} epoch(s) between ` +
+        `"${input.fromObservationName}" and "${input.toObservationName}"`
     )
   }
 
   // ── Pure: consensus advance ───────────────────────────────────────────────
 
   /**
-   * The fewest consensus epochs that must close within a window: every consensus epoch closes
-   * within its duration plus the delivery extension ({@link ProtocolTiming.effectiveEpochSec}), so
-   * a window of length W holds at least `floor(W / effective)` closes.
+   * The fewest consensus epochs of one chain that must close within a window: each closes
+   * within the chain's duration plus the delivery extension ({@link ProtocolTiming.effectiveEpochSec}),
+   * so a window of length W holds at least `floor(W / effective)` closes.
    *
    * @param windowMs - The window's length on the chain's clock (ms).
-   * @param consensusEpochDurationSec - The cluster's consensus epoch duration (s).
+   * @param consensusEpochDurationSec - The chain's consensus epoch duration (s).
    * @returns The lower bound on the consensus epochs the window advances.
    */
   export function consensusAdvanceLowerBound(
@@ -570,38 +715,43 @@ export namespace WireEconomicClockTool {
   }
 
   /**
-   * Assert consensus ran unpaused from `from` to `to` and advanced at least
+   * Assert `chain`'s consensus ran unpaused from `from` to `to` and advanced at least
    * {@link consensusAdvanceLowerBound} epochs over the window between them.
    *
    * @param from - The earlier reading.
    * @param to - The later reading.
-   * @param consensusEpochDurationSec - The cluster's consensus epoch duration (s).
-   * @returns The consensus epochs advanced between the readings.
-   * @throws When either reading shows consensus paused, the window is shorter than one effective
-   *   consensus epoch (nothing could be measured), or consensus advanced fewer epochs than the bound.
+   * @param chain - The outpost chain whose consensus is measured.
+   * @param consensusEpochDurationSec - The chain's consensus epoch duration (s).
+   * @returns The chain's consensus epochs advanced between the readings.
+   * @throws When either reading shows the chain paused, the window is shorter than one effective
+   *   consensus epoch of the chain (nothing could be measured), or the chain advanced fewer
+   *   epochs than the bound.
    */
   export function assertConsensusAdvanced(
     from: Reading,
     to: Reading,
+    chain: Constants.OutpostChainCodename,
     consensusEpochDurationSec: number
   ): number {
+    const before = from.consensus[chain],
+      after = to.consensus[chain]
     Assert.ok(
-      !from.consensusPaused && !to.consensusPaused,
-      `consensus was paused between consensus epochs ${from.consensusEpochIndex} and ${to.consensusEpochIndex}`
+      !before.paused && !after.paused,
+      `the ${chain} consensus was paused between its epochs ${before.epochIndex} and ${after.epochIndex}`
     )
     const windowMs = to.headBlockTimeMs - from.headBlockTimeMs,
       lowerBound = consensusAdvanceLowerBound(
         windowMs,
         consensusEpochDurationSec
       ),
-      advanced = to.consensusEpochIndex - from.consensusEpochIndex
+      advanced = after.epochIndex - before.epochIndex
     Assert.ok(
       lowerBound >= 1,
-      `a ${windowMs} ms window spans no whole ${ProtocolTiming.effectiveEpochSec(consensusEpochDurationSec)} s consensus epoch`
+      `a ${windowMs} ms window spans no whole ${ProtocolTiming.effectiveEpochSec(consensusEpochDurationSec)} s ${chain} consensus epoch`
     )
     Assert.ok(
       advanced >= lowerBound,
-      `consensus advanced ${advanced} epoch(s) in ${windowMs} ms; a consensus epoch closes within ` +
+      `the ${chain} consensus advanced ${advanced} epoch(s) in ${windowMs} ms; its epoch closes within ` +
         `${ProtocolTiming.effectiveEpochSec(consensusEpochDurationSec)} s, so at least ${lowerBound}`
     )
     return advanced

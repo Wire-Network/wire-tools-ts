@@ -63,7 +63,7 @@ export class SyndicationPluginUnderwritingRecoveryScenario extends SyndicationSc
       verifyStep(Actor.Sysio, "original-digest-pruned",
         "ten newer source records replace the original while its immutable request stays OPEN and unbonded",
         RecoverySteps.verifyPruned, {
-          timeoutMs: Constants.pruningBudgetMs(cluster.context.config.epochDurationSec) + ProtocolTiming.PollDeadlineBufferMs
+          timeoutMs: Constants.pruningBudgetMs(cluster.context.config.outpostEpochDurationSec[SyndicationScenario.Chain]) + ProtocolTiming.PollDeadlineBufferMs
         }),
       verifyStep(Actor.Sysio, "pruning-evidence",
         "record the original request, ten retained newer epochs and matching checkpoint before recovery",

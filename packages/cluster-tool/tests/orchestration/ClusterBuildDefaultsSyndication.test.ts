@@ -1,4 +1,5 @@
 import Path from "node:path"
+import { createUniformOutpostEpochDurations } from "@wireio/cluster-tool-shared"
 import { Name } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
@@ -95,7 +96,9 @@ describe("ClusterBuildDefaults — underwriting, syndication and the emergency s
       pairs.forEach((step, index) =>
         expect(step.input).toEqual({
           kind: "SyndContractSteps.SetconfigInput",
-          data: Steps.registry.syndicationConfigRegistrations(epochDurationSec)[index]
+          data: Steps.registry.syndicationConfigRegistrations(
+            createUniformOutpostEpochDurations(epochDurationSec)
+          )[index]
         })
       )
       pairs.forEach(step =>

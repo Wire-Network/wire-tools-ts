@@ -5,9 +5,12 @@ import { match } from "ts-pattern"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterFiles,
+  mapOutpostChains,
+  OutpostChainCodenames,
   WireOpregBootstrap,
   WireOpregBootstrapSchemaCodec,
   type ClusterConfig,
+  type PerOutpostChain,
   type WireOpregBootstrapOperator,
   type WireOpregBootstrapOppOperatorKeys,
   type WireOpregBootstrapProducerKeys
@@ -35,12 +38,21 @@ const { SysioOpregOperatortype, SysioOpregOperatorstatus } = SysioContracts
 /**
  * Steps that emit and verify `wire-opreg-bootstrap.json`
  * (`ClusterFiles.WireOpregBootstrapFilename`) in the cluster directory: the
- * bootstrapped operator roster (WIRE account, operator type, public keys), the
- * initial batch-operator schedule `sysio.epoch::schbatchgps` built, and the
- * depot's epoch duration. Composed into `EpochBootstrap` right after
- * `schedule-batch-groups`, in every cluster mode.
+ * bootstrapped operator roster (WIRE account, operator type, public keys) and,
+ * for each outpost chain, its consensus epoch duration and the initial
+ * batch-operator schedule its `sysio.epoch::schbatchgps` built. Composed into
+ * `EpochBootstrap` right after the chains' `schedule-batch-groups-<chain>`
+ * steps, in every cluster mode.
  */
 export namespace WireOpregBootstrapSteps {
+  /** One outpost chain's depot rows the document is resolved from. */
+  export interface ChainEpochRows {
+    /** The chain's `sysio.epoch::epochstate` row — its schedule window and cursor. */
+    readonly epochState: SysioContracts.SysioEpochEpochStateType
+    /** The chain's `sysio.epoch::epochcfg` row — its consensus epoch duration. */
+    readonly epochConfig: SysioContracts.SysioEpochEpochConfigType
+  }
+
   /**
    * `wire-opreg-bootstrap.json` under a cluster directory.
    *
@@ -53,7 +65,7 @@ export namespace WireOpregBootstrapSteps {
 
   /**
    * Emit `wire-opreg-bootstrap.json`. Input-less — the roster comes from
-   * `ctx.keyStore`, the schedule and epoch duration from the depot, the AWS
+   * `ctx.keyStore`, each chain's schedule and epoch duration from the depot, the AWS
    * account from the cluster config; the label is written `null` (the
    * `create-wire-platform-cluster` workflow sets it after a successful create).
    *
@@ -82,14 +94,43 @@ export namespace WireOpregBootstrapSteps {
   }
 
   /**
-   * Named runner for {@link planEmit} — read `sysio.epoch::epochstate` and
-   * `epochcfg`, resolve the document, write it through its codec, and record it
-   * as the step's artifact.
+   * Every outpost chain's `epochstate` and `epochcfg` rows — a read: one of each table.
+   *
+   * @param ctx - The build context.
+   * @returns Each chain's rows.
+   * @throws When a chain has no batch-operator schedule or no epoch config yet.
+   */
+  export async function readChainEpochRows<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<ChainEpochRows>> {
+    const [epochStates, epochConfigs] = await Promise.all([
+      EpochContractSteps.readEpochStates(ctx),
+      EpochContractSteps.readEpochConfigs(ctx)
+    ])
+    return mapOutpostChains(chain => {
+      const epochState = epochStates[chain],
+        epochConfig = epochConfigs[chain]
+      Assert.ok(
+        epochState?.batch_op_groups?.length > 0,
+        `WireOpregBootstrapSteps: the depot has no ${chain} batch-operator schedule yet — its schbatchgps must precede it`
+      )
+      Assert.ok(
+        epochConfig != null,
+        `WireOpregBootstrapSteps: sysio.epoch::epochcfg has no ${chain} row — its setconfig must precede it`
+      )
+      return { epochState, epochConfig }
+    })
+  }
+
+  /**
+   * Named runner for {@link planEmit} — read every chain's `sysio.epoch::epochstate` and
+   * `epochcfg` rows, resolve the document, write it through its codec, and record it as the
+   * step's artifact.
    *
    * @param ctx - The build context.
    * @param _input - Unused (the step is input-less).
    * @param signal - The step's abort signal.
-   * @throws When the depot has no batch-operator schedule or no epoch config yet.
+   * @throws When a chain has no batch-operator schedule or no epoch config yet.
    */
   export async function runEmit<C extends ClusterBuildContext>(
     ctx: C,
@@ -97,20 +138,9 @@ export namespace WireOpregBootstrapSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const epochState = await EpochContractSteps.readEpochState(ctx),
-      epochConfig = await EpochContractSteps.readEpochConfig(ctx)
-    Assert.ok(
-      epochState?.batch_op_groups?.length > 0,
-      "WireOpregBootstrapSteps.runEmit: the depot has no batch-operator schedule yet — schbatchgps must precede it"
-    )
-    Assert.ok(
-      epochConfig != null,
-      "WireOpregBootstrapSteps.runEmit: sysio.epoch::epochcfg has no row — setconfig must precede it"
-    )
     const bootstrap = resolveWireOpregBootstrap(
         ctx.keyStore.operators,
-        epochState,
-        epochConfig,
+        await readChainEpochRows(ctx),
         ctx.config.awsClusterNodeConfig
       ),
       text = WireOpregBootstrapSchemaCodec.serialize(bootstrap),
@@ -123,9 +153,14 @@ export namespace WireOpregBootstrapSteps {
       contents: JSON.parse(text) as Record<string, unknown>
     })
     log.info(
-      `[wire-opreg-bootstrap] wrote ${file}: ${bootstrap.operators.length} operator(s), ` +
-        `${bootstrap.batchOperatorGroups.groups.length} batch-operator group(s), ` +
-        `active group ${bootstrap.batchOperatorGroups.activeGroupIndex}`
+      `[wire-opreg-bootstrap] wrote ${file}: ${bootstrap.operators.length} operator(s); ` +
+        OutpostChainCodenames.map(chain => {
+          const { epochDurationSec, batchOperatorGroups } = bootstrap.chains[chain]
+          return (
+            `${chain} ${epochDurationSec}s epochs, ${batchOperatorGroups.groups.length} ` +
+            `batch-operator group(s), active group ${batchOperatorGroups.activeGroupIndex}`
+          )
+        }).join("; ")
     )
   }
 
@@ -154,8 +189,9 @@ export namespace WireOpregBootstrapSteps {
    * that its roster is exactly the depot's bootstrapped PRODUCER / BATCH /
    * UNDERWRITER `sysio.opreg::operators` rows (read through
    * `OpregContractSteps.readOperators`), each with the file's operator type and
-   * ACTIVE status; that its schedule is the depot's `epochstate` window and
-   * cursor; and that its epoch duration and AWS account are the cluster's.
+   * ACTIVE status; that each chain's schedule is that chain's `epochstate`
+   * window and cursor; that each chain's epoch duration is its `epochcfg`
+   * duration and the cluster's; and that its AWS account is the cluster's.
    * Operator types bridge to the ABI enum by VALUE (`abiEnumValue`).
    *
    * @param ctx - The build context.
@@ -204,20 +240,29 @@ export namespace WireOpregBootstrapSteps {
         `WireOpregBootstrapSteps.runVerify: ${operator.accountName} is not ACTIVE on sysio.opreg (status ${row.status})`
       )
     })
-    const epochState = await EpochContractSteps.readEpochState(ctx)
-    Assert.deepStrictEqual(
-      bootstrap.batchOperatorGroups,
-      {
-        activeGroupIndex: epochState?.current_batch_op_group,
-        groups: epochState?.batch_op_groups
-      },
-      "WireOpregBootstrapSteps.runVerify: the batch-operator schedule is not the depot's epochstate window"
-    )
-    Assert.strictEqual(
-      bootstrap.epochDurationSec,
-      ctx.config.epochDurationSec,
-      "WireOpregBootstrapSteps.runVerify: the file's epoch duration is not the cluster's"
-    )
+    const chainRows = await readChainEpochRows(ctx)
+    OutpostChainCodenames.forEach(chain => {
+      const { epochState, epochConfig } = chainRows[chain],
+        { batchOperatorGroups, epochDurationSec } = bootstrap.chains[chain]
+      Assert.deepStrictEqual(
+        batchOperatorGroups,
+        {
+          activeGroupIndex: epochState.current_batch_op_group,
+          groups: epochState.batch_op_groups
+        },
+        `WireOpregBootstrapSteps.runVerify: the ${chain} batch-operator schedule is not its epochstate window`
+      )
+      Assert.strictEqual(
+        epochDurationSec,
+        epochConfig.epoch_duration_sec,
+        `WireOpregBootstrapSteps.runVerify: the file's ${chain} epoch duration is not its epochcfg duration`
+      )
+      Assert.strictEqual(
+        epochDurationSec,
+        ctx.config.outpostEpochDurationSec[chain],
+        `WireOpregBootstrapSteps.runVerify: the file's ${chain} epoch duration is not the cluster's`
+      )
+    })
     Assert.strictEqual(
       bootstrap.awsAccount,
       toAWSAccount(ctx.config.awsClusterNodeConfig),
@@ -229,37 +274,37 @@ export namespace WireOpregBootstrapSteps {
    * The document — pure. The roster is every key-store operator of a
    * `WireOpregBootstrap.OperatorTypes` type (the genesis identities are
    * `UNKNOWN`-typed and fall out), ordered by operator type then account name;
-   * the schedule and epoch duration are the depot's; the AWS account is the
-   * cluster's placement account. The label is `null` — the cluster-tool does not
-   * know it; the `create-wire-platform-cluster` workflow sets it after a
+   * each chain's schedule and epoch duration are its depot rows'; the AWS account
+   * is the cluster's placement account. The label is `null` — the cluster-tool
+   * does not know it; the `create-wire-platform-cluster` workflow sets it after a
    * successful create.
    *
    * @param operators - Every provisioned operator (`ctx.keyStore.operators`).
-   * @param epochState - The depot's `sysio.epoch::epochstate` row.
-   * @param epochConfig - The depot's `sysio.epoch::epochcfg` row.
+   * @param chainRows - Each outpost chain's `epochstate` and `epochcfg` rows.
    * @param awsClusterNodeConfig - The cluster's AWS placement, or `null`.
    * @returns The `wire-opreg-bootstrap.json` document.
    */
   export function resolveWireOpregBootstrap(
     operators: ReadonlyArray<OperatorAccount>,
-    epochState: SysioContracts.SysioEpochEpochStateType,
-    epochConfig: SysioContracts.SysioEpochEpochConfigType,
+    chainRows: PerOutpostChain<ChainEpochRows>,
     awsClusterNodeConfig: ClusterConfig["awsClusterNodeConfig"]
   ): WireOpregBootstrap {
     return {
       label: null,
       awsAccount: toAWSAccount(awsClusterNodeConfig),
-      epochDurationSec: epochConfig.epoch_duration_sec,
       operators: operators
         .filter(operator =>
           WireOpregBootstrap.OperatorTypes.includes(operator.type)
         )
         .map(toWireOpregBootstrapOperator)
         .sort(compareRosterOrder),
-      batchOperatorGroups: {
-        activeGroupIndex: epochState.current_batch_op_group,
-        groups: epochState.batch_op_groups
-      }
+      chains: mapOutpostChains(chain => ({
+        epochDurationSec: chainRows[chain].epochConfig.epoch_duration_sec,
+        batchOperatorGroups: {
+          activeGroupIndex: chainRows[chain].epochState.current_batch_op_group,
+          groups: chainRows[chain].epochState.batch_op_groups
+        }
+      }))
     }
   }
 

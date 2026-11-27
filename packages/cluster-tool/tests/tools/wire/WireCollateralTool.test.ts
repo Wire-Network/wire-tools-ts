@@ -1,10 +1,14 @@
-import type { ChainTokenAmount } from "@wireio/cluster-tool-shared"
+import {
+  createUniformOutpostEpochDurations,
+  OutpostChainCodenames,
+  type ChainTokenAmount
+} from "@wireio/cluster-tool-shared"
 import { OperatorType, TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { Logger } from "@wireio/shared"
 
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
-import { ProtocolTiming } from "@wireio/cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool/Constants"
 import { Steps, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { WireCollateralTool } from "@wireio/cluster-tool/tools/wire"
@@ -97,7 +101,10 @@ function withdrawRequest(
     token_code: token,
     amount: amount.toString(),
     eligible_at_economic_epoch: 3,
-    eligible_at_consensus_epoch: 3,
+    consensus_waits: OutpostChainCodenames.map(chain => ({
+      chain_code: chain,
+      eligible_at_epoch: 3
+    })),
     requested_at_economic_epoch: 1
   }
 }
@@ -899,10 +906,28 @@ describe("WireCollateralTool", () => {
       ).rejects.toThrow(/remitclaims has more than 100 rows; the read is truncated/)
     })
 
-    /** A resolved config with only the two clock durations varied. */
+    /** A resolved config with only the clock durations varied: every chain at `epochDurationSec`. */
     function clocks(epochDurationSec: number, economicEpochDurationSec: number) {
-      return { ...fixtureContext().config, epochDurationSec, economicEpochDurationSec }
+      return {
+        ...fixtureContext().config,
+        epochDurationSec,
+        outpostEpochDurationSec: createUniformOutpostEpochDurations(epochDurationSec),
+        economicEpochDurationSec
+      }
     }
+
+    it("remitClaimDeadlineMs waits on the slowest outpost chain's consensus", () => {
+      const perChain = {
+        ...clocks(60, 60),
+        outpostEpochDurationSec: {
+          ...createUniformOutpostEpochDurations(60),
+          [Constants.SOLANA_CHAIN_CODENAME]: 300
+        }
+      }
+      expect(WireCollateralTool.remitClaimDeadlineMs(perChain)).toBe(
+        WireCollateralTool.RemitClaimEpochCount * 330_000
+      )
+    })
 
     it("remitClaimDeadlineMs spans RemitClaimEpochCount effective epochs of the slower clock", () => {
       expect(WireCollateralTool.remitClaimDeadlineMs(clocks(60, 60))).toBe(
@@ -1071,5 +1096,199 @@ describe("WireCollateralTool", () => {
         WireCollateralTool.assertWireCollateral(collateral(EthereumChainCode, WireCode, OneWire))
       ).toThrow(/keyed on the WIRE chain/)
     })
+  })
+})
+
+describe("WireCollateralTool consensus waits", () => {
+  const request = withdrawRequest(7, "withdrawer", "WIRE", 1n),
+    { ETHEREUM_CHAIN_CODENAME: Ethereum, SOLANA_CHAIN_CODENAME: Solana } = Constants,
+    waitingOn = (waits: SysioContracts.SysioOpregConsensusWaitType[]) => ({
+      ...request,
+      consensus_waits: waits
+    })
+
+  it("names the outpost chain of each wait, by its slug spelling", () => {
+    expect(
+      WireCollateralTool.consensusWaitChain({ chain_code: Solana, eligible_at_epoch: 4 })
+    ).toBe(Solana)
+    expect(() =>
+      WireCollateralTool.consensusWaitChain({ chain_code: "WIRE", eligible_at_epoch: 4 })
+    ).toThrow(/WIRE, which is not an outpost chain/)
+  })
+
+  it("maps each waited-on chain to the epoch it waits for, and leaves the others out", () => {
+    expect(
+      WireCollateralTool.consensusWaitEpochs(
+        waitingOn([{ chain_code: Solana, eligible_at_epoch: 9 }])
+      )
+    ).toEqual({ [Solana]: 9 })
+    expect(WireCollateralTool.consensusWaitEpochs(waitingOn([]))).toEqual({})
+  })
+
+  it("passes only once every waited-on chain reached its epoch", () => {
+    const both = waitingOn([
+      { chain_code: Ethereum, eligible_at_epoch: 5 },
+      { chain_code: Solana, eligible_at_epoch: 3 }
+    ])
+    expect(WireCollateralTool.consensusWaitsPassed(both, { [Ethereum]: 5, [Solana]: 3 })).toBe(true)
+    expect(WireCollateralTool.consensusWaitsPassed(both, { [Ethereum]: 4, [Solana]: 9 })).toBe(false)
+    // A request that waits on one chain ignores the other chain's index.
+    expect(
+      WireCollateralTool.consensusWaitsPassed(
+        waitingOn([{ chain_code: Solana, eligible_at_epoch: 3 }]),
+        { [Ethereum]: 0, [Solana]: 3 }
+      )
+    ).toBe(true)
+    expect(WireCollateralTool.consensusWaitsPassed(waitingOn([]), { [Ethereum]: 0, [Solana]: 0 })).toBe(true)
+  })
+
+  it("mirrors sysio.opreg's WITHDRAW_WAIT_EPOCHS", () => {
+    expect(WireCollateralTool.WithdrawWaitConsensusEpochs).toBe(2)
+  })
+
+  describe("assertConsensusWaits", () => {
+    const wait = WireCollateralTool.WithdrawWaitConsensusEpochs,
+      before = { [Ethereum]: 10, [Solana]: 4 },
+      after = { [Ethereum]: 11, [Solana]: 4 }
+
+    it("accepts a guard per served chain, each the wait past an epoch between the readings", () => {
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([
+            { chain_code: Ethereum, eligible_at_epoch: 11 + wait },
+            { chain_code: Solana, eligible_at_epoch: 4 + wait }
+          ]),
+          [Ethereum, Solana],
+          before,
+          after
+        )
+      ).not.toThrow()
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([{ chain_code: Solana, eligible_at_epoch: 4 + wait }]),
+          [Solana],
+          before,
+          after
+        )
+      ).not.toThrow()
+    })
+
+    it("refuses a guard counted from an epoch outside the readings", () => {
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([{ chain_code: Ethereum, eligible_at_epoch: 12 + wait }]),
+          [Ethereum],
+          before,
+          after
+        )
+      ).toThrow(new RegExp(`waits for ${Ethereum} epoch ${12 + wait}, not ${wait} past a ${Ethereum} consensus epoch in 10..11`))
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([{ chain_code: Solana, eligible_at_epoch: 3 + wait }]),
+          [Solana],
+          before,
+          after
+        )
+      ).toThrow(/in 4..4/)
+    })
+
+    it("refuses a request that waits on another set of chains", () => {
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([{ chain_code: Ethereum, eligible_at_epoch: 10 + wait }]),
+          [Solana],
+          before,
+          after
+        )
+      ).toThrow(new RegExp(`waits on ${Ethereum}, not on ${Solana}`))
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(waitingOn([]), [Solana], before, after)
+      ).toThrow(new RegExp(`waits on no chain, not on ${Solana}`))
+    })
+
+    it("refuses a request that waits on one chain twice", () => {
+      expect(() =>
+        WireCollateralTool.assertConsensusWaits(
+          waitingOn([
+            { chain_code: Solana, eligible_at_epoch: 4 + wait },
+            { chain_code: Solana, eligible_at_epoch: 4 + wait }
+          ]),
+          [Solana],
+          before,
+          after
+        )
+      ).toThrow(/more than once/)
+    })
+  })
+})
+
+describe("WireCollateralTool.planVerifyOperatorStatus", () => {
+  const { OPERATOR_STATUS_ACTIVE, OPERATOR_STATUS_UNKNOWN } = SysioContracts.SysioOpregOperatorstatus
+
+  afterEach(() => jest.restoreAllMocks())
+
+  it("carries the operator handle and the status to its named runner", () => {
+    const step = WireCollateralTool.planVerifyOperatorStatus(
+      Report.Actor.Underwriter,
+      "status",
+      "status",
+      {},
+      OperatorLabel,
+      OPERATOR_STATUS_ACTIVE
+    )
+    expect(step.input).toEqual({
+      kind: "WireCollateralTool.VerifyOperatorStatusInput",
+      operatorLabel: OperatorLabel,
+      status: OPERATOR_STATUS_ACTIVE
+    })
+    expect(step.runner).toBe(WireCollateralTool.runVerifyOperatorStatus)
+  })
+
+  it("passes when the operator's row carries the status, by value or by ABI spelling", async () => {
+    const { ctx, account } = operatorContext(),
+      step = WireCollateralTool.planVerifyOperatorStatus(
+        Report.Actor.Underwriter,
+        "status",
+        "status",
+        {},
+        OperatorLabel,
+        OPERATOR_STATUS_ACTIVE
+      )
+    serveOperators(ctx, [operatorRow(account, [])])
+    await expect(step.runner(ctx, step.input, signal)).resolves.toBeUndefined()
+    serveOperators(ctx, [{ ...operatorRow(account, []), status: "OPERATOR_STATUS_ACTIVE" }])
+    await expect(step.runner(ctx, step.input, signal)).resolves.toBeUndefined()
+  })
+
+  it("fails naming the operator, its status and the expected one when they differ", async () => {
+    const { ctx, account } = operatorContext(),
+      step = WireCollateralTool.planVerifyOperatorStatus(
+        Report.Actor.Underwriter,
+        "status",
+        "status",
+        {},
+        OperatorLabel,
+        OPERATOR_STATUS_UNKNOWN
+      )
+    serveOperators(ctx, [operatorRow(account, [])])
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      new RegExp(`${OperatorLabel} is .*, not OPERATOR_STATUS_UNKNOWN`)
+    )
+  })
+
+  it("fails for an operator with no operators row", async () => {
+    const { ctx } = operatorContext(),
+      step = WireCollateralTool.planVerifyOperatorStatus(
+        Report.Actor.Underwriter,
+        "status",
+        "status",
+        {},
+        OperatorLabel,
+        OPERATOR_STATUS_ACTIVE
+      )
+    serveOperators(ctx, [operatorRow("someoneelse", [])])
+    await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
+      new RegExp(`${OperatorLabel} has no sysio.opreg::operators row`)
+    )
   })
 })

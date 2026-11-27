@@ -804,16 +804,6 @@ export class WireClient {
       SysioContractName.opreg
     ).tables.wtdwqueue.query()
   }
-  getEpochState() {
-    return this.getSysioContract(
-      SysioContractName.epoch
-    ).tables.epochstate.query()
-  }
-  getEpochConfig() {
-    return this.getSysioContract(
-      SysioContractName.epoch
-    ).tables.epochcfg.query()
-  }
   getChains() {
     return this.getSysioContract(SysioContractName.chains).tables.chains.query()
   }

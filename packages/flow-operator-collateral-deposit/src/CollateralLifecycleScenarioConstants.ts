@@ -26,7 +26,7 @@ export namespace CollateralLifecycleScenarioConstants {
    */
   export const DepositorAirdropLamports = 5_000_000_000n
 
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
 
   /**

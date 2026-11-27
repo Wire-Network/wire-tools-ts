@@ -35,7 +35,7 @@ describe("EthereumOutpostBootstrapper constructor", () => {
     /** A valid WNE-41 initial roster — one operator, one positive duration. */
     initialRoster: EthereumOutpostInitialRoster = {
       groups: [[RosterMemberA]],
-      epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+      epochDurationSec: ClusterConfigProvider.DefaultEthereumEpochDurationSec
     }
   beforeAll(async () => {
     rpcUrl = toURL(
@@ -114,7 +114,7 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           options({
             initialRoster: {
               groups: [[]],
-              epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+              epochDurationSec: ClusterConfigProvider.DefaultEthereumEpochDurationSec
             }
           })
         )

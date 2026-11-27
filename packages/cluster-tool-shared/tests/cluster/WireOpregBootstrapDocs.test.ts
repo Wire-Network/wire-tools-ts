@@ -4,6 +4,7 @@ import Os from "node:os"
 import Path from "node:path"
 import Ajv2020 from "ajv/dist/2020"
 import {
+  OutpostChainCodenames,
   WireOpregBootstrapSchemaCodec,
   findKeyMaterial
 } from "@wireio/cluster-tool-shared"
@@ -105,7 +106,9 @@ describe("docs/outpost/wire-opreg-bootstrap.example.json", () => {
   it("decodes through WireOpregBootstrapSchemaCodec", () => {
     const example = WireOpregBootstrapSchemaCodec.deserialize(exampleText())
     expect(example.operators.length).toBeGreaterThan(0)
-    expect(example.batchOperatorGroups.groups.length).toBeGreaterThan(0)
+    OutpostChainCodenames.forEach(chain =>
+      expect(example.chains[chain].batchOperatorGroups.groups.length).toBeGreaterThan(0)
+    )
   })
 
   it("validates against the committed JSON Schema (ajv, draft 2020-12, strict)", () => {

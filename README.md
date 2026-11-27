@@ -132,12 +132,13 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 |---|---|---|
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
-| `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
+| `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator eviction from the one chain it misses (it stays ACTIVE with its bond), then governance termination pays the bond back |
 | `flow-liq-syndication` | `@wireio/test-flow-liq-syndication` | Real syndication reaches the destination wallet; reported yield is fully released |
 | `flow-liq-yield` | `@wireio/test-flow-liq-yield` | Syndicated liqSOL parked → linked → credited; reported yield minted, sold through `sysio.swap`, claimed as WIRE; `DESYNDICATE_LIQ` paid on the outpost |
 | `flow-liq-kicker` | `@wireio/test-flow-liq-kicker` | `sysio.kicker` pays LIQETH holders the accrued WIRE gift — a manual kick checked against the accrual model, then a batch operator's crank-pushed kick when the nodeop carries it |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
 | `flow-economic-clock` | `@wireio/test-flow-economic-clock` | The economic clock beside consensus: economic epochs on their own grid pay emissions, a withdrawal matures only once both clocks pass, a held payout leaves OPP running and pays the whole period once funded, and the andon cord leaves emissions and `claimpay` working |
+| `flow-per-chain-epochs` | `@wireio/test-flow-per-chain-epochs` | Each outpost chain runs its own consensus epoch: Ethereum at 60 s and Solana at 150 s advance on their own cadence, an operator joined to one chain is seated only there, `leavechain` stops its new seats on that chain while the other keeps seating it, and a pause of Ethereum holds only Ethereum while Solana advances and a Solana-only withdrawal matures |
 | `flow-ethereum-round-trip` | `@wireio/test-flow-ethereum-round-trip` | Fresh ETH → liqETH → shadow → external liqETH redemption, exact net of the desyndication fee |
 | `flow-batch-relay-restart` | `@wireio/test-flow-batch-relay-restart` | Real relay restarts with a durable pending payout and resumes exact settlement |
 | `flow-batch-roster-replacement` | `@wireio/test-flow-batch-roster-replacement` | Nonbootstrap replacement is consumed by both outposts and records canonical accepted deliveries |
@@ -169,10 +170,10 @@ and outbound queue entries are intermediate checks.
 | `flow-batch-relay-restart` | The Ethereum round trip with the sole live relay stopped while a durable return waits; retained-data restart must finish the payout |
 | `flow-batch-roster-replacement` | Both real registries consume the nonbootstrap replacement; its recorded votes match accepted canonical envelopes on both outposts |
 
-The other eight enabled flows (`flow-batch-operator-slashing`,
+The other nine enabled flows (`flow-batch-operator-slashing`,
 `flow-batch-operator-termination`, `flow-economic-clock`, `flow-emissions-soak`,
 `flow-governance-handoff`, `flow-node-owner-nft`, `flow-operator-collateral-deposit`,
-`flow-producer-registration`) exercise their own paths. Imported
+`flow-per-chain-epochs`, `flow-producer-registration`) exercise their own paths. Imported
 bootstrap collateral and reward funding have their own assertions. The eight
 former disabled swap/reserve flows have been removed.
 
@@ -324,13 +325,16 @@ for the run's entire life:
 node scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster-dir>
 ```
 
-Every 90s it probes chain liveness, operators, epoch state, msgch envelopes,
+Every 90s it probes chain liveness, operators, every outpost chain's epoch state
+(`epoch=ETHEREUM:<n>,SOLANA:<n>`, `p` marking a paused chain), msgch envelopes,
 `data/opp-debugging/` per-direction artifact counts, and the aggregate cluster
 log (FATAL vs NOISE classified), printing one `HB …` line per cycle — and it
-**bails loudly** on the fatal conditions (epoch stall, zero-delta opp-debugging,
+**bails loudly** on the fatal conditions (a chain's epoch stalled for about twice
+its own duration, a chain that never starts epoch 1, zero-delta opp-debugging,
 plugin-layer failures) instead of letting a dead run burn its full `pollUntil`
 deadline. It self-concludes when the flow exits. `--interval-seconds` /
-`--epoch-duration-seconds` are the only tuning knobs; everything else derives
+`--epoch-duration-seconds` (every chain's duration; default each chain's
+`outpostEpochDurationSec`) are the only tuning knobs; everything else derives
 from the cluster's `cluster-config.json`.
 
 OutpostFrozen (`custom program error: 0x17c7`) and `EnforcedPause()` are FATAL
@@ -338,7 +342,9 @@ by default. **Only `flow-emergency-stop` passes `--expect-freeze` to the monitor
 when deliberately exercising paused outposts; it counts and quotes those exact
 refusals as NOISE, while preserving unrelated failures and all liveness bails.
 The liquidity flows run without this flag. It is distinct from
-`--expect-epoch-freeze`, which permits a deliberate epoch stall.
+`--expect-epoch-freeze`, which permits a deliberate epoch stall
+(`flow-batch-operator-slashing`, `flow-economic-clock` and `flow-per-chain-epochs`
+hold one chain's epoch on purpose).
 
 Rules of the road (binding for sessions/automation; see
 `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
@@ -546,14 +552,16 @@ command comes first).
 | `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
 | `--underwriter-count` | `-u` | `0` | compatibility option; nonzero values are rejected |
-| `--epoch-duration-sec` | | `300` | minimum epoch duration in seconds (60 is the depot floor — `sysio.epoch::setconfig` rejects lower) |
-| `--economic-epoch-duration-sec` | | the epoch duration | economic epoch duration in seconds — the `sysio.epoch` clock emissions, collateral withdrawals and producer pay run on (60 is its floor) |
+| `--epoch-duration-sec` | | each chain's own | minimum consensus epoch duration in seconds of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>` (10 is the depot floor — `sysio.epoch::setconfig` rejects lower); also the economic default. Omitted, each such chain takes its own default and the cluster config persists `epochDurationSec: null`. Every flow pins it |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | | `--epoch-duration-sec`, else `60` (Ethereum) / `15` (Solana) | one outpost chain's minimum consensus epoch duration in seconds — the `epoch_duration_sec` of that chain's `sysio.epoch::setconfig`, persisted as `outpostEpochDurationSec`. The defaults are `ClusterConfigProvider.DefaultOutpostEpochDurationSec` |
+| `--economic-epoch-duration-sec` | | `--epoch-duration-sec` (at least `60`), else `300` | economic epoch duration in seconds — the `sysio.epoch` clock emissions, collateral withdrawals and producer pay run on (60 is its floor). No per-chain consensus default reaches it |
 | `--economic-start-time` | | the chain head | start of economic epoch 1, an ISO-8601 UTC timestamp; a past start is caught up one epoch per tick after the genesis advance |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
 | `--solana-slots-per-epoch` | | `100` | `solana-test-validator --slots-per-epoch`; agave's own default leaves the chain at Solana epoch 0, which the liqsol surface cannot initialize against |
 | `--terminate-max-consecutive-misses` | | — | consecutive missed-delivery termination threshold |
 | `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
+| `--terminate-minimum-percent-samples` | | — | duty epochs a chain membership holds before the percentage threshold applies (`terminate_min_pct_samples`, 1 to 100; bootstrap default 20) |
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-liq-pools` | | `false`; forced on by a local `create` | seed the mock LIQETH/LIQSOL yield pools during epoch zero and fund outpost custody to back all outstanding shadow |
@@ -676,8 +684,8 @@ What `create` does with it:
 - **Gates** success on the depot's head block advancing, an outbound envelope
   being queued for every registered outpost, and every batch-operator node having
   synced — not on epoch distribution (there is no local chain to advance). A LOCAL
-  cluster instead gates on `sysio.epoch::current_epoch_index` passing the
-  bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
+  cluster instead gates on every outpost chain's `sysio.epoch::epochstate`
+  `current_epoch_index` passing its bootstrap epoch. A remote `anvil`/`solana` bind address WITHOUT
   `--external-outpost-config` fails fast.
 - **Requires the judge's key.** `--judge-public-key` (or `judgePublicKey` in the
   build-options document) names the key `bond.judge` is created under. Its holder
@@ -697,12 +705,13 @@ and funded, as described in the [underwriting setup](docs/syndication-underwriti
 ### Bootstrapped operator roster (`wire-opreg-bootstrap.json`)
 
 Every bootstrap — `create` and every flow, local or `--external-outpost-config` —
-writes `<cluster-path>/wire-opreg-bootstrap.json` right after
-`sysio.epoch::schbatchgps`: the cluster's build `label` and `awsAccount`, each
-bootstrapped operator's WIRE account, operator type (`PRODUCER` / `BATCH` /
-`UNDERWRITER`) and public keys with their key types (`K1` / `BLS` / `EM` /
-`ED`), the initial batch-operator groups with the first active group, and the
-depot's epoch duration. `awsAccount` is `awsClusterNodeConfig.account` (or
+writes `<cluster-path>/wire-opreg-bootstrap.json` right after each outpost
+chain's `sysio.epoch::schbatchgps(chain)`: the cluster's build `label` and
+`awsAccount`, each bootstrapped operator's WIRE account, operator type
+(`PRODUCER` / `BATCH` / `UNDERWRITER`) and public keys with their key types
+(`K1` / `BLS` / `EM` / `ED`), and, per outpost chain (`chains.ETHEREUM`,
+`chains.SOLANA`), its consensus epoch duration and initial batch-operator groups
+with the first active group. `awsAccount` is `awsClusterNodeConfig.account` (or
 `null`); the cluster-tool writes `label: null` and the
 `create-wire-platform-cluster` workflow sets it after a successful create. It
 holds public data only. The
@@ -736,7 +745,10 @@ stale local port + round-trip the emitted JSON). The emitted config carries the
 external `bindings`, each operator account's key providers **matching the source
 cluster's provider type** (`KEY` inline for a `KEY` cluster, `SSM`
 `awsSecretId` references — no plaintext — for an `SSM` cluster, material-less
-`KIOD` for a `KIOD` cluster), the depot `epochDurationSec` + genesis path, and
+`KIOD` for a `KIOD` cluster), the cluster's `epochDurationSec` (`null` when its
+chains took their own defaults), each outpost chain's
+`outpostEpochDurationSec` (a config emitted without it decodes every chain at
+`epochDurationSec`, as `cluster-config.json` does) and the genesis path, and
 the ethereum/solana outpost references — fully self-described, so the external
 directory can then be `package`d and deployed on another host (`create` →
 `create-external-config` → `package`).

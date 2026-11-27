@@ -8,13 +8,14 @@ import {
   AWSKMSSignatureProviderOptionsSchema,
   AWSSSMSignatureProviderOptionsSchema,
   BatchOperatorUnderwritingConfigSchema,
-  type BatchOperatorUnderwritingOptions,
   ChainTokenAmountSchema,
   ClusterSignatureProviderTypes,
   CollateralRequirementSchema,
+  describeOutpostChains,
   EthereumReadBlockTag,
   LcoImportOptionsSchema,
   NodeopReadMode,
+  OutpostChainCodenames,
   QueryEngineReadModeSchema,
   SchemaCodec,
   SignatureProviderKeyPolicy,
@@ -23,6 +24,7 @@ import {
   type AWSKMSSignatureProviderOptions,
   type AWSKMSSignatureProviderOptionsInput,
   type AWSSSMSignatureProviderOptions,
+  type BatchOperatorUnderwritingOptions,
   type ChainTokenAmount,
   type CollateralRequirement,
   type LcoImportOptions,
@@ -47,8 +49,9 @@ import { LogFileAppender } from "../logging/LogFileAppender.js"
  * NOTE: the topology members are intentionally the *CLI* defaults and are distinct
  * from `ClusterConfigProvider.Default*` (the resolve-time fallbacks used when an
  * option is fully unset), which differ for producer count (21). Changing them would
- * silently alter the topology of every flow. The epoch duration is the one resolve-time
- * default the CLI shares: every flow pins its own in `Scenario.defaults`.
+ * silently alter the topology of every flow. The epoch durations have no CLI default:
+ * `ClusterConfigProvider.resolve` is their one author, and every flow pins its own in
+ * `Scenario.defaults`.
  */
 const CliDefault = {
   nodeCount: 1,
@@ -56,8 +59,7 @@ const CliDefault = {
   batchOperatorCount: 3,
   underwriterCount: 0,
   apiCount: 0,
-  adHocCount: 0,
-  epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+  adHocCount: 0
 } as const
 
 /** The dedicated `--signature-provider-ssm` flag: inline JSON, or a file path when the value doesn't start with `{`. */
@@ -507,6 +509,24 @@ function buildEthereumReadShape(): OptionShapeObject {
 }
 
 /**
+ * The `outpostEpochDurationSec` sub-tree: one UNSEEDED number per outpost chain
+ * (`--outpost-epoch-duration-sec-ethereum`, `--outpost-epoch-duration-sec-solana`).
+ * Never seeded: an omitted chain resolves to `--epoch-duration-sec` or its own default,
+ * which only `ClusterConfigProvider.resolve` applies.
+ */
+function buildOutpostEpochDurationShape(): OptionShapeObject {
+  return Object.fromEntries(
+    OutpostChainCodenames.map(chain => [
+      chain,
+      optionalLeaf(
+        OptionLeafType.number,
+        `consensus epoch duration in seconds of the ${chain} outpost chain (its sysio.epoch::setconfig); omit for --epoch-duration-sec, else ${ClusterConfigProvider.DefaultOutpostEpochDurationSec[chain]}`
+      )
+    ])
+  )
+}
+
+/**
  * The canonical {@link ClusterBuildOptions} descriptor — one {@link
  * OptionLeafSpec} per leaf, at every depth. TS interfaces have no runtime shape,
  * so this concrete object IS the source the flag tree is derived from. Node-port
@@ -548,15 +568,18 @@ export function buildOptionShape(
       "ad-hoc node count — port pairs reserved for nodes a flow starts itself, outside NodeConfig.plan"
     ),
     // ── epoch ──
-    epochDurationSec: leaf(
-      CliDefault.epochDurationSec,
-      "minimum epoch duration in seconds"
+    // optionalLeaf, NOT leaf: a seeded default would always reach resolve as a caller's
+    // duration for every chain, and no chain would take its own default.
+    epochDurationSec: optionalLeaf(
+      OptionLeafType.number,
+      `minimum consensus epoch duration in seconds of every outpost chain without its own --outpost-epoch-duration-sec-<chain>; omit for each chain's default (${describeOutpostChains(ClusterConfigProvider.DefaultOutpostEpochDurationSec)})`
     ),
-    // optionalLeaf: omitting it must resolve to the consensus duration, which only
-    // `ClusterConfigProvider.resolve` knows.
+    outpostEpochDurationSec: buildOutpostEpochDurationShape(),
+    // optionalLeaf: omitting it must resolve from --epoch-duration-sec, which only
+    // `ClusterConfigProvider.resolve` applies.
     economicEpochDurationSec: optionalLeaf(
       OptionLeafType.number,
-      "economic epoch duration in seconds (emissions, collateral withdrawals, producer pay); omit to match the epoch duration"
+      `economic epoch duration in seconds (emissions, collateral withdrawals, producer pay); omit for --epoch-duration-sec (at least ${ClusterConfigProvider.MinimumEconomicEpochDurationSec}), else ${ClusterConfigProvider.DefaultEconomicEpochDurationSec}`
     ),
     economicStartTime: optionalLeaf(
       OptionLeafType.string,
@@ -612,6 +635,10 @@ export function buildOptionShape(
     terminateMaxPercentMisses24h: optionalLeaf(
       OptionLeafType.number,
       "24h missed-delivery percentage termination threshold"
+    ),
+    terminateMinimumPercentSamples: optionalLeaf(
+      OptionLeafType.number,
+      "duty epochs a chain membership holds before the percentage threshold applies"
     ),
     terminateWindowMs: optionalLeaf(
       OptionLeafType.number,

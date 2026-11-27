@@ -8,9 +8,11 @@ Every cluster that `wire-cluster-tool create` (or any `flow-*` run) bootstraps w
 - **the bootstrapped operator roster** — every operator registered on `sysio.opreg` with
   `is_bootstrapped`, with its WIRE account name, operator type and public keys (each tagged with
   its key type);
-- **the initial batch-operator schedule** — the batch-operator groups `sysio.epoch::schbatchgps`
-  built, plus the index of the first active group;
-- **the depot's epoch duration** — `sysio.epoch::epochcfg.epoch_duration_sec`.
+- **each outpost chain's consensus epoch** — keyed by the chain's `sysio.chains` code
+  (`ETHEREUM`, `SOLANA`): its duration (that chain's `sysio.epoch::epochcfg.epoch_duration_sec`)
+  and its initial batch-operator schedule (the groups that chain's `sysio.epoch::schbatchgps`
+  built, plus the index of the first active group). Each chain runs its own epoch counter,
+  duration and schedule.
 
 It holds public data only: account names, public keys, addresses and proofs of possession. No
 private key or secret reference is ever written to it.
@@ -24,7 +26,7 @@ private key or secret reference is ever written to it.
 
 - **Path:** `<clusterPath>/wire-opreg-bootstrap.json`.
 - **When:** during bootstrap, in the `EpochBootstrap` phase, right after
-  `schedule-batch-groups` (`sysio.epoch::schbatchgps`) — the step `emit-wire-opreg-bootstrap`
+  `schedule-batch-groups-<chain>` (one `sysio.epoch::schbatchgps(chain)` per outpost chain) — the step `emit-wire-opreg-bootstrap`
   writes it, then `verify-wire-opreg-bootstrap` checks it against the depot. Both steps appear in
   the bootstrap Report.
 - **Every mode:** local outposts and `--external-outpost-config` alike.
@@ -40,7 +42,6 @@ private key or secret reference is ever written to it.
 {
   "label": "testnet-epoch60",
   "awsAccount": "test",
-  "epochDurationSec": 60,
   "operators": [
     {
       "accountName": "defproducera",
@@ -60,9 +61,21 @@ private key or secret reference is ever written to it.
       }
     }
   ],
-  "batchOperatorGroups": {
-    "activeGroupIndex": 0,
-    "groups": [["batchop.a"], ["batchop.b"], ["batchop.c"]]
+  "chains": {
+    "ETHEREUM": {
+      "epochDurationSec": 60,
+      "batchOperatorGroups": {
+        "activeGroupIndex": 0,
+        "groups": [["batchop.a"], ["batchop.c"], ["batchop.b"]]
+      }
+    },
+    "SOLANA": {
+      "epochDurationSec": 120,
+      "batchOperatorGroups": {
+        "activeGroupIndex": 0,
+        "groups": [["batchop.b"], ["batchop.a"], ["batchop.c"]]
+      }
+    }
   }
 }
 ```
@@ -73,7 +86,6 @@ private key or secret reference is ever written to it.
 |---|---|---|
 | `label` | string (`^[a-z0-9_-]+$`) \| `null` | The cluster build label — the `WIRE_CLUSTER_LABEL` of the `create-wire-platform-cluster` run that built the cluster. `null` for a cluster built outside that workflow |
 | `awsAccount` | `"dev"` \| `"sandbox"` \| `"test"` \| `"prod"` \| `null` | The AWS account (environment) the cluster's nodes run in — `awsClusterNodeConfig.account` of the cluster config. `null` when the cluster has no AWS placement |
-| `epochDurationSec` | integer > 0 | The depot's global epoch duration in seconds |
 | `operators` | array (≥ 1) | Every bootstrapped operator, ordered by type (`PRODUCER`, `BATCH`, `UNDERWRITER`) then account name |
 | `operators[].accountName` | WIRE name | The operator's on-chain account — the `sysio.opreg::operators` row key |
 | `operators[].type` | `"PRODUCER"` \| `"BATCH"` \| `"UNDERWRITER"` | The operator type (the `OperatorType` member name) |
@@ -82,18 +94,23 @@ private key or secret reference is ever written to it.
 | `operators[].keys.wireFinalizer` | `{ type: "BLS", publicKey, proofOfPossession }` | The WIRE finality key — `PRODUCER` |
 | `operators[].keys.ethereum` | `{ type: "EM", publicKey, address }` | The Ethereum key and its `0x` address — `BATCH` / `UNDERWRITER` |
 | `operators[].keys.solana` | `{ type: "ED", publicKey, address }` | The Solana key and its base58 address — `BATCH` / `UNDERWRITER` |
-| `batchOperatorGroups.groups` | array of arrays of WIRE names | The batch-operator window in slot order; each member is the `accountName` of a `BATCH` entry in `operators` |
-| `batchOperatorGroups.activeGroupIndex` | integer ≥ 0 | Index into `groups` of the first active group |
+| `chains` | object | One entry per outpost chain, keyed by its `sysio.chains` code: `ETHEREUM` and `SOLANA`, both required |
+| `chains.<chain>.epochDurationSec` | integer > 0 | The chain's consensus epoch duration in seconds (its `sysio.epoch::epochcfg.epoch_duration_sec`) |
+| `chains.<chain>.batchOperatorGroups.groups` | array of arrays of WIRE names | The chain's batch-operator window in slot order; each member is the `accountName` of a `BATCH` entry in `operators` |
+| `chains.<chain>.batchOperatorGroups.activeGroupIndex` | integer ≥ 0 | Index into the chain's `groups` of its first active group |
 
 Public keys are Wire-canonical (`PUB_<type>_…`); each key slot accepts only its own key type.
 `label` and `awsAccount` are always present; a missing value is an explicit `null`.
 
 ### Semantics
 
-- `groups[k]` serves epoch `k + 1`. The depot's genesis advance (epoch 0 → 1) does not move the
-  window; it first slides on the 1 → 2 advance.
-- `activeGroupIndex` is `0` when the file is written: the front of the depot's window is always the
+- A chain's `groups[k]` serves that chain's epoch `k + 1`. The chain's genesis advance (epoch 0 → 1)
+  does not move its window; it first slides on the chain's 1 → 2 advance.
+- `activeGroupIndex` is `0` when the file is written: the front of a chain's window is always its
   current group.
+- A chain's schedule seats only the batch operators that joined it (`sysio.opreg::joinchain`); the
+  bootstrap joins every bootstrapped batch operator to every outpost chain, so each chain's groups
+  draw on the same roster in their own order.
 - Groups are disjoint by depot construction. The schema itself rejects only a repeat **within** one
   group.
 - Producers that share a node share that node's `wire` key, so a public key can appear on more than
@@ -118,9 +135,9 @@ The JSON Schema checks each field, including each operator type's key slots (one
 per type). Cross-field rules have no JSON Schema form and are enforced by the codec only:
 
 - every `accountName` is unique;
-- `activeGroupIndex` is within `groups`;
-- no account repeats within a group;
-- every group member is a `BATCH` entry in `operators`.
+- each chain's `activeGroupIndex` is within its `groups`;
+- no account repeats within one of a chain's groups;
+- every group member of every chain is a `BATCH` entry in `operators`.
 
 **TypeScript** — `@wireio/cluster-tool-shared` applies every rule:
 
@@ -151,11 +168,13 @@ pnpm build
 
 | Symptom | Cause |
 |---|---|
-| `emit-wire-opreg-bootstrap` fails: *no batch-operator schedule yet* | `sysio.epoch::schbatchgps` produced no groups — no ACTIVE batch operator was registered |
-| `emit-wire-opreg-bootstrap` fails: *group member … is not a BATCH operator in operators* | `schbatchgps` scheduled a batch operator the bootstrap did not provision. It prefers non-bootstrapped ACTIVE batch operators, so one registered before `EpochBootstrap` lands in the window but not in the roster |
+| `emit-wire-opreg-bootstrap` fails: *the depot has no `<chain>` batch-operator schedule yet* | That chain's `sysio.epoch::schbatchgps` produced no groups — no ACTIVE batch operator joined the chain |
+| `emit-wire-opreg-bootstrap` fails: *sysio.epoch::epochcfg has no `<chain>` row* | That chain's `sysio.epoch::setconfig` did not run |
+| `emit-wire-opreg-bootstrap` fails: *`<chain>` group member … is not a BATCH operator in operators* | The chain's `schbatchgps` scheduled a batch operator the bootstrap did not provision. It prefers non-bootstrapped ACTIVE batch operators serving the chain, so one registered and joined before `EpochBootstrap` lands in the window but not in the roster |
 | `verify-wire-opreg-bootstrap` fails: *not the depot's set of bootstrapped operators* | An operator was registered on `sysio.opreg` as bootstrapped without being provisioned by the bootstrap (or the reverse) |
 | `verify-wire-opreg-bootstrap` fails: *is not ACTIVE on sysio.opreg* | A bootstrapped operator's registration did not activate it |
-| `verify-wire-opreg-bootstrap` fails: *schedule is not the depot's epochstate window* | The depot's window changed between the emit and the verify step |
+| `verify-wire-opreg-bootstrap` fails: *the `<chain>` batch-operator schedule is not its epochstate window* | The chain's window changed between the emit and the verify step |
+| `verify-wire-opreg-bootstrap` fails: *the file's `<chain>` epoch duration is not its epochcfg duration* (or *not the cluster's*) | The chain's `epochcfg` row, or the cluster config's `outpostEpochDurationSec`, changed between the bootstrap and the verify step |
 | `verify-wire-opreg-bootstrap` fails: *AWS account is not the cluster's* | The file was rewritten between the emit and the verify step |
 | `label` is `null` in a workflow-built cluster | The workflow's label step did not run — `create` failed, or the run predates the step |
 | `generate-json-schemas.mjs` exits 2: *run pnpm build first* | The script reads the built `@wireio/cluster-tool-shared` package |

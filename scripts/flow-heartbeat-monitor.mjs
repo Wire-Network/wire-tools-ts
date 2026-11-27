@@ -8,9 +8,10 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
- * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
+ * (`epoch=` lists every outpost chain's own consensus epoch, a `p` suffix marking a paused
+ * chain) plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
  * once it appears: `executables.clio` (the resolved clio binary) and the URL
  * from `bind.nodeop.ports.producers[0].http` (NEVER bios — its port dies after
@@ -20,7 +21,8 @@
  * The six probes, per beat:
  *   1. chain liveness            — `clio get info` → head_block_num
  *   2. operators table           — `sysio.opreg::operators` (v6 `-S` scope, fields under `.value`)
- *   3. epoch state singleton     — `sysio.epoch::epochstate` → index + start/next timestamps
+ *   3. epoch state per chain     — `sysio.epoch::epochstate`, one row per outpost chain → index + start/next timestamps + pause,
+ *                                  and `sysio.epoch::epochcfg` → each chain's epoch duration (the depot's value)
  *   4. msgch outbound envelopes  — `sysio.msgch::envelopes` row count
  *   5. opp-debugging artifacts   — total + per-direction `.metadata` counts + delta
  *   6. aggregate cluster log     — action-receipt top-3 + the TWO failure classes:
@@ -29,15 +31,24 @@
  *      counted + quoted, NEVER a bail).
  *
  * The bails (print `BAIL: <reason>`, SIGINT the watched flow, exit 1):
- *   - bootstrap never completes — epoch still null/0 past the deadline since first liveness
- *   - epoch stall — same epoch as the previous beat AND still unchanged after a re-probe
- *   - opp-debugging zero delta on the FIRST beat at/past the first epoch's
- *     start + epoch duration (controller ruling for self-check 6). Before
- *     that wall-clock boundary, zero delta is marked growth=first-epoch-boundary
- *     in HB and does not bail. The boundary never resets on epoch advance.
- *     It comes from epochstate.current_epoch_start / next_epoch_start and
- *     cluster-config epochDurationSec (or --epoch-duration-seconds). The
- *     bootstrap-never-completes rule is unchanged.
+ *   - bootstrap never completes — a chain's epoch still null/0 past the deadline since first
+ *     liveness (the deadline scales with that chain's duration)
+ *   - epoch stall — a chain at the same epoch as the previous beat, unchanged for close to
+ *     2 x its own epoch duration, AND still unchanged after a re-probe
+ *   - opp-debugging zero delta on the FIRST beat at/past the first epoch
+ *     boundary of every chain — the latest of each chain's first epoch start +
+ *     its duration (controller ruling for self-check 6). Before that wall-clock
+ *     boundary, zero delta is marked growth=first-epoch-boundary in HB and does
+ *     not bail. The boundary never resets on epoch advance. It comes from each
+ *     chain's epochstate.current_epoch_start / next_epoch_start and its epoch
+ *     duration (or --epoch-duration-seconds). The bootstrap-never-completes rule
+ *     is unchanged.
+ *
+ * A chain's epoch duration is its `sysio.epoch::epochcfg.epoch_duration_sec`, read
+ * every beat; before the chain's row exists it is the cluster-config
+ * `outpostEpochDurationSec` its bootstrap will write there, and before that names
+ * the chain the cluster's `epochDurationSec` (60 s when that is `null`).
+ * `--epoch-duration-seconds` overrides every chain's.
  *   - one direction frozen for 2 consecutive beats while the others advance
  *     (only after all four directions have a non-zero baseline)
  *   - FATAL count growing across 2 consecutive beats
@@ -58,6 +69,14 @@ import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import { argv, chalk, echo, fs, glob, path, $, sleep } from "zx"
 
+import {
+  chainEpochConfigs,
+  chainEpochDurations,
+  chainEpochStates,
+  EpochStateRowLimit,
+  kvRowValue
+} from "./common/epoch-state.mjs"
+
 // ---------------------------------------------------------------------------
 // Constants — tuning knobs + probe surface
 // ---------------------------------------------------------------------------
@@ -71,11 +90,35 @@ import { argv, chalk, echo, fs, glob, path, $, sleep } from "zx"
 const DefaultIntervalSeconds = 90
 
 /**
- * The cluster's configured epoch duration. Scales the bootstrap-deadline bail
- * (`max(BootstrapDeadlineFloorSeconds, 3 × this)`) and labels the epoch-stall
- * bail. Overridable via `--epoch-duration-seconds`.
+ * An outpost chain's epoch duration when neither its `epochcfg` row nor the
+ * cluster config names one. Each chain's duration scales its bootstrap-deadline
+ * bail (`max(BootstrapDeadlineFloorSeconds, BootstrapDeadlineEpochs × duration)`)
+ * and its epoch-stall window. `--epoch-duration-seconds` overrides every chain's.
  */
 const DefaultEpochDurationSeconds = 60
+
+/**
+ * Epoch durations of a chain the bootstrap-never-completed deadline allows at
+ * least (`max(BootstrapDeadlineFloorSeconds, this × duration, …)`). Raising it
+ * tolerates a slower first advance; lowering it risks bailing on a healthy
+ * long-epoch chain.
+ */
+const BootstrapDeadlineEpochs = 3
+
+/**
+ * The chain the bootstrap-never-completed bail names when the monitor knows of
+ * no outpost chain at all — no epochstate or epochcfg row yet and no chain in
+ * the cluster config. A bail label only: it never keys a per-chain record.
+ */
+const NoEpochStateLabel = "(no epochstate row)"
+
+/**
+ * A chain's epoch is stalled once it has not advanced for this many of its own
+ * epoch durations (`epoch-stall-is-fatal.md`: about 2 ×). Raising it delays
+ * the stall bail; lowering it below the consensus cadence false-bails a
+ * healthy chain.
+ */
+const EpochStallDurations = 2
 
 /**
  * Floor (seconds of chain liveness with epoch still null/0) for the
@@ -105,8 +148,10 @@ const BootstrapPerIdentitySeconds = 60
  * Delay before the epoch-stall re-probe. A same-epoch heartbeat at 60s epochs
  * is the fatal signal, but consensus latency makes the effective cadence
  * ~90–105s — re-probe once after this delay and bail only if STILL unchanged
- * (a true stall = dead cluster). Raising it delays the stall bail; lowering it
- * re-introduces cadence-jitter false positives.
+ * (a true stall = dead cluster). A chain with a longer epoch is re-probed only
+ * once its unchanged time plus this delay reaches its stall window. Raising it
+ * delays the stall bail; lowering it re-introduces cadence-jitter false
+ * positives.
  */
 const EpochStallReprobeDelaySeconds = 45
 
@@ -249,6 +294,7 @@ const ActionReceiptPattern = "sysio\\.[a-z]+::[a-z]+"
 // Depot accounts / tables probed each beat (v6 form: `clio get table <code> <table> -S <scope>`).
 const SysioEpochAccount = "sysio.epoch"
 const EpochStateTable = "epochstate"
+const EpochConfigTable = "epochcfg"
 const SysioOpregAccount = "sysio.opreg"
 const OperatorsTable = "operators"
 const SysioMsgchAccount = "sysio.msgch"
@@ -483,8 +529,14 @@ export function provisionedIdentityCount(config) {
  * ({@link provisionedIdentityCount}), which scales the bootstrap deadline — see
  * {@link bootstrapDeadlineSeconds}.
  *
+ * And each outpost chain's configured epoch duration (`chainEpochDurations`) —
+ * which the chain's `epochcfg` row supersedes once it exists — beside the
+ * cluster's `epochDurationSec` (else {@link DefaultEpochDurationSeconds}), the
+ * duration of a chain neither names.
+ *
  * @param {string} clusterConfigPath absolute path to cluster-config.json.
- * @return {{ clioExecutable: string, producerUrl: string, identityCount: number } | null}
+ * @return {{ clioExecutable: string, producerUrl: string, identityCount: number,
+ *   chainEpochDurationSeconds: Record<string, number>, defaultEpochDurationSeconds: number } | null}
  *   null while the config is absent or not yet fully written (the pre-config
  *   window).
  */
@@ -510,7 +562,8 @@ function readClusterConfig(clusterConfigPath) {
       clioExecutable,
       producerUrl: `http://${producerHost}:${producerHttpPort}`,
       identityCount,
-      epochDurationSeconds: config?.epochDurationSec ?? DefaultEpochDurationSeconds
+      chainEpochDurationSeconds: chainEpochDurations(config),
+      defaultEpochDurationSeconds: config?.epochDurationSec ?? DefaultEpochDurationSeconds
     }
   } catch {
     return null // mid-write JSON — same as absent; the next beat re-reads
@@ -573,17 +626,6 @@ async function clioGetTableRows(clioExecutable, url, code, table, scope, limit) 
 }
 
 /**
- * v6 KV rows arrive as `{key, value}` — the fields live under `.value`; fall
- * back to the row itself for non-KV shapes.
- *
- * @param {object} row a `get table` row.
- * @return {object} the field-carrying object.
- */
-function kvRowValue(row) {
-  return row?.value ?? row
-}
-
-/**
  * Probe 1 — chain liveness: `clio get info` → head block AND last-irreversible
  * block. BOTH are reported because a frozen LIB under an advancing head is a
  * distinct, silent failure the head alone cannot show: when finalizers lock on
@@ -633,19 +675,239 @@ async function probeOperators(clioExecutable, url) {
 }
 
 /**
- * Probe 3 — the `sysio.epoch::epochstate` singleton, including chain timestamps.
+ * Probe 3 — every outpost chain's `sysio.epoch::epochstate` row, including chain
+ * timestamps and the pause flag.
  *
  * @param {string} clioExecutable resolved clio binary.
  * @param {string} url the producer HTTP URL.
- * @return {Promise<object | null>} the epoch row, or null while the
- *   table/row doesn't exist yet (pre-bootstrap) or the probe fails.
+ * @return {Promise<Record<string, object> | null>} each chain's epoch row keyed by
+ *   its codename ({@link chainEpochStates}), or null while the table doesn't exist
+ *   yet (pre-bootstrap) or the probe fails.
  */
-async function probeEpochState(clioExecutable, url) {
-  const rows = await clioGetTableRows(clioExecutable, url, SysioEpochAccount, EpochStateTable, SysioEpochAccount, 1)
-  const row = kvRowValue(rows?.[0])
-  if (row?.current_epoch_index == null) return null
-  const epochIndex = Number(row.current_epoch_index)
-  return Number.isFinite(epochIndex) ? { ...row, current_epoch_index: epochIndex } : null
+async function probeEpochStates(clioExecutable, url) {
+  const rows = await clioGetTableRows(
+    clioExecutable, url, SysioEpochAccount, EpochStateTable, SysioEpochAccount, EpochStateRowLimit
+  )
+  return rows == null ? null : chainEpochStates(rows)
+}
+
+/**
+ * Probe 3 (durations) — every outpost chain's `sysio.epoch::epochcfg` row: the
+ * depot's own epoch duration of each chain, the source of truth once the chain's
+ * `setconfig` ran.
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @return {Promise<Record<string, object> | null>} each chain's config row keyed by
+ *   its codename (`chainEpochConfigs`), or null while the table doesn't exist yet
+ *   (pre-bootstrap) or the probe fails.
+ */
+async function probeEpochConfigs(clioExecutable, url) {
+  const rows = await clioGetTableRows(
+    clioExecutable, url, SysioEpochAccount, EpochConfigTable, SysioEpochAccount, EpochStateRowLimit
+  )
+  return rows == null ? null : chainEpochConfigs(rows)
+}
+
+/**
+ * Each outpost chain's configured epoch duration: its `epochcfg` row's
+ * `epoch_duration_sec` once the row exists, else the cluster-config duration its
+ * bootstrap will write there.
+ *
+ * @param {Record<string, number>} configuredDurations each chain's cluster-config
+ *   duration (`chainEpochDurations`).
+ * @param {Record<string, object>} epochConfigs each chain's `epochcfg` row
+ *   (`chainEpochConfigs`).
+ * @return {Record<string, number>} each known chain's duration in seconds, by codename.
+ */
+export function resolveChainEpochDurations(configuredDurations, epochConfigs) {
+  return {
+    ...configuredDurations,
+    ...Object.fromEntries(
+      Object.entries(epochConfigs ?? {}).map(([chain, config]) => [chain, config.epoch_duration_sec])
+    )
+  }
+}
+
+/**
+ * The outpost chains the monitor watches, in codename order: every chain the
+ * cluster config names, has an `epochcfg` row, or has an `epochstate` row — so a
+ * chain configured on the depot but not yet started is still watched for its
+ * bootstrap.
+ *
+ * @param {Record<string, number>} configuredDurations each chain's cluster-config duration.
+ * @param {Record<string, object>} epochConfigs each chain's `epochcfg` row.
+ * @param {Record<string, object>} epochStates each chain's `epochstate` row.
+ * @return {string[]} the chains' codenames, sorted.
+ */
+export function monitoredChains(configuredDurations, epochConfigs, epochStates) {
+  return [
+    ...new Set([
+      ...Object.keys(configuredDurations ?? {}),
+      ...Object.keys(epochConfigs ?? {}),
+      ...Object.keys(epochStates ?? {})
+    ])
+  ].sort()
+}
+
+/**
+ * One chain's epoch duration: the explicit `--epoch-duration-seconds` override,
+ * else its configured duration ({@link resolveChainEpochDurations}), else the
+ * cluster's default duration.
+ *
+ * @param {Record<string, number>} durations each chain's configured duration.
+ * @param {string} chain the chain's codename.
+ * @param {number | null} overrideSeconds the explicit override, if given.
+ * @param {number} defaultSeconds the cluster's `epochDurationSec`, else {@link DefaultEpochDurationSeconds}.
+ * @return {number} the duration in seconds.
+ */
+export function chainEpochDurationSeconds(durations, chain, overrideSeconds, defaultSeconds) {
+  return overrideSeconds ?? durations?.[chain] ?? defaultSeconds
+}
+
+/**
+ * Every outpost chain's epoch, in codename order, for the heartbeat line —
+ * `ETHEREUM:4,SOLANA:2p` (`p`: the chain is paused).
+ *
+ * @param {Record<string, object>} states each chain's epoch row.
+ * @param {string[]} chains the chains to list.
+ * @return {string} the fragment, `?` for a chain without a row.
+ */
+export function describeChainEpochs(states, chains) {
+  return chains.length === 0
+    ? "?"
+    : chains
+        .map(chain => {
+          const state = states?.[chain]
+          return `${chain}:${state?.current_epoch_index ?? "?"}${state?.is_paused === true ? "p" : ""}`
+        })
+        .join(",")
+}
+
+/**
+ * Bootstrap deadline: a chain's epoch must reach >= 1 within this many seconds
+ * of first chain liveness. Scaled by the cluster's provisioned identity count
+ * (see {@link BootstrapPerIdentitySeconds}) because a 21-producer / 21-batch-op
+ * bootstrap legitimately takes many times longer than the dev default's — a
+ * flat floor would SIGINT it mid-bootstrap — and by the chain's own duration.
+ *
+ * @param {number} identityCount the provisioned identity count — see
+ *   {@link provisionedIdentityCount}.
+ * @param {number} durationSeconds the chain's epoch duration.
+ * @return {number} the deadline, in seconds of chain liveness.
+ */
+export function bootstrapDeadlineSeconds(identityCount, durationSeconds) {
+  return Math.max(
+    BootstrapDeadlineFloorSeconds,
+    durationSeconds * BootstrapDeadlineEpochs,
+    identityCount * BootstrapPerIdentitySeconds
+  )
+}
+
+/**
+ * The bootstrap-never-completed bail reason: the first watched chain whose epoch
+ * is still null/0 past its own deadline ({@link bootstrapDeadlineSeconds}), or —
+ * when the monitor knows of no chain at all — the absence of any epochstate row
+ * past the deadline of `noChainDurationSeconds`.
+ *
+ * @param {string[]} chains the watched chains ({@link monitoredChains}).
+ * @param {Record<string, number | undefined>} epochIndices each chain's epoch index this beat.
+ * @param {number} livenessSeconds seconds since the chain first answered.
+ * @param {number} identityCount the provisioned identity count.
+ * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
+ * @param {number} noChainDurationSeconds the duration the deadline scales by when
+ *   no chain is known (the override, else the cluster's `epochDurationSec`).
+ * @return {string | null} the bail reason, or null while no deadline has passed.
+ */
+export function bootstrapBailReason(
+  chains, epochIndices, livenessSeconds, identityCount, durationSeconds, noChainDurationSeconds
+) {
+  const provisioned = `for ${identityCount} provisioned identities`
+  if (chains.length === 0) {
+    const deadlineSeconds = bootstrapDeadlineSeconds(identityCount, noChainDurationSeconds)
+    return livenessSeconds > deadlineSeconds
+      ? `bootstrap never completed: ${NoEpochStateLabel} after ${livenessSeconds}s of chain liveness ` +
+          `(deadline ${deadlineSeconds}s ${provisioned})`
+      : null
+  }
+  const overdue = chains
+    .filter(chain => epochIndices[chain] == null || epochIndices[chain] === 0)
+    .find(chain => livenessSeconds > bootstrapDeadlineSeconds(identityCount, durationSeconds(chain)))
+  return overdue == null
+    ? null
+    : `bootstrap never completed: ${overdue} current_epoch_index=${epochIndices[overdue] ?? "null"} ` +
+        `after ${livenessSeconds}s of chain liveness ` +
+        `(deadline ${bootstrapDeadlineSeconds(identityCount, durationSeconds(overdue))}s ${provisioned})`
+}
+
+/**
+ * Whether a chain that showed the same epoch as the previous beat should be
+ * re-probed for a stall now: its unchanged time plus the re-probe delay reaches
+ * {@link EpochStallDurations} of its own epoch duration. At 60 s epochs every
+ * same-epoch beat qualifies (90 + 45 >= 120); a longer epoch waits for more beats.
+ *
+ * @param {number} unchangedSeconds seconds since the chain was last seen to advance.
+ * @param {number} durationSeconds the chain's epoch duration.
+ * @return {boolean} true when the re-probe is due.
+ */
+export function isStallReprobeDue(unchangedSeconds, durationSeconds) {
+  return unchangedSeconds + EpochStallReprobeDelaySeconds >= EpochStallDurations * durationSeconds
+}
+
+/**
+ * The chains due a stall re-probe this beat: each at the same epoch as the
+ * previous beat whose re-probe is due ({@link isStallReprobeDue}).
+ *
+ * @param {string[]} chains the watched chains.
+ * @param {Record<string, number | undefined>} epochIndices each chain's epoch index this beat.
+ * @param {Record<string, number>} previousEpochIndices each chain's index at the previous beat.
+ * @param {(chain: string) => number} unchangedSeconds seconds since a chain was last seen to advance.
+ * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
+ * @return {string[]} the due chains, in watch order.
+ */
+export function stallReprobeDueChains(chains, epochIndices, previousEpochIndices, unchangedSeconds, durationSeconds) {
+  return chains.filter(
+    chain =>
+      epochIndices[chain] != null &&
+      epochIndices[chain] === previousEpochIndices[chain] &&
+      isStallReprobeDue(unchangedSeconds(chain), durationSeconds(chain))
+  )
+}
+
+/**
+ * The first due chain still at its previous epoch after the re-probe — a true
+ * stall. A chain the re-probe could not read keeps its beat index, so a failed
+ * re-probe never clears a stall.
+ *
+ * @param {string[]} dueChains the chains re-probed ({@link stallReprobeDueChains}).
+ * @param {Record<string, object>} reprobedStates each chain's re-probed epoch row.
+ * @param {Record<string, number | undefined>} epochIndices each chain's epoch index this beat.
+ * @param {Record<string, number>} previousEpochIndices each chain's index at the previous beat.
+ * @return {string | undefined} the stalled chain, or undefined when every due chain advanced.
+ */
+export function stalledChain(dueChains, reprobedStates, epochIndices, previousEpochIndices) {
+  return dueChains.find(
+    chain =>
+      (reprobedStates?.[chain]?.current_epoch_index ?? epochIndices[chain]) === previousEpochIndices[chain]
+  )
+}
+
+/**
+ * The network's first-epoch growth deadline: the latest of every chain's
+ * {@link firstEpochGrowthDeadlineMs}, so zero growth is tolerated until every
+ * chain is past its first epoch boundary. Null while any chain has not started.
+ *
+ * @param {Record<string, object>} states each chain's epoch row.
+ * @param {string[]} chains the chains the network runs.
+ * @param {(chain: string) => number} durationSeconds a chain's monitored duration.
+ * @param {(chain: string) => number} configuredSeconds a chain's configured duration.
+ * @return {number | null} the deadline (ms), or null before every chain started.
+ */
+export function networkGrowthDeadlineMs(states, chains, durationSeconds, configuredSeconds) {
+  const deadlines = chains.map(chain =>
+    firstEpochGrowthDeadlineMs(states?.[chain], durationSeconds(chain), configuredSeconds(chain))
+  )
+  return chains.length === 0 || deadlines.some(deadline => deadline == null) ? null : Math.max(...deadlines)
 }
 
 /**
@@ -784,25 +1046,31 @@ ${chalk.bold("Options:")}
   --cluster-path <path>          cluster data dir of the flow run under watch
                                  (or pass it as the first positional arg). Required.
   --interval-seconds <n>         seconds between heartbeats (default: ${DefaultIntervalSeconds})
-  --epoch-duration-seconds <n>   the cluster's epoch duration (default: ${DefaultEpochDurationSeconds});
-                                 scales the bootstrap-deadline bail and labels
-                                 the epoch-stall bail
+  --epoch-duration-seconds <n>   every outpost chain's epoch duration (default: each
+                                 chain's sysio.epoch::epochcfg epoch_duration_sec,
+                                 read every beat; its cluster-config
+                                 outpostEpochDurationSec until that row exists);
+                                 scales each chain's bootstrap-deadline bail and
+                                 epoch-stall window
   --expect-freeze                ONLY flow-emergency-stop: exact OutpostFrozen
                                  (0x17c7), EnforcedPause and NoPendingDesyndication
                                  recovery refusals become NOISE.
                                  Default FATAL. All liveness bails remain enabled.
-  --expect-epoch-freeze          the flow INTENTIONALLY freezes the epoch as its
+  --expect-epoch-freeze          the flow INTENTIONALLY freezes a chain's epoch as its
                                  mechanism (flow-batch-operator-slashing holds the
-                                 contested epoch across the dispute lifecycle);
+                                 contested chain's epoch across the dispute lifecycle;
+                                 flow-economic-clock and flow-per-chain-epochs pause
+                                 Ethereum's epoch while Solana keeps advancing);
                                  suppresses the epoch-stall / opp-zero-growth /
                                  direction-plateau bails (FATAL + bootstrap bails
                                  still fire). Default off.
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
-  growth=first-epoch-boundary(until=<UTC>): zero delta before the first epoch's
-                            start + configured duration; reported without a bail
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+                            (one epoch per outpost chain; p = paused)
+  growth=first-epoch-boundary(until=<UTC>): zero delta before every chain's first
+                            epoch start + configured duration; reported without a bail
   NOISE-TAIL: / FAIL-TAIL:  quote lines when the class deltas are positive
   BAIL: <reason>            a red flag fired → SIGINTs the flow, exits 1
                             (cluster dir preserved for forensics)
@@ -878,10 +1146,20 @@ export function firstEpochGrowthDeadlineMs(epochState, epochDurationSeconds, con
 /**
  * Self-check 6: mark the initial partial-epoch cycle, then bail on the FIRST
  * zero-growth cycle at/past its chain-time boundary. The caller retains the
- * first deadline across epoch changes. Epoch null/0 keeps its bootstrap rule.
+ * first deadline across epoch changes. Before the network has started (some
+ * chain's epoch still null/0) the bootstrap rule applies instead.
+ *
+ * @param {boolean} networkStarted whether every watched chain has reached epoch >= 1.
+ * @param {number} oppDelta opp-debugging artifacts added since the previous beat.
+ * @param {number} oppTotal opp-debugging artifacts in total.
+ * @param {number} nowMs the beat's wall clock (ms).
+ * @param {number | null} deadlineMs the first-epoch growth deadline (ms), or null
+ *   before it is known.
+ * @param {boolean} expectEpochFreeze whether the flow deliberately freezes an epoch.
+ * @return {string | null} the bail reason, or null when the beat is healthy.
  */
-export function oppGrowthBailReason(epochIndex, oppDelta, oppTotal, nowMs, deadlineMs, expectEpochFreeze = false) {
-  if (epochIndex == null || epochIndex < 1 || oppDelta > 0 || expectEpochFreeze) return null
+export function oppGrowthBailReason(networkStarted, oppDelta, oppTotal, nowMs, deadlineMs, expectEpochFreeze = false) {
+  if (!networkStarted || oppDelta > 0 || expectEpochFreeze) return null
   if (deadlineMs != null && nowMs < deadlineMs) return null
   return `opp-debugging zero growth (total=${oppTotal}) on a post-bootstrap heartbeat`
 }
@@ -895,13 +1173,18 @@ async function main() {
 
   const clusterPath = resolveClusterPath()
   const intervalSeconds = resolveNumberOption("interval-seconds", DefaultIntervalSeconds)
-  const epochDurationSeconds = resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
+  /** The explicit `--epoch-duration-seconds` override of every chain's duration, or null. */
+  const epochDurationOverrideSeconds = argv["epoch-duration-seconds"] == null
+    ? null
+    : resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
   /**
-   * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes the epoch as
-   * part of its mechanism — flow-batch-operator-slashing holds the contested epoch
-   * index across the entire dispute → vote → resolve → slash lifecycle by making
-   * the sole active batch-op group SBP-less (it never delivers, so depot consensus
-   * cannot advance and the epoch is paused for the dispute). Suppresses the three
+   * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes a chain's epoch
+   * as part of its mechanism — flow-batch-operator-slashing holds the contested
+   * epoch index across the entire dispute → vote → resolve → slash lifecycle by
+   * making the sole active batch-op group SBP-less (it never delivers, so depot
+   * consensus cannot advance and the epoch is paused for the dispute), and
+   * flow-economic-clock and flow-per-chain-epochs pause Ethereum's consensus epoch
+   * through `sysio.epoch::pause` while Solana keeps advancing. Suppresses the three
    * epoch-ADVANCEMENT bails (epoch-stall, opp zero-growth, direction-plateau) that
    * would otherwise false-kill such a flow. The FATAL-signature and
    * bootstrap-never-completes bails STILL fire — a real plugin/execution failure
@@ -913,31 +1196,15 @@ async function main() {
   const clusterConfigPath = path.join(clusterPath, ClusterConfigFilename)
   const oppDebuggingDir = path.join(clusterPath, OppDebuggingSubdir)
 
-  /**
-   * Bootstrap deadline: the epoch must reach >= 1 within this many seconds of
-   * first chain liveness. Scaled by the cluster's provisioned identity count
-   * (see {@link BootstrapPerIdentitySeconds}) because a 21-producer / 21-batch-op
-   * bootstrap legitimately takes many times longer than the dev default's — a
-   * flat floor would SIGINT it mid-bootstrap.
-   *
-   * @param {number} identityCount the provisioned identity count — see
-   *   {@link provisionedIdentityCount}.
-   * @return {number} the deadline, in seconds of chain liveness.
-   */
-  function bootstrapDeadlineSeconds(identityCount) {
-    return Math.max(
-      BootstrapDeadlineFloorSeconds,
-      epochDurationSeconds * 3,
-      identityCount * BootstrapPerIdentitySeconds
-    )
-  }
-
   // ---------------------------------------------------------------------------
   // Heartbeat loop
   // ---------------------------------------------------------------------------
 
   let firstGrowthDeadlineMs = null
-  let previousEpochIndex = -1
+  /** Each chain's epoch index at the previous beat, by codename. */
+  const previousEpochIndices = {}
+  /** When each chain was last seen to advance (monitor clock, ms), by codename. */
+  const lastAdvanceMs = {}
   let previousOppTotal = 0
   let previousFatalCount = 0
   let previousNoiseCount = 0
@@ -965,9 +1232,9 @@ async function main() {
     const { clioExecutable, producerUrl } = clusterConfig
 
     // Probe 1 — chain liveness (also starts the bootstrap-deadline clock).
-    const chain = await probeChainLiveness(clioExecutable, producerUrl),
-      headBlockNumber = chain?.headBlockNumber,
-      libBlockNumber = chain?.libBlockNumber
+    const liveness = await probeChainLiveness(clioExecutable, producerUrl),
+      headBlockNumber = liveness?.headBlockNumber,
+      libBlockNumber = liveness?.libBlockNumber
     if (headBlockNumber != null && firstLivenessTimestamp == null) {
       firstLivenessTimestamp = now
     }
@@ -975,16 +1242,26 @@ async function main() {
     // Probe 2 — operators (queried every beat; see probeOperators for why unprinted).
     await probeOperators(clioExecutable, producerUrl)
 
-    // Probe 3 — epoch state.
-    const epochState = await probeEpochState(clioExecutable, producerUrl)
-    let epochIndex = epochState?.current_epoch_index ?? null
+    // Probe 3 — every outpost chain's epoch state, and its epoch duration from
+    // the depot's epochcfg row (the cluster config's until the row exists).
+    const epochStates = (await probeEpochStates(clioExecutable, producerUrl)) ?? {}
+    const epochConfigs = (await probeEpochConfigs(clioExecutable, producerUrl)) ?? {}
+    const chainDurations = resolveChainEpochDurations(clusterConfig.chainEpochDurationSeconds, epochConfigs)
+    const chains = monitoredChains(clusterConfig.chainEpochDurationSeconds, epochConfigs, epochStates)
+    const configuredDuration = chain => chainEpochDurationSeconds(
+      chainDurations, chain, null, clusterConfig.defaultEpochDurationSeconds
+    )
+    const monitoredDuration = chain => chainEpochDurationSeconds(
+      chainDurations, chain, epochDurationOverrideSeconds, clusterConfig.defaultEpochDurationSeconds
+    )
+    const epochIndices = Object.fromEntries(
+      chains.map(chain => [chain, epochStates[chain]?.current_epoch_index])
+    )
+    // The network is past bootstrap once EVERY chain has started its epoch 1; the
+    // post-bootstrap gates (FATAL tail, FATAL growth, stalls) wait for that.
+    const networkStarted = chains.length > 0 && chains.every(chain => epochIndices[chain] >= 1)
     if (firstGrowthDeadlineMs == null) {
-      const growthEpochDurationSeconds = argv["epoch-duration-seconds"] == null
-        ? clusterConfig.epochDurationSeconds
-        : epochDurationSeconds
-      firstGrowthDeadlineMs = firstEpochGrowthDeadlineMs(
-        epochState, growthEpochDurationSeconds, clusterConfig.epochDurationSeconds
-      )
+      firstGrowthDeadlineMs = networkGrowthDeadlineMs(epochStates, chains, monitoredDuration, configuredDuration)
     }
 
     // Probe 4 — msgch outbound envelopes.
@@ -1022,7 +1299,7 @@ async function main() {
     fatalGrowthStreak = fatalDelta > 0 ? fatalGrowthStreak + 1 : 0
 
     const growthNowMs = Date.now()
-    const initialEpochBoundary = epochIndex >= 1 && oppDelta <= 0 &&
+    const initialEpochBoundary = networkStarted && oppDelta <= 0 &&
       firstGrowthDeadlineMs != null && growthNowMs < firstGrowthDeadlineMs
     const growthMarker = initialEpochBoundary
       ? ` growth=first-epoch-boundary(until=${new Date(firstGrowthDeadlineMs).toISOString()})`
@@ -1033,7 +1310,7 @@ async function main() {
     console.log(
       `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
         `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
-        `epoch=${epochIndex ?? "?"} ` +
+        `epoch=${describeChainEpochs(epochStates, chains)} ` +
         `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
         `acts=[${logProbe.actionReceipts.join(" ")}] ` +
         `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})${growthMarker}`
@@ -1041,44 +1318,57 @@ async function main() {
     if (noiseDelta > 0 && logProbe.noiseTail.length > 0) {
       console.log(`NOISE-TAIL: ${logProbe.noiseTail}`)
     }
-    if (fatalDelta > 0 && epochIndex != null && epochIndex !== 0) {
+    if (fatalDelta > 0 && networkStarted) {
       console.log(`FAIL-TAIL: ${logProbe.fatalTail.join(" | ")}`)
     }
 
     // ── bails ──
-    // Bootstrap fallback: chain answering but epoch still null/0 past the
-    // deadline. Every other bail is gated on epoch >= 1 — without this fallback
-    // a monitor against a dead-during-bootstrap chain would print forever.
-    if (firstLivenessTimestamp != null && (epochIndex == null || epochIndex === 0)) {
-      const livenessSeconds = Math.round((now - firstLivenessTimestamp) / 1000),
-        deadlineSeconds = bootstrapDeadlineSeconds(clusterConfig.identityCount)
-      if (livenessSeconds > deadlineSeconds) {
-        await bail(
-          `bootstrap never completed: current_epoch_index=${epochIndex ?? "null"} after ${livenessSeconds}s of chain liveness ` +
-            `(deadline ${deadlineSeconds}s for ${clusterConfig.identityCount} provisioned identities)`,
-          clusterPath
-        )
-      }
+    // Bootstrap fallback: chain answering but a chain's epoch still null/0 past
+    // its deadline. Every other bail is gated on every chain at epoch >= 1 —
+    // without this fallback a monitor against a dead-during-bootstrap chain
+    // would print forever.
+    if (firstLivenessTimestamp != null) {
+      const bootstrapBail = bootstrapBailReason(
+        chains,
+        epochIndices,
+        Math.round((now - firstLivenessTimestamp) / 1000),
+        clusterConfig.identityCount,
+        monitoredDuration,
+        epochDurationOverrideSeconds ?? clusterConfig.defaultEpochDurationSeconds
+      )
+      if (bootstrapBail != null) await bail(bootstrapBail, clusterPath)
     }
-    const growthBail = oppGrowthBailReason(epochIndex, oppDelta, opp.total, growthNowMs, firstGrowthDeadlineMs, expectEpochFreeze)
+    const growthBail = oppGrowthBailReason(
+      networkStarted, oppDelta, opp.total, growthNowMs, firstGrowthDeadlineMs, expectEpochFreeze
+    )
     if (growthBail != null) await bail(growthBail, clusterPath)
-    if (epochIndex != null && epochIndex >= 1) {
-      // Epoch stall: a same-epoch heartbeat at 60s epochs is the fatal signal,
-      // but consensus latency makes the effective cadence ~90–105s — re-probe
-      // once after EpochStallReprobeDelaySeconds and bail only if STILL
-      // unchanged (a true stall = dead cluster).
-      // Epoch-ADVANCEMENT bails (epoch-stall + opp zero-growth) — skipped when the
-      // flow intentionally freezes the epoch (see {@link expectEpochFreeze}).
-      if (!expectEpochFreeze && epochIndex === previousEpochIndex) {
+    if (networkStarted) {
+      // Epoch stall, per chain: a chain at the same epoch as the previous beat
+      // is re-probed once its unchanged time plus EpochStallReprobeDelaySeconds
+      // reaches EpochStallDurations of its own duration (at 60 s epochs: every
+      // same-epoch beat), and bails only if STILL unchanged (a true stall = dead
+      // cluster). Every due chain shares ONE re-probe per beat. Epoch-ADVANCEMENT
+      // bails (epoch-stall + opp zero-growth) — skipped when the flow
+      // intentionally freezes an epoch (see {@link expectEpochFreeze}).
+      const unchangedSeconds = chain => (now - (lastAdvanceMs[chain] ?? now)) / 1000
+      const stallDue = expectEpochFreeze
+        ? []
+        : stallReprobeDueChains(chains, epochIndices, previousEpochIndices, unchangedSeconds, monitoredDuration)
+      if (stallDue.length > 0) {
         await sleep(EpochStallReprobeDelaySeconds * 1000)
-        const reprobedEpochIndex = (await probeEpochState(clioExecutable, producerUrl))?.current_epoch_index
-        if ((reprobedEpochIndex ?? epochIndex) === previousEpochIndex) {
+        const reprobedStates = (await probeEpochStates(clioExecutable, producerUrl)) ?? {}
+        const stalled = stalledChain(stallDue, reprobedStates, epochIndices, previousEpochIndices)
+        if (stalled != null) {
           await bail(
-            `epoch stalled at ${epochIndex} across heartbeat + ${EpochStallReprobeDelaySeconds}s re-probe (epoch_duration=${epochDurationSeconds}s)`,
+            `${stalled} epoch stalled at ${epochIndices[stalled]} for ` +
+              `${Math.round(unchangedSeconds(stalled)) + EpochStallReprobeDelaySeconds}s across heartbeats + ` +
+              `${EpochStallReprobeDelaySeconds}s re-probe (epoch_duration=${monitoredDuration(stalled)}s)`,
             clusterPath
           )
         }
-        epochIndex = reprobedEpochIndex
+        stallDue.forEach(chain => {
+          epochIndices[chain] = reprobedStates[chain]?.current_epoch_index ?? epochIndices[chain]
+        })
       }
       // FATAL growth: bail on PERSISTENT growth only — one-off transients (nonce
       // retries, momentary table-read races) occur in PASSING runs; persistent
@@ -1097,7 +1387,12 @@ async function main() {
       }
     }
 
-    previousEpochIndex = epochIndex ?? previousEpochIndex
+    chains.forEach(chain => {
+      const index = epochIndices[chain]
+      if (index == null) return
+      if (index !== previousEpochIndices[chain]) lastAdvanceMs[chain] = Date.now()
+      previousEpochIndices[chain] = index
+    })
     previousOppTotal = opp.total
     previousFatalCount = logProbe.fatalCount
   }

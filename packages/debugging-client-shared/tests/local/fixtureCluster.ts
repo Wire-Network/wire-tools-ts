@@ -15,7 +15,8 @@ import {
   createUnsetQueryEngineConfig,
   type ClusterConfig,
   type ClusterState,
-  type ClusterStateNode
+  type ClusterStateNode,
+  createUniformOutpostEpochDurations
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import { PidSources, oppDebuggingPath } from "@wireio/debugging-shared"
@@ -97,6 +98,7 @@ export function makeFixtureCluster(): FixtureCluster {
     underwriterCount: 1,
     apiCount: 0,
     epochDurationSec: 60,
+    outpostEpochDurationSec: createUniformOutpostEpochDurations(60),
     economicEpochDurationSec: 60,
     economicStartTime: null,
     solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
@@ -107,6 +109,7 @@ export function makeFixtureCluster(): FixtureCluster {
     cooldownEpochs: 0,
     terminateMaxConsecutiveMisses: null,
     terminateMaxPercentMisses24h: null,
+    terminateMinimumPercentSamples: null,
     terminateWindowMs: null,
     ethereumPath: "",
     solanaPath: "",

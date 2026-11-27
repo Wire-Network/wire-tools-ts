@@ -1,9 +1,9 @@
-import { SlugName } from "@wireio/sdk-core"
-import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
+import { OutpostChainCodename } from "@wireio/cluster-tool-shared"
+import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-termination flow: the doomed operator's
- * identity, the termination threshold, the WIRE bond it posts on the depot
+ * identity and the chain it serves, the eviction threshold, the WIRE bond it posts on the depot
  * through `sysio.opreg::deposit` (in depot atomic units — WIRE has 9
  * decimals), and the epoch budgets of its waits. Every poll deadline derives
  * from the epoch duration so the flow scales with it.
@@ -17,13 +17,17 @@ export namespace TerminationScenarioConstants {
    */
   export const DoomedOperatorLabel = "newop"
 
-  /** Registered outpost chain codes whose inbound cursors must keep advancing. */
-  export const EthereumChainCode = SlugName.from(
-    Constants.ETHEREUM_CHAIN_CODENAME
-  )
-  export const SolanaChainCode = SlugName.from(Constants.SOLANA_CHAIN_CODENAME)
+  /**
+   * The outpost chain the doomed operator serves and misses — the one chain its
+   * miss rails evict it from.
+   */
+  export const MissedChain = OutpostChainCodename.ETHEREUM
+  /** The outpost chain the doomed operator never joins, so it never holds a membership there. */
+  export const UnservedChain = OutpostChainCodename.SOLANA
+  /** The `status_reason` governance terminates the evicted operator with. */
+  export const GovernanceTerminationReason = "governance termination after a chain eviction"
 
-  /** Epoch duration (s) — the bare-cluster working baseline (`sysio.epoch::setconfig` floor is 60). */
+  /** Consensus epoch duration (s) of every outpost chain — the bare-cluster working baseline. */
   export const EpochDurationSec = 60
   /**
    * Bootstrapped batch operators stood up by the harness. 9 → 3 odd-sized
@@ -32,16 +36,25 @@ export namespace TerminationScenarioConstants {
    */
   export const BatchOperatorCount = 9
   /**
-   * Override for `terminate_max_consecutive_misses` so `termcheck` fires inside
-   * the flow's budget: 2 consecutive missed scheduled epochs flip TERMINATED.
+   * Override for `terminate_max_consecutive_misses`: a run of more than 2 missed
+   * scheduled epochs of the missed chain evicts it by the consecutive rail.
    */
   export const TerminateMaxConsecutiveMisses = 2
+  /**
+   * Override for `terminate_min_pct_samples` so `termcheck` fires inside the
+   * flow's budget: the percent rail applies from the operator's second duty
+   * epoch of the missed chain, so 2 missed scheduled epochs (a 100 % miss rate,
+   * above the 5 % default) flip its membership EVICTED, one before the
+   * consecutive rail would.
+   */
+  export const TerminateMinimumPercentSamples = 2
 
   /** `requiredBatchOperatorCollateral` `(WIRE, WIRE)` minimum — 1 WIRE. */
   export const MinimumBond = 1_000_000_000n
   /**
-   * WIRE bonded in total — 2 WIRE. Termination credits the whole of it to the
-   * operator's WIRE claim, so the exact value just needs to clear the minimum.
+   * WIRE bonded in total — 2 WIRE. The eviction leaves it bonded; governance
+   * termination credits the whole of it to the operator's WIRE claim, so the
+   * exact value just needs to clear the minimum.
    */
   export const BondAmount = 2_000_000_000n
   /** The first deposit — half the minimum, so the operator stays UNKNOWN on it. */
@@ -55,8 +68,8 @@ export namespace TerminationScenarioConstants {
    */
   export const ScheduleWindowEpochs = 5
   /**
-   * Epochs to wait for termination once the operator is in rotation. With
-   * `TerminateMaxConsecutiveMisses = 2` and 3 groups, the operator's slot
+   * Epochs of the missed chain to wait for the eviction once the operator is in its rotation. With
+   * `TerminateMinimumPercentSamples = 2` and 3 groups, the operator's slot
    * rotates every 3 epochs in the worst case, so 10 epochs is comfortably above
    * the ~6-epoch theoretical worst.
    */
@@ -70,33 +83,27 @@ export namespace TerminationScenarioConstants {
   /** `getCode` length floor proving a contract is deployed (above the `"0x"` empty response). */
   export const MinimumContractCodeLength = 4
 
-  /** Deadline for the operator to appear in `epochstate.batch_op_groups`. */
+  /**
+   * Epochs of a chain a post-eviction rotation allows on top of its window's groups: the one that
+   * accepts the rotation's final envelope. Changing it moves the rotation deadline.
+   */
+  export const RotationFinalEnvelopeEpochs = 1
+
+  /**
+   * Deadline for the operator to appear in the missed chain's `epochstate.batch_op_groups` (ms).
+   *
+   * @returns {@link ScheduleWindowEpochs} effective epochs of {@link EpochDurationSec}.
+   */
   export function scheduleWindowDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      ScheduleWindowEpochs *
-      ProtocolTiming.MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochsMs(EpochDurationSec, ScheduleWindowEpochs)
   }
 
-  /** Deadline for the miss window to accumulate and `termcheck` to flip TERMINATED. */
+  /**
+   * Deadline for the miss window to accumulate and `termcheck` to flip the membership EVICTED (ms).
+   *
+   * @returns {@link MissAccumulationEpochs} effective epochs of {@link EpochDurationSec}.
+   */
   export function terminationDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      MissAccumulationEpochs *
-      ProtocolTiming.MsPerSecond
-    )
-  }
-
-  /** A full group rotation plus the epoch needed to accept its final envelope. */
-  export function rotationDeadlineMs(
-    epochDurationSec: number,
-    groupCount: number
-  ): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(epochDurationSec) *
-      (groupCount + 1) *
-      ProtocolTiming.MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochsMs(EpochDurationSec, MissAccumulationEpochs)
   }
 }

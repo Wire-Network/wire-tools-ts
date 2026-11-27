@@ -1,5 +1,6 @@
 import Assert from "node:assert"
 import {
+  OutpostChainCodenames,
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   type ClusterConfig,
@@ -18,7 +19,7 @@ import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import { WireLcoImportTool } from "../tools/wire/WireLcoImportTool.js"
 import { formatWireAsset } from "../tools/wire/WireUserTool.js"
-import { pollUntil, verifyStep } from "./StepTools.js"
+import { verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
 import { Report } from "../report/Report.js"
@@ -40,14 +41,6 @@ const log = getLogger(__filename)
 const { SysioContractName, SysioContractAccount } = SysioContracts
 const { DeployMode } = ContractSteps
 const { Actor } = Report
-
-/**
- * Epoch index the LOCAL bootstrap gate waits for. `sysio.msgch::bootstrap`
- * takes the chain 0 → 1 inline, so reaching 2 is the first index that can only
- * come from `sysio.epoch::advance` firing on its own cadence — i.e. the depot
- * is circulating epochs, not merely bootstrapped.
- */
-const EpochAdvanceTargetIndex = 2
 
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
@@ -90,8 +83,18 @@ const NodeStartConcurrency = 4
 const EnvelopeLogRetentionEpochs = 10
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
 const DefaultTerminateMaxConsecutiveMisses = 5
-/** Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig). */
+/**
+ * Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig); at most
+ * {@link ClusterBuildDefaults.MaxTerminateMaxPercentMisses24h}.
+ */
 const DefaultTerminateMaxPercentMisses24h = 5
+/**
+ * Dev-default `terminate_min_pct_samples` (per-flow overridable via ClusterConfig): the duty epochs
+ * a chain membership holds before the percent rail applies — the contract's
+ * `DEFAULT_TERMINATE_MIN_PCT_SAMPLES`, at which one early miss stays at the 5 % threshold rather
+ * than above it. At most {@link ClusterBuildDefaults.MaxTerminateMinimumPercentSamples}.
+ */
+const DefaultTerminateMinimumPercentSamples = 20
 /** Dev-default `terminate_window_ms` — 24h (per-flow overridable via ClusterConfig). */
 const DefaultTerminateWindowMs = 24 * 60 * 60 * 1000
 /**
@@ -139,6 +142,24 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  * through {@link create}.
  */
 export namespace ClusterBuildDefaults {
+  /**
+   * The highest `terminate_max_pct_misses_24h` `sysio.opreg::setconfig` accepts — the
+   * contract's `MAX_TERMINATE_MAX_PCT_MISSES_24H`. A flow that observes membership rather than
+   * eviction sets it, so a missed seat while an operator's daemon syncs does not evict it; the
+   * dev default is {@link DefaultTerminateMaxPercentMisses24h}. It mirrors the contract: a
+   * higher value is refused by `setconfig`.
+   */
+  export const MaxTerminateMaxPercentMisses24h = 99
+
+  /**
+   * The highest `terminate_min_pct_samples` `sysio.opreg::setconfig` accepts — the contract's
+   * `MAX_TERMINATE_MIN_PCT_SAMPLES`. A flow that must not evict an operator by its miss rate
+   * sets it, so the percent rail waits for the longest sample; the dev default is
+   * {@link DefaultTerminateMinimumPercentSamples}. It mirrors the contract: a higher value is
+   * refused by `setconfig`.
+   */
+  export const MaxTerminateMinimumPercentSamples = 100
+
   /**
    * How a caller composes the bootstrap: the run's context, which create-only
    * phases join it, and which create-only options are merged into the caller's
@@ -297,6 +318,8 @@ export namespace ClusterBuildDefaults {
         : WireLcoImportTool.planClaimTotal(lcoImportPlan),
       dexEarmark
     )
+    // Before anything runs: `configure-opreg` would refuse the pair only after the cluster is up.
+    assertTerminationWindow(config)
     if (lcoImportPlan != null && isExternalOutpost) {
       WireLcoImportTool.assertRealData(lcoImportPlan)
       WireLcoImportTool.assertExportOutposts(
@@ -751,12 +774,14 @@ export namespace ClusterBuildDefaults {
       "OPPConfig",
       "Configure sysio.epoch + sysio.opreg"
     ).push(
-      Steps.contracts.sysio.epoch.planSetconfig<C>(
-        Actor.Sysio,
-        "configure-epoch",
-        "set the global epoch config",
-        {},
-        epochConfig(config)
+      ...OutpostChainCodenames.map(chain =>
+        Steps.contracts.sysio.epoch.planSetconfig<C>(
+          Actor.Sysio,
+          `configure-epoch-${chain.toLowerCase()}`,
+          `set the ${chain} consensus epoch config: ${config.outpostEpochDurationSec[chain]}s epochs`,
+          {},
+          epochConfig(config, chain)
+        )
       ),
       // Before `init-t5` and `msgch::bootstrap`, which both read the economic clock.
       Steps.contracts.sysio.epoch.planSeteconomy<C>(
@@ -1191,13 +1216,13 @@ export namespace ClusterBuildDefaults {
     // Underwriting and syndication: sysio.bond's hold bond, each shadow pair's
     // sysio.synd rules, and the verify of the syndication preconditions. A pair with
     // no syndconfig row releases nothing, so a real depot configures it too —
-    // unconditional. The buckets refill one burst per consensus epoch of THIS cluster.
+    // unconditional. A pair's buckets refill one burst per consensus epoch of its chain.
     Steps.registry.planSyndicationConfig<C>(
       prerequisites,
       "SyndicationConfig",
       "Configure sysio.bond + each shadow pair on sysio.synd",
       {},
-      config.epochDurationSec
+      config.outpostEpochDurationSec
     )
     // The launch-data import of each outpost's frozen export: positions, WIRE claims and the
     // LCO pool. Epoch-zero only (importsynd, regliqpool) and the first mint of each imported
@@ -1374,23 +1399,27 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── first epoch ──
-    // Step ORDER is load-bearing: both roster seeds read the schedule
-    // `schbatchgps` just materialized, and must land before `msgch::bootstrap`
+    // Step ORDER is load-bearing: each roster seed reads the schedule its
+    // chain's `schbatchgps` just materialized from the operators that joined the
+    // chain in their provisioning phase, and must land before `msgch::bootstrap`
     // delivers the first envelope.
     const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
-      "Schedule groups, emit the opreg bootstrap roster, bootstrap epoch 0 → 1"
+      "Schedule each chain's groups, emit the opreg bootstrap roster, bootstrap every chain's epoch 0 → 1"
     ).push(
-      Steps.contracts.sysio.epoch.planSchbatchgps<C>(
-        Actor.Sysio,
-        "schedule-batch-groups",
-        "build the initial batch-operator schedule",
-        {}
+      ...OutpostChainCodenames.map(chain =>
+        Steps.contracts.sysio.epoch.planSchbatchgps<C>(
+          Actor.Sysio,
+          `schedule-batch-groups-${chain.toLowerCase()}`,
+          `build the ${chain} initial batch-operator schedule`,
+          {},
+          { chain_code: chain }
+        )
       ),
-      // Every mode: wire-opreg-bootstrap.json — the bootstrapped roster + the
-      // window schbatchgps just built (groups[k] serves epoch k + 1), emitted
-      // at the earliest point the schedule exists.
+      // Every mode: wire-opreg-bootstrap.json — the bootstrapped roster + each
+      // chain's window schbatchgps just built (groups[k] serves the chain's
+      // epoch k + 1), emitted at the earliest point the schedules exist.
       Steps.wireOpregBootstrap.planEmit<C>(
         Actor.Sysio,
         "emit-wire-opreg-bootstrap",
@@ -1438,7 +1467,7 @@ export namespace ClusterBuildDefaults {
       Steps.contracts.sysio.msgch.planBootstrap<C>(
         Actor.Sysio,
         "bootstrap-epoch",
-        "bootstrap the first epoch",
+        "bootstrap every outpost chain's first epoch",
         { timeoutMs: 300_000 }
       )
     )
@@ -1495,13 +1524,16 @@ export namespace ClusterBuildDefaults {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
         "EpochAdvance",
-        "Verify the depot advances past the bootstrap epoch"
+        "Verify every outpost chain's epoch advances past the bootstrap epoch"
       ).push(
-        verifyStep<C>(
-          Actor.Sysio,
-          "verify-epoch-advance",
-          `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
-          runEpochAdvance
+        ...OutpostChainCodenames.map(chain =>
+          Steps.epochAdvance.planAwaitEpochAdvanced<C>(
+            Actor.Sysio,
+            `verify-epoch-advance-${chain.toLowerCase()}`,
+            `the ${chain} current_epoch_index reaches ${Steps.epochAdvance.BootstrapAdvanceTargetIndex}`,
+            {},
+            chain
+          )
         )
       )
     }
@@ -1736,58 +1768,6 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
-   * The epoch-advance gate's budget — {@link ProtocolTiming.EpochVerifyEpochCount}
-   * effective-epoch windows, the SAME envelope `ClusterManager.run`'s post-relaunch
-   * liveness check uses (one constant, two call sites; no new literal).
-   *
-   * @param config - The resolved cluster config (its `epochDurationSec`).
-   * @returns The budget in ms.
-   */
-  export function epochAdvanceBudgetMs(config: ClusterConfig): number {
-    return (
-      ProtocolTiming.EpochVerifyEpochCount *
-      ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
-      ProtocolTiming.MsPerSecond
-    )
-  }
-
-  /**
-   * Named runner — poll `sysio.epoch::epochstate` until the depot has advanced
-   * PAST the bootstrap epoch. `msgch::bootstrap` takes the chain 0 → 1 inline;
-   * reaching {@link EpochAdvanceTargetIndex} proves `sysio.epoch::advance` then
-   * fired on its own cadence, i.e. OPP is circulating and not merely bootstrapped.
-   *
-   * The poll owns the whole budget (no step ceiling), mirroring
-   * `ExternalOutpostSteps.runHeadBlockAdvance` — one owner, so the Report carries
-   * `pollUntil`'s precise timeout message rather than a racing step abort.
-   *
-   * @param ctx - The build context.
-   * @param signal - Abort signal.
-   */
-  export async function runEpochAdvance<C extends ClusterBuildContext>(
-    ctx: C,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await pollUntil(
-      `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
-      async () => {
-        try {
-          const { rows } = await ctx.wire.getEpochState()
-          return (rows[0]?.current_epoch_index ?? 0) >= EpochAdvanceTargetIndex
-        } catch (error) {
-          log.debug(
-            `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
-          )
-          return false
-        }
-      },
-      epochAdvanceBudgetMs(ctx.config),
-      ProtocolTiming.EpochVerifyPollIntervalMs
-    )
-  }
-
-  /**
    * The bootstrap's emission config with the T5 DEX earmark carved out of `t5_distributable`
    * (`t5_floor` unchanged). Every launch pool's WIRE side leaves the `sysio` treasury, so it
    * must sit outside the distributable pool, or the epoch readiness gate later finds the
@@ -1837,7 +1817,9 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
-   * The `sysio.epoch::setconfig` data, derived from the batch-operator topology.
+   * One outpost chain's `sysio.epoch::setconfig` data: the chain's consensus epoch duration,
+   * and the schedule shape derived from the batch-operator topology (every chain is sized the
+   * same, since every bootstrapped batch operator serves every chain).
    *
    * The shape itself comes from {@link BatchOperatorSchedule.resolve} — the ONE
    * place it is derived and validated, shared with
@@ -1848,11 +1830,13 @@ export namespace ClusterBuildDefaults {
    * without standing up a cluster.
    *
    * @param config - The resolved cluster config (topology + epoch overrides).
-   * @returns The `epoch::setconfig` action data.
+   * @param chain - The outpost chain the config is for.
+   * @returns The chain's `epoch::setconfig` action data.
    * @throws If the resulting group shape violates the spec.
    */
   export function epochConfig(
-    config: ClusterConfig
+    config: ClusterConfig,
+    chain: Constants.OutpostChainCodename
   ): SysioContracts.SysioEpochSetconfigAction {
     const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
       BatchOperatorSchedule.resolve({
@@ -1861,13 +1845,53 @@ export namespace ClusterBuildDefaults {
         batchOpGroups: config.batchOpGroups
       })
     return {
-      epoch_duration_sec: config.epochDurationSec,
+      chain_code: chain,
+      epoch_duration_sec: config.outpostEpochDurationSec[chain],
       operators_per_epoch: operatorsPerEpoch,
       batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,
       epoch_retention_envelope_log_count:
         config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
+  }
+
+  /**
+   * Assert the `sysio.opreg::setconfig` window this bootstrap installs holds both eviction rails at
+   * every outpost chain's `sysio.epoch::setconfig` schedule, the rule both setters enforce. A resident
+   * batch operator is on duty once every `batch_op_groups` epochs, so the window holds
+   * `terminate_window_ms` over that interval duties; they must reach
+   * `terminate_max_consecutive_misses + 1` and `terminate_min_pct_samples`.
+   *
+   * Exported (a pure value helper, not a Step) so the rule is unit-testable without standing up a
+   * cluster.
+   *
+   * @param config - The resolved cluster config (topology, epoch and termination overrides).
+   * @throws If a chain's schedule leaves the window short of either rail.
+   */
+  export function assertTerminationWindow(config: ClusterConfig): void {
+    const {
+      terminate_window_ms: windowMs,
+      terminate_max_consecutive_misses: maxConsecutiveMisses,
+      terminate_min_pct_samples: minimumPercentSamples
+    } = operatorRegistryConfig(config)
+    OutpostChainCodenames.forEach(chain => {
+      const {
+          epoch_duration_sec: epochDurationSec,
+          batch_op_groups: batchOpGroups
+        } = epochConfig(config, chain),
+        dutyIntervalMs =
+          epochDurationSec * batchOpGroups * ProtocolTiming.MsPerSecond,
+        duties = Math.floor(Number(windowMs) / dutyIntervalMs),
+        schedule = `the ${chain} schedule (${batchOpGroups} groups of ${epochDurationSec} s epochs)`
+      Assert.ok(
+        duties >= maxConsecutiveMisses + 1,
+        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_max_consecutive_misses + 1 (${maxConsecutiveMisses + 1})`
+      )
+      Assert.ok(
+        duties >= minimumPercentSamples,
+        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_min_pct_samples (${minimumPercentSamples})`
+      )
+    })
   }
 
   /**
@@ -1914,6 +1938,9 @@ export namespace ClusterBuildDefaults {
       terminate_max_pct_misses_24h:
         config.terminateMaxPercentMisses24h ??
         DefaultTerminateMaxPercentMisses24h,
+      terminate_min_pct_samples:
+        config.terminateMinimumPercentSamples ??
+        DefaultTerminateMinimumPercentSamples,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:

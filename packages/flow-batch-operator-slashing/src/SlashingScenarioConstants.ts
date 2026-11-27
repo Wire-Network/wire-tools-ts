@@ -2,6 +2,7 @@ import { SlugName } from "@wireio/sdk-core"
 import {
   Constants,
   ManagedProcess,
+  MinBatchOperatorGroups,
   NodeopProcess,
   ProtocolTiming
 } from "@wireio/cluster-tool"
@@ -15,7 +16,7 @@ import {
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
 export namespace SlashingScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
   /**
    * Economic epoch duration (s) — the `sysio.epoch::seteconomy` floor, equal to the consensus
@@ -69,47 +70,52 @@ export namespace SlashingScenarioConstants {
   /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
-   * Bootstrapped batch operators provisioned by the harness — exactly
-   * {@link DisputeOperators}.length, because the scenario states the group
-   * shape EXPLICITLY (`operatorsPerEpoch` + `batchOpGroups` in its `defaults`)
-   * and the bootstrap's `sysio.epoch::schbatchgps` asserts the ACTIVE pool can
-   * fill that shape: `operators_per_epoch x batch_op_groups` operators must
-   * exist when it runs. A smaller roster reverts the bootstrap with "not enough
-   * available batch operators for group assignment".
-   *
-   * These bootstrapped operators do NOT stay in the group: once the flow flips
-   * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
-   * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
-   * `dispop.*` fill the sole group and these fall outside it, exactly as the
-   * hand-off in `SlashingScenario.plan` describes. They keep the network
-   * relaying until that hand-off.
-   *
-   * (This was 1 while the shape was DERIVED from the roster — one operator then
-   * produced the wanted single group. The shape is explicit now, so 1 only
-   * starves the group; `batch_op_groups` still comes from
-   * {@link DisputeBatchOperatorGroupCount}, which wire-sysio #529 pins after
-   * materialization.)
+   * Batch-operator groups per chain: the depot's floor. The advance after the
+   * dispute operators turn ACTIVE seats them as the window's new tail, and the
+   * advance after that makes them the contested chain's SOLE active group.
    */
-  export const BootstrapBatchOperatorCount = DisputeOperatorCount
+  export const DisputeBatchOperatorGroupCount = MinBatchOperatorGroups
+  /**
+   * Bootstrapped batch operators provisioned by the harness — one window of
+   * {@link DisputeBatchOperatorGroupCount} groups of {@link DisputeOperators}.length,
+   * because the scenario states the group shape EXPLICITLY (`operatorsPerEpoch` +
+   * `batchOpGroups` in its `defaults`) and the bootstrap's
+   * `sysio.epoch::schbatchgps` asserts the ACTIVE pool can fill that shape:
+   * `operators_per_epoch x batch_op_groups` operators must exist when it runs. A
+   * smaller roster reverts the bootstrap with "not enough available batch
+   * operators for group assignment".
+   *
+   * These bootstrapped operators leave the contested chain's window as it slides:
+   * each advance draws the new tail group from the chain's pool, non-bootstrapped
+   * first, so the advance after the flow flips the SBP-less dispute operators
+   * ACTIVE seats the three `dispop.*` (which serve only the contested chain) as
+   * the tail, and the advance after that brings them on duty, as
+   * `SlashingScenario.plan` describes. The bootstrapped operators keep relaying the
+   * contested chain until then, and the other chain for the whole run.
+   */
+  export const BootstrapBatchOperatorCount =
+    DisputeOperatorCount * DisputeBatchOperatorGroupCount
   /**
    * Loosest VALID termination thresholds for the run. Termination CANNOT be
    * fully disabled — the depot contract (`sysio.opreg::setconfig`) caps
-   * `terminate_max_consecutive_misses` at [1, 5] and `terminate_max_pct_misses_24h`
-   * at [1, 99] — so these are the max the contract allows. The dispute operators
+   * `terminate_max_consecutive_misses` at [1, 5], `terminate_max_pct_misses_24h`
+   * at [1, 99] and `terminate_min_pct_samples` at [1, 100] — so the run takes the
+   * max the contract allows: this consecutive-miss ceiling,
+   * `ClusterBuildDefaults.MaxTerminateMaxPercentMisses24h` for the percentage, and
+   * `ClusterBuildDefaults.MaxTerminateMinimumPercentSamples` for the duty epochs the
+   * percent rail waits for. The dispute operators
    * are SBP-less and only deliver when the flow injects an envelope; across the
-   * critical window the epoch FREEZES (the sole active group isn't delivering, so
-   * depot consensus can't advance) and then PAUSES (opendispute), so `advance` —
-   * and thus `recorddel` miss-recording — does not run during settle / vote /
-   * tally / resolve. The dispute ops therefore never accrue 5 consecutive missed
-   * ADVANCES, so at the loosest valid thresholds they don't trip `termcheck`
-   * before the slash lands (which would make the slash a no-op on an
-   * already-TERMINATED operator). Termination itself is exercised by
+   * critical window the contested chain's epoch FREEZES (the sole active group
+   * isn't delivering, so its consensus can't advance) and then PAUSES
+   * (opendispute), so its `advance` — and thus `recorddel` miss-recording — does
+   * not run during settle / vote / tally / resolve. The dispute ops serve no other
+   * chain, so they never accrue 5 consecutive missed ADVANCES, and at the loosest
+   * valid thresholds they don't trip `termcheck` (which would evict them from the
+   * contested chain) before the slash lands. Termination itself is exercised by
    * flow-batch-operator-termination; THIS flow verifies the dispute-driven slash,
    * independent of the miss ladder.
    */
   export const TerminateMaxConsecutiveMisses = 5
-  /** Companion miss-percentage threshold — the max the contract allows (see above). */
-  export const TerminateMaxPercentMisses24h = 99
 
   /**
    * Tier-1 node owners that vote the dispute. Names MUST be 2-6 chars —
@@ -139,33 +145,23 @@ export namespace SlashingScenarioConstants {
 
   /** Distinct payload tags → distinct envelope checksums (no majority). */
   export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const
-  /**
-   * Tag delivered IDENTICALLY by all three dispute operators on the
-   * non-contested outpost, so that outpost reaches Option-A consensus for the
-   * contested epoch (the post-resolution advance where the slash runs requires
-   * every active outpost at epoch consensus).
-   */
-  export const ConsensusEnvelopeTag = "consensus"
 
-  /** One batch-operator group, so the dispute operators are the SOLE active group. */
-  export const DisputeBatchOperatorGroupCount = 1
   /** `epoch_retention_envelope_log_count` for the reshaped epoch config. */
   export const EpochRetentionEnvelopeLogCount = 200
 
   /**
-   * slug_name of the contested outpost. ETHEREUM is one of the two outposts
-   * the bootstrap registers + activates; its slug fits a JS number.
+   * The contested outpost chain. It runs its own consensus epoch, so the dispute
+   * pauses it alone: the dispute operators serve only it, and the other chain
+   * keeps advancing with the bootstrapped operators.
    */
-  export const ContestedChainCode = SlugName.from(
-    Constants.ETHEREUM_CHAIN_CODENAME
-  )
+  export const ContestedChain = Constants.ETHEREUM_CHAIN_CODENAME
+  /** The contested outpost's packed slug_name; it fits a JS number. */
+  export const ContestedChainCode = SlugName.from(ContestedChain)
   /**
-   * slug_name of the non-contested active outpost (SOLANA) — receives the
-   * consistent consensus envelope (see {@link ConsensusEnvelopeTag}).
+   * The outpost chain the dispute leaves running: its bootstrapped operators keep
+   * relaying it while the contested chain is paused.
    */
-  export const NonContestedChainCode = SlugName.from(
-    Constants.SOLANA_CHAIN_CODENAME
-  )
+  export const RunningChain = Constants.SOLANA_CHAIN_CODENAME
 
   /** Envelope fixture: `epoch_envelope_index` (mirrors `sysio.dispute_tests.cpp::encode_envelope`). */
   export const EnvelopeEpochEnvelopeIndex = 1
@@ -180,6 +176,13 @@ export namespace SlashingScenarioConstants {
   export const DisputeTableReadLimit = 100
   /** Row ceiling for `sysio.msgch::outpcons` reads (one row per active outpost). */
   export const OutpostConsensusTableReadLimit = 100
+  /**
+   * Row ceiling for `sysio.msgch::envelopes` reads. The depot keeps each outpost's
+   * deliveries for its current and previous epoch only, one row per delivering
+   * group member, so the table stays far below this; a read that reports more rows
+   * is refused, since a truncated read could miss the row it looks for.
+   */
+  export const EnvelopeTableReadLimit = 100
 
   /**
    * Frozen := the epoch index held across ≥ this many consecutive settle polls
@@ -191,10 +194,29 @@ export namespace SlashingScenarioConstants {
   /** Settle poll interval as a fraction of the epoch duration (see {@link SettleStableChecks}). */
   export const SettlePollIntervalEpochRatio = 0.75
 
+  /**
+   * Share of an epoch that must remain before the contested chain's next boundary,
+   * in chain time, when the dispute operators' ACTIVE flips start. An advance never
+   * lands before the boundary, so all three flips land between the same two
+   * advances unless they take longer than this.
+   */
+  export const ActivationHeadroomEpochRatio = 0.5
+  /**
+   * Epochs budgeted for the contested chain's clock to reach
+   * {@link activationHeadroomMs} short of its next boundary: the rest of the epoch
+   * then live, and the next one if it opened late.
+   */
+  export const ActivationHeadroomEpochBudget = 2
   /** Epochs budgeted for a dispute operator to flip OPERATOR_STATUS_ACTIVE after `processbatch`. */
   export const ActiveEpochBudget = 2
-  /** Epochs budgeted for `schbatchgps` to make the dispute operators the sole active group. */
-  export const GroupEpochBudget = 5
+  /**
+   * Epochs budgeted, from the moment all three dispute operators are ACTIVE, for
+   * the contested chain's natural advances to make them its sole active group:
+   * the epoch then live runs out and its advance seats them as the tail, then the
+   * bootstrapped group ahead of them relays one more epoch and its consensus
+   * advances it again.
+   */
+  export const GroupEpochBudget = DisputeBatchOperatorGroupCount
   /** Epochs budgeted for the epoch index to settle (freeze) on the dispute-operators-owned epoch. */
   export const SettleEpochBudget = 6
   /** Epochs budgeted for the chain head-block time to pass `next_epoch_start`. */
@@ -216,6 +238,20 @@ export namespace SlashingScenarioConstants {
   /** Epochs budgeted for the post-resolution advance to slash a non-canonical deliverer. */
   export const SlashPropagationEpochs = 8
 
+  /** Chain-clock headroom before the contested chain's next boundary the ACTIVE flips start with (ms). */
+  export function activationHeadroomMs(): number {
+    return EpochDurationSec * ActivationHeadroomEpochRatio * MsPerSecond
+  }
+
+  /** Deadline for the contested chain's clock to leave {@link activationHeadroomMs} before its boundary (ms). */
+  export function activationHeadroomDeadlineMs(): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ActivationHeadroomEpochBudget *
+      MsPerSecond
+    )
+  }
+
   /** Deadline for a dispute operator's ACTIVE flip (ms). */
   export function activeDeadlineMs(): number {
     return (
@@ -225,7 +261,7 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for the sole-active-group rebuild (ms). */
+  /** Deadline for the contested chain's next advance to seat the dispute operators as its sole group (ms). */
   export function groupDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *

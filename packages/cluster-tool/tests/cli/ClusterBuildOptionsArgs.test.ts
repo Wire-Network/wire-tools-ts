@@ -9,6 +9,7 @@ import {
   ClusterSignatureProviderTypes,
   EthereumReadBlockTag,
   NodeopReadMode,
+  OutpostChainCodenames,
   QueryEngineReadModeSchema,
   SignatureProviderKeyPolicy,
   SignatureProviderType
@@ -146,6 +147,9 @@ describe("toFlag", () => {
       "bind-nodeop-ports-bios-p2p"
     )
     expect(toFlag(["terminateWindowMs"])).toBe("terminate-window-ms")
+    expect(toFlag(["terminateMinimumPercentSamples"])).toBe(
+      "terminate-minimum-percent-samples"
+    )
   })
 })
 
@@ -343,7 +347,8 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     })
     expect(options.get("epoch-duration-sec")).toMatchObject({
       type: "number",
-      describe: "minimum epoch duration in seconds"
+      describe:
+        "minimum consensus epoch duration in seconds of every outpost chain without its own --outpost-epoch-duration-sec-<chain>; omit for each chain's default (ETHEREUM 60, SOLANA 30)"
     })
     expect(options.get("force")).toMatchObject({ type: "boolean" })
     expect(options.get("logging-levels-console")).toMatchObject({
@@ -372,6 +377,20 @@ describe("applyClusterBuildOptionsArgs registration", () => {
   it("seeds a flag default from the passed defaults", () => {
     const options = register({ ...RequiredPaths, epochDurationSec: 42 })
     expect(options.get("epoch-duration-sec")?.default).toBe(42)
+  })
+
+  it("registers --epoch-duration-sec and --economic-epoch-duration-sec with NO seeded default", () => {
+    // `optionalLeaf`s, deliberately: a seeded consensus duration would reach resolve as the
+    // caller's duration for every chain, so no chain would take its own default — and the
+    // economic default would follow it instead of standing on its own.
+    const registered = register(RequiredPaths)
+    ;["epoch-duration-sec", "economic-epoch-duration-sec"].forEach(flag => {
+      expect(registered.get(flag)).toMatchObject({ type: "number", demandOption: false })
+      expect(registered.get(flag)?.default).toBeUndefined()
+    })
+    expect(registered.get("economic-epoch-duration-sec")?.describe).toContain(
+      `at least ${ClusterConfigProvider.MinimumEconomicEpochDurationSec}), else ${ClusterConfigProvider.DefaultEconomicEpochDurationSec}`
+    )
   })
 
   it("registers --chain-state-db-size-mb with NO seeded default (SHARED-31)", () => {
@@ -704,6 +723,36 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.economicStartTime).toBeUndefined()
   })
 
+  it("registers one unseeded consensus epoch duration flag per outpost chain, naming its default", () => {
+    const options = register()
+    OutpostChainCodenames.forEach(chain => {
+      const option = options.get(`outpost-epoch-duration-sec-${chain.toLowerCase()}`)
+      expect(option).toMatchObject({ type: "number" })
+      expect(option?.describe).toContain(chain)
+      expect(option?.describe).toContain(
+        `else ${ClusterConfigProvider.DefaultOutpostEpochDurationSec[chain]}`
+      )
+      expect(option?.default).toBeUndefined()
+    })
+  })
+
+  it("maps a per-chain consensus epoch duration flag onto that chain alone", () => {
+    const options = toClusterBuildOptions({
+      "epoch-duration-sec": 60,
+      "outpost-epoch-duration-sec-solana": 150
+    })
+    expect(options.epochDurationSec).toBe(60)
+    expect(options.outpostEpochDurationSec).toEqual({
+      [Constants.SOLANA_CHAIN_CODENAME]: 150
+    })
+  })
+
+  it("leaves every chain's duration unset when no per-chain flag names one", () => {
+    const options = toClusterBuildOptions({ "epoch-duration-sec": 60 })
+    expect(options.outpostEpochDurationSec?.[Constants.ETHEREUM_CHAIN_CODENAME]).toBeUndefined()
+    expect(options.outpostEpochDurationSec?.[Constants.SOLANA_CHAIN_CODENAME]).toBeUndefined()
+  })
+
   it("reads the camelCase alias yargs also emits", () => {
     // yargs stores both kebab + camelCase; the reverse falls back to camelCase
     expect(
@@ -724,9 +773,9 @@ describe("register → parse round-trip", () => {
 
     const options = toClusterBuildOptions(argv)
     expect(options.clusterPath).toBe(Path.resolve(RequiredPaths.clusterPath))
-    expect(options.epochDurationSec).toBe(
-      ClusterConfigProvider.DefaultEpochDurationSec
-    )
+    // unseeded epoch durations never materialize — resolve gives each chain its default
+    expect(options.epochDurationSec).toBeUndefined()
+    expect(options.economicEpochDurationSec).toBeUndefined()
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
     expect(options.enableMockLiqPools).toBe(false)
@@ -750,10 +799,11 @@ describe("register → parse round-trip", () => {
     const registered = register({
         ...RequiredPaths,
         operatorsPerEpoch: 3,
-        batchOpGroups: 1,
+        batchOpGroups: 2,
         epochRetentionEnvelopeLogCount: 200,
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
+        terminateMinimumPercentSamples: 100,
         terminateWindowMs: 3_600_000,
         enableMockLiqPools: true,
         enableMockSyndicationImport: true,
@@ -768,10 +818,11 @@ describe("register → parse round-trip", () => {
 
     const options = toClusterBuildOptions(argv)
     expect(options.operatorsPerEpoch).toBe(3)
-    expect(options.batchOpGroups).toBe(1)
+    expect(options.batchOpGroups).toBe(2)
     expect(options.epochRetentionEnvelopeLogCount).toBe(200)
     expect(options.terminateMaxConsecutiveMisses).toBe(5)
     expect(options.terminateMaxPercentMisses24h).toBe(99)
+    expect(options.terminateMinimumPercentSamples).toBe(100)
     expect(options.terminateWindowMs).toBe(3_600_000)
     // …and the one the liq-yield flow's pools ride
     expect(options.enableMockLiqPools).toBe(true)

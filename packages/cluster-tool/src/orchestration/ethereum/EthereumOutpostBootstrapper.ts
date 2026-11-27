@@ -384,7 +384,7 @@ export namespace EthereumOutpostBootstrapper {
    * from (`epochstate.current_batch_op_group`).
    */
   export interface OppBootstrapSeed {
-    /** Every window group in slot order, with the depot's epoch duration. */
+    /** Every window group in slot order, with the Ethereum chain's consensus epoch duration. */
     window: EthereumOutpostInitialRoster
     /** Index of the window group that serves epoch 1. */
     activeGroupIndex: number

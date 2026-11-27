@@ -9,6 +9,7 @@ import type {
   CollateralRequirement,
   EthereumReadConfirmationOptions,
   LcoImportOptions,
+  OutpostEpochDurations,
   QueryEngineOptions
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
@@ -50,8 +51,24 @@ export interface ClusterBuildOptions {
    */
   adHocCount?: number
   // epoch
+  /**
+   * One consensus epoch duration (s) for every outpost chain `outpostEpochDurationSec` names
+   * none for — and, raised to the depot's economic floor, the default economic epoch duration.
+   * Omit it and each such chain takes its own default
+   * (`ClusterConfigProvider.DefaultOutpostEpochDurationSec`).
+   */
   epochDurationSec?: number
-  /** Economic epoch duration (s) — omit to match `epochDurationSec`. */
+  /**
+   * Each outpost chain's consensus epoch duration (s), keyed by its depot codename — the
+   * `epoch_duration_sec` of that chain's `sysio.epoch::setconfig`. A chain left unset takes
+   * `epochDurationSec`, or its own default when that is unset too.
+   */
+  outpostEpochDurationSec?: Partial<OutpostEpochDurations>
+  /**
+   * Economic epoch duration (s) — omit for `epochDurationSec` raised to the depot's economic
+   * floor (`ClusterConfigProvider.MinimumEconomicEpochDurationSec`), or, when that is unset too,
+   * `ClusterConfigProvider.DefaultEconomicEpochDurationSec`.
+   */
   economicEpochDurationSec?: number
   /**
    * Start of economic epoch 1 (ISO-8601; a stamp without `Z` or a `±HH:MM` offset is read as
@@ -133,6 +150,12 @@ export interface ClusterBuildOptions {
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number
+  /**
+   * `terminate_min_pct_samples`: the duty epochs an operator's membership of a chain must hold
+   * before the percent rail can evict it from that chain (the contract accepts 1 to 100). Omit for
+   * the dev default, 20.
+   */
+  terminateMinimumPercentSamples?: number
   terminateWindowMs?: number
   // collateral
   /**

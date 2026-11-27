@@ -486,7 +486,8 @@ export class SolanaOutpostBootstrapper {
    *   a larger seed overruns), and the group's SIZE drives the outpost's
    *   consensus threshold (`consensus_reached_now`), so seeding more than the
    *   delivering set would stall epoch 1.
-   * @param epochDurationSec - the depot's epoch duration (must be positive).
+   * @param epochDurationSec - the Solana chain's consensus epoch duration — its
+   *   `sysio.epoch::epochcfg` `epoch_duration_sec` (must be positive).
    */
   async oppBootstrap(
     seed: SolanaOutpostBootstrapper.OppBootstrapSeed,

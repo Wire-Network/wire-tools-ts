@@ -1,12 +1,16 @@
 const Assert = require("node:assert/strict")
 const { test, afterEach, mock } = require("node:test")
 
+const { SlugName } = require("@wireio/sdk-core")
 const {
   ClusterBuild,
+  ClusterBuildDefaults,
+  MinBatchOperatorGroups,
   NodeConfig,
   NodeOwnerTier,
   NodeRole,
   OutputStore,
+  ProtocolTiming,
   Steps,
   WireEconomicClockTool
 } = require("@wireio/cluster-tool")
@@ -15,6 +19,9 @@ const { SlashingScenario } = require("../lib/SlashingScenario.js")
 const {
   SlashingScenarioConstants: Constants
 } = require("../lib/SlashingScenarioConstants.js")
+const {
+  SlashingScenarioDisputeSteps: DisputeSteps
+} = require("../lib/steps/SlashingScenarioDisputeSteps.js")
 
 afterEach(() => mock.restoreAll())
 
@@ -46,6 +53,29 @@ function child(node, name) {
   const found = node.children.find(entry => entry.name === name)
   Assert.ok(found, `missing ${name}`)
   return found
+}
+
+/** Every step under a build, group or phase, in plan order. */
+function allSteps(node) {
+  return [...(node.steps ?? []), ...(node.children ?? []).flatMap(allSteps)]
+}
+
+/** The contested epoch {@link stagedContext} stages. */
+const StagedEpoch = 9
+
+/** A `sysio.msgch::envelopes` row of `chain` at `epochIndex` delivered by `operator`, as the RPC renders it. */
+function envelope(chain, epochIndex, operator) {
+  return { chain_code: String(SlugName.from(chain)), epoch_index: epochIndex, batch_op_name: operator }
+}
+
+/** A build context holding the staged contested epoch, whose `envelopes` read returns `rows`. */
+function stagedContext(rows) {
+  return {
+    outputs: new OutputStore().set(DisputeSteps.ContestedEpochKey, StagedEpoch),
+    wire: {
+      getSysioContract: () => ({ tables: { envelopes: { query: async () => ({ rows, more: false }) } } })
+    }
+  }
 }
 
 test("provisions each Tier-1 voter through a single nodeownreg step", () => {
@@ -128,6 +158,8 @@ test("the economic clock is observed before and after the restart against one he
   })
   Assert.equal(pausedAwait.options.timeoutMs, timeoutMs)
   Assert.equal(restartAwait.options.timeoutMs, timeoutMs)
+  Assert.equal(pausedHeld.input.chain, Constants.ContestedChain)
+  Assert.equal(restartHeld.input.chain, Constants.ContestedChain)
   Assert.deepEqual(pausedHeld.input.observationNames, [Constants.DisputePauseObservation])
   Assert.deepEqual(restartHeld.input.observationNames, [
     Constants.DisputePauseObservation,
@@ -156,4 +188,136 @@ test("the dispute's assertions stay in place around the new phases", () => {
     child(build, "SlashNonCanonical").steps.map(step => step.name),
     [...Constants.LosingOperators.map(operator => `${operator}-slashed`), "canonical-not-slashed"]
   )
+})
+
+test("the dispute operators serve only the contested chain, and no schedule is rebuilt mid-run", () => {
+  const { build } = plannedBuild(),
+    setup = child(build, "SetupDispute"),
+    provisioning = child(setup, "ProvisionDisputeOperators"),
+    joins = provisioning.children.flatMap(phase =>
+      phase.steps.filter(step => step.input.kind === "WireOperatorProvisioningTool.ChainJoinInput")
+    )
+  Assert.deepEqual(
+    joins.map(step => [step.input.label, step.input.chain]),
+    Constants.DisputeOperators.map(label => [label, Constants.ContestedChain])
+  )
+  Assert.equal(typeof Steps.contracts.sysio.epoch.runSchbatchgps, "function")
+  Assert.deepEqual(
+    allSteps(build).filter(step => step.runner === Steps.contracts.sysio.epoch.runSchbatchgps),
+    []
+  )
+  Assert.notEqual(Constants.RunningChain, Constants.ContestedChain)
+})
+
+test("the bootstrap shape is two groups of the dispute operators' size, the depot's floor", () => {
+  const { scenario } = plannedBuild()
+  Assert.equal(scenario.defaults.operatorsPerEpoch, Constants.DisputeOperators.length)
+  Assert.equal(scenario.defaults.batchOpGroups, MinBatchOperatorGroups)
+  Assert.equal(scenario.defaults.batchOperatorCount, MinBatchOperatorGroups * Constants.DisputeOperators.length)
+})
+
+test("every miss rail runs at the loosest value the contract accepts", () => {
+  const { scenario } = plannedBuild()
+  Assert.equal(scenario.defaults.terminateMaxConsecutiveMisses, Constants.TerminateMaxConsecutiveMisses)
+  Assert.equal(scenario.defaults.terminateMaxPercentMisses24h, ClusterBuildDefaults.MaxTerminateMaxPercentMisses24h)
+  Assert.equal(
+    scenario.defaults.terminateMinimumPercentSamples,
+    ClusterBuildDefaults.MaxTerminateMinimumPercentSamples
+  )
+})
+
+test("the ACTIVE flips start with headroom before the boundary, then the next advance is awaited", () => {
+  const { build } = plannedBuild(),
+    steps = child(child(build, "SetupDispute"), "ReshapeSchedule").steps,
+    [headroom] = steps,
+    soleGroup = steps[steps.length - 1]
+  Assert.deepEqual(
+    steps.map(step => step.name),
+    [
+      "activation-headroom",
+      ...Constants.DisputeOperators.map(operator => `force-eligible-${operator}`),
+      ...Constants.DisputeOperators.map(operator => `${operator}-active`),
+      "sole-active-group"
+    ]
+  )
+  Assert.equal(headroom.runner, DisputeSteps.runAwaitActivationHeadroom)
+  Assert.equal(headroom.input, null)
+  Assert.equal(
+    headroom.options.timeoutMs,
+    Constants.activationHeadroomDeadlineMs() + Constants.PollDeadlineBufferMs
+  )
+  Assert.equal(soleGroup.runner, DisputeSteps.runAwaitSoleActiveGroup)
+  Assert.equal(soleGroup.input, null)
+  Assert.equal(soleGroup.options.timeoutMs, Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs)
+})
+
+test("the natural advances are budgeted one effective contested-chain epoch per group", () => {
+  Assert.equal(Constants.GroupEpochBudget, MinBatchOperatorGroups)
+  Assert.equal(
+    Constants.groupDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, MinBatchOperatorGroups)
+  )
+})
+
+test("the ACTIVE flips' headroom is a share of the epoch, awaited within its budget", () => {
+  Assert.equal(
+    Constants.activationHeadroomMs(),
+    Constants.EpochDurationSec * Constants.ActivationHeadroomEpochRatio * ProtocolTiming.MsPerSecond
+  )
+  Assert.ok(Constants.activationHeadroomMs() > 0)
+  Assert.ok(Constants.activationHeadroomMs() < Constants.EpochDurationSec * ProtocolTiming.MsPerSecond)
+  Assert.equal(
+    Constants.activationHeadroomDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, Constants.ActivationHeadroomEpochBudget)
+  )
+})
+
+test("the contested epoch is captured, then its envelope bucket is verified empty, before any delivery", () => {
+  const { build } = plannedBuild(),
+    inject = child(build, "InjectDivergent"),
+    [stage, bucketEmpty] = child(inject, "StageContestedEpoch").steps
+  Assert.deepEqual(
+    inject.children.map(node => node.name),
+    ["StageContestedEpoch", "DivergentDeliveries", "DisputeOpens"]
+  )
+  Assert.equal(stage.name, "stage-contested-epoch")
+  Assert.equal(stage.runner, DisputeSteps.runStageContestedEpoch)
+  Assert.equal(bucketEmpty.name, "contested-bucket-empty")
+})
+
+test("the bucket verify passes when only other chains' or epochs' deliveries are retained", async () => {
+  const { build } = plannedBuild(),
+    [, bucketEmpty] = child(child(build, "InjectDivergent"), "StageContestedEpoch").steps
+  await bucketEmpty.runner(
+    stagedContext([
+      envelope(Constants.ContestedChain, StagedEpoch - 1, "batchop.a"),
+      envelope(Constants.RunningChain, StagedEpoch, "batchop.b")
+    ]),
+    null,
+    new AbortController().signal
+  )
+})
+
+test("the bucket verify fails when the contested epoch already holds a delivery", async () => {
+  const { build } = plannedBuild(),
+    [, bucketEmpty] = child(child(build, "InjectDivergent"), "StageContestedEpoch").steps
+  await Assert.rejects(
+    bucketEmpty.runner(
+      stagedContext([envelope(Constants.ContestedChain, StagedEpoch, "batchop.a")]),
+      null,
+      new AbortController().signal
+    ),
+    /already holds deliveries from \["batchop\.a"\]/
+  )
+})
+
+test("each dispute operator delivers one divergent envelope, to the contested chain only", () => {
+  const { build } = plannedBuild(),
+    deliveries = child(child(build, "InjectDivergent"), "DivergentDeliveries"),
+    steps = deliveries.children.flatMap(phase => phase.steps)
+  Assert.equal(steps.length, Constants.DisputeOperators.length)
+  steps.forEach((step, index) => {
+    Assert.equal(step.input.chainCode, Constants.ContestedChainCode)
+    Assert.equal(step.input.tag, Constants.EnvelopeTags[index])
+  })
 })

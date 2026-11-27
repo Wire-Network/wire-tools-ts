@@ -5,7 +5,8 @@ import {
   SignatureProviderKeyPolicy,
   SignatureProviderType,
   createUnsetEthereumReadConfirmationConfig,
-  type ClusterConfig
+  type ClusterConfig,
+  createUniformOutpostEpochDurations
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool"
@@ -43,6 +44,7 @@ export const PersistedFixture: ClusterConfig = {
   underwriterCount: 0,
   apiCount: 1,
   epochDurationSec: 60,
+  outpostEpochDurationSec: createUniformOutpostEpochDurations(60),
   economicEpochDurationSec: 60,
   economicStartTime: null,
   operatorsPerEpoch: null,
@@ -52,6 +54,7 @@ export const PersistedFixture: ClusterConfig = {
   cooldownEpochs: 1,
   terminateMaxConsecutiveMisses: null,
   terminateMaxPercentMisses24h: null,
+  terminateMinimumPercentSamples: null,
   terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",

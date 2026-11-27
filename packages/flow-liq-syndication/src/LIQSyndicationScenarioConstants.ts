@@ -13,7 +13,7 @@ import {
  * stopwatch.
  */
 export namespace LIQSyndicationScenarioConstants {
-  /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
+  /** Consensus epoch duration (s) of every outpost chain. */
   export const EpochDurationSec = 60
   /** Producer nodes stood up by the bootstrap. */
   export const ProducerCount = 3
@@ -73,28 +73,9 @@ export namespace LIQSyndicationScenarioConstants {
   export const OutpostWriteTimeoutMs = ProtocolTiming.OutpostWriteBudgetMs
 
   /**
-   * Effective-epoch windows budgeted for `current_epoch_index` to move past the
-   * pre-syndication snapshot. Reuses the shared epoch-advance liveness envelope —
-   * the depot must keep advancing WHILE carrying envelopes with attestation
-   * types its dispatcher does not know.
+   * The snapshot of every outpost chain's `current_epoch_index` taken before the syndication
+   * (`EpochAdvanceSteps.epochIndicesKey`); the depot must keep advancing past it WHILE carrying
+   * envelopes with attestation types its dispatcher does not know.
    */
-  export const EpochAdvanceEpochBudget = ProtocolTiming.EpochVerifyEpochCount
-  /** Interval between epoch-state reads while waiting for the advance (ms). */
-  export const EpochAdvancePollMs = ProtocolTiming.EpochVerifyPollIntervalMs
-
-  /** Row page size for the `sysio.epoch::epochstate` singleton read. */
-  export const EpochStateQueryLimit = 1
-
-  /**
-   * Deadline for the depot to advance past the snapshotted epoch index (ms).
-   *
-   * @returns The deadline in milliseconds.
-   */
-  export function epochAdvanceDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      EpochAdvanceEpochBudget *
-      ProtocolTiming.MsPerSecond
-    )
-  }
+  export const PreSyndicationEpochSnapshot = "liq-syndication.pre-syndication"
 }

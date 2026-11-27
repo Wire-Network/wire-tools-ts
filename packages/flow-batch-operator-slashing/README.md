@@ -1,18 +1,30 @@
 # flow-batch-operator-slashing
 
-Three SBP-less batch operators become the only active group and deliver three different envelopes for
-one outpost and epoch, past the epoch boundary. `sysio.msgch::evalcons` opens a dispute and
-`sysio.chalg::opendispute` pauses the consensus epoch. Three of the four Tier-1 node owners vote the
-canonical checksum, the bootstrapped batch operators' `chkdispute` crank resolves the dispute and
-lifts the pause, and the next `advance` slashes the two non-canonical deliverers. The canonical
-deliverer is not slashed.
+Three SBP-less batch operators join the Ethereum outpost chain only and are flipped ACTIVE. The flow
+does not rebuild any schedule. Every chain's window holds two groups of three, and each advance draws
+the new tail group from the chain's ACTIVE, serving batch operators outside the group still seated,
+non-bootstrapped first. So Ethereum's next advance seats the three as its tail group, and the advance
+after makes them its only active group. The flips start only when at least half an epoch is left
+before Ethereum's next boundary, so that all three land before the same advance. An advance between
+two flips would seat a mixed group, and the dispute operators in it would miss that epoch instead of
+owning it alone. The flow runs every miss rail at its loosest valid setting
+(`terminateMaxConsecutiveMisses` 5, `terminateMaxPercentMisses24h` 99,
+`terminateMinimumPercentSamples` 100), so the dispute operators are not evicted before the slash.
 
-While the dispute is open, the **EconomicClockDuringDispute** group checks that the pause holds
-consensus only. An economic epoch opens on the bootstrapped relays' `tickeconomy` crank while
-consensus stays paused at the contested epoch. Every relay is then stopped and restarted against
-its retained data. The restarted relays catch the economic clock up with its grid and open another
-economic epoch, and consensus is still paused at the same epoch. The relays restart before the vote,
-so their crank still resolves the dispute.
+Nothing delivers for the new epoch, so Ethereum freezes on it with an empty envelope bucket, which
+the flow verifies. Past that epoch's boundary the three deliver three different envelopes for it.
+`sysio.msgch::evalcons` opens a dispute and `sysio.chalg::opendispute` pauses the Ethereum consensus
+epoch alone: the Solana chain's schedule keeps the bootstrapped operators, which keep it advancing.
+Three of the four Tier-1 node owners vote the canonical checksum, the bootstrapped batch operators'
+`chkdispute` crank resolves the dispute and lifts the pause, and Ethereum's next `advance` slashes
+the two non-canonical deliverers. The canonical deliverer is not slashed.
+
+While the dispute is open, the **EconomicClockDuringDispute** group checks that the pause holds the
+Ethereum consensus only. An economic epoch opens on the bootstrapped relays' `tickeconomy` crank
+while Ethereum stays paused at the contested epoch. Every relay is then stopped and restarted
+against its retained data. The restarted relays catch the economic clock up with its grid and open
+another economic epoch, and Ethereum is still paused at the same epoch. The relays restart before the
+vote, so their crank still resolves the dispute.
 
 ## Running
 
@@ -25,6 +37,6 @@ node scripts/run-flow.mjs flow-batch-operator-slashing \
 node scripts/flow-heartbeat-monitor.mjs --cluster-path <same-cluster-path> --expect-epoch-freeze
 ```
 
-The flow holds the contested epoch on purpose, so arm the monitor with `--expect-epoch-freeze`.
+The flow holds the contested Ethereum epoch on purpose, so arm the monitor with `--expect-epoch-freeze`.
 `pnpm run test:unit` checks the plan's structure, and the jest suites cover the envelope codec and
 the inbound tip reader; neither starts a cluster.

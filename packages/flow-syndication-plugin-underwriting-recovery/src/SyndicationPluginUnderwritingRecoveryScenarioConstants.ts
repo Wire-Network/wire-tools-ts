@@ -16,7 +16,8 @@ export namespace SyndicationPluginUnderwritingRecoveryScenarioConstants {
   export const CheckpointHeadroomEpochs = 3
   /**
    * Poll budget for real pruning and a matching accepted checkpoint.
-   * @param epochDurationSec - The cluster's actual global epoch duration.
+   * @param epochDurationSec - The Solana chain's actual consensus epoch duration: its envelope
+   *   log prunes one record per Solana epoch.
    * @returns The retention window plus finalization headroom in milliseconds.
    */
   export function pruningBudgetMs(epochDurationSec: number): number {
@@ -27,6 +28,6 @@ export namespace SyndicationPluginUnderwritingRecoveryScenarioConstants {
   export const PruningPollMs = 5 * ProtocolTiming.MsPerSecond
   /** Anchor's generated account name, decoded with the deployed program's own IDL. */
   export const EnvelopeLogAccountName = "envelopeLog"
-  /** The shortest global epoch keeps the experiment at ordinary one-minute cadence. */
+  /** Every outpost chain's consensus epoch keeps the experiment at ordinary one-minute cadence. */
   export const EpochDurationSec = SyndicationScenario.EpochDurationSec
 }
