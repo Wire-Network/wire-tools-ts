@@ -856,12 +856,13 @@ export namespace SlashingScenarioDisputeSteps {
 
   /**
    * Poll until the contested chain's ACTIVE group is exactly the dispute
-   * operators. Nothing rebuilds the schedule: the chain's window holds one
-   * group, and `sysio.epoch::finishadv` re-draws it on every advance from the
-   * chain's pool (ACTIVE batch operators SERVING the chain, non-bootstrapped
-   * first, then by account). Once the three serving dispute operators are
-   * ACTIVE, the next advance, pushed by the bootstrapped relays after their
-   * consensus on the epoch then live, seats exactly them.
+   * operators. Nothing rebuilds the schedule: `sysio.epoch::finishadv` draws the
+   * window's new tail group on every advance from the chain's pool (ACTIVE batch
+   * operators SERVING the chain, non-bootstrapped first, then by account), minus
+   * the group still seated. Once the three serving dispute operators are ACTIVE,
+   * the next advance, pushed by the bootstrapped relays after their consensus on
+   * the epoch then live, seats exactly them as the tail, and the advance after
+   * the bootstrapped group ahead of them relays its epoch brings them on duty.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.

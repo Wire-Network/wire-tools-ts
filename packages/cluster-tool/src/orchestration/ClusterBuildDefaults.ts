@@ -318,6 +318,8 @@ export namespace ClusterBuildDefaults {
         : WireLcoImportTool.planClaimTotal(lcoImportPlan),
       dexEarmark
     )
+    // Before anything runs: `configure-opreg` would refuse the pair only after the cluster is up.
+    assertTerminationWindow(config)
     if (lcoImportPlan != null && isExternalOutpost) {
       WireLcoImportTool.assertRealData(lcoImportPlan)
       WireLcoImportTool.assertExportOutposts(
@@ -1851,6 +1853,45 @@ export namespace ClusterBuildDefaults {
       epoch_retention_envelope_log_count:
         config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
+  }
+
+  /**
+   * Assert the `sysio.opreg::setconfig` window this bootstrap installs holds both eviction rails at
+   * every outpost chain's `sysio.epoch::setconfig` schedule, the rule both setters enforce. A resident
+   * batch operator is on duty once every `batch_op_groups` epochs, so the window holds
+   * `terminate_window_ms` over that interval duties; they must reach
+   * `terminate_max_consecutive_misses + 1` and `terminate_min_pct_samples`.
+   *
+   * Exported (a pure value helper, not a Step) so the rule is unit-testable without standing up a
+   * cluster.
+   *
+   * @param config - The resolved cluster config (topology, epoch and termination overrides).
+   * @throws If a chain's schedule leaves the window short of either rail.
+   */
+  export function assertTerminationWindow(config: ClusterConfig): void {
+    const {
+      terminate_window_ms: windowMs,
+      terminate_max_consecutive_misses: maxConsecutiveMisses,
+      terminate_min_pct_samples: minimumPercentSamples
+    } = operatorRegistryConfig(config)
+    OutpostChainCodenames.forEach(chain => {
+      const {
+          epoch_duration_sec: epochDurationSec,
+          batch_op_groups: batchOpGroups
+        } = epochConfig(config, chain),
+        dutyIntervalMs =
+          epochDurationSec * batchOpGroups * ProtocolTiming.MsPerSecond,
+        duties = Math.floor(Number(windowMs) / dutyIntervalMs),
+        schedule = `the ${chain} schedule (${batchOpGroups} groups of ${epochDurationSec} s epochs)`
+      Assert.ok(
+        duties >= maxConsecutiveMisses + 1,
+        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_max_consecutive_misses + 1 (${maxConsecutiveMisses + 1})`
+      )
+      Assert.ok(
+        duties >= minimumPercentSamples,
+        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_min_pct_samples (${minimumPercentSamples})`
+      )
+    })
   }
 
   /**

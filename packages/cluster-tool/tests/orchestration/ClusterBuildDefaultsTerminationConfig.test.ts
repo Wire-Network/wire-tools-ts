@@ -1,6 +1,12 @@
 import Path from "node:path"
+import {
+  OutpostChainCodename,
+  createUniformOutpostEpochDurations,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import type { ClusterBuildOptions } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
+import { PersistedFixture } from "../config/clusterConfigFixture.js"
 import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -12,6 +18,15 @@ const ContractDefaultMinimumPercentSamples = 20
 const ContractMaximumMinimumPercentSamples = 100
 /** The contract's `MAX_TERMINATE_MAX_PCT_MISSES_24H`. */
 const ContractMaximumPercentMisses = 99
+/** A 60 s epoch with the default three groups: a resident operator is on duty every 180 s. */
+const DutyIntervalMs = 3 * 60 * 1_000
+/** An hourly epoch: with three groups, eight duties fit the default 24 h window. */
+const HourlyEpochDurationSec = 3_600
+
+/** The persisted fixture (60 s epochs, three groups), reshaped for a case. Pure — no `resolve`. */
+function config(overrides: Partial<ClusterConfig>): ClusterConfig {
+  return { ...PersistedFixture, ...overrides }
+}
 
 describe("ClusterBuildDefaults — sysio.opreg termination rails", () => {
   let environment: ResolveEnvironment
@@ -67,6 +82,18 @@ describe("ClusterBuildDefaults — sysio.opreg termination rails", () => {
     expect(data.terminate_min_pct_samples).toBe(1)
   })
 
+  it("refuses, before anything runs, a schedule whose window cannot reach the sample minimum", async () => {
+    await expect(
+      setconfigData({
+        outpostEpochDurationSec: {
+          [OutpostChainCodename.ETHEREUM]: HourlyEpochDurationSec
+        }
+      })
+    ).rejects.toThrow(
+      /holds 8 duty rotations of the ETHEREUM schedule .*terminate_min_pct_samples \(20\)/
+    )
+  })
+
   it("mirrors the contract's ceilings for the percent rail", () => {
     expect(ClusterBuildDefaults.MaxTerminateMinimumPercentSamples).toBe(
       ContractMaximumMinimumPercentSamples
@@ -74,5 +101,66 @@ describe("ClusterBuildDefaults — sysio.opreg termination rails", () => {
     expect(ClusterBuildDefaults.MaxTerminateMaxPercentMisses24h).toBe(
       ContractMaximumPercentMisses
     )
+  })
+})
+
+describe("ClusterBuildDefaults.assertTerminationWindow — the window holds both rails at every schedule", () => {
+  it("accepts the default rails at the default schedules", () => {
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(config({}))
+    ).not.toThrow()
+  })
+
+  it("accepts a window of exactly the sample minimum's duty rotations and refuses one ms less", () => {
+    const window = ContractDefaultMinimumPercentSamples * DutyIntervalMs
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({ terminateWindowMs: window })
+      )
+    ).not.toThrow()
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({ terminateWindowMs: window - 1 })
+      )
+    ).toThrow(
+      /holds 19 duty rotations .*fewer than terminate_min_pct_samples \(20\)/
+    )
+  })
+
+  it("refuses a window short of the consecutive-miss run", () => {
+    const window = 6 * DutyIntervalMs - 1
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({ terminateWindowMs: window, terminateMinimumPercentSamples: 1 })
+      )
+    ).toThrow(
+      /holds 5 duty rotations .*fewer than terminate_max_consecutive_misses \+ 1 \(6\)/
+    )
+  })
+
+  it("checks every chain's own schedule", () => {
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({
+          outpostEpochDurationSec: {
+            ...createUniformOutpostEpochDurations(60),
+            [OutpostChainCodename.SOLANA]: HourlyEpochDurationSec
+          }
+        })
+      )
+    ).toThrow(/the SOLANA schedule \(3 groups of 3600 s epochs\)/)
+  })
+
+  it("accepts a sample minimum the hourly schedule's window holds", () => {
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({
+          outpostEpochDurationSec: createUniformOutpostEpochDurations(
+            HourlyEpochDurationSec
+          ),
+          terminateMinimumPercentSamples: 8
+        })
+      )
+    ).not.toThrow()
   })
 })

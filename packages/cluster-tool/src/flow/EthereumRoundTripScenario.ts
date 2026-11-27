@@ -6,6 +6,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { EthereumWallet } from "../clients/ethereum/EthereumWallet.js"
+import { MinBatchOperatorGroups } from "../config/BatchOperatorSchedule.js"
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -31,12 +32,13 @@ const { SysioSyndItemKind } = SysioContracts
 
 /** One fresh Ethereum custody-to-wallet round trip, with explicit integration hooks. */
 export abstract class EthereumRoundTripScenario extends FlowScenario {
+  // The smallest window the depot accepts: two one-relay groups, on duty in turn.
   override readonly defaults = {
     epochDurationSec: SyndicationScenario.EpochDurationSec,
     producerCount: 1,
-    batchOperatorCount: 1,
+    batchOperatorCount: MinBatchOperatorGroups,
     operatorsPerEpoch: 1,
-    batchOpGroups: 1,
+    batchOpGroups: MinBatchOperatorGroups,
     underwriterCount: 0
   }
 

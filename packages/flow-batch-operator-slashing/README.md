@@ -1,12 +1,13 @@
 # flow-batch-operator-slashing
 
 Three SBP-less batch operators join the Ethereum outpost chain only and are flipped ACTIVE. The flow
-does not rebuild any schedule. Every chain's window holds one group of three, and each advance draws
-the next epoch's group from the chain's ACTIVE, serving batch operators, non-bootstrapped first. So
-Ethereum's next advance makes the three its only active group. The flips start only when at least
-half an epoch is left before Ethereum's next boundary, so that all three land before the same advance.
-An advance between two flips would seat a mixed group, and the dispute operators in it would miss
-that epoch instead of owning it alone. The flow runs every miss rail at its loosest valid setting
+does not rebuild any schedule. Every chain's window holds two groups of three, and each advance draws
+the new tail group from the chain's ACTIVE, serving batch operators outside the group still seated,
+non-bootstrapped first. So Ethereum's next advance seats the three as its tail group, and the advance
+after makes them its only active group. The flips start only when at least half an epoch is left
+before Ethereum's next boundary, so that all three land before the same advance. An advance between
+two flips would seat a mixed group, and the dispute operators in it would miss that epoch instead of
+owning it alone. The flow runs every miss rail at its loosest valid setting
 (`terminateMaxConsecutiveMisses` 5, `terminateMaxPercentMisses24h` 99,
 `terminateMinimumPercentSamples` 100), so the dispute operators are not evicted before the slash.
 

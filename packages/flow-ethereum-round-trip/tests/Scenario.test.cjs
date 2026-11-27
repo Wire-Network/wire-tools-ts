@@ -5,6 +5,7 @@ const {
   EthereumSyndicationTool,
   WireSyndicationTool,
   ClusterBuild,
+  MinBatchOperatorGroups,
   OutputStore
 } = require("@wireio/cluster-tool")
 const { EthereumHappyScenario } = require("../lib/EthereumHappyScenario.js")
@@ -131,3 +132,9 @@ for (const [outstanding, ok] of [
     if (ok) await run()
     else await Assert.rejects(run)
   })
+test("the round trip runs the depot's smallest window: two one-relay groups", () => {
+  const { defaults } = new EthereumHappyScenario()
+  Assert.equal(defaults.batchOpGroups, MinBatchOperatorGroups)
+  Assert.equal(defaults.operatorsPerEpoch, 1)
+  Assert.equal(defaults.batchOperatorCount, MinBatchOperatorGroups)
+})

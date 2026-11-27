@@ -106,9 +106,9 @@ describe("EthereumOutpostSteps.resolveInitialRoster", () => {
     // The whole point of WNE-41 on a cluster: these are the addresses the
     // daemons sign `epochIn` with, and `isActiveOperator` is fail-closed.
     const ctx = context({
-        batchOperatorCount: 3,
+        batchOperatorCount: 6,
         operatorsPerEpoch: 3,
-        batchOpGroups: 1
+        batchOpGroups: 2
       }),
       addresses = seedBatchOperators(ctx),
       roster = EthereumOutpostSteps.resolveInitialRoster(ctx)
@@ -120,19 +120,19 @@ describe("EthereumOutpostSteps.resolveInitialRoster", () => {
 
   it("walks the batch-operator LABEL sequence, not the key store's insertion order", () => {
     const ctx = context({
-        batchOperatorCount: 3,
+        batchOperatorCount: 6,
         operatorsPerEpoch: 3,
-        batchOpGroups: 1
+        batchOpGroups: 2
       }),
-      // Inserted c, b, a — the roster still reads a, b, c.
-      [a, b, c] = seedBatchOperators(
+      // Inserted f … a — the roster still reads a … f, interleaved as the depot does.
+      addresses = seedBatchOperators(
         ctx,
-        [...Constants.batchOperatorLabels(3)].reverse()
+        [...Constants.batchOperatorLabels(6)].reverse()
       )
     expect(EthereumOutpostSteps.resolveInitialRoster(ctx).groups[0]).toEqual([
-      a,
-      c,
-      b
+      addresses[0],
+      addresses[2],
+      addresses[4]
     ])
   })
 
@@ -224,10 +224,11 @@ describe("EthereumOutpostSteps.partitionLikeDepot", () => {
     Array.from({ length: count }, (_unused, index) => `0x${index}`)
 
   it("trims to batch_operator_minimum_active before grouping", () => {
-    // 9 addresses but the depot only schedules 3: group 0's length is the
+    // 9 addresses but the depot only schedules 6: group 0's length is the
     // consensus threshold, so the untrimmed pool must not widen it.
-    const groups = EthereumOutpostSteps.partitionLikeDepot(pool(9), 3, 1, 3)
+    const groups = EthereumOutpostSteps.partitionLikeDepot(pool(9), 3, 2, 6)
     expect(groups[0]).toHaveLength(3)
+    expect(groups.flat()).toHaveLength(6)
   })
 
   it("leaves operators past the scheduled window OUT — the depot leaves them ungrouped too", () => {
@@ -235,11 +236,11 @@ describe("EthereumOutpostSteps.partitionLikeDepot", () => {
     // seat for an unscheduled operator would authorize it for an epoch the
     // depot never scheduled it for. It stays ACTIVE and ungrouped, as on the
     // depot, until a rotation schedules it.
-    const groups = EthereumOutpostSteps.partitionLikeDepot(pool(5), 3, 1, 3)
-    expect(groups).toHaveLength(1)
+    const groups = EthereumOutpostSteps.partitionLikeDepot(pool(8), 3, 2, 6)
+    expect(groups).toHaveLength(2)
     expect(groups[0]).toHaveLength(3)
-    expect(groups.flat()).not.toContain("0x3")
-    expect(groups.flat()).not.toContain("0x4")
+    expect(groups.flat()).not.toContain("0x6")
+    expect(groups.flat()).not.toContain("0x7")
   })
 
   it("emits exactly batch_op_groups groups when the pool fills them", () => {
