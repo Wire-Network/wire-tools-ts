@@ -721,7 +721,8 @@ IDL whose `OutboundMessageBuffer` and `LatestOutboundEnvelope` layouts do not pl
 
 Each batch operator's relay pushes, as `<operator>@active`: `sysio.msgch::deliver`, `sysio.msgch::chkcons`,
 `sysio.msgch::reportqueue` (its report of the outpost's outbound backlog; reports from a strict majority of the
-seats of the chain's group give the chain traffic), `sysio.chalg::chkdispute`, `sysio.epoch::tickeconomy`, `sysio.swap::tickyield`,
+seats of the chain's group on duty, or of its next group, give the chain traffic), `sysio.chalg::chkdispute`,
+`sysio.epoch::tickeconomy`, `sysio.swap::tickyield`,
 `sysio.liq::queueyield`, and `sysio.kicker::kick` while the plugin's kick crank is on (`--batch-kick-crank`, on by
 default). The bootstrap links none of them, so `<operator>@active` authorizes them all; an operator whose
 `@active` a `linkauth` restricts must let it authorize every one of these actions, or `batch_operator_plugin`

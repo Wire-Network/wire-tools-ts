@@ -49,10 +49,11 @@ const { SysioContractName, SysioMsgchChainkind, SysioSyndItemKind } = SysioContr
  * message the depot queues — makes the chain due at the later of its epoch start plus its minimum
  * and its traffic plus its traffic wait, and it advances then; a strict majority of the seats on
  * duty decides an epoch at the delivery that completes it; and a member that missed its epoch
- * delivers it late, inside the late window, and is credited when the books close. Waits on
- * traffic the flow creates poll without the keep-due pump; only the late-delivery phase, which
- * needs advances nothing queued would bring, keeps Ethereum due. Every pure check is exported on
- * its own so the unit tests drive it without a chain.
+ * delivers it late, inside the late window, and is credited when the books close, once that window
+ * has passed and with no advance. Waits on traffic the flow creates poll without the keep-due
+ * pump; only the late-delivery phase, which needs advances nothing queued would bring, keeps
+ * Ethereum due until the epoch after the member's opens. Every pure check is exported on its own
+ * so the unit tests drive it without a chain.
  */
 export namespace DepotPacedEpochsSteps {
   /** Every OPP stream position the idle check compares, at one instant. */
@@ -570,6 +571,41 @@ export namespace DepotPacedEpochsSteps {
   ): void {
     Assert.strictEqual(rows.length, 1, `${account} has ${rows.length} dellog rows of epoch ${epochIndex}`)
     Assert.ok(rows[0].delivered, `the books of epoch ${epochIndex} record ${account}'s delivery as a miss`)
+  }
+
+  /**
+   * Assert an epoch's books closed once its late window had passed, with no advance — pure: the
+   * member's `dellog` row was written no sooner than the late window's end and before the epoch
+   * after it could be due, one chain minimum from its start, so `sysio.msgch::chkcons` closed them
+   * (`sysio.epoch::closebooks`), not an advance.
+   *
+   * @param row - The member's `dellog` row of the epoch.
+   * @param windowStartMs - When the epoch after it opened (ms): the start of its late window.
+   * @param lateWindowSec - The chain's `epochcfg.late_window_sec`.
+   * @param minimumSec - The chain's `epochcfg.epoch_duration_sec`.
+   * @param chain - The outpost chain.
+   * @throws When the row was written inside the late window, or once the epoch after it could advance.
+   */
+  export function assertBooksClosedAfterLateWindow(
+    row: SysioContracts.SysioOpregDeliveryLogEntryType,
+    windowStartMs: number,
+    lateWindowSec: number,
+    minimumSec: number,
+    chain: OutpostChainCodename
+  ): void {
+    const closedMs = Number(row.ts_ms),
+      windowEndMs = windowStartMs + lateWindowSec * ProtocolTiming.MsPerSecond,
+      dueFromMs = windowStartMs + minimumSec * ProtocolTiming.MsPerSecond
+    Assert.ok(
+      closedMs >= windowEndMs,
+      `the books of the ${chain} epoch ${row.epoch} closed at ${new Date(closedMs).toISOString()}, ` +
+        `inside its late window, which closes at ${new Date(windowEndMs).toISOString()}`
+    )
+    Assert.ok(
+      closedMs < dueFromMs,
+      `the books of the ${chain} epoch ${row.epoch} closed at ${new Date(closedMs).toISOString()}, once the ` +
+        `epoch after it could advance at ${new Date(dueFromMs).toISOString()}: an advance closed them`
+    )
   }
 
   // ── Reads ─────────────────────────────────────────────────────────────────
@@ -1449,8 +1485,9 @@ export namespace DepotPacedEpochsSteps {
   }
 
   /**
-   * Wait, keeping `chain` due, for the advance that closes the duty epoch's books, and assert they
-   * credit the member's delivery ({@link assertDeliveryCredited}).
+   * Wait, with no keep-due pump, for the duty epoch's books to close once its late window has
+   * passed, and assert they credit the member's delivery ({@link assertDeliveryCredited}) and closed
+   * with no advance ({@link assertBooksClosedAfterLateWindow}).
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -1479,14 +1516,14 @@ export namespace DepotPacedEpochsSteps {
   }
 
   /**
-   * Named runner — poll `dellog`, keeping the chain due, until the member's row of the duty epoch
-   * appears, then check it.
+   * Named runner — poll `dellog`, with no keep-due pump, until the member's row of the duty epoch
+   * appears, then check it against the chain's late window and minimum.
    *
    * @param ctx - The build context.
    * @param input - The chain and the member.
    * @param signal - Abort signal.
-   * @throws When the duty epoch was never recorded, its books do not close in time, or
-   *   {@link assertDeliveryCredited} fails.
+   * @throws When the duty epoch was never recorded, its books do not close in time,
+   *   {@link assertDeliveryCredited} fails, or {@link assertBooksClosedAfterLateWindow} does.
    */
   export async function runAwaitDeliveryCredited<C extends ClusterBuildContext>(
     ctx: C,
@@ -1497,18 +1534,23 @@ export namespace DepotPacedEpochsSteps {
     const { chain } = input,
       duty = ctx.outputs.assert(DutyEpochKey),
       account = ctx.keyStore.assertOperator(input.label).account,
-      rows = await Steps.epochAdvance.pollForKeepingDue(
-        ctx,
-        [chain],
+      rows = await pollFor(
         `the books of the ${chain} epoch ${duty.epochIndex} close`,
         async () => {
           const read = memberDeliveryRows(await readDeliveryLog(ctx), account, chain, duty.epochIndex)
           return read.length > 0 ? read : null
         },
         ProtocolTiming.effectiveEpochsMs(ctx.config.outpostEpochDurationSec[chain], Constants.BooksClosingBudgetEpochs),
-        Constants.PollIntervalMs,
-        signal
-      )
+        Constants.PollIntervalMs
+      ),
+      config = await Steps.contracts.sysio.epoch.readEpochConfig(ctx, chain)
     assertDeliveryCredited(rows, account, duty.epochIndex)
+    assertBooksClosedAfterLateWindow(
+      rows[0],
+      ctx.outputs.assert(LateWindowStartKey),
+      config.late_window_sec,
+      config.epoch_duration_sec,
+      chain
+    )
   }
 }

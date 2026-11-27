@@ -8,7 +8,7 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>,... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>[+<r>/<s>],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
  * (`epoch=` lists every outpost chain's own consensus epoch: a `p` suffix marks a paused
  * chain, then `i` an idle chain (no traffic, so it legitimately stays in its epoch), `w` a
@@ -16,8 +16,9 @@
  * chain whose `due_at` does not read — unknown, never treated as idle; then `u` while its
  * current epoch is still undecided. `qreports=` lists each chain's backlog reports in its
  * current epoch (`sysio.msgch::qreports`): the reporters `r` over the seats `s` of its group on
- * duty, counting only members that are ACTIVE and not EVICTED from the chain; reports from a
- * strict majority of the seats record the chain's traffic; `?` while unknown)
+ * duty, then `+r/s` for the next group of its window, which reports too, counting only members
+ * that are ACTIVE and not EVICTED from the chain; reports from a strict majority of one group's
+ * seats record the chain's traffic, the two groups' never adding up; `?` while unknown)
  * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
  * once it appears: `executables.clio` (the resolved clio binary) and the URL
@@ -32,7 +33,7 @@
  *                                  `sysio.epoch::epochcfg` → each chain's epoch duration (the depot's value),
  *                                  `sysio.msgch::outpcons` → the epoch each chain decided last,
  *                                  and `sysio.msgch::qreports` + `sysio.opreg::servchains` → each chain's
- *                                  current-epoch backlog reports over its group's seats
+ *                                  current-epoch backlog reports over its reporting groups' seats
  *   4. msgch outbound envelopes  — `sysio.msgch::envelopes` row count
  *   5. opp-debugging artifacts   — total + per-direction `.metadata` counts + delta
  *   6. aggregate cluster log     — action-receipt top-3 + the TWO failure classes:
@@ -1050,10 +1051,23 @@ export function chainGroupOnDuty(state) {
 }
 
 /**
- * The members of a chain's group on duty ({@link chainGroupOnDuty}) whose backlog reports
- * `sysio.msgch` counts: those ACTIVE in `sysio.opreg::operators` holding a membership of the chain
- * that is not EVICTED. Null when the beat could not read the operators or the memberships, or the
- * chain has no group on duty.
+ * A chain's next group: `epochstate.batch_op_groups[current_batch_op_group + 1]`, the group the next
+ * advance puts on duty, whose backlog reports `sysio.msgch` tallies over its own seats.
+ *
+ * @param {object} state the chain's epoch row.
+ * @return {string[] | null} the group's accounts, one per seat, or null when the window holds none.
+ */
+export function chainNextGroup(state) {
+  const cursor = state?.current_batch_op_group,
+    group = Number.isInteger(cursor) ? state?.batch_op_groups?.[cursor + 1] : undefined
+  return Array.isArray(group) ? group : null
+}
+
+/**
+ * The members of a chain's group on duty ({@link chainGroupOnDuty}) and of its next group
+ * ({@link chainNextGroup}) whose backlog reports `sysio.msgch` counts: those ACTIVE in
+ * `sysio.opreg::operators` holding a membership of the chain that is not EVICTED. Null when the
+ * beat could not read the operators or the memberships, or the chain has no group on duty.
  *
  * @param {object} state the chain's epoch row.
  * @param {Array<{ account: string, status: unknown }> | null} operators the operators probe.
@@ -1062,9 +1076,10 @@ export function chainGroupOnDuty(state) {
  * @return {string[] | null} the eligible accounts, or null when unknown.
  */
 export function chainEligibleOperators(state, operators, memberships, chain) {
-  const group = chainGroupOnDuty(state)
-  if (operators == null || memberships == null || group == null) return null
-  const { SysioOpregOperatorstatus, SysioOpregChainServiceStatus } = SysioContracts,
+  const onDuty = chainGroupOnDuty(state)
+  if (operators == null || memberships == null || onDuty == null) return null
+  const group = [...onDuty, ...(chainNextGroup(state) ?? [])],
+    { SysioOpregOperatorstatus, SysioOpregChainServiceStatus } = SysioContracts,
     isActive = account =>
       operators.some(
         operator =>
@@ -1082,19 +1097,21 @@ export function chainEligibleOperators(state, operators, memberships, chain) {
 }
 
 /**
- * One chain's backlog reports in its current epoch, as `sysio.msgch` tallies them: the eligible
- * members ({@link chainEligibleOperators}) with a `qreports` row of the chain in its current
- * epoch, over every seat of its group on duty — a slashed, evicted or inactive member never lowers
- * the strict majority of seats whose reports record the chain's traffic.
+ * One group's backlog reports of a chain in its current epoch, as `sysio.msgch` tallies them: the
+ * group's eligible members ({@link chainEligibleOperators}) with a `qreports` row of the chain in
+ * its current epoch, over every seat of the group — a slashed, evicted or inactive member never
+ * lowers the strict majority of seats whose reports record the chain's traffic.
  *
  * @param {object[]} reports every `qreports` row.
  * @param {object} state the chain's epoch row.
  * @param {string} chain the chain's codename.
  * @param {string[] | null} eligible the chain's eligible accounts, or null when unknown.
+ * @param {string[] | null} group the group tallied: its group on duty unless given; null when the
+ *   row carries none, which counts every eligible report.
  * @return {{ reporters: number | null, seats: number | null }} the reporters (null while the
- *   eligible set is unknown) and the seats (null without a group on duty).
+ *   eligible set is unknown) and the seats (null without the group).
  */
-export function chainBacklogReports(reports, state, chain, eligible) {
+export function chainBacklogReports(reports, state, chain, eligible, group = chainGroupOnDuty(state)) {
   const reporters =
       eligible == null
         ? null
@@ -1102,16 +1119,18 @@ export function chainBacklogReports(reports, state, chain, eligible) {
             report =>
               chainCodename(report?.chain_code) === chain &&
               Number(report?.epoch_index) === state.current_epoch_index &&
-              eligible.includes(report.account)
+              eligible.includes(report.account) &&
+              (group == null || group.includes(report.account))
           ).length,
-    seats = chainGroupOnDuty(state)?.length ?? null
+    seats = group?.length ?? null
   return { reporters, seats }
 }
 
 /**
  * Every watched chain's current-epoch backlog reports, for the heartbeat line —
- * `ETHEREUM:2/3,SOLANA:0/3` (reporters / seats, {@link chainBacklogReports}); `?` for an unknown
- * count, and for a chain before its genesis advance or without a row.
+ * `ETHEREUM:2/3+0/3,SOLANA:0/3` (reporters / seats of the group on duty, then `+` those of the next
+ * group when the window holds one, {@link chainBacklogReports}); `?` for an unknown count, and for a
+ * chain before its genesis advance or without a row.
  *
  * @param {string[]} chains the watched chains.
  * @param {Record<string, object>} states each chain's epoch row.
@@ -1125,8 +1144,13 @@ export function describeBacklogReports(chains, states, reports, eligibleByChain)
     .map(chain => {
       const state = states?.[chain]
       if (!(state?.current_epoch_index >= 1)) return `${chain}:?`
-      const { reporters, seats } = chainBacklogReports(reports, state, chain, eligibleByChain?.[chain])
-      return `${chain}:${reporters ?? "?"}/${seats ?? "?"}`
+      const eligible = eligibleByChain?.[chain],
+        describe = ({ reporters, seats }) => `${reporters ?? "?"}/${seats ?? "?"}`,
+        next = chainNextGroup(state),
+        onDuty = describe(chainBacklogReports(reports, state, chain, eligible))
+      return next == null
+        ? `${chain}:${onDuty}`
+        : `${chain}:${onDuty}+${describe(chainBacklogReports(reports, state, chain, eligible, next))}`
     })
     .join(",")
 }
@@ -1610,12 +1634,13 @@ ${chalk.bold("Options:")}
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>,... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<CHAIN>:<n>[p][i|w|d|?][u],... qreports=<CHAIN>:<r>/<s>[+<r>/<s>],... env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
                             (one epoch per outpost chain; p = paused; i = idle, no
                             traffic, never a stall; w = traffic, waiting for due_at;
                             d = due, must advance; ? = due_at unreadable, never idle;
                             u = current epoch still undecided; qreports = each chain's
-                            backlog reporters / its group's seats in its current epoch)
+                            backlog reporters / its group's seats in its current epoch,
+                            then + those of its next group)
   Liveness bails beside the epoch ones: the depot head block frozen across a beat and
                             a ${HeadStallReprobeDelaySeconds}s re-probe (wall clock); a chain's epoch undecided past
                             max(${UndecidedEpochFloorSeconds}s, ${UndecidedEpochDurations} x its minimum)

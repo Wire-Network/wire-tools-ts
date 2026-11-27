@@ -111,8 +111,9 @@ export namespace PerChainEpochsScenarioConstants {
   export const DutyPeriodEconomicEpochs = 1
 
   /**
-   * Epochs of a chain a duty wait allows after a seat's own epoch closes: the advance after it closes that
-   * epoch's books and credits the seat's seat-seconds. Changing it moves every seat-seconds deadline.
+   * Epochs of a chain a duty wait allows after a seat's own epoch closes: that epoch's books, which credit the
+   * seat's seat-seconds, close once the next epoch's late window has passed, or at the advance after it.
+   * Changing it moves every seat-seconds deadline.
    */
   export const BookClosingEpochs = 1
 

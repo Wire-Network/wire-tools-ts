@@ -131,7 +131,7 @@ export namespace DepotPacedEpochsScenarioConstants {
   /** Epochs of Ethereum allowed for the late delivery to land (it must land inside the late window). */
   export const LateDeliveryBudgetEpochs = 1
 
-  /** Epochs of Ethereum allowed for the advance that closes the stopped member's epoch's books. */
+  /** Epochs of Ethereum allowed for the stopped member's epoch's books to close once its late window passes. */
   export const BooksClosingBudgetEpochs = 2
 
   /** Interval for chain-state polls (ms): a second, so the restart lands early in the late window. */

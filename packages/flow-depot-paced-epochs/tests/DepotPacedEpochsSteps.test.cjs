@@ -129,8 +129,8 @@ function envelopeLog(epochIndex, emittedMs, inbound = true, chain = Ethereum) {
 }
 
 /** A `dellog` row: `account`'s hit or miss of `chain`'s `epoch`. */
-function delivery(account, epoch, delivered = true, chain = Ethereum) {
-  return { log_id: 1, account, chain_code: chain, epoch, delivered, ts_ms: "1" }
+function delivery(account, epoch, delivered = true, chain = Ethereum, tsMs = 1) {
+  return { log_id: 1, account, chain_code: chain, epoch, delivered, ts_ms: String(tsMs) }
 }
 
 /** An `epochstate` row: `chain` at `epochIndex`, its window `groups`, cursor `cursor`. */
@@ -587,6 +587,21 @@ describe("majority and a late delivery", () => {
     )
   })
 
+  test("books closed after the late window and before the next epoch could advance pass; inside it or later fail", () => {
+    const windowStartMs = BaseMs + 60_000,
+      closedAt = tsMs => delivery(Member, 5, true, Ethereum, tsMs)
+    DepotPacedEpochsSteps.assertBooksClosedAfterLateWindow(closedAt(windowStartMs + 30_000), windowStartMs, 30, 60, Ethereum)
+    DepotPacedEpochsSteps.assertBooksClosedAfterLateWindow(closedAt(windowStartMs + 59_500), windowStartMs, 30, 60, Ethereum)
+    Assert.throws(
+      () => DepotPacedEpochsSteps.assertBooksClosedAfterLateWindow(closedAt(windowStartMs + 29_500), windowStartMs, 30, 60, Ethereum),
+      /closed at .*, inside its late window/
+    )
+    Assert.throws(
+      () => DepotPacedEpochsSteps.assertBooksClosedAfterLateWindow(closedAt(windowStartMs + 60_000), windowStartMs, 30, 60, Ethereum),
+      /once the epoch after it could advance .*: an advance closed them/
+    )
+  })
+
   test("the books credit one delivered row of the member's epoch; a miss, none or several fail", () => {
     const rows = [delivery(Member, 5), delivery(Member, 4, false), delivery("batchop.b", 5), delivery(Member, 5, true, Solana)],
       own = DepotPacedEpochsSteps.memberDeliveryRows(rows, Member, Ethereum, 5)
@@ -709,20 +724,22 @@ describe("majority and a late delivery", () => {
     await Assert.rejects(DepotPacedEpochsSteps.runAwaitLateDelivery(context(outputs), input, signal), /batchop.a delivers the ETHEREUM epoch 5 late/)
   })
 
-  test("runAwaitDeliveryCredited waits for the member's dellog row of the duty epoch and checks it", async () => {
+  test("runAwaitDeliveryCredited waits, pumping nothing, for the member's dellog row and checks when the books closed", async () => {
     pollOnce()
-    recordPump({ [Ethereum]: epochState(7), [Solana]: epochState(2, undefined, 0, Solana) })
-    const outputs = new OutputStore().set(DepotPacedEpochsSteps.DutyEpochKey, duty),
-      input = { kind: "DepotPacedEpochsSteps.MemberInput", chain: Ethereum, label: Member }
-    await DepotPacedEpochsSteps.runAwaitDeliveryCredited(context(outputs, { wire: wireOf({ dellog: [delivery(Member, 5)] }) }), input, signal)
-    await Assert.rejects(
-      DepotPacedEpochsSteps.runAwaitDeliveryCredited(context(outputs, { wire: wireOf({ dellog: [delivery(Member, 5, false)] }) }), input, signal),
-      /as a miss/
-    )
-    await Assert.rejects(
-      DepotPacedEpochsSteps.runAwaitDeliveryCredited(context(outputs, { wire: wireOf({ dellog: [] }) }), input, signal),
-      /the books of the ETHEREUM epoch 5 close/
-    )
+    const pushed = recordPump({ [Ethereum]: epochState(6), [Solana]: epochState(2, undefined, 0, Solana) }),
+      windowStartMs = BaseMs + 60_000,
+      closedMs = windowStartMs + 31_000,
+      outputs = new OutputStore()
+        .set(DepotPacedEpochsSteps.DutyEpochKey, duty)
+        .set(DepotPacedEpochsSteps.LateWindowStartKey, windowStartMs),
+      input = { kind: "DepotPacedEpochsSteps.MemberInput", chain: Ethereum, label: Member },
+      run = rows => DepotPacedEpochsSteps.runAwaitDeliveryCredited(context(outputs, { wire: wireOf({ dellog: rows }) }), input, signal)
+    mock.method(Steps.contracts.sysio.epoch, "readEpochConfig", async () => ({ late_window_sec: 30, epoch_duration_sec: 60 }))
+    await run([delivery(Member, 5, true, Ethereum, closedMs)])
+    await Assert.rejects(run([delivery(Member, 5, false, Ethereum, closedMs)]), /as a miss/)
+    await Assert.rejects(run([delivery(Member, 5, true, Ethereum, windowStartMs + 60_000)]), /an advance closed them/)
+    await Assert.rejects(run([]), /the books of the ETHEREUM epoch 5 close/)
+    Assert.deepEqual(pushed(), [])
   })
 
   test("runAwaitDecidedAndIdle waits on the chain at the flow's poll interval", async () => {

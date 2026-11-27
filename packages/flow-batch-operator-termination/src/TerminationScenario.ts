@@ -58,7 +58,8 @@ const { Actor } = Report
  * 6. **AccumulateMisses** — the missed chain's `advance` folds the operator into
  *    its `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never started,
  *    so every scheduled epoch of the chain records `recorddel(delivered=false)`
- *    at the advance after it, which closes that epoch's books.
+ *    when that epoch's books close: once the next epoch's late window has
+ *    passed, or at the advance after it.
  *
  * Epochs are depot-paced and the flow queues nothing to either outpost, so every
  * duty epoch of the missed chain, and both chains' post-eviction rotation, are

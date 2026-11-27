@@ -42,8 +42,8 @@ const { Actor } = Report
  *    it advances no sooner than that while Ethereum does not move.
  * 3. **MajorityAndLateDelivery** — with one member of Ethereum's next group stopped, the depot
  *    decides that epoch at its second delivery, two of three seats; restarted once the next epoch
- *    opens, the member delivers the epoch late, inside its late window, and the books that close
- *    one advance later credit its delivery.
+ *    opens, the member delivers the epoch late, inside its late window, and the books, which close
+ *    once that window has passed with no advance, credit its delivery.
  */
 export class DepotPacedEpochsScenario extends FlowScenario {
   readonly name = "flow-depot-paced-epochs"
@@ -375,7 +375,7 @@ export class DepotPacedEpochsScenario extends FlowScenario {
       group,
       "LateDeliveryCredited",
       "Restarted once the next epoch opens, the member delivers its epoch inside the late window, " +
-        "and the books credit it"
+        "and the books, closed once the window has passed with no advance, credit it"
     ).push(
       DepotPacedEpochsSteps.planAwaitNextEpochOpened(
         Actor.Sysio,
@@ -406,7 +406,8 @@ export class DepotPacedEpochsScenario extends FlowScenario {
       DepotPacedEpochsSteps.planAwaitDeliveryCredited(
         Actor.Sysio,
         "books-credit-member",
-        `kept due, the advance that closes the epoch's books records ${label}'s delivery, not a miss`,
+        `once the late window has passed, the relays' chkcons closes the epoch's books with no advance, ` +
+          `recording ${label}'s delivery, not a miss`,
         ProtocolTiming.pollStepOptions(
           ProtocolTiming.effectiveEpochsMs(minimumSec, Constants.BooksClosingBudgetEpochs)
         ),

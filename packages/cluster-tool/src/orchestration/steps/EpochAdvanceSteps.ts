@@ -40,7 +40,8 @@ const log = getLogger(__filename)
  * a pump. A message either side queues needs no pump: the depot's own outbound queue gives its
  * chain traffic (`sysio.msgch::queueout`), and the relays report each outpost's outbound backlog to
  * the depot (`sysio.msgch::reportqueue`), which gives the chain traffic once eligible members
- * holding a strict majority of its group's seats reported, so a wait on an outpost → depot
+ * holding a strict majority of the seats of its group on duty, or of its next group, reported, so a
+ * wait on an outpost → depot
  * delivery polls without the pump. The pump is for waits that need an advance nothing queued
  * would bring.
  *

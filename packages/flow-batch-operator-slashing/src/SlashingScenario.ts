@@ -564,14 +564,15 @@ export class SlashingScenario extends FlowScenario {
     // after it, and its group still runs no relay, so no elected operator pushes
     // its chkcons: the flow waits for it to fall due and cranks it. A relay's
     // liveness chkcons may advance it first, so the wait also accepts an advance
-    // and the crank then pushes nothing. That advance closes the books of the
-    // epoch before the contested one and must slash no one the resolution did not.
+    // and the crank then pushes nothing. That chkcons closes the books of the
+    // epoch before the contested one, its late window long passed, then advances,
+    // and must slash no one the resolution did not.
     //
     // The flow ends there and leaves the Ethereum outpost on the contested epoch:
     // no relay of the contested epoch's group delivers its depot envelope, so the
     // next group's relays find the outpost behind and the next epoch is never
-    // decided. The advance after it, which would close the contested epoch's own
-    // books, cannot happen here; that it slashes nothing is covered by the
+    // decided. The contested epoch's own books close once that next epoch's late
+    // window has passed; that closing books slashes nothing is covered by the
     // wire-sysio contract tests.
     ClusterBuildPhase.create(
       cluster,

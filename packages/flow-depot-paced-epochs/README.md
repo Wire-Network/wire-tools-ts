@@ -31,11 +31,14 @@ Each phase group shows its rules once, so a failure names the phase:
    two of the three seats: the depot accepts the envelope (its inbound `envlog` row) in the block of
    the second delivery, with no wait for the third. Once the next epoch opens, the relay is
    restarted. It delivers the epoch late, the accepted envelope's bytes, inside the late window
-   (30 s from the next epoch's start). The advance after that closes the epoch's books, and its
-   `sysio.opreg::dellog` row records the operator's delivery, not a miss.
+   (30 s from the next epoch's start). Once that window has passed, the relays' `sysio.msgch::chkcons`
+   closes the epoch's books (`sysio.epoch::closebooks`) with no advance: the `sysio.opreg::dellog` row,
+   written after the window and before the next epoch could be due, records the operator's delivery,
+   not a miss.
 
 Waits on traffic the flow creates poll without the keep-due pump. Only the last phase group, which
-needs advances nothing queued would bring, keeps Ethereum due (`EpochAdvanceSteps.pollUntilKeepingDue`).
+needs advances nothing queued would bring, keeps Ethereum due (`EpochAdvanceSteps.pollUntilKeepingDue`)
+until the epoch after the member's opens.
 
 Covered elsewhere, so not repeated here:
 
@@ -55,7 +58,7 @@ one Solana epoch 30 + 30 s, one economic epoch 120 + 30 s.
 | --- | --- | --- |
 | IdleChainsStay | 5-6 min (three economic epochs) | 630 s (the idle window) |
 | TrafficMakesDue | 2-3 min (a burst, an advance on it, a desyndication and an advance on it) | 300 s (the decided-and-idle await) |
-| MajorityAndLateDelivery | 4-6 min (up to three advances to seat the member, then three more) | 390 s (the member's next-on-duty await) |
+| MajorityAndLateDelivery | 3-5 min (up to three advances to seat the member, then two more and a late window) | 390 s (the member's next-on-duty await) |
 
 With the bootstrap the flow takes about 20 minutes.
 

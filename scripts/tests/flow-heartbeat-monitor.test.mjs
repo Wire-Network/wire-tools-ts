@@ -14,6 +14,7 @@ import {
   chainDueAtMs,
   chainEpochDurationSeconds,
   chainGroupOnDuty,
+  chainNextGroup,
   chainOverdueSeconds,
   chainTraffic,
   ChainTraffic,
@@ -479,6 +480,11 @@ function groupRow(index, group, dueAt = NoTraffic) {
   return { ...epochRow(index, dueAt), current_batch_op_group: 1, batch_op_groups: [["other.a"], group] }
 }
 
+/** A started chain's epoch row whose window holds `onDuty`, on duty, then `next`, idle. */
+function windowRow(index, onDuty, next) {
+  return { ...epochRow(index), current_batch_op_group: 0, batch_op_groups: [onDuty, next] }
+}
+
 /** One `qreports` row: `account`'s backlog report on `chain` in its epoch `epochIndex`. */
 function report(chain, account, epochIndex) {
   return { chain_code: SlugName.from(chain), account, epoch_index: epochIndex, pending_count: 1 }
@@ -526,6 +532,13 @@ test("a chain's eligible set is its group on duty, ACTIVE and not EVICTED from t
   )
 })
 
+test("a chain's eligible set takes in its next group, ACTIVE and not EVICTED from the chain", () => {
+  const state = windowRow(4, ["batchop.a", "batchop.d"], ["batchop.b", "batchop.c"])
+  // batchop.d is TERMINATED, batchop.c EVICTED from Ethereum.
+  Assert.deepEqual(chainEligibleOperators(state, Operators, Memberships, "ETHEREUM"), ["batchop.a", "batchop.b"])
+  Assert.deepEqual(chainEligibleOperators(state, Operators, Memberships, "SOLANA"), ["batchop.a", "batchop.b", "batchop.c"])
+})
+
 test("a chain's eligible set is unknown without operators, memberships or a group on duty", () => {
   Assert.equal(chainEligibleOperators(groupRow(4, ["batchop.a"]), null, Memberships, "ETHEREUM"), null)
   Assert.equal(chainEligibleOperators(groupRow(4, ["batchop.a"]), Operators, null, "ETHEREUM"), null)
@@ -540,6 +553,24 @@ test("a chain's group on duty is the epoch row's current group, every seat inclu
   Assert.equal(chainGroupOnDuty(epochRow(4)), null)
   Assert.equal(chainGroupOnDuty({ ...groupRow(4, ["batchop.a"]), current_batch_op_group: 5 }), null)
   Assert.equal(chainGroupOnDuty(undefined), null)
+})
+
+test("a chain's next group is the window's group after the one on duty", () => {
+  Assert.deepEqual(chainNextGroup(windowRow(4, ["batchop.a"], ["batchop.b", "batchop.c"])), ["batchop.b", "batchop.c"])
+  // The group on duty is the window's last, or there is no window, cursor or row.
+  Assert.equal(chainNextGroup(groupRow(4, ["batchop.a"])), null)
+  Assert.equal(chainNextGroup(epochRow(4)), null)
+  Assert.equal(chainNextGroup({ ...windowRow(4, ["batchop.a"], ["batchop.b"]), current_batch_op_group: undefined }), null)
+  Assert.equal(chainNextGroup(undefined), null)
+})
+
+test("each group's reporters count over its own seats only, never the other group's", () => {
+  const state = windowRow(4, ["batchop.a", "batchop.d", "batchop.x"], ["batchop.b", "batchop.c"]),
+    next = chainNextGroup(state),
+    reports = [report("ETHEREUM", "batchop.a", 4), report("ETHEREUM", "batchop.b", 4), report("ETHEREUM", "batchop.c", 4)],
+    eligible = ["batchop.a", "batchop.b", "batchop.c"]
+  Assert.deepEqual(chainBacklogReports(reports, state, "ETHEREUM", eligible), { reporters: 1, seats: 3 })
+  Assert.deepEqual(chainBacklogReports(reports, state, "ETHEREUM", eligible, next), { reporters: 2, seats: 2 })
 })
 
 test("a chain's reporters are its eligible members' reports in its current epoch, over every seat", () => {
@@ -575,6 +606,13 @@ test("the heartbeat lists each chain's reporters over its group's seats", () => 
   Assert.equal(describeBacklogReports(Chains, { ETHEREUM: epochRow(4), SOLANA: states.SOLANA }, reports, eligible), "ETHEREUM:2/?,SOLANA:0/2")
   // Before its genesis advance, or without a row, a chain has no epoch to report in.
   Assert.equal(describeBacklogReports(Chains, { ETHEREUM: epochRow(0) }, reports, eligible), "ETHEREUM:?,SOLANA:?")
+  // A window with a next group lists its reporters after the group on duty's.
+  const windowed = { ETHEREUM: windowRow(4, ["batchop.a"], ["batchop.b", "batchop.c"]), SOLANA: states.SOLANA }
+  Assert.equal(
+    describeBacklogReports(Chains, windowed, reports, { ETHEREUM: ["batchop.a", "batchop.b"], SOLANA: ["batchop.a"] }),
+    "ETHEREUM:1/1+1/2,SOLANA:0/2"
+  )
+  Assert.equal(describeBacklogReports(Chains, windowed, reports, { ETHEREUM: null }), "ETHEREUM:?/1+?/2,SOLANA:?/2")
   Assert.equal(describeBacklogReports(Chains, states, null, eligible), "?")
   Assert.equal(describeBacklogReports([], states, reports, eligible), "?")
 })

@@ -519,8 +519,9 @@ export namespace BatchOperatorUnderwritingSteps {
    * custody: a yield claim lands in the pool before any envelope carries its `LIQ_YIELD`, so
    * reading earlier compares the pool against a stale total. The attestations travel Solana →
    * depot, so the wait adds no traffic: the syndications queue theirs on the outpost, the relays'
-   * per-epoch `report_liq_yield` crank queues the yield their own claims leave unreported, and the
-   * relays report that backlog to the depot (`sysio.msgch::reportqueue`), which makes Solana due.
+   * `report_liq_yield` crank, run at most once per chain minimum whether or not the chain advances,
+   * queues the yield their own claims leave unreported, and the relays report that backlog to the
+   * depot (`sysio.msgch::reportqueue`), which makes Solana due.
    *
    * @param ctx - The build context.
    * @param label - What the poll is for (timeout message).
