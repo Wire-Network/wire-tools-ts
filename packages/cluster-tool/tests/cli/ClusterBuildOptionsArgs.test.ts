@@ -799,7 +799,7 @@ describe("register → parse round-trip", () => {
     const registered = register({
         ...RequiredPaths,
         operatorsPerEpoch: 3,
-        batchOpGroups: 1,
+        batchOpGroups: 2,
         epochRetentionEnvelopeLogCount: 200,
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
@@ -818,7 +818,7 @@ describe("register → parse round-trip", () => {
 
     const options = toClusterBuildOptions(argv)
     expect(options.operatorsPerEpoch).toBe(3)
-    expect(options.batchOpGroups).toBe(1)
+    expect(options.batchOpGroups).toBe(2)
     expect(options.epochRetentionEnvelopeLogCount).toBe(200)
     expect(options.terminateMaxConsecutiveMisses).toBe(5)
     expect(options.terminateMaxPercentMisses24h).toBe(99)

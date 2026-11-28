@@ -2,6 +2,7 @@ import { SlugName } from "@wireio/sdk-core"
 import {
   Constants,
   ManagedProcess,
+  MinBatchOperatorGroups,
   NodeopProcess,
   ProtocolTiming
 } from "@wireio/cluster-tool"
@@ -63,29 +64,31 @@ export namespace SlashingScenarioConstants {
   /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
-   * Bootstrapped batch operators provisioned by the harness — exactly
-   * {@link DisputeOperators}.length, because the scenario states the group
-   * shape EXPLICITLY (`operatorsPerEpoch` + `batchOpGroups` in its `defaults`)
-   * and the bootstrap's `sysio.epoch::schbatchgps` asserts the ACTIVE pool can
-   * fill that shape: `operators_per_epoch x batch_op_groups` operators must
-   * exist when it runs. A smaller roster reverts the bootstrap with "not enough
-   * available batch operators for group assignment".
-   *
-   * These bootstrapped operators do NOT stay in the contested chain's group: every
-   * advance re-draws that chain's single group from its pool, non-bootstrapped
-   * first, so the advance after the flow flips the SBP-less dispute operators
-   * ACTIVE seats the three `dispop.*` (which serve only the contested chain) and
-   * these fall outside it, as `SlashingScenario.plan` describes. They keep
-   * relaying the contested chain until that advance, and the other chain for the
-   * whole run.
-   *
-   * (This was 1 while the shape was DERIVED from the roster — one operator then
-   * produced the wanted single group. The shape is explicit now, so 1 only
-   * starves the group; `batch_op_groups` still comes from
-   * {@link DisputeBatchOperatorGroupCount}, which wire-sysio #529 pins after
-   * materialization.)
+   * Batch-operator groups per chain: the depot's floor. The advance after the
+   * dispute operators turn ACTIVE seats them as the window's new tail, and the
+   * advance after that makes them the contested chain's SOLE active group.
    */
-  export const BootstrapBatchOperatorCount = DisputeOperatorCount
+  export const DisputeBatchOperatorGroupCount = MinBatchOperatorGroups
+  /**
+   * Bootstrapped batch operators provisioned by the harness — one window of
+   * {@link DisputeBatchOperatorGroupCount} groups of {@link DisputeOperators}.length,
+   * because the scenario states the group shape EXPLICITLY (`operatorsPerEpoch` +
+   * `batchOpGroups` in its `defaults`) and the bootstrap's
+   * `sysio.epoch::schbatchgps` asserts the ACTIVE pool can fill that shape:
+   * `operators_per_epoch x batch_op_groups` operators must exist when it runs. A
+   * smaller roster reverts the bootstrap with "not enough available batch
+   * operators for group assignment".
+   *
+   * These bootstrapped operators leave the contested chain's window as it slides:
+   * each advance draws the new tail group from the chain's pool, non-bootstrapped
+   * first, so the advance after the flow flips the SBP-less dispute operators
+   * ACTIVE seats the three `dispop.*` (which serve only the contested chain) as
+   * the tail, and the advance after that brings them on duty, as
+   * `SlashingScenario.plan` describes. The bootstrapped operators keep relaying the
+   * contested chain until then, and the other chain for the whole run.
+   */
+  export const BootstrapBatchOperatorCount =
+    DisputeOperatorCount * DisputeBatchOperatorGroupCount
   /**
    * Loosest VALID termination thresholds for the run. Termination CANNOT be
    * fully disabled — the depot contract (`sysio.opreg::setconfig`) caps
@@ -137,13 +140,6 @@ export namespace SlashingScenarioConstants {
   /** Distinct payload tags → distinct envelope checksums (no majority). */
   export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const
 
-  /**
-   * One batch-operator group per chain. The schedule window then holds only the
-   * current group, so every advance re-draws it whole from the chain's pool, and
-   * the advance after the dispute operators turn ACTIVE makes them the contested
-   * chain's SOLE active group.
-   */
-  export const DisputeBatchOperatorGroupCount = 1
   /** `epoch_retention_envelope_log_count` for the reshaped epoch config. */
   export const EpochRetentionEnvelopeLogCount = 200
 
@@ -200,11 +196,13 @@ export namespace SlashingScenarioConstants {
   export const ActiveEpochBudget = 2
   /**
    * Epochs budgeted, from the moment all three dispute operators are ACTIVE, for
-   * the contested chain's next advance to seat them as its sole active group: the
-   * keep-due traffic the await gives it makes it due within one minimum, and its
-   * relays' consensus advances it; one more for the traffic's own landing.
+   * the contested chain's advances to make them its sole active group: the
+   * keep-due traffic the await gives it makes it due within one minimum of each
+   * epoch's start, so one advance seats them as the tail and the next, once the
+   * bootstrapped group ahead of them has relayed its epoch, brings them on duty;
+   * one more for the traffic's own landing.
    */
-  export const GroupEpochBudget = 2
+  export const GroupEpochBudget = DisputeBatchOperatorGroupCount + 1
   /** Epochs budgeted for the epoch index to settle (freeze) on the dispute-operators-owned epoch. */
   export const SettleEpochBudget = 6
   /**

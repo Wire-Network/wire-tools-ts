@@ -7,7 +7,8 @@ import {
   MaxBatchOperatorGroups,
   MaxBatchOperatorRoster,
   MaxOperatorsPerEpoch,
-  MaxScheduledBatchOperators
+  MaxScheduledBatchOperators,
+  MinBatchOperatorGroups
 } from "@wireio/cluster-tool/config"
 // Direct module, not the root barrel (it re-exports FlowCLI → yargs@18, which
 // jest cannot require as ESM on Node < 24.9).
@@ -134,9 +135,23 @@ describe("BatchOperatorSchedule.resolve", () => {
     // size is capped at it; an explicit size or group count past its ceiling
     // is rejected on its own field.
     it("rejects an explicit size past MAX_OPERATORS_PER_EPOCH (7)", () => {
-      expect(() => resolve(21, 9, 1)).toThrow(
+      expect(() => resolve(21, 9, 2)).toThrow(
         /operatorsPerEpoch: operators-per-epoch exceeds the depot ceiling of 7/
       )
+    })
+
+    it("rejects a group count below MIN_BATCH_OP_GROUPS (2)", () => {
+      expect(() => resolve(21, 7, 1)).toThrow(
+        /batchOpGroups: batch-op-groups is below the depot floor of 2/
+      )
+    })
+
+    it("accepts a group count at MIN_BATCH_OP_GROUPS", () => {
+      expect(resolve(21, 7, 2)).toEqual({
+        operatorsPerEpoch: 7,
+        batchOpGroups: 2,
+        batchOperatorMinimumActive: 14
+      })
     })
 
     it("rejects a group count past MAX_BATCH_OP_GROUPS (8)", () => {
@@ -150,13 +165,10 @@ describe("BatchOperatorSchedule.resolve", () => {
       expect(resolve(24, 3, 8).batchOperatorMinimumActive).toBe(24)
     })
 
-    it.each([
-      [1, 7],
-      [2, 14]
-    ])(
-      "caps a size derived over %i group(s) at MAX_OPERATORS_PER_EPOCH",
+    it.each([[2, 14]])(
+      "caps a size derived over %i groups at MAX_OPERATORS_PER_EPOCH",
       (groups, total) => {
-        // 21 operators would fill groups of 21 or 10; the rest stay unscheduled.
+        // 21 operators would fill groups of 10; the rest stay unscheduled.
         expect(resolve(21, undefined, groups)).toEqual({
           operatorsPerEpoch: 7,
           batchOpGroups: groups,
@@ -183,7 +195,7 @@ describe("BatchOperatorSchedule.resolve", () => {
 
     it("gives every operator in the largest accepted roster a UNIQUE label", () => {
       const max = MaxBatchOperatorRoster
-      expect(() => resolve(max, 1, 1)).not.toThrow()
+      expect(() => resolve(max, 1, MinBatchOperatorGroups)).not.toThrow()
       const names = Array.from({ length: max }, (_, index) =>
         Constants.batchOperatorLabel(index)
       )
@@ -197,6 +209,7 @@ describe("BatchOperatorSchedule.resolve", () => {
     it("pins the ceilings against the contract", () => {
       expect(MaxOperatorsPerEpoch).toBe(7)
       expect(MaxBatchOperatorGroups).toBe(8)
+      expect(MinBatchOperatorGroups).toBe(2)
       expect(MaxScheduledBatchOperators).toBe(56)
       expect(DefaultBatchOperatorGroupCount).toBe(3)
       expect(MaxBatchOperatorRoster).toBe(26)

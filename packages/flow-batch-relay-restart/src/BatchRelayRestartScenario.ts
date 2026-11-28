@@ -13,41 +13,45 @@ import {
   type ClusterBuildContext
 } from "@wireio/cluster-tool"
 
-/** Restart the sole real batch relay while a burned principal awaits external payout. */
+/** Restart every real batch relay while a burned principal awaits external payout. */
 export class BatchRelayRestartScenario extends EthereumRoundTripScenario {
   readonly name = "flow-batch-relay-restart"
-  readonly description = "Restart a real relay with a queued external payout"
+  readonly description = "Restart the real relays with a queued external payout"
 
   protected override planBeforeRedemption(cluster: ClusterBuild): void {
-    const node = BatchRelayRestartScenario.relayNode(cluster.context)
+    const nodes = BatchRelayRestartScenario.relayNodes(cluster.context)
     ClusterBuildPhase.create(
       cluster,
-      "StopRelay",
-      "Stop the sole relay after its successful intake delivery"
+      "StopRelays",
+      "Stop every relay after the successful intake delivery"
     ).push(
-      Steps.processes.nodeop.planStop(
-        Report.Actor.BatchOperator,
-        "stop-relay",
-        "stop and reap the real relay, retaining its data",
-        SyndicationScenario.VerifyOptions,
-        node.name
+      ...nodes.map(node =>
+        Steps.processes.nodeop.planStop(
+          Report.Actor.BatchOperator,
+          `stop-${node.name}`,
+          `stop and reap the real relay ${node.name}, retaining its data`,
+          SyndicationScenario.VerifyOptions,
+          node.name
+        )
       )
     )
   }
 
   protected override planAfterRedemption(cluster: ClusterBuild): void {
-    const node = BatchRelayRestartScenario.relayNode(cluster.context)
+    const nodes = BatchRelayRestartScenario.relayNodes(cluster.context)
     ClusterBuildPhase.create(
       cluster,
-      "RecoverRelay",
-      "Resume the original relay against its retained chain data"
+      "RecoverRelays",
+      "Resume the original relays against their retained chain data"
     ).push(
       verifyStep(
         Report.Actor.User,
-        "payout-awaits-relay",
-        "principal is burned but the external wallet has received nothing while the relay is absent",
+        "payout-awaits-relays",
+        "principal is burned but the external wallet has received nothing while every relay is absent",
         async ctx => {
-          Assert.strictEqual(ctx.processManager.get(node.name), null)
+          nodes.forEach(node =>
+            Assert.strictEqual(ctx.processManager.get(node.name), null)
+          )
           Assert.strictEqual(
             await EthereumRoundTripScenario.externalBalance(ctx),
             0n
@@ -70,31 +74,30 @@ export class BatchRelayRestartScenario extends EthereumRoundTripScenario {
           )
         }
       ),
-      Steps.processes.nodeop.planStart(
-        Report.Actor.BatchOperator,
-        "restart-original-relay",
-        "relaunch the same real daemon using retained data and signing keys",
-        SyndicationScenario.VerifyOptions,
-        node.name
+      ...nodes.map(node =>
+        Steps.processes.nodeop.planStart(
+          Report.Actor.BatchOperator,
+          `restart-${node.name}`,
+          `relaunch the real daemon ${node.name} using retained data and signing keys`,
+          SyndicationScenario.VerifyOptions,
+          node.name
+        )
       )
     )
   }
 }
 
-/** Process selection and the one stop write. */
+/** Relay selection for the interruption. */
 export namespace BatchRelayRestartScenario {
   /**
-   * Select the only planned relay; extra relays would invalidate the interruption.
+   * Select every planned relay: the window seats at least two groups, each with its own relay, and the
+   * interruption stops them all, so none delivers while the payout waits.
    * @param ctx - The live cluster context and its deployed chain clients.
-   * @returns The sole planned relay node.
+   * @returns The planned relay nodes.
    */
-  export function relayNode(ctx: ClusterBuildContext): NodeConfig {
+  export function relayNodes(ctx: ClusterBuildContext): NodeConfig[] {
     const nodes = NodeConfig.batchOperatorNodes(ctx.config)
-    Assert.strictEqual(
-      nodes.length,
-      1,
-      "restart scenario requires exactly one relay"
-    )
-    return nodes[0]
+    Assert.ok(nodes.length > 0, "restart scenario requires a relay")
+    return nodes
   }
 }

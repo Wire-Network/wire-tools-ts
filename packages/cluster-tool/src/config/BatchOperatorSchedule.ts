@@ -15,7 +15,7 @@ export const DefaultBatchOperatorGroupCount = 3
  */
 export const MinimumOperatorsPerEpoch = 1
 /**
- * Depot ceilings, mirrored from `sysio.epoch.hpp` so an over-large topology
+ * Depot bounds, mirrored from `sysio.epoch.hpp` so an illegal topology
  * fails HERE instead of inside `sysio.epoch::setconfig` after the whole cluster
  * has been stood up: a group holds at most Ethereum's 7 operators and the window
  * at most Solana's 8 groups. The two bound the window, so the contract derives
@@ -24,6 +24,12 @@ export const MinimumOperatorsPerEpoch = 1
  */
 export const MaxOperatorsPerEpoch = 7
 export const MaxBatchOperatorGroups = 8
+/**
+ * The depot's floor on the group COUNT (`MIN_BATCH_OP_GROUPS`): each envelope
+ * announces the next epoch's group, so the group the slide appends sits behind
+ * another one. Keep in lock-step with the contract.
+ */
+export const MinBatchOperatorGroups = 2
 /**
  * The largest schedule window (`batch_operator_minimum_active`), derived from
  * the two ceilings above the way `sysio.epoch.hpp` derives
@@ -80,6 +86,9 @@ export const BatchOperatorScheduleOptionsSchema = z.object({
     // that value straight through.
     .nullish(),
   batchOpGroups: positiveCountSchema("batch-op-groups")
+    .refine(value => value >= MinBatchOperatorGroups, {
+      message: `batch-op-groups is below the depot floor of ${MinBatchOperatorGroups}`
+    })
     .refine(value => value <= MaxBatchOperatorGroups, {
       message: `batch-op-groups exceeds the depot ceiling of ${MaxBatchOperatorGroups}`
     })

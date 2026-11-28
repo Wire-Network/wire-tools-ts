@@ -5,6 +5,7 @@ const {
   EthereumSyndicationTool,
   WireSyndicationTool,
   ClusterBuild,
+  MinBatchOperatorGroups,
   OutputStore
 } = require("@wireio/cluster-tool")
 const { EthereumHappyScenario } = require("../lib/EthereumHappyScenario.js")
@@ -174,4 +175,10 @@ test("the post-settlement wait keeps Ethereum alone due: nothing is queued on ei
     push.mock.calls.map(call => call.arguments[1].data.chain_code),
     [Constants.ETHEREUM_CHAIN_CODENAME]
   )
+})
+test("the round trip runs the depot's smallest window: two one-relay groups", () => {
+  const { defaults } = new EthereumHappyScenario()
+  Assert.equal(defaults.batchOpGroups, MinBatchOperatorGroups)
+  Assert.equal(defaults.operatorsPerEpoch, 1)
+  Assert.equal(defaults.batchOperatorCount, MinBatchOperatorGroups)
 })

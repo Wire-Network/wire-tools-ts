@@ -199,7 +199,7 @@ async function verifyCanonicalNotSlashed(
  *
  * To force a 3-way split, the three dispute operators are provisioned SBP-less,
  * serving the contested chain only, and flipped ACTIVE; the chain's next natural
- * advance seats them as its sole active batch-op group, so their step-pushed
+ * advances seat them as its sole active batch-op group, so their step-pushed
  * deliveries are the only ones the depot sees for the contested (outpost, epoch).
  * The other chain's schedule keeps the bootstrapped operators, whose relays keep
  * it advancing throughout. Each
@@ -219,10 +219,11 @@ export class SlashingScenario extends FlowScenario {
     // Enough bootstrapped batch ops to keep the rest of the network healthy
     // while the dispute operators drive the contested outpost.
     batchOperatorCount: Constants.BootstrapBatchOperatorCount,
-    // ONE group of exactly DisputeOperators.length per chain, set at bootstrap
-    // and never changed mid-run. With a one-group window every advance re-draws
-    // the whole group from the chain's pool, so the contested chain's advance
-    // after the dispute operators turn ACTIVE seats exactly them.
+    // Two groups (the depot's floor) of exactly DisputeOperators.length per
+    // chain, set at bootstrap and never changed mid-run. Every advance draws the
+    // new tail group from the chain's pool, so the contested chain's advance
+    // after the dispute operators turn ACTIVE seats exactly them as the tail,
+    // on duty from the advance after.
     operatorsPerEpoch: Constants.DisputeOperators.length,
     batchOpGroups: Constants.DisputeBatchOperatorGroupCount,
     // The dispute references the contested epoch's envelope log ~16 epochs later
@@ -268,11 +269,11 @@ export class SlashingScenario extends FlowScenario {
         timeoutMs: Constants.contestedDueDeadlineMs() + Constants.PollDeadlineBufferMs
       }
 
-    // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 1-group/3-op epoch ──
+    // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 2-group/3-op epoch ──
     const setup = ClusterBuildPhaseGroup.create(
       cluster,
       "SetupDispute",
-      `Provision the Tier-1 electorate + the 3 SBP-less dispute operators; the ${Constants.ContestedChain} advance seats them as its single group`
+      `Provision the Tier-1 electorate + the 3 SBP-less dispute operators; the ${Constants.ContestedChain} advances seat them as its active group`
     )
 
     ClusterBuildPhase.create(
@@ -334,29 +335,32 @@ export class SlashingScenario extends FlowScenario {
       }))
     )
 
-    // Nothing rebuilds a schedule mid-run. Every chain's window is ONE group
-    // (`batchOpGroups` 1), so each advance's `sysio.epoch::finishadv` re-draws
-    // it whole from the chain's pool: ACTIVE batch operators SERVING the chain,
-    // non-bootstrapped first, then by account. The dispute operators serve the
-    // contested chain from provisioning, so once `processbatch` flips them
-    // ACTIVE (`req_batchop_collat` is empty) its next natural advance, pushed
-    // by the bootstrapped relays after their consensus on the epoch then live,
-    // seats exactly the three of them. Their epoch opens with an empty envelope
-    // bucket, and `deliver` accepts only its active group, so only these 3 can
-    // deliver to it — being SBP-less, only when the flow injects an envelope.
-    // The other chain's pool never holds them.
+    // Nothing rebuilds a schedule mid-run. Every chain's window is two groups
+    // (`batchOpGroups` 2), and each advance's `sysio.epoch::finishadv` draws the
+    // new tail group from the chain's pool minus the group still seated: ACTIVE
+    // batch operators SERVING the chain, non-bootstrapped first, then by
+    // account. The dispute operators serve the contested chain from
+    // provisioning, so once `processbatch` flips them ACTIVE
+    // (`req_batchop_collat` is empty) its next natural advance, pushed by the
+    // bootstrapped relays after their consensus on the epoch then live, seats
+    // exactly the three of them as the tail, and the advance after the
+    // bootstrapped group ahead of them relays its epoch brings them on duty.
+    // Their epoch opens with an empty envelope bucket, and `deliver` accepts
+    // only its active group, so only these 3 can deliver to it — being
+    // SBP-less, only when the flow injects an envelope. The other chain's pool
+    // never holds them.
     //
-    // An advance between two flips would seat a mixed group whose dispute
+    // An advance between two flips would seat a mixed tail whose dispute
     // operators miss that epoch instead of owning it alone. An advance never
     // lands before the chain is due and an idle chain is never due, so the flips
     // start only while the chain is idle or `activationHeadroomMs()` of chain
     // time short of its due_at. Nothing is queued to the contested chain, so the
     // sole-group await then gives it keep-due traffic (the keep-due pump) for
-    // the advance that seats the three.
+    // the two advances that bring the three on duty.
     ClusterBuildPhase.create(
       setup,
       "ReshapeSchedule",
-      `The ${Constants.ContestedChain} advance after the 3 dispute operators turn ACTIVE seats them as its one group`
+      `The ${Constants.ContestedChain} advances after the 3 dispute operators turn ACTIVE seat them as its active group`
     ).push(
       DisputeSteps.planAwaitActivationHeadroom(
         Actor.Sysio,
@@ -386,7 +390,7 @@ export class SlashingScenario extends FlowScenario {
       DisputeSteps.planAwaitSoleActiveGroup(
         Actor.Sysio,
         "sole-active-group",
-        `kept due, the next ${Constants.ContestedChain} advance seats the 3 dispute operators as exactly its active batch-operator group`,
+        `kept due, the next ${Constants.ContestedChain} advances seat the 3 dispute operators as exactly its active batch-operator group`,
         groupStepOptions
       )
     )

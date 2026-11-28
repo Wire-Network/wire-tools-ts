@@ -1,16 +1,17 @@
 # flow-batch-operator-slashing
 
 Three SBP-less batch operators join the Ethereum outpost chain only and are flipped ACTIVE. The flow
-does not rebuild any schedule. Every chain's window holds one group of three, and each advance draws
-the next epoch's group from the chain's ACTIVE, serving batch operators, non-bootstrapped first. So
-Ethereum's next advance makes the three its only active group. Epochs are depot-paced: a chain
-advances only once it is due (it has traffic and its minimum has passed), and an idle chain never
-advances. The flips start only while Ethereum is idle or at least half a minimum short of its
-`due_at`, so that all three land before the same advance; idle means no straddle. An advance between
-two flips would seat a mixed group, and the dispute operators in it would miss that epoch instead of
-owning it alone. The flow queues nothing to Ethereum, so the await for that advance gives Ethereum
-keep-due traffic (`sysio.epoch::notetraffic`, through the keep-due pump) until the three are
-seated. The flow runs every miss rail at its loosest valid setting
+does not rebuild any schedule. Every chain's window holds two groups of three, and each advance draws
+the new tail group from the chain's ACTIVE, serving batch operators outside the group still seated,
+non-bootstrapped first. So Ethereum's next advance seats the three as its tail group, and the advance
+after makes them its only active group. Epochs are depot-paced: a chain advances only once it is due
+(it has traffic and its minimum has passed), and an idle chain never advances. The flips start only
+while Ethereum is idle or at least half a minimum short of its `due_at`, so that all three land before
+the same advance; idle means no straddle. An advance between two flips would seat a mixed tail, and
+the dispute operators in it would miss that epoch instead of owning it alone. The flow queues nothing
+to Ethereum, so the await for those two advances gives Ethereum keep-due traffic
+(`sysio.epoch::notetraffic`, through the keep-due pump) until the three are on duty. The flow runs
+every miss rail at its loosest valid setting
 (`terminateMaxConsecutiveMisses` 5, `terminateMaxPercentMisses24h` 99,
 `terminateMinimumPercentSamples` 100), so the dispute operators are not evicted before the slash.
 

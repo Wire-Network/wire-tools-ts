@@ -5,6 +5,7 @@ const { SlugName } = require("@wireio/sdk-core")
 const {
   ClusterBuild,
   ClusterBuildDefaults,
+  MinBatchOperatorGroups,
   NodeConfig,
   NodeOwnerTier,
   NodeRole,
@@ -357,11 +358,11 @@ test("the dispute operators serve only the contested chain, and no schedule is r
   Assert.notEqual(Constants.RunningChain, Constants.ContestedChain)
 })
 
-test("the bootstrap shape is one group of the dispute operators' size, which every advance re-draws", () => {
+test("the bootstrap shape is two groups of the dispute operators' size, the depot's floor", () => {
   const { scenario } = plannedBuild()
   Assert.equal(scenario.defaults.operatorsPerEpoch, Constants.DisputeOperators.length)
-  Assert.equal(scenario.defaults.batchOpGroups, 1)
-  Assert.equal(scenario.defaults.batchOperatorCount, Constants.DisputeOperators.length)
+  Assert.equal(scenario.defaults.batchOpGroups, MinBatchOperatorGroups)
+  Assert.equal(scenario.defaults.batchOperatorCount, MinBatchOperatorGroups * Constants.DisputeOperators.length)
 })
 
 test("every miss rail runs at the loosest value the contract accepts", () => {
@@ -399,9 +400,12 @@ test("the ACTIVE flips start with headroom before the chain is due, then the nex
   Assert.equal(soleGroup.options.timeoutMs, Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs)
 })
 
-test("the kept-due advance is budgeted two effective contested-chain epochs", () => {
-  Assert.equal(Constants.GroupEpochBudget, 2)
-  Assert.equal(Constants.groupDeadlineMs(), ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, 2))
+test("the kept-due advances are budgeted one effective contested-chain epoch per group, and one more", () => {
+  Assert.equal(Constants.GroupEpochBudget, MinBatchOperatorGroups + 1)
+  Assert.equal(
+    Constants.groupDeadlineMs(),
+    ProtocolTiming.effectiveEpochsMs(Constants.EpochDurationSec, MinBatchOperatorGroups + 1)
+  )
 })
 
 test("the ACTIVE flips' headroom is a share of the epoch, awaited within its budget", () => {

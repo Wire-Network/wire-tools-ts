@@ -318,6 +318,8 @@ export namespace ClusterBuildDefaults {
         : WireLcoImportTool.planClaimTotal(lcoImportPlan),
       dexEarmark
     )
+    // Before anything runs: `configure-opreg` would refuse the pair only after the cluster is up.
+    assertTerminationWindow(config)
     if (lcoImportPlan != null && isExternalOutpost) {
       WireLcoImportTool.assertRealData(lcoImportPlan)
       WireLcoImportTool.assertExportOutposts(
@@ -1857,6 +1859,41 @@ export namespace ClusterBuildDefaults {
       epoch_retention_envelope_log_count:
         config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
+  }
+
+  /**
+   * Assert the `sysio.opreg::setconfig` window this bootstrap installs holds the percent rail's sample
+   * at every outpost chain's `sysio.epoch::setconfig` schedule, the rule both setters enforce. A
+   * resident batch operator is on duty once every `batch_op_groups` epochs, each at least
+   * `epoch_duration_sec` long, so the window holds at most `terminate_window_ms` over that interval
+   * duties; they must reach `terminate_min_pct_samples`. The consecutive rail counts missed duty
+   * epochs whatever their age, so it puts no bound on the window.
+   *
+   * Exported (a pure value helper, not a Step) so the rule is unit-testable without standing up a
+   * cluster.
+   *
+   * @param config - The resolved cluster config (topology, epoch and termination overrides).
+   * @throws If a chain's schedule leaves the window short of the percent rail's sample.
+   */
+  export function assertTerminationWindow(config: ClusterConfig): void {
+    const {
+      terminate_window_ms: windowMs,
+      terminate_min_pct_samples: minimumPercentSamples
+    } = operatorRegistryConfig(config)
+    OutpostChainCodenames.forEach(chain => {
+      const {
+          epoch_duration_sec: epochDurationSec,
+          batch_op_groups: batchOpGroups
+        } = epochConfig(config, chain),
+        dutyIntervalMs =
+          epochDurationSec * batchOpGroups * ProtocolTiming.MsPerSecond,
+        duties = Math.floor(Number(windowMs) / dutyIntervalMs),
+        schedule = `the ${chain} schedule (${batchOpGroups} groups of ${epochDurationSec} s epochs)`
+      Assert.ok(
+        duties >= minimumPercentSamples,
+        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_min_pct_samples (${minimumPercentSamples})`
+      )
+    })
   }
 
   /**
