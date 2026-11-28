@@ -1,4 +1,10 @@
+import Assert from "node:assert"
+
 import { SysioContracts } from "@wireio/sdk-core"
+
+import { mapOutpostChains, type PerOutpostChain } from "@wireio/cluster-tool-shared"
+
+import type { Constants } from "../../../../Constants.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -6,6 +12,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
+import { EpochContractSteps } from "./EpochContractSteps.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -99,8 +106,10 @@ export namespace MsgchContractSteps {
   }
 
   /**
-   * `sysio.msgch::chkcons` — crank one outpost chain's envelope consensus: advances that
-   * chain's epoch once its outpost has consensus and its boundary has passed.
+   * `sysio.msgch::chkcons` — crank one outpost chain's envelope consensus: re-tallies an
+   * undecided current epoch, and advances a decided one once the chain is due (`sysio.epoch`
+   * `due_at`: it has traffic, its minimum duration has passed since its epoch start and its
+   * traffic wait since that traffic). A decided epoch on an idle chain stays current.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -135,5 +144,81 @@ export namespace MsgchContractSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await ctx.wire.getSysioContract(SysioContractName.msgch).actions.chkcons.invoke(input.data)
+  }
+
+  // ── Reads (execute freely inside runners / verify steps) ─────────────────
+
+  /**
+   * Row ceiling of the `outpcons` read: the table holds one row per outpost chain, so a read
+   * that still reports `more` is refused rather than trusted.
+   */
+  export const OutpostConsensusRowLimit = 16
+
+  /**
+   * Every outpost chain's `sysio.msgch::outpcons` row from ONE read: the epoch whose winner it
+   * accepted last, that winner's checksum and the chain's inbound tips.
+   *
+   * @param ctx - The build context.
+   * @returns Each outpost chain's row (absent for a chain whose first winner is not yet accepted).
+   * @throws When the read is truncated at {@link OutpostConsensusRowLimit}.
+   */
+  export async function readOutpostConsensus<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType>> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.outpcons.query({ limit: OutpostConsensusRowLimit })
+    Assert.ok(
+      !more,
+      `MsgchContractSteps: sysio.msgch::outpcons has more than ${OutpostConsensusRowLimit} rows; the read is truncated`
+    )
+    return mapOutpostChains(chain => EpochContractSteps.findChainRow(rows, chain))
+  }
+
+  /**
+   * Row ceiling of the {@link readEnvelopes} read. `deliver` prunes each outpost's rows to its
+   * retained epochs, so the table holds a few groups of rows per outpost chain; a read that still
+   * reports `more` is refused rather than trusted.
+   */
+  export const EnvelopeRowLimit = 100
+
+  /**
+   * Every `sysio.msgch::envelopes` row: the inbound deliveries the depot still retains, one per
+   * delivering batch operator and (outpost, epoch).
+   *
+   * @param ctx - The build context.
+   * @returns The rows.
+   * @throws When the read is truncated at {@link EnvelopeRowLimit}.
+   */
+  export async function readEnvelopes<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<SysioContracts.SysioMsgchEnvelopeEntryType[]> {
+    const { rows, more } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.envelopes.query({ limit: EnvelopeRowLimit })
+    Assert.ok(
+      !more,
+      `MsgchContractSteps: sysio.msgch::envelopes has more than ${EnvelopeRowLimit} rows; the read is truncated`
+    )
+    return rows
+  }
+
+  /**
+   * The deliveries of one (outpost, epoch) bucket: the rows of `rows` for `chain`'s `epochIndex`,
+   * the set `sysio.msgch::evalcons` tallies — pure.
+   *
+   * @param rows - `sysio.msgch::envelopes` rows ({@link readEnvelopes}).
+   * @param chain - The outpost chain.
+   * @param epochIndex - The chain's epoch.
+   * @returns The bucket's rows, in table order.
+   */
+  export function outpostEpochEnvelopes(
+    rows: readonly SysioContracts.SysioMsgchEnvelopeEntryType[],
+    chain: Constants.OutpostChainCodename,
+    epochIndex: number
+  ): SysioContracts.SysioMsgchEnvelopeEntryType[] {
+    return rows.filter(
+      row => EpochContractSteps.isChainRow(row.chain_code, chain) && Number(row.epoch_index) === epochIndex
+    )
   }
 }

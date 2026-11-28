@@ -457,6 +457,29 @@ export namespace EmergencyStopSteps {
     )
     Assert.strictEqual(BigInt(row.epoch_index), BigInt(epoch))
   }
+  /**
+   * Whether `sysio.msgch::envlog` holds a Solana → depot envelope accepted after the row `afterId`
+   * — pure. Under the depot cord the depot still ships envelopes and accepts the outpost's answers;
+   * an accepted Solana envelope past the snapshot proves OPP kept circulating.
+   *
+   * @param rows - The `envlog` rows.
+   * @param afterId - The newest row id at the snapshot.
+   * @returns True once a later row starts on Solana.
+   */
+  export function hasSolanaEnvelopeSince(
+    rows: readonly SysioContracts.SysioMsgchEnvelopeLogEntryType[],
+    afterId: bigint
+  ): boolean {
+    return rows.some(
+      row =>
+        BigInt(row.id) > afterId &&
+        matchesProtoEnum(
+          row.endpoints.start.kind,
+          SysioContracts.SysioMsgchChainkind,
+          SysioContracts.SysioMsgchChainkind.CHAIN_KIND_SVM
+        )
+    )
+  }
   /** A repaired outpost must never report a shortfall at or beyond its recovery boundary. */
   export function assertRecoveryMismatches(
     rows: SysioContracts.SysioSyndMismatchRowType[],

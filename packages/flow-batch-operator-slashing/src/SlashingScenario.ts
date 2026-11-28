@@ -90,8 +90,8 @@ async function verifyContestedBucketEmpty(
   ctx: ClusterBuildContext
 ): Promise<void> {
   const epoch = ctx.outputs.assert(DisputeSteps.ContestedEpochKey),
-    bucket = DisputeSteps.outpostEpochEnvelopes(
-      await DisputeSteps.readEnvelopes(ctx),
+    bucket = Steps.contracts.sysio.msgch.outpostEpochEnvelopes(
+      await Steps.contracts.sysio.msgch.readEnvelopes(ctx),
       Constants.ContestedChain,
       epoch
     )
@@ -99,6 +99,55 @@ async function verifyContestedBucketEmpty(
     bucket.length,
     0,
     `the ${Constants.ContestedChain} epoch ${epoch} already holds deliveries from ${JSON.stringify(bucket.map(row => row.batch_op_name))}`
+  )
+}
+
+/**
+ * After the post-resolution traffic and `chkcons`, the contested chain advanced past the contested
+ * epoch, and that advance slashed nothing: no operator is SLASHED that was not before it (the
+ * recorded {@link DisputeSteps.SlashedOperatorsKey}), the losers stay SLASHED from the resolution,
+ * and the canonical deliverer, the epoch's only other deliverer, is still not SLASHED.
+ */
+async function verifyContestedChainAdvancedWithoutSlash(
+  ctx: ClusterBuildContext
+): Promise<void> {
+  const contested = ctx.outputs.assert(DisputeSteps.ContestedEpochKey),
+    current = await DisputeSteps.currentEpoch(ctx)
+  Assert.ok(
+    current > contested,
+    `the ${Constants.ContestedChain} epoch is still ${current}, not past the contested epoch ${contested}`
+  )
+  DisputeSteps.assertNoNewSlash(
+    ctx.outputs.assert(DisputeSteps.SlashedOperatorsKey),
+    await DisputeSteps.readSlashedOperators(ctx),
+    `the advance past the contested epoch ${contested}`
+  )
+  await verifyCanonicalNotSlashed(ctx)
+  const losers = await Promise.all(
+    Constants.LosingOperators.map(operator => DisputeSteps.readOperator(ctx, operator))
+  )
+  losers.forEach((row, index) =>
+    Assert.ok(
+      row != null &&
+        matchesProtoEnum(row.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED),
+      `${Constants.LosingOperators[index]} is no longer SLASHED after the advance`
+    )
+  )
+}
+
+/**
+ * The contested chain is still at the contested epoch: the dispute's resolution slashed the
+ * non-canonical deliverers in its own transaction, with no advance between them.
+ */
+async function verifyContestedEpochHeld(
+  ctx: ClusterBuildContext
+): Promise<void> {
+  const contested = ctx.outputs.assert(DisputeSteps.ContestedEpochKey),
+    current = await DisputeSteps.currentEpoch(ctx)
+  Assert.strictEqual(
+    current,
+    contested,
+    `the ${Constants.ContestedChain} epoch moved from the contested epoch ${contested} to ${current} before the losers were checked`
   )
 }
 
@@ -130,8 +179,8 @@ async function verifyCanonicalNotSlashed(
  * cluster):
  *
  * 1. Three batch operators deliver THREE DISTINCT envelope versions for one
- *    (outpost, epoch) with no majority, past the chain's epoch boundary.
- *    `sysio.msgch::evalcons` detects the 3-way split and inline-calls
+ *    (outpost, epoch) with no majority. The third delivery leaves no version
+ *    able to win, so its inline `sysio.msgch::evalcons` calls
  *    `sysio.chalg::opendispute`, which pauses that chain's epoch only.
  *    While the dispute is open the economic clock keeps opening epochs — before
  *    and after every batch-operator relay is stopped and restarted — and the
@@ -142,9 +191,11 @@ async function verifyCanonicalNotSlashed(
  *    once a checksum reaches floor(N/2)+1 of the live Tier-1 count it wins.
  *    chkdispute records the winner, dispatches the winning envelope via
  *    `sysio.msgch::resolvedisp`, and unpauses the chain's epoch.
- * 4. On the chain's next `advance`, every operator that delivered a NON-canonical
- *    checksum is slashed (`sysio.opreg::slash`, bond → LP, status SLASHED).
- *    The operator that delivered the canonical checksum is NOT slashed.
+ * 4. The winner's acceptance in `resolvedisp`, in that same transaction, slashes
+ *    every operator that delivered a NON-canonical checksum (`sysio.chalg::slashop`
+ *    → `sysio.opreg::slash`, bond → LP, status SLASHED) while the chain still sits
+ *    at the contested epoch. The operator that delivered the canonical checksum is
+ *    NOT slashed.
  *
  * To force a 3-way split, the three dispute operators are provisioned SBP-less,
  * serving the contested chain only, and flipped ACTIVE; the chain's next natural
@@ -176,7 +227,7 @@ export class SlashingScenario extends FlowScenario {
     operatorsPerEpoch: Constants.DisputeOperators.length,
     batchOpGroups: Constants.DisputeBatchOperatorGroupCount,
     // The dispute references the contested epoch's envelope log ~16 epochs later
-    // (vote + tally + resolve + slash propagation), so retention must outlast it.
+    // (vote + tally + resolve, which slashes), so retention must outlast it.
     epochRetentionEnvelopeLogCount: Constants.EpochRetentionEnvelopeLogCount,
     // Loosest VALID termination thresholds — see the constants' JSDoc.
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
@@ -199,10 +250,6 @@ export class SlashingScenario extends FlowScenario {
       settleStepOptions = {
         timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs
       },
-      stageStepOptions = {
-        timeoutMs:
-          Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs
-      },
       disputeOpenStepOptions = {
         timeoutMs:
           Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs
@@ -217,6 +264,9 @@ export class SlashingScenario extends FlowScenario {
       },
       slashStepOptions = {
         timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      contestedDueStepOptions = {
+        timeoutMs: Constants.contestedDueDeadlineMs() + Constants.PollDeadlineBufferMs
       }
 
     // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 2-group/3-op epoch ──
@@ -301,9 +351,12 @@ export class SlashingScenario extends FlowScenario {
     // never holds them.
     //
     // An advance between two flips would seat a mixed tail whose dispute
-    // operators miss that epoch instead of owning it alone. An
-    // advance never lands before the boundary, so the flips start only with
-    // `activationHeadroomMs()` of chain time left before it.
+    // operators miss that epoch instead of owning it alone. An advance never
+    // lands before the chain is due and an idle chain is never due, so the flips
+    // start only while the chain is idle or `activationHeadroomMs()` of chain
+    // time short of its due_at. Nothing is queued to the contested chain, so the
+    // sole-group await then gives it keep-due traffic (the keep-due pump) for
+    // the two advances that bring the three on duty.
     ClusterBuildPhase.create(
       setup,
       "ReshapeSchedule",
@@ -312,7 +365,7 @@ export class SlashingScenario extends FlowScenario {
       DisputeSteps.planAwaitActivationHeadroom(
         Actor.Sysio,
         "activation-headroom",
-        `the ${Constants.ContestedChain} chain clock is far enough short of its next boundary for every ACTIVE flip to land before it`,
+        `the ${Constants.ContestedChain} chain is idle, or far enough short of its due_at, for every ACTIVE flip to land before its next advance`,
         headroomStepOptions
       ),
       ...Constants.DisputeOperators.map(operator =>
@@ -337,7 +390,7 @@ export class SlashingScenario extends FlowScenario {
       DisputeSteps.planAwaitSoleActiveGroup(
         Actor.Sysio,
         "sole-active-group",
-        `the next ${Constants.ContestedChain} advances seat the 3 dispute operators as exactly its active batch-operator group`,
+        `kept due, the next ${Constants.ContestedChain} advances seat the 3 dispute operators as exactly its active batch-operator group`,
         groupStepOptions
       )
     )
@@ -369,22 +422,21 @@ export class SlashingScenario extends FlowScenario {
       `3 batch operators each deliver a distinct ${Constants.ContestedChain} envelope → 3-way checksum split`
     )
 
-    // A dispute opens ONLY from deliver's inline evalcons, and only when that
-    // deliver lands with now >= the chain's next_epoch_start (chkcons does NOT
-    // open disputes) — so wait past the frozen epoch's boundary first, capturing
-    // the contested epoch index, which the dispute operators must own, for every
-    // subsequent deliver / dispute read. Its envelope bucket must still be
-    // empty, so the three divergent deliveries are the only candidates.
+    // The dispute opens on the delivery after which no version can still win, at
+    // any time in the epoch: the third divergent delivery. Capture the contested
+    // epoch index, which the dispute operators must own, for every subsequent
+    // deliver / dispute read. Its envelope bucket must still be empty, so the
+    // three divergent deliveries are the only candidates.
     ClusterBuildPhase.create(
       inject,
       "StageContestedEpoch",
-      `Chain clock passes the frozen ${Constants.ContestedChain} epoch's boundary; the contested epoch is captured with an empty envelope bucket`
+      `The frozen ${Constants.ContestedChain} epoch is captured with an empty envelope bucket`
     ).push(
       DisputeSteps.planStageContestedEpoch(
         Actor.Sysio,
         "stage-contested-epoch",
-        `chain head-block time passes the ${Constants.ContestedChain} next_epoch_start; capture the contested epoch the dispute operators own`,
-        stageStepOptions
+        `capture the ${Constants.ContestedChain} contested epoch the dispute operators own`,
+        {}
       ),
       verifyStep(
         Actor.Sysio,
@@ -397,7 +449,7 @@ export class SlashingScenario extends FlowScenario {
     // One phase per dispute operator (parallel), each delivering the operator's
     // DISTINCT divergent envelope for the contested outpost. The contested chain
     // runs its own consensus epoch, so no other outpost's consensus gates the
-    // post-resolution advance where the slash runs.
+    // dispute on it.
     const deliveries = ClusterBuildPhaseGroup.create(
       inject,
       "DivergentDeliveries",
@@ -477,11 +529,16 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // ── 4. SlashNonCanonical — losers SLASHED, winner untouched ──
+    // ── 4. SlashNonCanonical — losers SLASHED at the resolution, winner untouched ──
+    // The resolution gives the contested chain traffic (sysio.msgch::resolvedisp),
+    // but its group's operators run no relay, so no elected operator cranks it (a
+    // relay serving it cranks it for liveness only one minimum after it falls due)
+    // and it still sits at the contested epoch: the resolution itself slashed the
+    // losers.
     ClusterBuildPhase.create(
       cluster,
       "SlashNonCanonical",
-      "Non-canonical deliverers flip SLASHED; the canonical deliverer does not"
+      `Non-canonical deliverers are SLASHED by the resolution, before the ${Constants.ContestedChain} epoch advances; the canonical deliverer is not`
     ).push(
       ...Constants.LosingOperators.map(operator =>
         DisputeSteps.planAwaitOperatorSlashed(
@@ -494,9 +551,61 @@ export class SlashingScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
+        "slashed-before-advance",
+        `the ${Constants.ContestedChain} epoch is still the contested epoch: the resolution slashed the losers, no advance did`,
+        verifyContestedEpochHeld
+      ),
+      verifyStep(
+        Actor.Sysio,
         "canonical-not-slashed",
         "the canonical deliverer is NOT slashed",
         verifyCanonicalNotSlashed
+      )
+    )
+
+    // ── 5. ContestedChainAdvances — a chkcons moves it past the contested epoch ──
+    // The resolution's traffic makes the contested chain due one traffic wait
+    // after it, and its group still runs no relay, so no elected operator pushes
+    // its chkcons: the flow waits for it to fall due and cranks it. A relay's
+    // liveness chkcons may advance it first, so the wait also accepts an advance
+    // and the crank then pushes nothing. That chkcons closes the books of the
+    // epoch before the contested one, its late window long passed, then advances,
+    // and must slash no one the resolution did not.
+    //
+    // The flow ends there and leaves the Ethereum outpost on the contested epoch:
+    // no relay of the contested epoch's group delivers its depot envelope, so the
+    // next group's relays find the outpost behind and the next epoch is never
+    // decided. The contested epoch's own books close once that next epoch's late
+    // window has passed; that closing books slashes nothing is covered by the
+    // wire-sysio contract tests.
+    ClusterBuildPhase.create(
+      cluster,
+      "ContestedChainAdvances",
+      `A chkcons moves the ${Constants.ContestedChain} chain, due from the resolution's traffic, past the contested epoch with no new slash`
+    ).push(
+      DisputeSteps.planRecordSlashedOperators(
+        Actor.Sysio,
+        "record-slashed-operators",
+        "record every SLASHED operator on sysio.opreg before the contested chain advances",
+        {}
+      ),
+      DisputeSteps.planAwaitContestedChainDue(
+        Actor.Sysio,
+        "contested-chain-due",
+        `the ${Constants.ContestedChain} chain falls due one traffic wait after the resolution's traffic`,
+        contestedDueStepOptions
+      ),
+      DisputeSteps.planCrankContestedChain(
+        Actor.Sysio,
+        "crank-contested-chain",
+        `crank the ${Constants.ContestedChain} chain's decided contested epoch through sysio.msgch::chkcons, unless a relay's liveness crank already advanced it`,
+        {}
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "advanced-without-slash",
+        `the ${Constants.ContestedChain} chain advanced past the contested epoch, and the advance slashed no one new`,
+        verifyContestedChainAdvancedWithoutSlash
       )
     )
   }

@@ -510,19 +510,57 @@ describe("ClusterManager.run epoch-advance liveness gate", () => {
     return config
   }
 
-  it("waits for EVERY chain to advance past the indices it read: one chain alone does not satisfy it", async () => {
+  it("waits for EVERY chain to advance past the indices it read, keeping every chain due: one chain alone does not satisfy it", async () => {
     const config = stubLocalRelaunch(),
       reads = jest
         .spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
         .mockResolvedValueOnce(StartIndices)
         .mockResolvedValueOnce(OneChainAdvanced)
         .mockResolvedValueOnce(BothChainsAdvanced),
+      states = jest
+        .spyOn(Steps.contracts.sysio.epoch, "readEpochStates")
+        .mockResolvedValue({} as Awaited<ReturnType<typeof Steps.contracts.sysio.epoch.readEpochStates>>),
       gate = jest.spyOn(Steps.epochAdvance, "awaitEpochIndicesAdvanced")
     await expect(ClusterManager.run(config)).resolves.toBeUndefined()
     expect(gate).toHaveBeenCalledTimes(1)
     expect(gate.mock.calls[0][1]).toEqual(StartIndices)
+    expect(gate.mock.calls[0][2]).toBeInstanceOf(AbortSignal)
     // The start read, the one-chain read the gate kept waiting through, the both-chains read.
     expect(reads).toHaveBeenCalledTimes(3)
+    // The keep-due pump reads its snapshot before each of the gate's two checks.
+    expect(states).toHaveBeenCalledTimes(2)
+  })
+
+  it("on a local relaunch, gives each idle chain one notetraffic while the gate waits, signed sysio.msgch@active", async () => {
+    const config = stubLocalRelaunch(),
+      idle = (chain: OutpostChainCodename) =>
+        ({
+          chain_code: 0,
+          current_epoch_index: StartIndices[chain],
+          current_epoch_start: "2026-11-25T00:00:00.000",
+          traffic_since: Steps.contracts.sysio.epoch.TrafficSinceNow,
+          due_at: Steps.contracts.sysio.epoch.TrafficSinceNow,
+          current_batch_op_group: 0,
+          batch_op_groups: [],
+          is_paused: false,
+          previous_group: []
+        }) as Awaited<ReturnType<typeof Steps.contracts.sysio.epoch.readEpochStates>>[OutpostChainCodename]
+    jest
+      .spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
+      .mockResolvedValueOnce(StartIndices)
+      .mockResolvedValueOnce(StartIndices)
+      .mockResolvedValueOnce(BothChainsAdvanced)
+    jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
+      [OutpostChainCodename.ETHEREUM]: idle(OutpostChainCodename.ETHEREUM),
+      [OutpostChainCodename.SOLANA]: idle(OutpostChainCodename.SOLANA)
+    })
+    const push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockResolvedValue(undefined)
+    await expect(ClusterManager.run(config)).resolves.toBeUndefined()
+    expect(push.mock.calls.map(([, input]) => input.data.chain_code)).toEqual([
+      OutpostChainCodename.ETHEREUM,
+      OutpostChainCodename.SOLANA
+    ])
+    expect(Steps.contracts.sysio.epoch.NotetrafficAccount).toBe("sysio.msgch")
   })
 
   it("fails the relaunch with the gate's timeout when a chain never advances", async () => {
@@ -537,13 +575,15 @@ describe("ClusterManager.run epoch-advance liveness gate", () => {
     await expect(ClusterManager.run(config)).rejects.toBe(timeout)
   })
 
-  it("skips the gate in external-outpost mode, where no local chain advances", async () => {
+  it("skips the gate in external-outpost mode, where no local chain advances, and writes no traffic", async () => {
     const config = {
         ...stubLocalRelaunch(),
         externalOutposts: fixtureExternalOutposts()
       },
-      reads = jest.spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices")
+      reads = jest.spyOn(Steps.contracts.sysio.epoch, "readCurrentEpochIndices"),
+      push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic")
     await expect(ClusterManager.run(config)).resolves.toBeUndefined()
     expect(reads).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
   })
 })

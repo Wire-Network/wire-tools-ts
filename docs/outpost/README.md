@@ -9,10 +9,12 @@ Every cluster that `wire-cluster-tool create` (or any `flow-*` run) bootstraps w
   `is_bootstrapped`, with its WIRE account name, operator type and public keys (each tagged with
   its key type);
 - **each outpost chain's consensus epoch** — keyed by the chain's `sysio.chains` code
-  (`ETHEREUM`, `SOLANA`): its duration (that chain's `sysio.epoch::epochcfg.epoch_duration_sec`)
-  and its initial batch-operator schedule (the groups that chain's `sysio.epoch::schbatchgps`
-  built, plus the index of the first active group). Each chain runs its own epoch counter,
-  duration and schedule.
+  (`ETHEREUM`, `SOLANA`): its minimum duration (that chain's
+  `sysio.epoch::epochcfg.epoch_duration_sec`, the least time between two of its envelopes) and its
+  initial batch-operator schedule (the groups that chain's `sysio.epoch::schbatchgps` built, plus
+  the index of the first active group). Each chain runs its own epoch counter, minimum and
+  schedule; its epochs are depot-paced, advancing only once it has traffic and its minimum has
+  passed.
 
 It holds public data only: account names, public keys, addresses and proofs of possession. No
 private key or secret reference is ever written to it.
@@ -95,7 +97,7 @@ private key or secret reference is ever written to it.
 | `operators[].keys.ethereum` | `{ type: "EM", publicKey, address }` | The Ethereum key and its `0x` address — `BATCH` / `UNDERWRITER` |
 | `operators[].keys.solana` | `{ type: "ED", publicKey, address }` | The Solana key and its base58 address — `BATCH` / `UNDERWRITER` |
 | `chains` | object | One entry per outpost chain, keyed by its `sysio.chains` code: `ETHEREUM` and `SOLANA`, both required |
-| `chains.<chain>.epochDurationSec` | integer > 0 | The chain's consensus epoch duration in seconds (its `sysio.epoch::epochcfg.epoch_duration_sec`) |
+| `chains.<chain>.epochDurationSec` | integer > 0 | The chain's minimum consensus epoch duration in seconds, the least time between two of its envelopes (its `sysio.epoch::epochcfg.epoch_duration_sec`) |
 | `chains.<chain>.batchOperatorGroups.groups` | array of arrays of WIRE names | The chain's batch-operator window in slot order; each member is the `accountName` of a `BATCH` entry in `operators` |
 | `chains.<chain>.batchOperatorGroups.activeGroupIndex` | integer ≥ 0 | Index into the chain's `groups` of its first active group |
 

@@ -155,10 +155,12 @@ describe("syndication scenario accounting", () => {
         chain_code: SlugName.from(chain),
         current_epoch_index: index,
         current_epoch_start: "2026-11-24T00:00:00.000",
-        next_epoch_start: "2026-11-24T00:01:00.000",
+        traffic_since: "1970-01-01T00:00:00.000",
+        due_at: "1970-01-01T00:00:00.000",
         current_batch_op_group: 0,
         batch_op_groups: [],
-        is_paused: false
+        is_paused: false,
+        previous_group: []
       })
     jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract as never)
     jest.spyOn(contract.tables.epochstate, "query").mockResolvedValue({
@@ -494,6 +496,38 @@ describe("decoded syndication intake", () => {
     expect(read.mock.calls.length).toBeGreaterThan(1)
     expect(ctx.outputs.get(epoch)).toBe(intakeEpoch)
     expect(ctx.outputs.get(request)).toBe(intakeRequest)
+  })
+
+  it("adds no traffic while its intake has not reached the depot: the outpost's backlog report drives it", async () => {
+    const ctx = fixtureContext({ clusterPath }),
+      wallet = Keypair.generate(),
+      step = SyndicationScenario.planVerifyIntake(
+        Actor.Sysio,
+        "verify-intake",
+        "verify intake",
+        {},
+        user,
+        intakeAmount,
+        outputKey<number>("test.intake.epoch", "consensus epoch"),
+        outputKey<SysioContracts.SysioBondApproveAction["request_id"]>(
+          "test.intake.request",
+          "bond request"
+        )
+      )
+    jest.spyOn(SolanaFundingTool, "loadKeypair").mockReturnValue(wallet)
+    const states = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates"),
+      push = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic").mockResolvedValue(undefined)
+    // The first read finds nothing held; the second finds the intake held and persisted.
+    jest
+      .spyOn(WireSyndicationTool, "readHeldEnvelope")
+      .mockImplementationOnce(async () => undefined)
+      .mockImplementation(async () => {
+        relay(syndication(wallet, intakeAmount, intakeAmount))
+        return heldEnvelope()
+      })
+    await step.runner(ctx, step.input, signal)
+    expect(push).not.toHaveBeenCalled()
+    expect(states).not.toHaveBeenCalled()
   })
 
   it("refuses a custody attestation below its own syndication", async () => {

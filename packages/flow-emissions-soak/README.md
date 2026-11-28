@@ -89,7 +89,7 @@ SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-so
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOAK_DURATION_MS` | `1800000` (30 min) | Soak duration in milliseconds. |
-| `EPOCH_DURATION_SEC` | `60` | Epoch duration passed to sysio.epoch::setconfig. |
+| `EPOCH_DURATION_SEC` | `60` | Minimum consensus epoch duration passed to sysio.epoch::setconfig. |
 | `WIRE_CLUSTER_PATH` | (fresh temp dir per run) | Cluster data directory (the standard harness contract; seeds `--cluster-path`). |
 | `WIRE_BUILD_PATH` | (required) | Path to the wire-sysio build directory (seeds `--wire-build-path`). |
 | `SYNTHETIC_SEED` | `1` | Seed for the synthetic dump PRNG (deterministic). |

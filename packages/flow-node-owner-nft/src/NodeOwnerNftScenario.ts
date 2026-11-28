@@ -208,9 +208,15 @@ async function verifyHappyPathConfirmed(
  * (`BAR.commitNode` → outbound envelope → depot dispatch → inline
  * `nodeownreg`), then the audit reads CONFIRMED. The poll
  * budget is the single-hop envelope; the row appears as soon as the depot
- * processes the consensus envelope carrying the attestation.
+ * processes the consensus envelope carrying the attestation. The Ethereum
+ * outpost emits that envelope with its reply to the depot's next one, and the
+ * poll adds no traffic: the claim's own message on the outpost is what makes
+ * Ethereum due, once the relays report the outpost's backlog to the depot
+ * (`sysio.msgch::reportqueue`).
+ *
+ * @param ctx - The build context.
  */
-async function verifyCommitPathConfirmed(
+export async function verifyCommitPathConfirmed(
   ctx: ClusterBuildContext
 ): Promise<void> {
   await pollUntil(

@@ -287,6 +287,7 @@ export class WireClient {
       scope: args.scope ?? account,
       table,
       limit: args.limit,
+      indexName: args.indexName,
       lowerBound: args.lowerBound,
       upperBound: args.upperBound
     })
@@ -679,7 +680,8 @@ export class WireClient {
       table: query.table,
       json: true,
       limit: query.limit ?? WireClient.DefaultRowLimit,
-      // omit bounds when null (conditional spread — no undefined)
+      // omit the index and the bounds when null (conditional spread — no undefined)
+      ...(query.indexName != null ? { index_name: query.indexName } : {}),
       ...(query.lowerBound != null ? { lower_bound: query.lowerBound } : {}),
       ...(query.upperBound != null ? { upper_bound: query.upperBound } : {})
     } as any)
@@ -1446,6 +1448,8 @@ export namespace WireClient {
   export interface TableQueryArgs {
     scope?: string
     limit?: number
+    /** The named secondary index the bounds key on (`byoutepoch`); the primary key when absent. */
+    indexName?: string
     lowerBound?: string | null
     upperBound?: string | null
   }
@@ -1789,6 +1793,8 @@ export namespace WireClient {
     scope: string
     table: string
     limit?: number
+    /** The named secondary index the bounds key on; the primary key when absent. */
+    indexName?: string
     lowerBound?: string | null
     upperBound?: string | null
   }

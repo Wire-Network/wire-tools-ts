@@ -104,7 +104,7 @@ describe("ClusterBuildDefaults — sysio.opreg termination rails", () => {
   })
 })
 
-describe("ClusterBuildDefaults.assertTerminationWindow — the window holds both rails at every schedule", () => {
+describe("ClusterBuildDefaults.assertTerminationWindow — the window holds the percent rail's sample at every schedule", () => {
   it("accepts the default rails at the default schedules", () => {
     expect(() =>
       ClusterBuildDefaults.assertTerminationWindow(config({}))
@@ -127,14 +127,19 @@ describe("ClusterBuildDefaults.assertTerminationWindow — the window holds both
     )
   })
 
-  it("refuses a window short of the consecutive-miss run", () => {
+  it("accepts a window short of the consecutive-miss run: that rail counts misses whatever their age", () => {
     const window = 6 * DutyIntervalMs - 1
     expect(() =>
       ClusterBuildDefaults.assertTerminationWindow(
-        config({ terminateWindowMs: window, terminateMinimumPercentSamples: 1 })
+        config({ terminateWindowMs: window, terminateMinimumPercentSamples: 5 })
+      )
+    ).not.toThrow()
+    expect(() =>
+      ClusterBuildDefaults.assertTerminationWindow(
+        config({ terminateWindowMs: window, terminateMinimumPercentSamples: 6 })
       )
     ).toThrow(
-      /holds 5 duty rotations .*fewer than terminate_max_consecutive_misses \+ 1 \(6\)/
+      /holds 5 duty rotations .*fewer than terminate_min_pct_samples \(6\)/
     )
   })
 

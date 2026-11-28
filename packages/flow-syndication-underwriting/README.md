@@ -11,7 +11,8 @@ Release follows BONDED as specified by `sysio.synd`; the challenge window gates
 approval and return of the bond. It does not gate the initial release.
 
 Each run uses a fresh cluster. Scenario defaults opt into mock liquidity pools and
-the imported bonder, with 60-second epochs. Pair configuration is set by governance
+the imported bonder, with a 60-second minimum epoch (each Solana → depot intake drives Solana
+itself: the relays report the outpost's backlog to the depot). Pair configuration is set by governance
 Steps and restored afterward. The final verify Step requires a clear cord and no
 mismatch rows. Every write is a Step, with irreversible WIRE confirmation.
 

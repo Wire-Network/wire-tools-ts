@@ -20,7 +20,6 @@ import {
   WireCollateralTool,
   WireOperatorProvisioningTool,
   getLogger,
-  pollUntil,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions
@@ -58,17 +57,25 @@ const { Actor } = Report
  *    operator flips ACTIVE in the same transaction.
  * 6. **AccumulateMisses** — the missed chain's `advance` folds the operator into
  *    its `epochstate.batch_op_groups`. Its daemon is DELIBERATELY never started,
- *    so every scheduled epoch of the chain records `recorddel(delivered=false)`.
+ *    so every scheduled epoch of the chain records `recorddel(delivered=false)`
+ *    when that epoch's books close: once the next epoch's late window has
+ *    passed, or at the advance after it.
+ *
+ * Epochs are depot-paced and the flow queues nothing to either outpost, so every
+ * duty epoch of the missed chain, and both chains' post-eviction rotation, are
+ * driven by keep-due traffic (`sysio.epoch::notetraffic`) the keep-due pump
+ * gives a chain whenever it is idle during the waits that need it to advance.
  * 7. **EvictFromChain** — once its first `terminateMinimumPercentSamples` duty
  *    epochs are all missed (a 100 % miss rate the moment the percent rail
- *    applies), `termcheck(account, chain)` flips the chain membership
- *    EVICTED with a populated `status_reason`, while the operator stays ACTIVE
- *    with `terminated_at` 0, its bond still in the balance row, no remit, and no
- *    membership of the other chain.
- * 8. **ContinuedRotation** — with sufficient standing operators, ordinary
- *    rotation fills every duty seat, excludes the evicted operator from every
- *    published window, and both outposts accept another complete rotation of
- *    their own chain.
+ *    applies), the `termcheck(account, chain)` of the advance that closes the
+ *    last one's books flips the chain membership EVICTED with a populated
+ *    `status_reason`, while the operator stays ACTIVE with `terminated_at` 0, its
+ *    bond still in the balance row, no remit, and no membership of the other chain.
+ * 8. **ContinuedRotation** — the seat the missed chain's window drew for the
+ *    operator before its eviction slides out and no later group seats it; with
+ *    sufficient standing operators, ordinary rotation then fills every duty seat,
+ *    excludes the evicted operator from every published window, and both outposts
+ *    accept another complete rotation of their own chain.
  * 9. **GovernanceTermination** — `sysio.opreg::terminate` (governance) flips the
  *    operator TERMINATED with `terminated_at > 0` and its reason, remits the whole
  *    bond (a success-true WITHDRAW_REMIT for the WIRE chain, the balance row
@@ -99,6 +106,7 @@ export class TerminationScenario extends FlowScenario {
       quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
       scheduleWindowStepOptions = ProtocolTiming.pollStepOptions(Constants.scheduleWindowDeadlineMs()),
       terminationStepOptions = ProtocolTiming.pollStepOptions(Constants.terminationDeadlineMs()),
+      evictedSeatStepOptions = ProtocolTiming.pollStepOptions(Constants.evictedSeatDeadlineMs()),
       // The same config the claim verify's runner reads (`ctx.config`).
       remitClaimStepOptions = {
         timeoutMs: WireCollateralTool.remitClaimStepTimeoutMs(config)
@@ -282,27 +290,8 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "enters-schedule-window",
         `operator rides into the ${Constants.MissedChain} epochstate.batch_op_groups via advance's new-tail computation`,
-        async ctx => {
-          await pollUntil(
-            `${Constants.DoomedOperatorLabel} appears in the ${Constants.MissedChain} epochstate.batch_op_groups`,
-            async () => {
-              try {
-                return Steps.contracts.sysio.epoch.isSeated(
-                  await Steps.contracts.sysio.epoch.readEpochState(ctx, Constants.MissedChain),
-                  TerminationSteps.doomedOperatorAccount(ctx)
-                )
-              } catch (error) {
-                // Transient RPC failure mid-advance — log it and keep polling.
-                log.warn(
-                  `[${this.name}] epochstate read failed: ${error instanceof Error ? error.message : String(error)}`
-                )
-                return false
-              }
-            },
-            Constants.scheduleWindowDeadlineMs(),
-            Constants.PollIntervalMs
-          )
-        },
+        async (ctx, signal) =>
+          TerminationSteps.awaitMissedChainSeat(ctx, true, Constants.scheduleWindowDeadlineMs(), signal),
         scheduleWindowStepOptions
       )
     )
@@ -317,15 +306,19 @@ export class TerminationScenario extends FlowScenario {
         Actor.Sysio,
         "membership-evicted",
         `the ${Constants.MissedChain} membership flips EVICTED once its first ${Constants.TerminateMinimumPercentSamples} scheduled epochs are all missed`,
-        async ctx => {
-          await pollUntil(
+        async (ctx, signal) => {
+          // Each duty epoch's books close at a later advance, which needs traffic: keep the chain due.
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.MissedChain],
             `${Constants.DoomedOperatorLabel}'s ${Constants.MissedChain} membership flips to EVICTED`,
             async () =>
               TerminationSteps.isEvicted(
                 await TerminationSteps.readDoomedMembership(ctx, Constants.MissedChain)
               ),
             Constants.terminationDeadlineMs(),
-            Constants.PollIntervalMs
+            Constants.PollIntervalMs,
+            signal
           )
         },
         terminationStepOptions
@@ -368,13 +361,21 @@ export class TerminationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "ContinuedRotation",
-      "Standing operators fill the rotation and both outposts accept another full window of their own chain"
+      "The seat drawn for the evicted operator before its eviction slides out, then standing operators fill the rotation and both outposts accept another full window of their own chain"
     ).push(
       verifyStep(
         Actor.Sysio,
+        "evicted-seat-slides-out",
+        `the seat the ${Constants.MissedChain} window drew for the evicted operator before its eviction slides out, and no later group seats it`,
+        async (ctx, signal) =>
+          TerminationSteps.awaitMissedChainSeat(ctx, false, Constants.evictedSeatDeadlineMs(), signal),
+        evictedSeatStepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
         "post-eviction-rotation",
-        "published groups exclude the evicted operator and both outposts advance through a full window of their own chain",
-        async ctx => {
+        "published groups exclude the evicted operator and both outposts, each kept due, advance through a full window of their own chain",
+        async (ctx, signal) => {
           const evicted = TerminationSteps.doomedOperatorAccount(ctx),
             standing = TerminationSteps.standingOperators(ctx.keyStore.operators, evicted),
             groupSize = BatchOperatorSchedule.resolve(ctx.config).operatorsPerEpoch,
@@ -384,7 +385,9 @@ export class TerminationScenario extends FlowScenario {
               await Steps.contracts.sysio.epoch.readEpochStates(ctx),
               await TerminationSteps.readInboundCursors(ctx)
             )
-          await pollUntil(
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            OutpostChainCodenames,
             `both outposts accept post-eviction epochs through ${describeOutpostChains(targets, target => String(target.targetEpoch))}`,
             async () => {
               const { rows } = await ctx.wire.getOutboundEnvelopes()
@@ -411,7 +414,8 @@ export class TerminationScenario extends FlowScenario {
               ctx.config,
               mapOutpostChains(chain => targets[chain].groupCount)
             ),
-            Constants.PollIntervalMs
+            Constants.PollIntervalMs,
+            signal
           )
         },
         rotationStepOptions

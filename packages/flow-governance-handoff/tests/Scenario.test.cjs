@@ -335,3 +335,14 @@ test("an owner registered after the last syncnodes is on the roster but not on s
   await Scenario.assertUnsyncedOwner(ctx, "govc")
   await Assert.rejects(Scenario.assertUnsyncedOwner(ctx, "govd"), /govd must be on the roster/)
 })
+
+test("after the late owner's commit the claim is awaited with no governance traffic: its backlog report drives Ethereum", async () => {
+  const { phases } = await plannedPhases(),
+    late = phases.find(phase => phase.name === "LateNodeOwner"),
+    names = late.steps.map(step => step.name)
+  Assert.equal(names.indexOf("late-owner-registered"), names.indexOf("commit-late-owner") + 1)
+  const proposed = phases.flatMap(phase => phase.steps).flatMap(step => step.input?.actions ?? [])
+  // The proposals still carry their actions; none gives a chain governance traffic.
+  Assert.ok(proposed.length > 0)
+  Assert.ok(!proposed.some(action => action.name === "resendroster"))
+})

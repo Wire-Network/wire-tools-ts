@@ -24,6 +24,7 @@ import {
   SolanaOutpostProgramTool,
   Steps,
   WireCollateralTool,
+  getLogger,
   isPackedCode,
   loadOutpostContract,
   matchesProtoEnum,
@@ -42,6 +43,8 @@ const {
   SysioOpregChainServiceStatus,
   SysioOpregOperatorstatus
 } = SysioContracts
+
+const log = getLogger(__filename)
 
 /** The Ethereum outpost contract whose inbound cursor {@link TerminationSteps.readInboundCursors} reads. */
 const EthereumInboundContract = "OPPInbound"
@@ -82,6 +85,51 @@ export namespace TerminationSteps {
    */
   export function doomedOperatorAccount(ctx: ClusterBuildContext): string {
     return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
+  }
+
+  /**
+   * Poll until the missed chain's schedule window holds a seat of the doomed operator exactly when `seated`: a
+   * tail group draws the seat in, and it leaves once that group slides out. Each needs the chain to advance,
+   * so the poll keeps the missed chain due with keep-due traffic (`EpochAdvanceSteps.pollUntilKeepingDue`).
+   * A failed `epochstate` read mid-advance is logged and polled again.
+   *
+   * @param ctx - The build context.
+   * @param seated - Whether to wait for a seat (`true`) or for none (`false`).
+   * @param timeoutMs - The poll deadline (ms).
+   * @param signal - Abort signal.
+   * @param intervalMs - The delay between reads (ms).
+   * @throws When the operator is not in the key store, or the deadline passes first.
+   */
+  export async function awaitMissedChainSeat(
+    ctx: ClusterBuildContext,
+    seated: boolean,
+    timeoutMs: number,
+    signal: AbortSignal,
+    intervalMs: number = Constants.PollIntervalMs
+  ): Promise<void> {
+    const account = doomedOperatorAccount(ctx)
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [Constants.MissedChain],
+      `${Constants.DoomedOperatorLabel} is seated (${seated}) in the ${Constants.MissedChain} epochstate.batch_op_groups`,
+      async () => {
+        try {
+          return (
+            Steps.contracts.sysio.epoch.isSeated(
+              await Steps.contracts.sysio.epoch.readEpochState(ctx, Constants.MissedChain),
+              account
+            ) === seated
+          )
+        } catch (error) {
+          // Transient RPC failure mid-advance — log it and keep polling.
+          log.warn(`epochstate read failed: ${error instanceof Error ? error.message : String(error)}`)
+          return false
+        }
+      },
+      timeoutMs,
+      intervalMs,
+      signal
+    )
   }
 
   /**

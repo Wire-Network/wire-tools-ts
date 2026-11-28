@@ -44,6 +44,11 @@ import {
   ExternalOutpostProgramId,
   fixtureExternalOutposts
 } from "../../config/resolveEnvironmentFixture.js"
+import {
+  fixtureEthereumAbi,
+  fixtureOutpostIdl,
+  type FixtureOutpostIdlOptions
+} from "./operatorDaemonArtifactFixture.js"
 
 /** A fully-keyed operator with REAL, RANDOM EM + ED keys — nothing derives from a mnemonic. */
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
@@ -678,27 +683,30 @@ describe("OperatorDaemonTool", () => {
       BAR: "0xbbb0000000000000000000000000000000000bbb"
     }
 
-    /** The hardhat artifact of each daemon ABI: source dir, artifact file, one event. */
+    /** The hardhat artifact of each daemon ABI: contract, source dir, artifact file, one event. */
     const AbiArtifacts = [
-      ["OPP.sol", "OPP.json", "OPPEnvelope"],
-      ["OPPInbound.sol", "OPPInbound.json", "OPPInboundEnvelope"],
-      ["BAR.sol", "BARV2.json", "NodeCommitted"]
-    ]
+      ["OPP", "OPP.sol", "OPP.json", "OPPEnvelope"],
+      ["OPPInbound", "OPPInbound.sol", "OPPInbound.json", "OPPInboundEnvelope"],
+      ["BAR", "BAR.sol", "BARV2.json", "NodeCommitted"]
+    ] as const
 
     /**
      * Write every source preparation reads under `root`: the outpost deploy
-     * record (`addresses`), the OPP / OPPInbound / BARV2 hardhat artifacts, and
-     * the liqsol_core program keypair + built IDL (`instructions` named).
+     * record (`addresses`), the OPP / OPPInbound / BARV2 hardhat artifacts
+     * (`omittedFunctions` left out of each), and the liqsol_core program keypair +
+     * built IDL (`idl` overriding what it declares).
      *
      * @param root - The sandbox root.
      * @param addresses - The deploy record's contract → address map.
-     * @param instructions - The built IDL's instruction names.
+     * @param idl - What the built IDL declares (default: every daemon requirement).
+     * @param omittedFunctions - Required ABI functions the artifacts leave out.
      * @returns The paths a context needs, plus the program keypair.
      */
     function writeArtifactSources(
       root: string,
       addresses: Record<string, string>,
-      instructions: readonly string[] = OperatorDaemonTool.RequiredSolanaIdlInstructions
+      idl: FixtureOutpostIdlOptions = {},
+      omittedFunctions: readonly string[] = []
     ) {
       const ethereumPath = Path.join(root, "wire-ethereum"),
         solanaPath = Path.join(root, "wire-solana"),
@@ -711,7 +719,7 @@ describe("OperatorDaemonTool", () => {
         Path.join(ethereumDeploymentsPath, "outpost-addrs.json"),
         JSON.stringify(addresses)
       )
-      AbiArtifacts.forEach(([source, artifact, event]) => {
+      AbiArtifacts.forEach(([contractName, source, artifact, event]) => {
         const artifactDir = Path.join(
           ethereumPath,
           "artifacts",
@@ -722,7 +730,9 @@ describe("OperatorDaemonTool", () => {
         Fs.mkdirSync(artifactDir, { recursive: true })
         Fs.writeFileSync(
           Path.join(artifactDir, artifact),
-          JSON.stringify({ abi: [{ type: "event", name: event }] })
+          JSON.stringify({
+            abi: fixtureEthereumAbi(contractName, event, omittedFunctions)
+          })
         )
       })
       Fs.mkdirSync(Path.join(solanaPath, ".keys"), { recursive: true })
@@ -733,12 +743,18 @@ describe("OperatorDaemonTool", () => {
       Fs.mkdirSync(Path.join(solanaPath, "target", "idl"), { recursive: true })
       Fs.writeFileSync(
         Path.join(solanaPath, "target", "idl", "liqsol_core.json"),
-        JSON.stringify({
-          metadata: { name: "liqsol_core" },
-          instructions: instructions.map(name => ({ name }))
-        })
+        JSON.stringify(fixtureOutpostIdl(idl))
       )
       return { ethereumPath, solanaPath, clusterPath, dataPath, programKeypair }
+    }
+
+    /** Run artifact preparation over a context. */
+    function prepare(ctx: ReturnType<typeof sourcesContext>): Promise<void> {
+      return OperatorDaemonTool.runArtifactPreparation(
+        ctx,
+        null,
+        new AbortController().signal
+      )
     }
 
     /** A context over the sources {@link writeArtifactSources} wrote. */
@@ -854,31 +870,268 @@ describe("OperatorDaemonTool", () => {
       expect(abi).toEqual({
         contractName: "OPP",
         address: DeployedAddresses.OPP,
-        abi: [{ type: "event", name: "OPPEnvelope" }]
+        abi: fixtureEthereumAbi("OPP", "OPPEnvelope")
       })
       const barFile = prepared.ethereumAbiFiles[2]
       expect(Path.basename(barFile)).toBe("BAR.json")
       expect(JSON.parse(Fs.readFileSync(barFile, "utf-8"))).toEqual({
         contractName: "BAR",
         address: DeployedAddresses.BAR,
-        abi: [{ type: "event", name: "NodeCommitted" }]
+        abi: fixtureEthereumAbi("BAR", "NodeCommitted")
       })
     })
 
     it("rejects an IDL missing a daemon-invoked instruction (wrong/stale IDL guard)", async () => {
       // epoch_in absent from the built IDL.
       const ctx = sourcesContext(
-        writeArtifactSources(Path.join(dir, "stale-idl"), DeployedAddresses, [
-          "sol_to_liqsol"
-        ])
+        writeArtifactSources(Path.join(dir, "stale-idl"), DeployedAddresses, {
+          instructions: ["sol_to_liqsol"]
+        })
       )
-      await expect(
-        OperatorDaemonTool.runArtifactPreparation(
-          ctx,
-          null,
-          new AbortController().signal
+      await expect(prepare(ctx)).rejects.toThrow(
+        /missing the 'epoch_in' instruction/
+      )
+    })
+
+    it("refuses an OPP ABI without pendingOutbound before writing any ABI file", async () => {
+      const sources = writeArtifactSources(
+        Path.join(dir, "no-backlog-view"),
+        DeployedAddresses,
+        {},
+        ["pendingOutbound"]
+      )
+      await expect(prepare(sourcesContext(sources))).rejects.toThrow(
+        /OPP ABI artifact at .*OPP\.json declares no 'pendingOutbound' function/
+      )
+      expect(
+        Fs.existsSync(
+          Path.join(sources.dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json")
         )
-      ).rejects.toThrow(/missing the 'epoch_in' instruction/)
+      ).toBe(false)
+    })
+
+    it("refuses an IDL whose OutboundMessageBuffer carries no attestation count, before writing the IDL", async () => {
+      const sources = writeArtifactSources(
+        Path.join(dir, "no-count-idl"),
+        DeployedAddresses,
+        {
+          outboundBufferFields: [
+            { name: "next_swap_id", type: "u64" },
+            { name: "used_data_bytes", type: "u32" }
+          ]
+        }
+      )
+      await expect(prepare(sourcesContext(sources))).rejects.toThrow(
+        /OutboundMessageBuffer field 3 as nothing, not 'attestation_count' \("u16"\)/
+      )
+      expect(
+        Fs.existsSync(
+          Path.join(
+            sources.dataPath,
+            OperatorDaemonTool.SolanaIdlSubpath,
+            OperatorDaemonTool.SolanaIdlFilename
+          )
+        )
+      ).toBe(false)
+    })
+
+    it("refuses an IDL whose delivery records carry no operator key", async () => {
+      const ctx = sourcesContext(
+        writeArtifactSources(Path.join(dir, "no-operator-idl"), DeployedAddresses, {
+          deliveryRecordFields: [{ name: "envelope_hash", type: { array: ["u8", 32] } }]
+        })
+      )
+      await expect(prepare(ctx)).rejects.toThrow(
+        /OperatorDelivery field 'operator' as nothing, not 'operator' \("pubkey"\)/
+      )
+    })
+  })
+
+  describe("assertEthereumAbi", () => {
+    /** Where the messages say the artifact is. */
+    const ArtifactFile = "/eth/artifacts/contracts/outpost/OPP.sol/OPP.json"
+
+    it("requires pendingOutbound of OPP alone", () => {
+      expect(OperatorDaemonTool.RequiredEthereumAbiFunctions).toEqual({
+        OPP: ["pendingOutbound"],
+        OPPInbound: [],
+        BAR: []
+      })
+    })
+
+    it("accepts an ABI declaring every required function", () => {
+      expect(() =>
+        OperatorDaemonTool.assertEthereumAbi(
+          "OPP",
+          fixtureEthereumAbi("OPP", "OPPEnvelope"),
+          ArtifactFile
+        )
+      ).not.toThrow()
+    })
+
+    it("accepts a contract with no required function whatever it declares", () => {
+      expect(() =>
+        OperatorDaemonTool.assertEthereumAbi("OPPInbound", [], ArtifactFile)
+      ).not.toThrow()
+    })
+
+    it("refuses an OPP ABI whose pendingOutbound is an event, not a function", () => {
+      expect(() =>
+        OperatorDaemonTool.assertEthereumAbi(
+          "OPP",
+          [{ type: "event", name: "pendingOutbound", inputs: [] }],
+          ArtifactFile
+        )
+      ).toThrow(/declares no 'pendingOutbound' function/)
+    })
+
+    it("refuses an ABI that does not parse, naming the artifact", () => {
+      expect(() =>
+        OperatorDaemonTool.assertEthereumAbi("OPP", "[{", ArtifactFile)
+      ).toThrow(/the OPP ABI artifact at .*OPP\.json does not parse/)
+    })
+
+    it("refuses an artifact carrying no abi at all", () => {
+      expect(() =>
+        OperatorDaemonTool.assertEthereumAbi("BAR", undefined, ArtifactFile)
+      ).toThrow(/the BAR ABI artifact at .*OPP\.json does not parse/)
+    })
+  })
+
+  describe("assertSolanaIdl", () => {
+    /** Where the messages say the IDL is. */
+    const IdlSource = "/sol/target/idl/liqsol_core.json"
+
+    /** Assert against {@link IdlSource}. */
+    const check = (options: FixtureOutpostIdlOptions) => () =>
+      OperatorDaemonTool.assertSolanaIdl(fixtureOutpostIdl(options), IdlSource)
+
+    it("pins the leading account fields and the delivery record field the relay reads", () => {
+      expect(OperatorDaemonTool.RequiredSolanaAccountLeadingFields).toEqual({
+        OutboundMessageBuffer: [
+          { name: "next_swap_id", type: "u64" },
+          { name: "used_data_bytes", type: "u32" },
+          { name: "attestation_count", type: "u16" }
+        ],
+        LatestOutboundEnvelope: [
+          { name: "bump", type: "u8" },
+          { name: "epoch_index", type: "u32" }
+        ]
+      })
+      expect(OperatorDaemonTool.SolanaEpochDeliveriesAccount).toBe("EpochDeliveries")
+      expect(OperatorDaemonTool.SolanaEpochDeliveriesRecordsField).toBe("deliveries")
+      expect(OperatorDaemonTool.RequiredSolanaDeliveryRecordField).toEqual({
+        name: "operator",
+        type: "pubkey"
+      })
+    })
+
+    it("accepts wire-solana's layout, whatever else the accounts and records declare", () => {
+      expect(check({})).not.toThrow()
+    })
+
+    it("accepts the leading fields followed by anything", () => {
+      expect(
+        check({
+          outboundBufferFields: [
+            { name: "next_swap_id", type: "u64" },
+            { name: "used_data_bytes", type: "u32" },
+            { name: "attestation_count", type: "u16" }
+          ],
+          latestEnvelopeFields: [
+            { name: "bump", type: "u8" },
+            { name: "epoch_index", type: "u32" },
+            { name: "trailer", type: "u64" }
+          ]
+        })
+      ).not.toThrow()
+    })
+
+    it("refuses an attestation count moved off its fixed offset", () => {
+      expect(
+        check({
+          outboundBufferFields: [
+            { name: "attestation_count", type: "u16" },
+            { name: "next_swap_id", type: "u64" },
+            { name: "used_data_bytes", type: "u32" }
+          ]
+        })
+      ).toThrow(
+        /OutboundMessageBuffer field 1 as 'attestation_count' \("u16"\), not 'next_swap_id' \("u64"\): the relay decodes it at a fixed offset/
+      )
+    })
+
+    it("refuses a latest envelope whose epoch is not right after its bump", () => {
+      expect(
+        check({
+          latestEnvelopeFields: [
+            { name: "epoch_index", type: "u32" },
+            { name: "bump", type: "u8" }
+          ]
+        })
+      ).toThrow(/LatestOutboundEnvelope field 1 as 'epoch_index' \("u32"\), not 'bump' \("u8"\)/)
+    })
+
+    it("refuses a field of the prefix with another width", () => {
+      expect(
+        check({
+          outboundBufferFields: [
+            { name: "next_swap_id", type: "u32" },
+            { name: "used_data_bytes", type: "u32" },
+            { name: "attestation_count", type: "u16" }
+          ]
+        })
+      ).toThrow(/OutboundMessageBuffer field 1 as 'next_swap_id' \("u32"\), not 'next_swap_id' \("u64"\)/)
+    })
+
+    for (const account of [
+      OperatorDaemonTool.SolanaOutboundBufferAccount,
+      OperatorDaemonTool.SolanaLatestOutboundEnvelopeAccount,
+      OperatorDaemonTool.SolanaEpochDeliveriesAccount
+    ]) {
+      it(`refuses an IDL that does not declare ${account} as an account`, () => {
+        expect(check({ omittedAccounts: [account] })).toThrow(
+          new RegExp(`IDL at .*liqsol_core\\.json declares no '${account}' account`)
+        )
+      })
+    }
+
+    it("refuses an attestation count of another width", () => {
+      expect(
+        check({
+          outboundBufferFields: [
+            { name: "next_swap_id", type: "u64" },
+            { name: "used_data_bytes", type: "u32" },
+            { name: "attestation_count", type: "u32" }
+          ]
+        })
+      ).toThrow(
+        /OutboundMessageBuffer field 3 as 'attestation_count' \("u32"\), not 'attestation_count' \("u16"\)/
+      )
+    })
+
+    it("refuses a latest envelope without its epoch", () => {
+      expect(
+        check({ latestEnvelopeFields: [{ name: "bump", type: "u8" }] })
+      ).toThrow(/LatestOutboundEnvelope field 2 as nothing, not 'epoch_index' \("u32"\)/)
+    })
+
+    it("refuses deliveries that are not a Vec of records", () => {
+      expect(check({ deliveriesType: { vec: "pubkey" } })).toThrow(
+        /declares EpochDeliveries\.deliveries as 'deliveries' \(\{"vec":"pubkey"\}\), not a Vec of records/
+      )
+    })
+
+    it("refuses a deliverer key of another type", () => {
+      expect(
+        check({ deliveryRecordFields: [{ name: "operator", type: { array: ["u8", 32] } }] })
+      ).toThrow(/OperatorDelivery field 'operator' as 'operator' .*, not 'operator' \("pubkey"\)/)
+    })
+
+    it("refuses deliveries whose record type the IDL does not define", () => {
+      expect(
+        check({ deliveriesType: { vec: { defined: { name: "MissingRecord" } } } })
+      ).toThrow(/declares no 'MissingRecord' struct with named fields/)
     })
   })
 })

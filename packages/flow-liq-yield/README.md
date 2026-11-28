@@ -24,7 +24,15 @@ Every write is a Report Step; depot confirmations wait for irreversibility.
    liqSOL payout equal the gross requested amount minus the fee
    `floor(quantity × desynd_fee_bps / 10000) + desynd_fee_flat` read from
    `syndconfig`; the write caps that charge with a live-derived `max_fee`.
-8. Verify epochs advanced, the emergency cord is clear and `mismatch` is empty.
+8. Verify every chain, kept due, advanced its epoch, the emergency cord is clear and
+   `mismatch` is empty.
+
+Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed.
+Solana's epochs here come from two sources: each Solana → depot attestation the outpost queues (it
+emits them with its reply to the depot's next envelope, and the relays' report of the outpost's
+backlog to the depot, `sysio.msgch::reportqueue`, makes Solana due for that envelope, so the waits
+for them add no traffic), and the `DESYNDICATE_LIQ` the desyndication queues. Ethereum advances
+only under the final check's keep-due pump (`sysio.epoch::notetraffic`).
 
 ## Bootstrap defaults
 

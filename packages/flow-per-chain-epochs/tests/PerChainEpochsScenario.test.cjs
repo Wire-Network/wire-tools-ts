@@ -85,38 +85,38 @@ test("plans one phase group per claim, so a failure names its phase", () => {
   const { build } = planned()
   Assert.deepEqual(
     build.children.map(group => group.name),
-    ["OwnCadence", "ServesOneChain", "LeavesOneChain", "PausesOneChain"]
+    ["OwnMinimum", "ServesOneChain", "LeavesOneChain", "PausesOneChain"]
   )
 })
 
-test("the cadence phase checks the configuration, then reads both clocks a window apart and compares them", () => {
+test("the pacing phase checks the configuration, then reads both clocks a kept-due window apart and compares them", () => {
   const { build, config } = planned(),
-    group = child(build, "OwnCadence"),
+    group = child(build, "OwnMinimum"),
     configuration = step(group, "epoch-configuration"),
-    [start, window, end, verify] = child(group, "ObserveCadence").steps
+    [start, window, end, verify] = child(group, "ObservePacing").steps
   Assert.deepEqual(configuration.input.durations, config.outpostEpochDurationSec)
   Assert.equal(start.runner, WireEconomicClockTool.runRecordClockReading)
-  Assert.equal(start.input.observationName, Constants.CadenceStartObservation)
+  Assert.equal(start.input.observationName, Constants.PacingStartObservation)
   Assert.equal(window.runner, PerChainEpochsSteps.runAwaitWindowElapsed)
   Assert.deepEqual(window.input, {
     kind: "PerChainEpochsSteps.AwaitWindowElapsedInput",
-    fromObservationName: Constants.CadenceStartObservation,
-    windowSec: Constants.CadenceWindowSec
+    fromObservationName: Constants.PacingStartObservation,
+    windowSec: Constants.PacingWindowSec
   })
   Assert.equal(
     window.options.timeoutMs,
-    PerChainEpochsSteps.windowDeadlineMs(Constants.CadenceWindowSec) + ProtocolTiming.PollDeadlineBufferMs
+    PerChainEpochsSteps.windowDeadlineMs(Constants.PacingWindowSec) + ProtocolTiming.PollDeadlineBufferMs
   )
   Assert.equal(end.runner, WireEconomicClockTool.runRecordClockReading)
-  Assert.equal(end.input.observationName, Constants.CadenceEndObservation)
-  Assert.equal(verify.runner, PerChainEpochsSteps.runVerifyOwnCadence)
-  Assert.equal(verify.input.fromObservationName, Constants.CadenceStartObservation)
-  Assert.equal(verify.input.toObservationName, Constants.CadenceEndObservation)
+  Assert.equal(end.input.observationName, Constants.PacingEndObservation)
+  Assert.equal(verify.runner, PerChainEpochsSteps.runVerifyOwnMinimum)
+  Assert.equal(verify.input.fromObservationName, Constants.PacingStartObservation)
+  Assert.equal(verify.input.toObservationName, Constants.PacingEndObservation)
 })
 
-test("the cadence group names both chains' configured durations", () => {
+test("the pacing group names both chains' configured minimums", () => {
   const { build, config } = planned(),
-    { description } = child(build, "OwnCadence")
+    { description } = child(build, "OwnMinimum")
   Object.entries(config.outpostEpochDurationSec).forEach(([chain, durationSec]) =>
     Assert.ok(description.includes(`${durationSec} s ${chain}`), description)
   )
@@ -281,7 +281,34 @@ test("the withdrawal is requested and matures under the Ethereum pause, which is
   Assert.equal(advanced.input.kind, "WireEconomicClockTool.VerifyConsensusAdvancedInput")
   Assert.equal(advanced.input.chain, OutpostChainCodename.SOLANA)
   Assert.equal(advanced.input.fromObservationName, Constants.PausedStartObservation)
-  Assert.equal(advanced.input.toObservationName, Constants.PausedEndObservation)
+  Assert.equal(advanced.input.toObservationName, Constants.SolanaAdvancedObservation)
+})
+
+test("Solana, kept due, advances under the pause before the withdrawal matures", () => {
+  const { build, config } = planned(),
+    group = child(build, "PausesOneChain"),
+    names = stepsOf(group).map(entry => entry.name),
+    kept = step(group, "solana-advances-while-ethereum-held"),
+    recorded = step(group, "record-solana-advanced")
+  Assert.equal(kept.runner, PerChainEpochsSteps.runAwaitConsensusAdvanced)
+  Assert.deepEqual(kept.input, {
+    kind: "PerChainEpochsSteps.AwaitConsensusAdvancedInput",
+    chain: OutpostChainCodename.SOLANA,
+    count: WireCollateralTool.WithdrawWaitConsensusEpochs,
+    budgetEpochs: WireCollateralTool.WithdrawWaitConsensusEpochs + Constants.RotationMarginEpochs
+  })
+  Assert.equal(
+    kept.options.timeoutMs,
+    PerChainEpochsSteps.chainEpochsBudgetMs(
+      config,
+      OutpostChainCodename.SOLANA,
+      WireCollateralTool.WithdrawWaitConsensusEpochs + Constants.RotationMarginEpochs
+    ) + ProtocolTiming.PollDeadlineBufferMs
+  )
+  Assert.equal(recorded.input.observationName, Constants.SolanaAdvancedObservation)
+  Assert.ok(names.indexOf("waits-on-solana-alone") < names.indexOf("solana-advances-while-ethereum-held"))
+  Assert.ok(names.indexOf("solana-advances-while-ethereum-held") < names.indexOf("record-solana-advanced"))
+  Assert.ok(names.indexOf("record-solana-advanced") < names.indexOf("withdrawal-matures"))
 })
 
 test("each phase group's longest Step ceiling is the one the README states", () => {
@@ -291,14 +318,14 @@ test("each phase group's longest Step ceiling is the one the README states", () 
         .filter(entry => entry.options.timeoutMs != null)
         .reduce((max, entry) => (entry.options.timeoutMs > max.options.timeoutMs ? entry : max))
   Assert.deepEqual(
-    ["OwnCadence", "ServesOneChain", "LeavesOneChain"].map(group => {
+    ["OwnMinimum", "ServesOneChain", "LeavesOneChain"].map(group => {
       const { name, options } = longest(group)
       return [group, name, options.timeoutMs / 1_000]
     }),
     [
-      ["OwnCadence", "cadence-window", 780],
-      ["ServesOneChain", "ethereum-seat-seconds", 540],
-      ["LeavesOneChain", "seated-on-solana", 930]
+      ["OwnMinimum", "pacing-window", 900],
+      ["ServesOneChain", "ethereum-seat-seconds", 630],
+      ["LeavesOneChain", "solana-seat-seconds", 1080]
     ]
   )
 })

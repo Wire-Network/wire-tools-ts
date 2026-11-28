@@ -4,15 +4,26 @@ The flow opts into backed mock liquidity and syndication imports. It provisions 
 linked Solana holder, releases an initial bonded syndication and queues another
 held envelope. Each write is a Report Step and state assertions are verify Steps.
 
+Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed.
+Solana's epochs here are driven by the redemptions' `DESYNDICATE_LIQ` outbound, by the Solana →
+depot syndications themselves (the outpost emits each with its reply to the depot's next envelope,
+and the relays' report of the outpost's backlog to the depot, `sysio.msgch::reportqueue`, makes
+Solana due for it, so those waits add no traffic), and by keep-due traffic the keep-due pump gives
+Solana for the advance under the cord, when nothing is queued. Ethereum advances on its lanes'
+redemptions.
+
 - The panic key freezes Solana. A syndication refuses with `OutpostFrozen`; a
   depot redemption burns shadow but stores a `PendingPayout` without paying the
   holder. A pending-payment call while frozen must refuse without changing the
-  record or holder balance. Epochs advance. The packaged `emergencyStop.ts status` and `pending`
+  record or holder balance. Solana advances on the redemption's own traffic. The packaged
+  `emergencyStop.ts status` and `pending`
   commands run read-only with explicit cluster RPC and wallet environment and
   retain their output in the cluster directory.
 - The panic account pulls the depot cord. Bond acceptance and challenge still
   work; crank releases nothing, while desyndication, plain-account transfers
-  and bond claims refuse. Epochs advance and bucket rows stay unchanged.
+  and bond claims refuse. Nothing is queued to Solana under the cord, so the flow gives it
+  keep-due traffic (`sysio.epoch::notetraffic`, through the keep-due pump): Solana advances, the
+  depot accepts the outpost's next envelope, and bucket rows stay unchanged.
 - Recovery clears Solana before the depot. The stored payment increases the
   holder's ATA by its exact amount and closes the PDA. A second on-chain call
   uses the original manifest and must refuse. Crank releases the due envelope.
@@ -62,7 +73,8 @@ node scripts/flow-heartbeat-monitor.mjs --cluster-path <fresh-dir> --expect-free
 ```
 
 Only this deliberate freeze flow uses `--expect-freeze`. Epoch stalls remain
-fatal. The monitor recognizes the expected `EnforcedPause` and
+fatal: a chain that is due and does not advance. An idle chain (no traffic) is
+not a stall; the monitor marks it `i`. The monitor recognizes the expected `EnforcedPause` and
 `WIRE_NoPendingDesyndication` refusals by name or raw Ethereum selector;
 unrelated errors remain fatal. No per-flow environment customization is needed.
 

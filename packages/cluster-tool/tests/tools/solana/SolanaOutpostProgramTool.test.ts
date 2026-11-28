@@ -148,6 +148,48 @@ describe("SolanaOutpostProgramTool", () => {
     }
   })
 
+  it("decodeInstruction reads an instruction by the program's camelCase IDL, null for foreign data", () => {
+    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-decode-"))
+    try {
+      Fs.mkdirSync(Path.join(programPath, "target", "idl"), { recursive: true })
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programIdlFile(programPath),
+        JSON.stringify({
+          address: Keypair.generate().publicKey.toBase58(),
+          metadata: { name: "liqsol_core", version: "0.1.0", spec: "0.1.0" },
+          instructions: [
+            {
+              name: "epoch_in",
+              discriminator: [85, 70, 55, 132, 50, 198, 135, 115],
+              accounts: [{ name: "operator", writable: true, signer: true }],
+              args: [
+                { name: "epoch_index", type: "u32" },
+                { name: "chunk_data", type: "bytes" }
+              ]
+            }
+          ]
+        })
+      )
+      const program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+          new Connection(rpcUrl),
+          programPath
+        ),
+        data = program.coder.instruction.encode("epochIn", {
+          epochIndex: 9,
+          chunkData: Buffer.from([1, 2])
+        })
+      expect(SolanaOutpostProgramTool.decodeInstruction(program, data)).toEqual({
+        name: "epochIn",
+        data: { epochIndex: 9, chunkData: Buffer.from([1, 2]) }
+      })
+      expect(
+        SolanaOutpostProgramTool.decodeInstruction(program, Buffer.alloc(16))
+      ).toBeNull()
+    } finally {
+      Fs.rmSync(programPath, { recursive: true, force: true })
+    }
+  })
+
   it("loadProgram carries the build remediation when the IDL is absent", () => {
     const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-noidl-"))
     try {

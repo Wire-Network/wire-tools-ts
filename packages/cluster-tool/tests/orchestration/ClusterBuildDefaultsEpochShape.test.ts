@@ -3,7 +3,7 @@ import {
   OutpostChainCodenames,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
-import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
+import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
 /**
@@ -50,6 +50,15 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
       chain_code: OutpostChainCodename.SOLANA,
       epoch_duration_sec: 150
     })
+  })
+
+  it("leaves every chain's traffic wait and late-delivery window to the contract default, half the minimum", () => {
+    OutpostChainCodenames.forEach(chain => {
+      const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount: 9 }), chain)
+      expect(data.traffic_wait_sec).toBe(Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec)
+      expect(data.late_window_sec).toBe(Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec)
+    })
+    expect(Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec).toBe(0)
   })
 
   it("sizes every chain's schedule the same from the batch-operator topology", () => {

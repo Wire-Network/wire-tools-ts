@@ -783,8 +783,13 @@ export namespace Constants {
 /**
  * Protocol timing envelope (author guidance, 2026-07-04) — the authoritative
  * worst-case durations of OPP propagation classes at the 60s minimum epoch.
- * An epoch can extend ~15–30s past its nominal duration while a scheduled
- * batch operator has yet to deliver (operators crank on ~15s internal loops);
+ * Epochs are depot-paced: a chain advances only once it is due (it has traffic,
+ * its minimum duration has passed since its epoch start and its traffic wait,
+ * at most that minimum, since that traffic), so every epoch-counted budget
+ * counts from a traffic injection, never from a cadence: from traffic, a chain
+ * is due within one minimum. An advance can land ~15–30s after its chain is due
+ * while a scheduled batch operator has yet to deliver or crank (operators crank
+ * on ~15s internal loops);
  * collateral deposit + depot verification takes ~4–6 minutes; a single-hop
  * wait (act on an outpost, verify on the depot — or the reverse) commonly
  * reaches 5–7 minutes; a full outpost → depot → outpost path doubles that to
@@ -803,8 +808,25 @@ export namespace Constants {
  * takes a parameter.
  */
 export namespace ProtocolTiming {
-  /** Max extension an epoch can run past `epoch_duration_sec` while a
-   *  scheduled batch operator has yet to deliver (s). */
+  /**
+   * Max time one epoch of a chain kept due can run past its minimum duration (s).
+   * Inside it accumulate, per epoch: the keep-due pump's latency from the advance
+   * to its traffic (`EpochAdvanceSteps.keepChainsDue` runs on each poll of the
+   * wait: its poll interval, at most 2 s, plus one tick of reads and
+   * irreversible pushes, up to ~8 s on a loaded host), the elected relay's
+   * `chkcons` poll once the chain is due (minimum / 24, capped at 15 s: 2.5 s at
+   * 60 s) and the block that carries it, and any decision lag (none while an
+   * epoch's round trip decides it inside its minimum, which it does by seconds).
+   * At a 60 s minimum that is at most ~13 s of the 30 s, so a kept-due cycle runs
+   * ≤ 73 s against the 90 s an N-epoch bound counts. Over a window W the
+   * lower bound `floor(W / (minimum + 30))` then trails the worst real count by
+   * `W × (1/73 − 1/90)` epochs, ≥ 2 only from W ≈ 770 s: the windows that assert
+   * that bound are sized to it (per-chain-epochs' `PacingWindowSec`,
+   * economic-clock's `ClockObservationEpochs`). At a 360 s minimum the relay poll
+   * alone is 15 s, leaving ~5 s per epoch; no flow counts such a chain's advances.
+   * Raising it lowers every kept-due lower bound and lengthens every N-epoch
+   * budget; lowering it under ~13 s fails healthy kept-due chains.
+   */
   export const EpochExtensionMaxSec = 30
 
   /**
@@ -885,36 +907,40 @@ export namespace ProtocolTiming {
   export const PollDeadlineBufferMs = 30_000
 
   /**
-   * Epoch-advance liveness budget as a count of effective-epoch windows. At a
-   * 60s epoch this is 3 × (60 + 30)s = 270s — ≥ {@link OppCirculationRestartMs}.
-   * A healthy cluster still passes in ~1 epoch (the poll returns the
-   * moment the index moves), so the larger ceiling adds no wall clock to a
-   * healthy run — it only keeps a slow restart from failing a live cluster.
+   * Epoch-advance liveness budget as a count of effective-epoch windows,
+   * counted from the traffic the wait injects (the `EpochAdvanceSteps` keep-due
+   * pump). At a 60s minimum this is 3 × (60 + 30)s = 270s — ≥
+   * {@link OppCirculationRestartMs}. A healthy cluster still passes in ~1 epoch
+   * (the poll returns the moment the index moves), so the larger ceiling adds no
+   * wall clock to a healthy run — it only keeps a slow restart from failing a
+   * live cluster.
    *
    * ONE envelope, every epoch-advance wait ({@link epochAdvanceBudgetMs}):
-   * `EpochAdvanceSteps` sizes the bootstrap's per-chain gate by each chain's
-   * duration and an every-chain wait (`ClusterManager.run`'s post-relaunch
-   * liveness check, a flow's advance past a snapshot) by the slowest chain's.
+   * `EpochAdvanceSteps` sizes the bootstrap's per-chain gate (its genesis epoch
+   * decided) by each chain's minimum and an every-chain wait
+   * (`ClusterManager.run`'s post-relaunch liveness check, a flow's advance past
+   * a snapshot) by the slowest chain's.
    */
   export const EpochVerifyEpochCount = 3
 
   /**
    * Wall clock a newly started or *resumed* cluster can need to (re)start OPP
-   * circulation before `current_epoch_index` advances (ms): about four minutes,
-   * whatever the chain's epoch duration — the start is daemon and delivery
-   * latency, not epochs. The floor of every epoch-advance budget, so a chain
-   * whose {@link EpochVerifyEpochCount} effective epochs are shorter (the 30 s
-   * Solana default: 3 × 60 s = 180 s) is not failed by its first close.
+   * circulation before a chain given traffic advances its `current_epoch_index`
+   * (ms): about four minutes, whatever the chain's minimum duration — the start
+   * is daemon and delivery latency, not epochs. The floor of every
+   * epoch-advance budget, so a chain whose {@link EpochVerifyEpochCount}
+   * effective epochs are shorter (the 30 s Solana default: 3 × 60 s = 180 s) is
+   * not failed by its first close.
    */
   export const OppCirculationRestartMs = 240_000
 
   /**
    * The budget of a wait on one clock's consensus epoch advancing (ms):
-   * {@link EpochVerifyEpochCount} effective epochs of its duration, never less
-   * than {@link OppCirculationRestartMs}.
+   * {@link EpochVerifyEpochCount} effective epochs of its duration, counted from
+   * the chain's traffic, never less than {@link OppCirculationRestartMs}.
    *
-   * @param epochDurationSec - The awaited chain's consensus epoch duration (s) —
-   *   for a wait on every chain, the slowest chain's.
+   * @param epochDurationSec - The awaited chain's minimum consensus epoch
+   *   duration (s) — for a wait on every chain, the slowest chain's.
    * @returns The budget (ms).
    */
   export function epochAdvanceBudgetMs(epochDurationSec: number): number {
@@ -965,11 +991,13 @@ export namespace ProtocolTiming {
   }
 
   /**
-   * Effective per-epoch duration for N-epoch deadlines (s): the nominal
-   * duration plus the maximum delivery extension, so an N-epoch budget
-   * survives N consecutively-extended epochs.
+   * Effective per-epoch duration for N-epoch deadlines (s): the minimum
+   * duration plus the maximum delivery extension — the longest one advance of a
+   * depot-paced chain takes from the traffic that makes it due — so an N-epoch
+   * budget survives N consecutively-extended epochs of a chain kept due. An
+   * idle chain takes no epochs at all; a wait that needs one gives it traffic.
    *
-   * @param epochDurationSec - The cluster's configured epoch duration (s).
+   * @param epochDurationSec - The clock's (minimum) epoch duration (s).
    * @returns The extension-inclusive per-epoch duration (s).
    */
   export function effectiveEpochSec(epochDurationSec: number): number {
@@ -978,8 +1006,8 @@ export namespace ProtocolTiming {
 
   /**
    * A wait of `epochs` effective epochs of one clock (ms) — an outpost chain's consensus epoch
-   * or the economic epoch: {@link effectiveEpochSec} of its duration, per epoch. THE form of
-   * every N-epoch deadline.
+   * (counted from the traffic that keeps it due) or the economic epoch: {@link effectiveEpochSec}
+   * of its duration, per epoch. THE form of every N-epoch deadline.
    *
    * @param epochDurationSec - The clock's epoch duration (s).
    * @param epochs - The epochs waited.

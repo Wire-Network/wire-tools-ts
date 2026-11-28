@@ -473,7 +473,9 @@ export async function assertProbePaid(
 }
 
 /**
- * The late owner's NFT claim reached the depot over OPP: a tier-1 `nodeowners` row.
+ * The late owner's NFT claim reached the depot over OPP: a tier-1 `nodeowners` row. The claim
+ * drives Ethereum itself: the relays report the outpost's backlog to the depot
+ * (`sysio.msgch::reportqueue`), which makes Ethereum ship the envelope the outpost answers with it.
  *
  * @param ctx - The build context.
  */

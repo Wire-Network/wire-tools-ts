@@ -14,6 +14,11 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
+import { Either } from "@3fv/prelude-ts"
+import type * as anchor from "@coral-xyz/anchor"
+import { ethers } from "ethers"
+import { identity } from "lodash"
+import { match, P } from "ts-pattern"
 import {
   type ClusterConfig,
   type EthereumReadConfirmationConfig,
@@ -22,7 +27,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { OperatorType, type TokenAmount } from "@wireio/opp-typescript-models"
 import { Asset, KeyType, SlugName } from "@wireio/sdk-core"
-import { match } from "ts-pattern"
+import { NestedError } from "@wireio/shared"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
@@ -162,9 +167,68 @@ export namespace OperatorDaemonTool {
   export const RequiredSolanaIdlInstructions = [
     SolanaEpochInInstruction
   ] as const
+  /**
+   * One named field of an Anchor IDL struct or instruction — Anchor's `IdlField`, derived from
+   * the `Idl` its package root exports (the root does not export `IdlField` itself).
+   */
+  export type SolanaIdlField = anchor.Idl["instructions"][number]["args"][number]
+  /** The Solana outpost account the relay reads the outbound backlog's message count from. */
+  export const SolanaOutboundBufferAccount = "OutboundMessageBuffer"
+  /** The Solana outpost account the relay reads the latest emitted outbound envelope from. */
+  export const SolanaLatestOutboundEnvelopeAccount = "LatestOutboundEnvelope"
+  /**
+   * The leading fields of each Solana outpost account the relay decodes at fixed byte offsets, in
+   * declaration order: the backlog's message count `attestation_count` at byte 20 of
+   * {@link SolanaOutboundBufferAccount}, and the latest emitted envelope's `epoch_index` at byte 9
+   * of {@link SolanaLatestOutboundEnvelopeAccount}, each after the 8-byte account discriminator.
+   * Asserted in the copied IDL so a wrong or stale IDL fails at artifact preparation, before any
+   * daemon starts.
+   */
+  export const RequiredSolanaAccountLeadingFields: Readonly<
+    Record<string, readonly SolanaIdlField[]>
+  > = {
+    [SolanaOutboundBufferAccount]: [
+      { name: "next_swap_id", type: "u64" },
+      { name: "used_data_bytes", type: "u32" },
+      { name: "attestation_count", type: "u16" }
+    ],
+    [SolanaLatestOutboundEnvelopeAccount]: [
+      { name: "bump", type: "u8" },
+      { name: "epoch_index", type: "u32" }
+    ]
+  }
+  /** The per-epoch Solana outpost tally the relay finds its own recorded delivery in. */
+  export const SolanaEpochDeliveriesAccount = "EpochDeliveries"
+  /** {@link SolanaEpochDeliveriesAccount}'s field of recorded deliveries: a Vec of records. */
+  export const SolanaEpochDeliveriesRecordsField = "deliveries"
+  /**
+   * The field each record of {@link SolanaEpochDeliveriesRecordsField} must declare: the
+   * deliverer's key, which the relay compares with its own to send nothing for a delivery the
+   * outpost already recorded. The batch-operator role refuses to boot without it; asserted in the
+   * copied IDL so a stale IDL fails at artifact preparation.
+   */
+  export const RequiredSolanaDeliveryRecordField = {
+    name: "operator",
+    type: "pubkey"
+  } as const satisfies SolanaIdlField
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
   export const EthereumAbiContractNames =
     ExternalOutpostConfig.RequiredOutpostContractNames
+  /** One of {@link EthereumAbiContractNames}. */
+  export type EthereumAbiContractName = (typeof EthereumAbiContractNames)[number]
+  /**
+   * The functions each daemon ABI must declare, by contract — asserted in the hardhat artifact
+   * before its ABI file is written, so a wire-ethereum build without them fails at artifact
+   * preparation rather than at daemon start. The Ethereum client refuses an OPP ABI without
+   * `pendingOutbound()`, the view the relay reads the outbound backlog from.
+   */
+  export const RequiredEthereumAbiFunctions: Readonly<
+    Record<EthereumAbiContractName, readonly string[]>
+  > = {
+    OPP: ["pendingOutbound"],
+    OPPInbound: [],
+    BAR: []
+  }
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
@@ -240,7 +304,10 @@ export namespace OperatorDaemonTool {
    * from the committed program keypair. External-outpost mode reads the
    * addresses `ExternalOutpostSteps.planMaterialize` wrote from the trusted
    * config, and overlays the config's `solana.programId`. Runs ONCE, before any
-   * operator node starts.
+   * operator node starts, and fails there when the `--ethereum-path` /
+   * `--solana-path` builds lack what the daemons refuse to boot without
+   * ({@link assertEthereumAbi}, {@link assertSolanaIdl}): the Ethereum outbound
+   * backlog view, and the Solana account layouts and delivery record the relay decodes.
    */
   export function planArtifactPreparation<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -305,6 +372,7 @@ export namespace OperatorDaemonTool {
       const artifact = JSON.parse(Fs.readFileSync(artifactFile, "utf-8")),
         abiFile = Path.join(abiDir, `${contractName}.json`),
         address = ethereumAddresses[contractName]
+      assertEthereumAbi(contractName, artifact.abi, artifactFile)
       Assert.ok(
         address != null,
         `prepareArtifacts: ${addressesFile} has no ${contractName} address to embed in its ABI`
@@ -332,18 +400,8 @@ export namespace OperatorDaemonTool {
       ctx.config.externalOutposts?.solana.programId ??
       SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
 
-    const idlSource = SolanaOutpostProgramTool.programIdlFile(solanaPath),
-      idl = SolanaOutpostProgramTool.readIdl(solanaPath),
-      idlInstructionNames = new Set(
-        idl.instructions.map(instruction => instruction.name)
-      )
-    for (const requiredInstruction of RequiredSolanaIdlInstructions) {
-      Assert.ok(
-        idlInstructionNames.has(requiredInstruction),
-        `prepareArtifacts: ${SolanaOutpostProgramTool.ProgramName} IDL at ${idlSource} ` +
-          `is missing the '${requiredInstruction}' instruction — wrong or stale IDL?`
-      )
-    }
+    const idl = SolanaOutpostProgramTool.readIdl(solanaPath)
+    assertSolanaIdl(idl, SolanaOutpostProgramTool.programIdlFile(solanaPath))
     const solanaIdlFile = Path.join(
       mkdirs(Path.join(dataPath, SolanaIdlSubpath)),
       SolanaIdlFilename
@@ -373,6 +431,144 @@ export namespace OperatorDaemonTool {
     ctx.log.info(
       `[operator-daemon] artifacts ready (abis=${ethereumAbiFiles.length}, programId=${solanaProgramId})`
     )
+  }
+
+  // ── artifact checks (pure): what the daemons refuse to boot without ───────
+
+  /**
+   * Assert a daemon ABI's hardhat artifact declares every function
+   * {@link RequiredEthereumAbiFunctions} names for `contractName` — for OPP the
+   * `pendingOutbound()` view the relay reads the outbound backlog from, without which the
+   * Ethereum client refuses to start.
+   *
+   * @param contractName - The daemon ABI's contract.
+   * @param abi - The artifact's `abi`.
+   * @param artifactFile - The artifact's path, for the messages.
+   * @throws When the ABI does not parse or a required function is not declared.
+   */
+  export function assertEthereumAbi(
+    contractName: EthereumAbiContractName,
+    abi: ethers.InterfaceAbi,
+    artifactFile: string
+  ): void {
+    const declared = Either.try(() => new ethers.Interface(abi))
+      .ifLeft(error => {
+        throw new NestedError(
+          `prepareArtifacts: the ${contractName} ABI artifact at ${artifactFile} does not parse`,
+          { cause: error, context: { contractName, artifactFile } }
+        )
+      })
+      .getOrThrow()
+    RequiredEthereumAbiFunctions[contractName].forEach(name =>
+      Assert.ok(
+        declared.getFunction(name) != null,
+        `prepareArtifacts: the ${contractName} ABI artifact at ${artifactFile} declares no '${name}' ` +
+          `function, which the batch-operator daemon requires — build wire-ethereum at an outpost version that declares it`
+      )
+    )
+  }
+
+  /**
+   * Assert the OPP outpost IDL declares everything the batch-operator daemons decode, so a wrong
+   * or stale IDL fails at artifact preparation, before any daemon starts: every
+   * {@link RequiredSolanaIdlInstructions} instruction; every {@link RequiredSolanaAccountLeadingFields}
+   * account opening with its leading fields (names, types and order); and the
+   * {@link SolanaEpochDeliveriesAccount} account's {@link SolanaEpochDeliveriesRecordsField}
+   * declared a Vec of records carrying {@link RequiredSolanaDeliveryRecordField}.
+   *
+   * @param idl - The parsed IDL.
+   * @param idlSource - The IDL's path, for the messages.
+   * @throws When an instruction, account, field or record is missing or declared differently.
+   */
+  export function assertSolanaIdl(idl: anchor.Idl, idlSource: string): void {
+    const label = `${SolanaOutpostProgramTool.ProgramName} IDL at ${idlSource}`,
+      instructionNames = new Set(
+        (idl.instructions ?? []).map(instruction => instruction.name)
+      )
+    RequiredSolanaIdlInstructions.forEach(requiredInstruction =>
+      Assert.ok(
+        instructionNames.has(requiredInstruction),
+        `prepareArtifacts: ${label} is missing the '${requiredInstruction}' instruction — wrong or stale IDL?`
+      )
+    )
+
+    Object.entries(RequiredSolanaAccountLeadingFields).forEach(([account, requiredFields]) => {
+      const declaredFields = solanaAccountFields(idl, account, label)
+      requiredFields.forEach((required, position) => {
+        const declared = declaredFields[position]
+        Assert.ok(
+          declared?.name === required.name && declared.type === required.type,
+          `prepareArtifacts: ${label} declares the ${account} field ${position + 1} as ` +
+            `${describeIdlField(declared)}, not ${describeIdlField(required)}: the relay decodes ` +
+            `it at a fixed offset — wrong or stale IDL?`
+        )
+      })
+    })
+
+    const records = solanaAccountFields(idl, SolanaEpochDeliveriesAccount, label).find(
+        field => field.name === SolanaEpochDeliveriesRecordsField
+      ),
+      recordType = match(records?.type)
+        .with({ vec: { defined: { name: P.select(P.string) } } }, identity<string>)
+        .otherwise(() => null)
+    Assert.ok(
+      recordType != null,
+      `prepareArtifacts: ${label} declares ${SolanaEpochDeliveriesAccount}.${SolanaEpochDeliveriesRecordsField} ` +
+        `as ${describeIdlField(records)}, not a Vec of records — wrong or stale IDL?`
+    )
+    const deliverer = solanaStructFields(idl, recordType, label).find(
+      field => field.name === RequiredSolanaDeliveryRecordField.name
+    )
+    Assert.ok(
+      deliverer?.type === RequiredSolanaDeliveryRecordField.type,
+      `prepareArtifacts: ${label} declares the ${recordType} field '${RequiredSolanaDeliveryRecordField.name}' as ` +
+        `${describeIdlField(deliverer)}, not ${describeIdlField(RequiredSolanaDeliveryRecordField)}: the relay ` +
+        `finds its own recorded delivery by it — build wire-solana at an outpost version that records it`
+    )
+  }
+
+  /**
+   * The named fields of the IDL struct of `account`, which the IDL must also declare as an
+   * account (Anchor's `accounts` list carries only names and discriminators).
+   */
+  function solanaAccountFields(
+    idl: anchor.Idl,
+    account: string,
+    label: string
+  ): readonly SolanaIdlField[] {
+    Assert.ok(
+      (idl.accounts ?? []).some(declared => declared.name === account),
+      `prepareArtifacts: ${label} declares no '${account}' account — wrong or stale IDL?`
+    )
+    return solanaStructFields(idl, account, label)
+  }
+
+  /** The named fields of the IDL's struct type `typeName`. */
+  function solanaStructFields(
+    idl: anchor.Idl,
+    typeName: string,
+    label: string
+  ): readonly SolanaIdlField[] {
+    const fields = match(
+      (idl.types ?? []).find(declared => declared.name === typeName)?.type
+    )
+      .with(
+        { kind: "struct", fields: P.array({ name: P.string }) },
+        struct => struct.fields
+      )
+      .otherwise(() => null)
+    Assert.ok(
+      fields != null,
+      `prepareArtifacts: ${label} declares no '${typeName}' struct with named fields — wrong or stale IDL?`
+    )
+    return fields
+  }
+
+  /** An IDL field as a diagnostic names it: `'name' (type)`, or `nothing` when absent. */
+  function describeIdlField(field: SolanaIdlField): string {
+    return field == null
+      ? "nothing"
+      : `'${field.name}' (${JSON.stringify(field.type)})`
   }
 
   // ── pure value builders: per-type daemon args ──────────────────────────────

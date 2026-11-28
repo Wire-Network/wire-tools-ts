@@ -115,6 +115,14 @@ Use the branches the manifest declares (`wire-platform-manifest/default.xml`): t
 (cd wire-solana   && git fetch && git checkout next)
 ```
 
+The batch operators' relay reports each outpost's outbound backlog to the depot (`sysio.msgch::reportqueue`),
+which is what makes a chain due for a message an outpost queued. wire-ethereum must be at a version whose `OPP`
+declares the `pendingOutbound()` view the relay reads. On Solana the relay decodes
+`OutboundMessageBuffer.attestation_count` and `LatestOutboundEnvelope.epoch_index` at fixed offsets, so the bootstrap
+checks that the `liqsol_core` IDL declares those layouts (and `EpochDeliveries.deliveries` records carrying an
+`operator` key): a check of the relay's decode surface, not of an outpost version. The bootstrap's artifact
+preparation refuses a build failing either check before any operator daemon starts.
+
 ---
 
 ## 2. Environment
@@ -304,7 +312,7 @@ options, is the `create` table in the repo root `README.md`):
 | `--producer-count` / `-p` | Producer accounts to register (default 1) |
 | `--batch-operator-count` / `-b` | Batch operators (default 3) |
 | `--epoch-duration-sec` | Minimum consensus epoch duration in seconds of every outpost chain without its own `--outpost-epoch-duration-sec-<chain>`, and the economic default (default: none — each chain takes its own default) |
-| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | One outpost chain's own consensus epoch duration in seconds — each chain runs its own epoch on the depot (default: `--epoch-duration-sec`, else 60 for Ethereum and 15 for Solana) |
+| `--outpost-epoch-duration-sec-ethereum` / `--outpost-epoch-duration-sec-solana` | One outpost chain's own minimum consensus epoch duration in seconds — each chain runs its own depot-paced epoch on the depot, advancing only once it has traffic and this minimum has passed (default: `--epoch-duration-sec`, else 60 for Ethereum and 30 for Solana) |
 | `--economic-epoch-duration-sec` | Economic epoch duration in seconds — emissions, collateral withdrawals and producer pay (default: `--epoch-duration-sec`, at least 60, else 300) |
 | `--economic-start-time` | Start of economic epoch 1, ISO-8601 UTC (default: the chain head when the bootstrap configures it) |
 | `--enable-mock-liq-pools` | Seed the mock LIQETH/LIQSOL yield pools during epoch zero — forced on by a local `create` |

@@ -29,3 +29,72 @@ for (const complete of [true, false]) test(`settlement requires the complete des
   if (complete) await run()
   else await Assert.rejects(run, /destination remains incomplete/)
 })
+
+for (const accepted of [true, false]) test(`under the cord the frozen-epoch wait keeps Solana alone due until it advances with an accepted Solana envelope: ${accepted}`, async () => {
+  const {Steps} = require("@wireio/cluster-tool"),
+    ctx = {
+      outputs: new OutputStore(),
+      config: {dataPath: "/tmp/unused-unit-wallet"},
+      wire: {
+        getSysioContract: () => ({
+          tables: {
+            envlog: {
+              query: async () => ({
+                rows: accepted ? [{id: "12", endpoints: {start: {kind: "CHAIN_KIND_SVM"}, end: {kind: "CHAIN_KIND_WIRE"}}}] : [],
+                more: false
+              })
+            },
+            buckets: {query: async () => ({rows: [], more: false})}
+          }
+        })
+      }
+    },
+    build = ClusterBuild.forContext(ctx),
+    idle = {current_epoch_index: 5, due_at: "1970-01-01T00:00:00.000", is_paused: false}
+  new EmergencyStopScenario().plan(build)
+  const step = steps(build).find(value => value.name === "frozen-epochs-and-buckets")
+  ctx.outputs.set(Constants.FreezeEpoch, 5).set(Constants.EnvelopeLogId, 10n).set(Constants.Buckets, [])
+  mock.method(SyndicationScenario, "readEpoch", async () => 6)
+  mock.method(SyndicationScenario, "readEnvelope", async () => ({released: "0"}))
+  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({ETHEREUM: idle, SOLANA: idle}))
+  const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  mock.method(StepTools, "pollUntil", async (label, predicate) => {
+    Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
+  })
+  const run = () => step.runner(ctx, step.input, new AbortController().signal)
+  if (accepted) {
+    await run()
+    Assert.equal(push.mock.callCount(), 0)
+  } else {
+    await Assert.rejects(run, /Timed out waiting for: epoch advance and an accepted Solana envelope/)
+    Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [SyndicationScenario.Chain])
+  }
+})
+
+test("the post-repair cursor wait pushes no traffic: the repaired syndication already circulated as the outpost's backlog", async () => {
+  const {Steps} = require("@wireio/cluster-tool"),
+    {SyndicateLIQ} = require("@wireio/opp-typescript-models"),
+    OppEnvelopeScan = require("@wireio/cluster-tool/lib/cjs/flow/oppEnvelopeScan.js"),
+    repaired = SyndicateLIQ.create({sequence: 9n, amount: {amount: Constants.ProbeAmount + Constants.Deficit}}),
+    ctx = {
+      outputs: new OutputStore(),
+      config: {clusterPath: "/tmp/unused-unit-cluster", dataPath: "/tmp/unused-unit-wallet"},
+      wire: {getSysioContract: () => ({tables: {syndcursors: {query: async () => ({rows: [], more: false})}}})}
+    },
+    build = ClusterBuild.forContext(ctx)
+  new EmergencyStopScenario().plan(build)
+  const step = steps(build).find(value => value.name === "repair-message-admitted"),
+    states = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  mock.method(OppEnvelopeScan, "readEnvelopeAttestations", async () => [SyndicateLIQ.toBinary(repaired)])
+  mock.method(StepTools, "pollUntil", async (label, predicate) => {
+    Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
+  })
+  await Assert.rejects(
+    step.runner(ctx, step.input, new AbortController().signal),
+    /Timed out waiting for: depot cursor reaches post-repair Solana sequence/
+  )
+  Assert.equal(ctx.outputs.assert(Constants.RecoverySequence), 9n)
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(states.mock.callCount(), 0)
+})

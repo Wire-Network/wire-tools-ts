@@ -74,10 +74,12 @@ function epochStateRow(
     chain_code: SlugName.from(chain),
     current_epoch_index: 0,
     current_epoch_start: "2026-10-16T00:00:00.000",
-    next_epoch_start: "2026-10-16T00:01:00.000",
+    traffic_since: "1970-01-01T00:00:00.000",
+    due_at: "1970-01-01T00:00:00.000",
     current_batch_op_group: 0,
     batch_op_groups: groups,
-    is_paused: false
+    is_paused: false,
+    previous_group: []
   }
 }
 
@@ -89,6 +91,8 @@ function epochConfigRow(
   return {
     chain_code: SlugName.from(chain),
     epoch_duration_sec: epochDurationSec,
+    traffic_wait_sec: Math.floor(epochDurationSec / 2),
+    late_window_sec: Math.floor(epochDurationSec / 2),
     operators_per_epoch: 1,
     batch_operator_minimum_active: BatchOperators.length,
     batch_op_groups: BatchOperators.length,

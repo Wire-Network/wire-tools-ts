@@ -178,6 +178,8 @@ export class LIQSyndicationScenario extends FlowScenario {
         "syndicate-liq-circulates",
         "SYNDICATE_LIQ appears in an OUTPOST_SOLANA_DEPOT envelope artifact",
         async ctx => {
+          // Traffic: `synd`'s own SYNDICATE_LIQ on the outpost — the relays report the outpost's
+          // backlog to the depot (`sysio.msgch::reportqueue`), which makes Solana due.
           await pollUntil(
             "SYNDICATE_LIQ in an OUTPOST_SOLANA_DEPOT envelope",
             async () =>
@@ -206,6 +208,7 @@ export class LIQSyndicationScenario extends FlowScenario {
           )
             .publicKey.toBuffer()
             .toString("hex")
+          // Traffic: the SYNDICATE_LIQ the previous phase saw circulate; holding it needs no advance.
           await pollUntil(
             "held syndication envelope",
             async () => {
@@ -371,6 +374,7 @@ export class LIQSyndicationScenario extends FlowScenario {
             1n,
             "report_liq_yield must consume exactly one value of the shared liq sequence"
           )
+          // Traffic: `report_liq_yield`'s own LIQ_YIELD on the outpost, reported as its backlog.
           await pollUntil(
             `LIQ_YIELD for ${reportedAmount} (sequence ${after.liqSequence}) in an OUTPOST_SOLANA_DEPOT envelope`,
             async () =>
@@ -406,6 +410,7 @@ export class LIQSyndicationScenario extends FlowScenario {
             after = await SolanaLiqSyndicationTool.readLiqYieldState(ctx),
             amount = after.liqYieldReported - before.liqYieldReported
           ctx.outputs.set(LIQSyndicationScenario.ReportedYieldKey, amount)
+          // Traffic: the LIQ_YIELD the previous phase saw circulate; holding it needs no advance.
           await pollUntil(
             "reported yield intake",
             async () => {
@@ -473,12 +478,12 @@ export class LIQSyndicationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "DepotKeepsAdvancing",
-      "The depot advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
+      "Kept due, every chain advances its epoch past the snapshot — envelopes carrying the liq attestations are consumed, never fatal"
     ).push(
       Steps.epochAdvance.planVerifyEpochIndicesAdvanced(
         Actor.Sysio,
         "epoch-index-advances",
-        "every outpost chain's sysio.epoch::epochstate.current_epoch_index advances past its pre-syndication snapshot",
+        "every outpost chain, given keep-due traffic while idle, advances its sysio.epoch::epochstate.current_epoch_index past its pre-syndication snapshot",
         epochAdvanceStepOptions,
         Constants.PreSyndicationEpochSnapshot
       )

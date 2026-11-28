@@ -22,8 +22,6 @@ import {
   isCode,
   matchesProtoEnum,
   outputKey,
-  pollFor,
-  pollUntil,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
   type OutputKey,
@@ -38,11 +36,13 @@ const log = getLogger(__filename)
 const { SysioContractName, SysioOpregChainServiceStatus } = SysioContracts
 
 /**
- * The per-chain-epochs scenario's Steps: the checks of every outpost chain's consensus epoch over
- * recorded clock readings, the awaits that capture a chain's schedule seating an operator or
- * dropping it, the operator's per-chain memberships, the seat-seconds it accrues, and the consensus
- * waits of a withdrawal. Every pure check is exported on its own so the scenario's unit tests
- * drive it without a chain.
+ * The per-chain-epochs scenario's Steps: the checks of every outpost chain's depot-paced consensus
+ * epoch over recorded clock readings, the awaits that capture a chain's schedule seating an
+ * operator or dropping it, the operator's per-chain memberships, the seat-seconds it accrues, and
+ * the consensus waits of a withdrawal. A chain advances only once it has traffic, so every await
+ * that needs a chain to advance keeps that chain due with keep-due traffic
+ * (`EpochAdvanceSteps.pollUntilKeepingDue`): the flow queues nothing to either outpost itself.
+ * Every pure check is exported on its own so the scenario's unit tests drive it without a chain.
  */
 export namespace PerChainEpochsSteps {
   /** The expected `sysio.opreg::servchains` status per chain; a chain not named has no row. */
@@ -68,9 +68,9 @@ export namespace PerChainEpochsSteps {
   // ── Budgets ───────────────────────────────────────────────────────────────
 
   /**
-   * A wait of `epochs` effective epochs of one outpost chain (ms), from the cluster's configured
-   * duration of that chain — the deadline every per-chain poll of this scenario runs on, and the
-   * value its Step ceiling is sized from at plan time.
+   * A wait of `epochs` effective epochs of one outpost chain kept due (ms), from the cluster's
+   * configured minimum duration of that chain — the deadline every per-chain poll of this scenario
+   * runs on, and the value its Step ceiling is sized from at plan time.
    *
    * @param config - The resolved cluster config (its `outpostEpochDurationSec`).
    * @param chain - The outpost chain waited on.
@@ -88,8 +88,29 @@ export namespace PerChainEpochsSteps {
   // ── Reads ─────────────────────────────────────────────────────────────────
 
   /**
-   * READ each outpost chain's consensus epoch duration from its `epochcfg` row, in one read of the
-   * table — the depot's value, which every per-chain check measures against.
+   * READ every outpost chain's `epochcfg` row, in one read of the table — the depot's minimum
+   * duration and traffic wait of each chain, which every per-chain check measures against.
+   *
+   * @param ctx - The build context.
+   * @returns Each chain's `epochcfg` row.
+   * @throws When a chain has no `epochcfg` row, or the read is truncated.
+   */
+  export async function readChainEpochConfigs<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<PerOutpostChain<SysioContracts.SysioEpochEpochConfigType>> {
+    const configs = await Steps.contracts.sysio.epoch.readEpochConfigs(ctx)
+    return mapOutpostChains(chain => {
+      Assert.ok(
+        configs[chain] != null,
+        `PerChainEpochsSteps: sysio.epoch::epochcfg has no ${chain} row`
+      )
+      return configs[chain]
+    })
+  }
+
+  /**
+   * READ each outpost chain's consensus epoch duration from its `epochcfg` row
+   * ({@link readChainEpochConfigs}).
    *
    * @param ctx - The build context.
    * @returns Each chain's `epoch_duration_sec`.
@@ -98,14 +119,8 @@ export namespace PerChainEpochsSteps {
   export async function readEpochDurations<C extends ClusterBuildContext>(
     ctx: C
   ): Promise<OutpostEpochDurations> {
-    const configs = await Steps.contracts.sysio.epoch.readEpochConfigs(ctx)
-    return mapOutpostChains(chain => {
-      Assert.ok(
-        configs[chain] != null,
-        `PerChainEpochsSteps: sysio.epoch::epochcfg has no ${chain} row`
-      )
-      return configs[chain].epoch_duration_sec
-    })
+    const configs = await readChainEpochConfigs(ctx)
+    return mapOutpostChains(chain => configs[chain].epoch_duration_sec)
   }
 
   // ── Verify: each chain's configured duration ──────────────────────────────
@@ -118,9 +133,9 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Assert each outpost chain's `epochcfg` carries its own configured duration, its `epochstate`
-   * spaces its boundaries by that duration, and no two chains share a duration
-   * ({@link assertEpochConfiguration}).
+   * Assert each outpost chain's `epochcfg` carries its own configured minimum duration, its
+   * `epochstate` paces its next advance by that minimum and its traffic wait, and no two chains
+   * share a minimum ({@link assertEpochConfiguration}).
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -147,7 +162,7 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Named runner — read every chain's `epochcfg` and `epochstate` and assert them.
+   * Named runner — read every chain's `epochcfg` and consensus reading and assert them.
    *
    * @param ctx - The build context.
    * @param input - The configured durations.
@@ -160,64 +175,43 @@ export namespace PerChainEpochsSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const [depotDurations, states] = await Promise.all([
-      readEpochDurations(ctx),
-      Steps.contracts.sysio.epoch.readEpochStates(ctx)
+    const [depotConfigs, consensus] = await Promise.all([
+      readChainEpochConfigs(ctx),
+      WireEconomicClockTool.readConsensusReadings(ctx)
     ])
-    assertEpochConfiguration(
-      depotDurations,
-      WireEconomicClockTool.toConsensusReadings(states),
-      input.durations
-    )
+    assertEpochConfiguration(depotConfigs, consensus, input.durations)
   }
 
   /**
-   * Assert the depot runs each outpost chain at its configured duration: its `epochcfg` duration
-   * is the configured one, its current epoch spans exactly that duration, and the chains'
-   * durations are pairwise distinct (so each later per-chain check tells the chains apart).
+   * Assert the depot paces each outpost chain by its configured minimum: its `epochcfg` duration
+   * is the configured one, its `epochstate` is idle or due exactly at the later of its epoch start
+   * plus its minimum and its traffic plus its traffic wait (`WireEconomicClockTool.assertDueAt`),
+   * and the chains' minimums are pairwise distinct (so each later per-chain check tells the chains
+   * apart).
    *
-   * @param depotDurations - Each chain's `epochcfg.epoch_duration_sec`.
+   * @param depotConfigs - Each chain's `epochcfg` row.
    * @param consensus - Every chain's consensus epoch, read from its `epochstate` row.
    * @param configured - Each chain's configured duration.
    * @throws On the first chain that differs, or two chains at one duration.
    */
   export function assertEpochConfiguration(
-    depotDurations: OutpostEpochDurations,
+    depotConfigs: PerOutpostChain<SysioContracts.SysioEpochEpochConfigType>,
     consensus: WireEconomicClockTool.ConsensusReadings,
     configured: OutpostEpochDurations
   ): void {
     OutpostChainCodenames.forEach(chain => {
+      const depotDuration = depotConfigs[chain].epoch_duration_sec
       Assert.strictEqual(
-        depotDurations[chain],
+        depotDuration,
         configured[chain],
-        `the ${chain} epochcfg runs ${depotDurations[chain]} s epochs, not the configured ${configured[chain]} s`
+        `the ${chain} epochcfg runs ${depotDuration} s epochs, not the configured ${configured[chain]} s`
       )
-      assertGridSpacing(consensus[chain], depotDurations[chain], chain)
+      WireEconomicClockTool.assertDueAt(consensus[chain], depotConfigs[chain], chain)
     })
     Assert.strictEqual(
       new Set(OutpostChainCodenames.map(chain => configured[chain])).size,
       OutpostChainCodenames.length,
       "two outpost chains run one consensus epoch duration, so no per-chain check can tell them apart"
-    )
-  }
-
-  /**
-   * Assert a chain's current epoch spans exactly its duration — pure.
-   *
-   * @param reading - The chain's consensus reading.
-   * @param durationSec - The chain's duration (s).
-   * @param chain - The chain (for the message).
-   * @throws When the epoch spans another length.
-   */
-  export function assertGridSpacing(
-    reading: WireEconomicClockTool.ConsensusReading,
-    durationSec: number,
-    chain: OutpostChainCodename
-  ): void {
-    Assert.strictEqual(
-      reading.nextEpochStartMs - reading.epochStartMs,
-      durationSec * ProtocolTiming.MsPerSecond,
-      `the ${chain} epoch ${reading.epochIndex} does not span one ${durationSec} s duration`
     )
   }
 
@@ -244,9 +238,10 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Wait until the depot head's time is `windowSec` past the named clock reading — a poll over
-   * the chain's own clock, so the window the cadence check measures is the one the chains ran.
-   * Pair it with `ProtocolTiming.pollStepOptions(windowDeadlineMs(windowSec))`.
+   * Wait until the depot head's time is `windowSec` past the named clock reading, keeping every
+   * outpost chain due meanwhile — a poll over the chain's own clock, so the window the pacing check
+   * measures is the one the chains ran, each given traffic the moment it went idle. Pair it with
+   * `ProtocolTiming.pollStepOptions(windowDeadlineMs(windowSec))`.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -275,7 +270,8 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Named runner — poll the depot head until it is `windowSec` past the starting reading.
+   * Named runner — poll the depot head until it is `windowSec` past the starting reading, keeping
+   * every chain due (`EpochAdvanceSteps.pollUntilKeepingDue`).
    *
    * @param ctx - The build context.
    * @param input - The starting reading and the window.
@@ -294,19 +290,22 @@ export namespace PerChainEpochsSteps {
         ctx.outputs.assert(WireEconomicClockTool.observationKey(input.fromObservationName))
       ).headBlockTimeMs +
       input.windowSec * ProtocolTiming.MsPerSecond
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      OutpostChainCodenames,
       `the depot head passes ${new Date(endMs).toISOString()}`,
       async () => WireClient.chainTimeMs((await ctx.wire.getInfo()).head_block_time) >= endMs,
       windowDeadlineMs(input.windowSec),
-      Constants.PollIntervalMs
+      Constants.PollIntervalMs,
+      signal
     )
   }
 
-  // ── Verify: each chain advanced on its own grid ───────────────────────────
+  // ── Verify: each chain advanced on its own minimum ──────────────────────
 
-  /** Input for {@link planVerifyOwnCadence}. */
-  export interface VerifyOwnCadenceInput extends StepInput {
-    readonly kind: "PerChainEpochsSteps.VerifyOwnCadenceInput"
+  /** Input for {@link planVerifyOwnMinimum}. */
+  export interface VerifyOwnMinimumInput extends StepInput {
+    readonly kind: "PerChainEpochsSteps.VerifyOwnMinimumInput"
     /** The clock reading the window starts at (`WireEconomicClockTool.observationKey`). */
     readonly fromObservationName: string
     /** The clock reading the window ends at. */
@@ -314,8 +313,8 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Assert every chain advanced on its own grid between two clock readings
-   * ({@link assertOwnCadence}).
+   * Assert every chain, kept due over the window between two clock readings, advanced on its own
+   * minimum ({@link assertOwnMinimum}).
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -325,40 +324,40 @@ export namespace PerChainEpochsSteps {
    * @param toObservationName - The reading the window ends at.
    * @returns The verify step.
    */
-  export function planVerifyOwnCadence<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planVerifyOwnMinimum<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
     fromObservationName: string,
     toObservationName: string
-  ): ClusterBuildStep<C, VerifyOwnCadenceInput> {
-    return ClusterBuildStep.create<C, VerifyOwnCadenceInput>(
+  ): ClusterBuildStep<C, VerifyOwnMinimumInput> {
+    return ClusterBuildStep.create<C, VerifyOwnMinimumInput>(
       actor,
       name,
       description,
       options,
-      { kind: "PerChainEpochsSteps.VerifyOwnCadenceInput", fromObservationName, toObservationName },
-      runVerifyOwnCadence
+      { kind: "PerChainEpochsSteps.VerifyOwnMinimumInput", fromObservationName, toObservationName },
+      runVerifyOwnMinimum
     )
   }
 
   /**
-   * Named runner — read every chain's duration and assert the two stored readings.
+   * Named runner — read every chain's minimum and assert the two stored readings.
    *
    * @param ctx - The build context.
    * @param input - The two readings.
    * @param signal - Abort signal.
    * @throws When a reading was never recorded, a chain has no `epochcfg` row, or
-   *   {@link assertOwnCadence} fails.
+   *   {@link assertOwnMinimum} fails.
    */
-  export async function runVerifyOwnCadence<C extends ClusterBuildContext>(
+  export async function runVerifyOwnMinimum<C extends ClusterBuildContext>(
     ctx: C,
-    input: VerifyOwnCadenceInput,
+    input: VerifyOwnMinimumInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const advanced = assertOwnCadence(
+    const advanced = assertOwnMinimum(
       WireEconomicClockTool.latestReading(
         ctx.outputs.assert(WireEconomicClockTool.observationKey(input.fromObservationName))
       ),
@@ -371,21 +370,21 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Assert each outpost chain advanced on its own grid between two readings: each chain ran
-   * unpaused and closed at least as many epochs as its envelope requires over the window
-   * (`WireEconomicClockTool.assertConsensusAdvanced`), each reading's epoch spans the chain's
-   * duration, the epochs between them started exactly one duration of the chain apart
-   * (`start(to) - start(from) = (to - from) × duration`), and a chain with a shorter duration
-   * advanced more than every chain with a longer one.
+   * Assert each outpost chain, kept due between two readings, advanced on its own minimum: each
+   * ran unpaused and closed at least as many epochs as a chain kept due closes and no more than
+   * its minimum allows (`WireEconomicClockTool.assertConsensusAdvanced`), the epochs between the
+   * readings started at least one minimum of the chain apart (an advance opens the next epoch at
+   * its own time, never on a grid: `start(to) - start(from) >= (to - from) × minimum`), and a chain
+   * with a shorter minimum advanced more than every chain with a longer one.
    *
    * @param from - The earlier reading.
    * @param to - The later reading.
-   * @param durations - Each chain's duration (s).
+   * @param durations - Each chain's minimum duration (s).
    * @returns The epochs each chain advanced.
-   * @throws On the first chain paused, behind its envelope or off its grid, or when a faster
-   *   chain did not out-advance a slower one.
+   * @throws On the first chain paused, outside its advance bounds or started closer than its
+   *   minimum, or when a faster chain did not out-advance a slower one.
    */
-  export function assertOwnCadence(
+  export function assertOwnMinimum(
     from: WireEconomicClockTool.Reading,
     to: WireEconomicClockTool.Reading,
     durations: OutpostEpochDurations
@@ -394,12 +393,9 @@ export namespace PerChainEpochsSteps {
       const before = from.consensus[chain],
         after = to.consensus[chain],
         count = WireEconomicClockTool.assertConsensusAdvanced(from, to, chain, durations[chain])
-      assertGridSpacing(before, durations[chain], chain)
-      assertGridSpacing(after, durations[chain], chain)
-      Assert.strictEqual(
-        after.epochStartMs - before.epochStartMs,
-        count * durations[chain] * ProtocolTiming.MsPerSecond,
-        `the ${chain} epochs ${before.epochIndex}..${after.epochIndex} did not start ${durations[chain]} s apart`
+      Assert.ok(
+        after.epochStartMs - before.epochStartMs >= count * durations[chain] * ProtocolTiming.MsPerSecond,
+        `the ${chain} epochs ${before.epochIndex}..${after.epochIndex} started less than ${durations[chain]} s apart`
       )
       return count
     })
@@ -430,7 +426,7 @@ export namespace PerChainEpochsSteps {
 
   /**
    * Wait for one chain's consensus epoch to advance `count` epochs from where it is when the
-   * Step starts.
+   * Step starts, keeping the chain due.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).
@@ -466,7 +462,8 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Named runner — poll the chain's `current_epoch_index` until it moved `count` epochs.
+   * Named runner — poll the chain's `current_epoch_index` until it moved `count` epochs, keeping
+   * the chain due (`EpochAdvanceSteps.pollUntilKeepingDue`).
    *
    * @param ctx - The build context.
    * @param input - The chain, the count and the budget.
@@ -480,13 +477,16 @@ export namespace PerChainEpochsSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const start = await Steps.contracts.sysio.epoch.readCurrentEpochIndex(ctx, input.chain)
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [input.chain],
       `the ${input.chain} consensus advances ${input.count} epoch(s) past ${start}`,
       async () =>
         (await Steps.contracts.sysio.epoch.readCurrentEpochIndex(ctx, input.chain)) >=
         start + input.count,
       chainEpochsBudgetMs(ctx.config, input.chain, input.budgetEpochs),
-      Constants.PollIntervalMs
+      Constants.PollIntervalMs,
+      signal
     )
   }
 
@@ -664,11 +664,14 @@ export namespace PerChainEpochsSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [input.chain],
       `the ${input.chain} schedule window seats ${input.label}`,
       async () => readSeated(ctx, input),
       chainEpochsBudgetMs(ctx.config, input.chain, input.budgetEpochs),
-      Constants.PollIntervalMs
+      Constants.PollIntervalMs,
+      signal
     )
   }
 
@@ -717,11 +720,14 @@ export namespace PerChainEpochsSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [input.chain],
       `the ${input.chain} schedule window no longer seats ${input.label}`,
       async () => !(await readSeated(ctx, input)),
       chainEpochsBudgetMs(ctx.config, input.chain, input.budgetEpochs),
-      Constants.PollIntervalMs
+      Constants.PollIntervalMs,
+      signal
     )
   }
 
@@ -822,7 +828,9 @@ export namespace PerChainEpochsSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const start = await Steps.contracts.sysio.epoch.readCurrentEpochIndex(ctx, input.chain)
-    await pollUntil(
+    await Steps.epochAdvance.pollUntilKeepingDue(
+      ctx,
+      [input.chain],
       `the ${input.chain} consensus advances ${input.budgetEpochs} epoch(s) past ${start} with ${input.label} unseated`,
       async () => {
         Assert.ok(
@@ -835,7 +843,8 @@ export namespace PerChainEpochsSteps {
         )
       },
       chainEpochsBudgetMs(ctx.config, input.chain, input.budgetEpochs),
-      Constants.PollIntervalMs
+      Constants.PollIntervalMs,
+      signal
     )
   }
 
@@ -912,11 +921,14 @@ export namespace PerChainEpochsSteps {
         input.chain
       ],
       account = ctx.keyStore.assertOperator(input.label).account,
-      epoch = await pollFor(
+      epoch = await Steps.epochAdvance.pollForKeepingDue(
+        ctx,
+        [input.chain],
         `a ${input.chain} group appended after epoch ${since} seats ${input.label}`,
         async () => newSeatEpoch(await Steps.contracts.sysio.epoch.readEpochState(ctx, input.chain), account, since),
         chainEpochsBudgetMs(ctx.config, input.chain, input.budgetEpochs),
-        Constants.PollIntervalMs
+        Constants.PollIntervalMs,
+        signal
       )
     log.info(`[per-chain-epochs] ${input.chain} seats ${input.label} again for its epoch ${epoch}`)
   }
@@ -1034,8 +1046,9 @@ export namespace PerChainEpochsSteps {
 
   /**
    * The deadline of a seat-second await (ms): `budgetEpochs` effective epochs of the chain the
-   * operator is seated on, for its next seat to close, then the open pay period's close
-   * (`PerChainEpochsScenarioConstants.DutyPeriodEconomicEpochs` economic epochs).
+   * operator is seated on, for its next seat to close, the advance that closes that seat's books
+   * (`PerChainEpochsScenarioConstants.BookClosingEpochs` more epochs of the chain), then the open pay
+   * period's close (`PerChainEpochsScenarioConstants.DutyPeriodEconomicEpochs` economic epochs).
    *
    * @param config - The resolved cluster config.
    * @param chain - The chain the operator is seated on.
@@ -1048,7 +1061,7 @@ export namespace PerChainEpochsSteps {
     budgetEpochs: number
   ): number {
     return (
-      chainEpochsBudgetMs(config, chain, budgetEpochs) +
+      chainEpochsBudgetMs(config, chain, budgetEpochs + Constants.BookClosingEpochs) +
       ProtocolTiming.effectiveEpochsMs(config.economicEpochDurationSec, Constants.DutyPeriodEconomicEpochs)
     )
   }
@@ -1133,14 +1146,17 @@ export namespace PerChainEpochsSteps {
       durationSec = await Steps.contracts.sysio.epoch.readEpochDurationSec(ctx, input.chain),
       accrues = (candidate: SysioContracts.SysioSystemBatchDutyType): boolean =>
         isSeatSecondsAccrual(candidate, account, input.chain, sincePeriod),
-      rows = await pollFor(
+      rows = await Steps.epochAdvance.pollForKeepingDue(
+        ctx,
+        [input.chain],
         `${input.label} accrues ${input.chain} seat-seconds in a pay period after ${sincePeriod}`,
         async () => {
           const read = await readBatchDuty(ctx)
           return read.some(accrues) ? read : null
         },
         seatSecondsDeadlineMs(ctx.config, input.chain, input.budgetEpochs),
-        Constants.PollIntervalMs
+        Constants.PollIntervalMs,
+        signal
       ),
       row = rows.find(accrues),
       seats = assertSeatSeconds(BigInt(row.seat_seconds), durationSec, input.chain)
@@ -1207,12 +1223,13 @@ export namespace PerChainEpochsSteps {
   }
 
   /**
-   * Assert a seat-second total is a positive whole number of one chain's epoch durations — pure.
-   * Each closed epoch credits its scheduled length to each seated operator's row of that chain
-   * (`sysio.system::rcrdduty`), so the row accrues exactly that multiple.
+   * Assert a seat-second total is exactly a positive number of seats times one chain's minimum
+   * duration — pure. Each duty epoch credits the chain's minimum to each seated operator's row of
+   * that chain (`sysio.system::rcrdduty`), however long the epoch ran, so the row accrues exactly
+   * seats × minimum.
    *
    * @param seatSeconds - The `batchduty.seat_seconds`.
-   * @param durationSec - The chain's epoch duration (s).
+   * @param durationSec - The chain's minimum duration (s).
    * @param chain - The chain (for the message).
    * @returns The seats the total stands for.
    * @throws When the total is zero or not a whole multiple of the duration.
@@ -1227,7 +1244,7 @@ export namespace PerChainEpochsSteps {
     Assert.strictEqual(
       seatSeconds % duration,
       0n,
-      `${seatSeconds} seat-seconds are not a whole number of ${durationSec} s ${chain} epochs`
+      `${seatSeconds} seat-seconds are not a whole number of ${durationSec} s ${chain} seats`
     )
     return Number(seatSeconds / duration)
   }

@@ -100,7 +100,8 @@ export namespace OpregContractSteps {
    * `sysio.opreg::joinchain` — the batch operator starts SERVING one outpost chain, so that
    * chain's schedule draws new seats from it. Requires the operator's `sysio.authex` link for
    * the chain's kind; a LEFT or EVICTED operator rejoins only once it holds no seat in the
-   * chain's window. Signed by the operator itself — the self-service path.
+   * chain's window nor in its `previous_group`, the group of the previous epoch while that epoch's
+   * books are open. Signed by the operator itself — the self-service path.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).

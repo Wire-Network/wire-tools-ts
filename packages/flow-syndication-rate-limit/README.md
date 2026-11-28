@@ -12,10 +12,19 @@ A redemption above even a full desyndication bucket is refused without a balance
 supply or queue change; a smaller redemption burns and queues the exact amount.
 The flow then waits for the external destination wallet to receive that exact
 amount. A queued instruction alone cannot pass the flow.
-The flow aligns both arrivals to one epoch and never weakens finality.
+The flow aligns both arrivals to one outpost envelope and never weakens finality: it
+waits until Solana's current epoch is decided and the chain idle (no traffic), adding
+no traffic itself. The outpost has then answered the depot's current envelope and
+emits its next only on the depot's next one, which needs traffic and then Solana's
+traffic wait from it, so both writes land before it; the relays' report of the outpost's
+backlog to the depot (`sysio.msgch::reportqueue`), made only after the first write, gives
+Solana that traffic, and the intake waits add none. A wait for a new epoch would not
+do: the outpost answers a depot envelope only after the advance that ships it, so the
+two writes could straddle that answer. Epochs are depot-paced: Solana's come from the
+intakes' backlog report and from the redemption, the flow's only depot → Solana traffic.
 
 Each run uses a fresh cluster. Scenario defaults opt into mock liquidity pools and
-the imported bonder, with 60-second epochs. Pair configuration is set by governance
+the imported bonder, with a 60-second minimum epoch. Pair configuration is set by governance
 Steps and restored afterward. The final verify Step requires a clear cord and no
 mismatch rows. Every write is a Step, with irreversible WIRE confirmation.
 

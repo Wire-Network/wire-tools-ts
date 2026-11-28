@@ -33,6 +33,7 @@ import {
   WireSyndicationTool
 } from "../../tools/wire/index.js"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
+import { ceilDiv } from "../../utils/bigintUtils.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { SyndicationScenario } from "../SyndicationScenario.js"
 
@@ -415,13 +416,15 @@ export namespace BatchOperatorUnderwritingSteps {
    * request. A held state is not required: the operators may bond and release it before the
    * first read. Only `sysio.synd::crank` issues a request, and while nothing is in play the
    * role cranks every {@link OperatorDaemonTool.UnderwriterIdleCrankIntervalMs}, hence the
-   * budget. Its custody attestation is checked by the custody Steps, which wait for it.
+   * budget. Its custody attestation is checked by the custody Steps, which wait for it. The
+   * syndication is an outpost → depot message, so the wait adds no traffic: the relays report
+   * the outpost's backlog to the depot (`sysio.msgch::reportqueue`), which makes `chain` due.
    *
    * @param actor - Report actor.
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step options (above the request budget).
-   * @param amount - The envelope's syndicated total.
+   * @param amount - The syndicated amount ({@link findRecordedEnvelope} matches its credit).
    * @param after - The epoch the envelope must follow, or `null` for the first.
    * @param epoch - Where the envelope's epoch is recorded.
    * @param request - Where its request id is recorded.
@@ -438,7 +441,7 @@ export namespace BatchOperatorUnderwritingSteps {
     after: OutputKey<number> | null,
     epoch: OutputKey<number>,
     request: WireSyndicationTool.RequestKey,
-    chain: string = SyndicationScenario.Chain,
+    chain: Constants.OutpostChainCodename = SyndicationScenario.Chain,
     token: string = SyndicationScenario.Token
   ): ClusterBuildStep {
     return verifyStep(
@@ -446,6 +449,7 @@ export namespace BatchOperatorUnderwritingSteps {
       name,
       description,
       async ctx => {
+        // Traffic: the syndication's own message on the outpost, reported as its backlog.
         const floor = after == null ? -1 : ctx.outputs.assert(after),
           envelope = await pollFor(
             `${name}: the envelope has an issued request`,
@@ -466,11 +470,22 @@ export namespace BatchOperatorUnderwritingSteps {
   }
 
   /**
-   * The envelope a syndication of `amount` landed in: after the `floor` epoch, with exactly
-   * that syndicated total and an issued request.
+   * Depot units a syndication's credit may fall short of its amount: the Ethereum pool credits the
+   * liqETH it measured arriving, floored to the depot frame, so a transfer short by up to
+   * `EthereumSyndicationTool.LiqEthShareRoundingLossWei` credits one unit less.
+   */
+  export const SyndicationCreditRoundingLoss = ceilDiv(
+    EthereumSyndicationTool.LiqEthShareRoundingLossWei,
+    Steps.mockShadowBacking.EthereumWeiPerDepotUnit
+  )
+
+  /**
+   * The envelope a syndication of `amount` landed in: after the `floor` epoch, with an issued
+   * request and a syndicated total of the credit the outpost recorded for it — `amount`, or up to
+   * {@link SyndicationCreditRoundingLoss} below it.
    *
    * @param envelopes - The pair's envelope rows.
-   * @param amount - The syndicated total.
+   * @param amount - The syndicated amount.
    * @param floor - The epoch the envelope must follow (-1 for none).
    * @return The envelope, or nothing yet.
    */
@@ -482,7 +497,8 @@ export namespace BatchOperatorUnderwritingSteps {
     return envelopes.find(
       row =>
         row.epoch_index > floor &&
-        BigInt(row.synd_total) === amount &&
+        BigInt(row.synd_total) <= amount &&
+        amount - BigInt(row.synd_total) <= SyndicationCreditRoundingLoss &&
         WireSyndicationTool.isRequestIssued(row)
     )
   }
@@ -501,7 +517,11 @@ export namespace BatchOperatorUnderwritingSteps {
    * attestation of its latest liq sequence, then read the pool between two identical
    * `GlobalState` readings. The newest attestation's `total_syndicated` then names the pool's
    * custody: a yield claim lands in the pool before any envelope carries its `LIQ_YIELD`, so
-   * reading earlier compares the pool against a stale total.
+   * reading earlier compares the pool against a stale total. The attestations travel Solana →
+   * depot, so the wait adds no traffic: the syndications queue theirs on the outpost, the relays'
+   * `report_liq_yield` crank, run at most once per chain minimum whether or not the chain advances,
+   * queues the yield their own claims leave unreported, and the relays report that backlog to the
+   * depot (`sysio.msgch::reportqueue`), which makes Solana due.
    *
    * @param ctx - The build context.
    * @param label - What the poll is for (timeout message).

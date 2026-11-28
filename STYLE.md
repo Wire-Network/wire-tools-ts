@@ -890,6 +890,11 @@ validate.
   so the assertion lands in the Report.
 - **"N actors each do X" is a Phase of N steps** — one per actor — never one
   step looping over N.
+- **The one exception is the keep-due pump** (`EpochAdvanceSteps.keepChainsDue`):
+  a wait that needs a depot-paced chain to advance cannot know at plan time how
+  many advances, so how many `sysio.epoch::notetraffic` pushes, it takes, so the
+  pushes run inside the waiting Step, each through `planNotetraffic`'s named
+  runner.
 
 ### Tools are FACTORIES that return orchestration units
 
@@ -964,7 +969,7 @@ define protocol latency):
 
 | Class | Budget | Use for |
 |---|---|---|
-| `EpochExtensionMaxSec` (30s) | via `effectiveEpochSec()` | every N-epoch deadline: `N × (epochDurationSec + 30) × MsPerSecond` |
+| `EpochExtensionMaxSec` (30s) | via `effectiveEpochSec()` | every N-epoch deadline of a chain kept due (epochs are depot-paced: count from the traffic, never a cadence): `N × (epochDurationSec + 30) × MsPerSecond` |
 | `CollateralVerifyBudgetMs` (6 min) | deposit → depot verification gates |
 | `SingleHopBudgetMs` (7 min) | act on an outpost, verify on the depot — or the reverse (a `SYNDICATE_LIQ` envelope reaches `REQUESTED`, a `DESYNDICATE_LIQ` payout reaches the outpost wallet, attestation propagation) |
 | `DoubleHopBudgetMs` (14 min) | outpost → depot → outpost tails (an outpost syndication bonded and released on the depot, then redeemed back to the outpost wallet via `DESYNDICATE_LIQ`) |

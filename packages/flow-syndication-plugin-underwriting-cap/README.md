@@ -10,19 +10,22 @@ and its first bond exhausts the cap.
 
 Setup sets the pair rules and checks that only the funded operator holds LIQSOL.
 The first challenge window is **601 seconds**, sized from the post-bond envelope:
-one 72-second scenario epoch for submission, a complete 420-second single hop,
+one 72-second scenario minimum epoch for submission, a complete 420-second single hop,
 78 seconds of governance finality for three producers, two 15-second active plugin
 passes for request issuance and reads, and one 1-second observer poll gap.
 
-The flow runs on **72-second epochs**, not the 60-second shortest. The underwriter
-verifies each request's statement against the Solana outpost's outbound envelope
-log, which keeps the last 10 epochs (`MAX_TRACKED_ENVELOPES` in liqsol-core). The
-second request is bonded only once the first bond is paid back, a challenge window
-plus three plugin passes (approve, claim, bond) after that bond. At 60-second
-epochs the window alone is about ten epochs, so the second request's statement can
-leave the log first and the request is never bonded. 72 seconds is the shortest
-epoch that keeps one epoch to spare; slower epochs only add margin, since the log
-counts epochs.
+The flow runs on a **72-second minimum epoch**, not the 60-second shortest. The
+underwriter verifies each request's statement against the Solana outpost's outbound
+envelope log, which keeps the last 10 epochs (`MAX_TRACKED_ENVELOPES` in liqsol-core).
+The second request is bonded only once the first bond is paid back, a challenge window
+plus three plugin passes (approve, claim, bond) after that bond. Epochs are depot-paced,
+so Solana advances at most once per minimum, and only with traffic: at a 60-second minimum
+the window alone could hold about ten epochs, so the second request's statement could
+leave the log first and the request would never be bonded. 72 seconds is the shortest
+minimum that keeps one epoch to spare; a longer minimum only adds margin, since the log
+counts epochs. The flow queues nothing to Solana: each Solana → depot intake makes Solana
+due itself, once the relays report the outpost's backlog to the depot
+(`sysio.msgch::reportqueue`), and the waits for them add no traffic.
 
 Step deadlines remain ceilings that return early; they do not size the window.
 `WIRE_FLOW_TIMEOUT_SCALE` scales deadlines only. Once the first request is issued (and has
@@ -77,7 +80,7 @@ operators' own nodes. `flow-syndication-plugin-underwriting` keeps the case of a
 three operators funded and racing.
 
 Each run uses a fresh cluster with mock liquidity pools, the syndication import
-and 72-second epochs. The pair configuration is restored at the end. The run
+and a 72-second minimum epoch. The pair configuration is restored at the end. The run
 requires a nodeop built with the `batch_operator_plugin` underwriter role
 (wire-sysio PR #671).
 

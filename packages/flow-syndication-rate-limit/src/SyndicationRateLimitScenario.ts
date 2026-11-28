@@ -23,15 +23,22 @@ import { SyndicationRateLimitSteps } from "./steps/index.js"
 const { Actor } = Report,
   { SysioSyndBucketDirection, SysioContractName } = SysioContracts
 
-/** Wait for a new epoch so consecutive confirmed writes have a full epoch to execute. */
-async function waitNewEpoch(ctx: ClusterBuildContext): Promise<void> {
-  const before = await SyndicationScenario.readEpoch(ctx)
-  await pollUntil(
-    "next consensus epoch",
-    async () => (await SyndicationScenario.readEpoch(ctx)) > before,
-    ProtocolTiming.SingleHopBudgetMs,
-    SyndicationScenario.PollMs
-  )
+/**
+ * Wait until the syndication's chain is decided and idle (`EpochAdvanceSteps.awaitDecidedAndIdle`),
+ * so both Solana writes that follow share one outpost envelope. The outpost answers a depot
+ * envelope only after the advance that ships it, so a wait for a new epoch returns before that
+ * answer and the two writes could straddle it. Once the current epoch is decided the outpost has
+ * answered, and it emits its next envelope only on the depot's next one, which needs traffic and
+ * then at least the chain's traffic wait (half its minimum) from it: both writes land first, and
+ * the relays' report of the outpost's backlog to the depot (`sysio.msgch::reportqueue`), made only
+ * after the first write, gives the chain that traffic.
+ *
+ * @param ctx - The build context.
+ * @param signal - Abort signal.
+ */
+export async function waitDecidedAndIdle(ctx: ClusterBuildContext, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  await Steps.epochAdvance.awaitDecidedAndIdle(ctx, SyndicationScenario.Chain, SyndicationScenario.PollMs)
 }
 
 /** Whole seconds between two bucket ticks — the span tick_bucket refills by. */
@@ -111,8 +118,8 @@ export class SyndicationRateLimitScenario extends SyndicationScenario {
       verifyStep(
         Actor.Sysio,
         "align-intake",
-        "wait for the next epoch before both Solana writes",
-        waitNewEpoch,
+        "wait until the Solana epoch is decided and the chain idle, so both Solana writes share its next outpost envelope",
+        waitDecidedAndIdle,
         SyndicationScenario.VerifyOptions
       ),
       SolanaLiqSyndicationTool.planSynd(

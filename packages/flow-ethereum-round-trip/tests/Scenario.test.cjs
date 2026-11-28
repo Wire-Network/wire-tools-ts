@@ -132,6 +132,50 @@ for (const [outstanding, ok] of [
     if (ok) await run()
     else await Assert.rejects(run)
   })
+test("the intake wait pushes no traffic: the outpost's backlog report makes Ethereum due", async () => {
+  const { Steps, EthereumFundingTool } = require("@wireio/cluster-tool"),
+    ctx = { outputs: new OutputStore() },
+    build = ClusterBuild.forContext(ctx)
+  new EthereumHappyScenario().plan(build)
+  ctx.outputs.set(Scenario.PoolBefore, 0n)
+  const step = steps(build).find(step => step.name === "ethereum-intake-held"),
+    states = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  mock.method(EthereumFundingTool, "compressedPubkey", () => "0x02")
+  mock.method(WireSyndicationTool, "readHeldEnvelope", async () => ({ epoch_index: 9 }))
+  mock.method(Scenario, "externalBalance", async () => 0n)
+  mock.method(EthereumSyndicationTool, "readPoolBalanceDepot", async () => Scenario.Amount)
+  mock.method(StepTools, "pollUntil", async (label, predicate) =>
+    Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
+  )
+  await step.runner(ctx, step.input, new AbortController().signal)
+  Assert.equal(ctx.outputs.assert(Scenario.Epoch), 9)
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(states.mock.callCount(), 0)
+})
+test("the post-settlement wait keeps Ethereum alone due: nothing is queued on either side", async () => {
+  const { Steps, Constants } = require("@wireio/cluster-tool"),
+    ctx = { outputs: new OutputStore() },
+    build = ClusterBuild.forContext(ctx),
+    idle = { current_epoch_index: 5, due_at: "1970-01-01T00:00:00.000", is_paused: false }
+  new EthereumHappyScenario().plan(build)
+  ctx.outputs.set(Scenario.SettledEpoch, 5n)
+  const step = steps(build).find(step => step.name === "settlement-stays-exact")
+  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({
+    [Constants.ETHEREUM_CHAIN_CODENAME]: idle,
+    [Constants.SOLANA_CHAIN_CODENAME]: idle
+  }))
+  const push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  mock.method(Scenario, "readInboundEpoch", async () => 5n)
+  mock.method(StepTools, "pollUntil", async (label, predicate) =>
+    Assert.ok(await predicate(), `Timed out waiting for: ${label}`)
+  )
+  await Assert.rejects(step.runner(ctx, step.input, new AbortController().signal), /Timed out waiting for/)
+  Assert.deepEqual(
+    push.mock.calls.map(call => call.arguments[1].data.chain_code),
+    [Constants.ETHEREUM_CHAIN_CODENAME]
+  )
+})
 test("the round trip runs the depot's smallest window: two one-relay groups", () => {
   const { defaults } = new EthereumHappyScenario()
   Assert.equal(defaults.batchOpGroups, MinBatchOperatorGroups)

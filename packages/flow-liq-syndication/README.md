@@ -16,8 +16,16 @@ liqsol_core::report_liq_yield        (permissionless crank — non-admin signer)
   → each request is ruled VALID using sysio.bond::rslvvalid, through its linked permission
   → sysio.synd releases principal; authenticated linking delivers it to the wallet
   → reported yield is released into the depot yield queue
-  → sysio.epoch::advance keeps closing epochs
+  → sysio.epoch::advance keeps closing epochs while a chain has traffic
 ```
+
+Epochs are depot-paced: a chain advances only once it has traffic and its minimum has passed. The
+flow queues nothing to either outpost; Solana's epochs are driven by its own Solana → depot
+attestations. Each is an outpost → depot message, which the outpost emits with its reply to the
+depot's next envelope: the relays report the outpost's backlog to the depot
+(`sysio.msgch::reportqueue`), and that report is what makes Solana ship, so the waits for them add
+no traffic. The final advance check needs every chain to advance with nothing queued, so it keeps
+both chains due with keep-due traffic (`sysio.epoch::notetraffic`, the keep-due pump).
 
 Asserts:
 
@@ -36,10 +44,10 @@ Asserts:
    with no parked credit. Reported yield also reaches full release. This flow
    enables no mock import, bonder or pool; native tests compare its governance
    shortcut with actual provider settlement.
-4. **The depot keeps advancing.** Every outpost chain's
-   `sysio.epoch::epochstate.current_epoch_index` advances past its value
-   snapshotted before the syndication — a depot that choked on either
-   attestation would stall that chain's epoch instead.
+4. **The depot keeps advancing.** Every outpost chain, given keep-due traffic
+   while idle, advances its `sysio.epoch::epochstate.current_epoch_index` past
+   its value snapshotted before the syndication — a depot that choked on either
+   attestation would stall that chain's epoch while it was due instead.
 
 5. **Solvency stays healthy.** The final verify Step requires a clear emergency
    cord and an empty `sysio.synd::mismatch` table.

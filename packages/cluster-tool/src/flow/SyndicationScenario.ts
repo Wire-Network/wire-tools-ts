@@ -509,7 +509,12 @@ export namespace SyndicationScenario {
       totalSyndicated: message.totalSyndicated
     }
   }
-  /** Wait for intake, prove it is held and capture the consensus epoch and request. */
+  /**
+   * Wait for intake, prove it is held and capture the consensus epoch and request. The intake is
+   * an outpost → depot message, so the wait adds no traffic: the outpost emits it with its reply
+   * to the depot's next envelope, and the relays' report of the outpost's backlog
+   * (`sysio.msgch::reportqueue`) is what makes the syndication's chain due for that envelope.
+   */
   export function planVerifyIntake(
     actor: Report.Actor,
     name: string,
@@ -525,6 +530,7 @@ export namespace SyndicationScenario {
       name,
       description,
       async ctx => {
+        // Traffic: the syndication's own message on the outpost, reported as its backlog.
         const { envelope, matching } = await pollFor(
           name,
           async () => {

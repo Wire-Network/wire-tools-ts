@@ -28,13 +28,17 @@ export namespace EconomicClockScenarioConstants {
   export const Producer = producerName(0)
 
   /**
-   * Economic epochs the clock-independence phase observes. Its window spans the four economic
-   * epochs between the first and the last, 480 s, in which the consensus envelope (a consensus
-   * epoch closes within 90 s) guarantees at least five consensus advances even with 30 s of
-   * crank lag between the two readings — so "consensus advances more often" follows from the
-   * envelope, not from a fast run.
+   * Economic epochs the clock-independence phase observes. Its window spans the seven economic
+   * epochs between the first and the last, 840 s, in which the consensus envelope (a kept-due
+   * consensus epoch closes within 90 s, `ProtocolTiming.EpochExtensionMaxSec`) guarantees at least
+   * nine consensus advances even with 30 s of crank lag between the two readings — more than the
+   * seven economic epochs, so "consensus advances more often" follows from the envelope, not
+   * from a fast run. Sized for slack: a kept-due cycle really runs ≤ 73 s (60 s, plus ≤ 10 s of
+   * keep-due pump latency, ≤ 2.5 s of relay `chkcons` poll and a block), so a chain closes at
+   * least `floor(810 / 73)` = 11 — 2 epochs above the bound (`810 × (1/73 − 1/90)` ≈ 2.1), where
+   * the earlier five epochs (480 s) left ≈ 1.3. Fewer than eight leaves under 2 epochs of slack.
    */
-  export const ClockObservationEpochs = 5
+  export const ClockObservationEpochs = 8
 
   /** Economic epochs each later await observes: the next one to open. */
   export const NextEconomicEpoch = 1
@@ -75,10 +79,18 @@ export namespace EconomicClockScenarioConstants {
   export const WithdrawerServedChains = OutpostChainCodenames
 
   /**
-   * The outpost chain governance pauses for the second withdrawal: that chain's consensus guard
-   * holds the request after its economic wait passes, while the other chain keeps advancing.
+   * The outpost chain governance pauses on a decided epoch for the second withdrawal: its decided
+   * epoch passes the request's wait on it while its index stands still, and the other chain keeps
+   * advancing.
    */
   export const PausedChain = Constants.ETHEREUM_CHAIN_CODENAME
+
+  /**
+   * Epochs of {@link PausedChain} the decided-and-idle await allows: the one in progress (its
+   * decision lands one round trip after it opened), an advance its traffic may still bring, and one
+   * of margin.
+   */
+  export const DecidedEpochAwaitEpochs = 3
 
   /** WIRE the withdrawer bonds — 2 WIRE. */
   export const BondAmount = 2_000_000_000n
@@ -122,8 +134,8 @@ export namespace EconomicClockScenarioConstants {
   export const ClockObservation = "clock-independence"
   /** The reading before the withdrawal whose consensus guard passes first. */
   export const ConsensusFirstObservation = "consensus-first-request"
-  /** The reading before the withdrawal whose economic wait passes first. */
-  export const EconomicFirstObservation = "economic-first-request"
+  /** The reading before the withdrawal made while {@link PausedChain} is paused on a decided epoch. */
+  export const PausedDecidedObservation = "paused-decided-request"
   /** The epoch the treasury drain lands in. */
   export const DrainObservation = "treasury-drain"
   /** An economic epoch that opens while emissions are held. */
@@ -133,8 +145,8 @@ export namespace EconomicClockScenarioConstants {
 
   /** The withdrawal whose consensus guard passes first. */
   export const ConsensusFirstWithdrawal = "consensus-first"
-  /** The withdrawal whose economic wait passes first. */
-  export const EconomicFirstWithdrawal = "economic-first"
+  /** The withdrawal made while {@link PausedChain} is paused on a decided epoch. */
+  export const PausedDecidedWithdrawal = "paused-decided"
 
   /** The producer pay claimed after the clock-independence phase. */
   export const ClockPayClaim = "clock-independence"

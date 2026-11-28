@@ -49,6 +49,7 @@ import { TokenContractSteps } from "../../orchestration/steps/contracts/sysio/To
 import { Report } from "../../report/Report.js"
 import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { isCode, slugValue } from "../../utils/slugUtils.js"
+import type { WireEconomicClockTool } from "./WireEconomicClockTool.js"
 import { formatWireAsset } from "./WireUserTool.js"
 
 const log = getLogger(__filename)
@@ -78,16 +79,17 @@ export namespace WireCollateralTool {
 
   /**
    * `sysio.opreg`'s `WITHDRAW_WAIT_EPOCHS`: the consensus epochs each chain a withdrawal waits
-   * on must close after the request — a request at a chain's epoch N is guarded until N + this.
-   * It mirrors the contract; changing it without the contract makes every guard check fail.
+   * on closes after the request — a request at a chain's epoch N is guarded until N + this, or
+   * until the chain's current epoch is decided first ({@link consensusWaitsPassed}). It mirrors
+   * the contract; changing it without the contract makes every guard check fail.
    */
   export const WithdrawWaitConsensusEpochs = 2
 
   /**
    * Epochs of the slower clock a remit claim may take to appear once the economic clock
-   * ticks: the contract's two-epoch withdraw wait on each clock, the economic tick whose
-   * `flushwtdw` credits the claim, and one epoch of margin. Changing it moves the
-   * {@link planVerifyRemitClaim} deadline.
+   * ticks: the contract's two-epoch economic wait and its consensus wait of at most two epochs,
+   * the economic tick whose `flushwtdw` credits the claim, and one epoch of margin. Changing it
+   * moves the {@link planVerifyRemitClaim} deadline.
    */
   export const RemitClaimEpochCount = 4
 
@@ -384,20 +386,24 @@ export namespace WireCollateralTool {
   }
 
   /**
-   * Whether every consensus wait of a withdrawal has passed: each waited-on chain's consensus
-   * epoch index has reached the request's `eligible_at_epoch` for it — pure.
+   * Whether every consensus wait of a withdrawal has passed, as `sysio.opreg::flushwtdw` judges
+   * it — pure. A waited-on chain passes once its consensus epoch index has reached the request's
+   * `eligible_at_epoch` for it, or once its current epoch is decided (its winner accepted, no
+   * dispute open on it); an undecided or disputed epoch below that index holds the request.
    *
    * @param request - The `wtdwqueue` row.
-   * @param epochIndices - Each outpost chain's current consensus epoch index.
+   * @param consensus - Each outpost chain's consensus reading
+   *   (`WireEconomicClockTool.readConsensusReadings`).
    * @returns `true` once no chain holds the request (always, for a request that waits on none).
    */
   export function consensusWaitsPassed(
     request: SysioContracts.SysioOpregWithdrawRequestType,
-    epochIndices: Readonly<PerOutpostChain<number>>
+    consensus: WireEconomicClockTool.ConsensusReadings
   ): boolean {
-    return request.consensus_waits.every(
-      wait => epochIndices[consensusWaitChain(wait)] >= wait.eligible_at_epoch
-    )
+    return request.consensus_waits.every(wait => {
+      const chain = consensus[consensusWaitChain(wait)]
+      return chain.epochIndex >= wait.eligible_at_epoch || chain.decided
+    })
   }
 
   /**

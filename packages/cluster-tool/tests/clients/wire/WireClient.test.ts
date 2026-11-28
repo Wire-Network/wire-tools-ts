@@ -881,6 +881,36 @@ describe("WireClient", () => {
       })
     })
 
+    it("getTableRows reads a named secondary index only when one is given", async () => {
+      const client = new WireClient(config),
+        read = jest
+          .spyOn(client.api.v1.chain, "get_table_rows")
+          .mockResolvedValue(page([7], undefined) as never)
+      await client.getTableRows({ ...query, indexName: "byoutepoch", lowerBound: `{"byoutepoch":"7"}` })
+      await client.getTableRows(query)
+      const [indexed, primary] = read.mock.calls.map(([params]: any[]) => params)
+      expect(indexed.index_name).toBe("byoutepoch")
+      expect(indexed.lower_bound).toBe(`{"byoutepoch":"7"}`)
+      expect(primary).not.toHaveProperty("index_name")
+    })
+
+    it("a typed table query passes its secondary index through to the node", async () => {
+      const client = new WireClient(config),
+        read = jest
+          .spyOn(client.api.v1.chain, "get_table_rows")
+          .mockResolvedValue(page([], undefined) as never)
+      await client
+        .getSysioContract(SysioContracts.SysioContractName.chalg)
+        .tables.disputes.query({ indexName: "byoutepoch", lowerBound: `{"byoutepoch":"7"}`, limit: 1 })
+      expect(read.mock.calls[0][0]).toMatchObject({
+        code: "sysio.chalg",
+        table: "disputes",
+        index_name: "byoutepoch",
+        lower_bound: `{"byoutepoch":"7"}`,
+        limit: 1
+      })
+    })
+
     it("getAllTableRows resumes each page at the previous page's next_key", async () => {
       const client = new WireClient(config),
         read = jest

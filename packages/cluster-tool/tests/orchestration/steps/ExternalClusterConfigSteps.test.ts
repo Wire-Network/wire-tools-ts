@@ -52,6 +52,10 @@ import {
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { seedProducerOperators } from "../outputs/operatorAccountFixture.js"
 import {
+  fixtureEthereumAbi,
+  fixtureOutpostIdl
+} from "../../tools/wire/operatorDaemonArtifactFixture.js"
+import {
   fixtureProducerTopologyOverrides,
   PersistedFixture
 } from "../../config/clusterConfigFixture.js"
@@ -217,19 +221,6 @@ function solanaPrivateKey(index: number): string {
   )
 }
 
-/** The generated OPP outpost IDL, carrying every daemon-invoked instruction. */
-function outpostIdl(programId: string) {
-  return {
-    address: programId,
-    metadata: { name: SolanaOutpostProgramTool.ProgramName },
-    instructions: OperatorDaemonTool.RequiredSolanaIdlInstructions.map(
-      name => ({
-        name
-      })
-    )
-  }
-}
-
 /** Write `value` as JSON at `file`, creating its directory. */
 function writeJsonFile(file: string, value: unknown): void {
   Fs.mkdirSync(Path.dirname(file), { recursive: true })
@@ -349,7 +340,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
    * 1. the deployed ETH outpost address map, in the per-cluster deployments dir;
    * 2. every daemon ABI's hardhat artifact in the wire-ethereum checkout;
    * 3. the committed `liqsol_core` program keypair (the program id source);
-   * 4. the generated IDL, carrying every daemon-invoked instruction.
+   * 4. the generated IDL, carrying everything the daemons decode.
    *
    * All four are pure `Fs`/`JSON.parse` reads — no binaries, no network.
    */
@@ -373,7 +364,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           `${contractName}.sol`,
           `${abiArtifactName(contractName)}.json`
         ),
-        { abi: [] }
+        { abi: fixtureEthereumAbi(contractName, `${contractName}Event`) }
       )
     )
     // The validator loads EVERY wire-solana program at genesis, so the rendered
@@ -387,7 +378,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     writeJsonFile(
       SolanaOutpostProgramTool.programIdlFile(solanaPath),
-      outpostIdl(programKeypair().publicKey.toBase58())
+      fixtureOutpostIdl({ address: programKeypair().publicKey.toBase58() })
     )
   }
 

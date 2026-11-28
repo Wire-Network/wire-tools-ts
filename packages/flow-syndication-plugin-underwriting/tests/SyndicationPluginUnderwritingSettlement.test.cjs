@@ -8,6 +8,7 @@ const {
   Constants: HarnessConstants,
   OutputStore,
   SolanaLiqSyndicationTool,
+  Steps,
   EthereumSyndicationTool,
   SyndicationScenario,
   WireCollateralTool,
@@ -491,13 +492,16 @@ test("custody waits for an unreported claim and its persisted LIQ_YIELD", async 
         ]
   )
   mock.method(SolanaLiqSyndicationTool, "readPoolBalance", async () => 11n)
-  const observation = await BatchOperatorUnderwritingSteps.readSettledCustody(
-    ctx,
-    "t"
-  )
+  // The custody attestations travel Solana -> depot: the relays report the outpost's backlog to
+  // the depot, so the wait adds no traffic while one is missing.
+  const epochStates = mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({})),
+    push = mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+  const observation = await BatchOperatorUnderwritingSteps.readSettledCustody(ctx, "t")
   Assert.equal(observation.pool, 11n)
   Assert.equal(observation.attestations.at(-1).sequence, 5n)
   Assert.ok(persisted >= 2)
+  Assert.equal(push.mock.callCount(), 0)
+  Assert.equal(epochStates.mock.callCount(), 0)
 })
 
 test("setup funding requires every operator's exact credit", async () => {

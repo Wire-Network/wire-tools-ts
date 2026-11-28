@@ -1,6 +1,7 @@
 import { AndonContractSteps } from "./AndonContractSteps.js"
 import { BiosContractSteps } from "./BiosContractSteps.js"
 import { BondContractSteps } from "./BondContractSteps.js"
+import { ChalgContractSteps } from "./ChalgContractSteps.js"
 import { ChainsContractSteps } from "./ChainsContractSteps.js"
 import { CounclContractSteps } from "./CounclContractSteps.js"
 import { DclaimContractSteps } from "./DclaimContractSteps.js"
@@ -27,6 +28,7 @@ export namespace SysioContractSteps {
   export import andon = AndonContractSteps
   export import bios = BiosContractSteps
   export import bond = BondContractSteps
+  export import chalg = ChalgContractSteps
   export import chains = ChainsContractSteps
   export import councl = CounclContractSteps
   export import dclaim = DclaimContractSteps

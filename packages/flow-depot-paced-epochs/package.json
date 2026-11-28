@@ -1,0 +1,22 @@
+{
+  "name": "@wireio/test-flow-depot-paced-epochs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: each outpost chain's epochs are paced by the depot — an idle chain stays put, traffic makes it due, a strict majority decides at once, and a late delivery inside the window is credited",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib",
+    "test:unit": "node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.110",
+    "@wireio/shared": "^1.0.109"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -70,10 +70,19 @@ export namespace TerminationScenarioConstants {
   /**
    * Epochs of the missed chain to wait for the eviction once the operator is in its rotation. With
    * `TerminateMinimumPercentSamples = 2` and 3 groups, the operator's slot
-   * rotates every 3 epochs in the worst case, so 10 epochs is comfortably above
-   * the ~6-epoch theoretical worst.
+   * rotates every 3 epochs in the worst case, and the eviction lands at the advance
+   * after its second missed epoch, which closes that epoch's books, so 10 epochs is
+   * comfortably above the ~7-epoch theoretical worst.
    */
   export const MissAccumulationEpochs = 10
+
+  /**
+   * Epochs of the missed chain to wait, after the eviction, for the seat its window drew for the
+   * operator before it to slide out: the slide out of its last duty epoch re-seats it in the tail
+   * group, the eviction lands one advance later, and with the flow's 3 groups that tail group slides
+   * out two advances after the eviction; the rest is margin. Changing it moves the wait's deadline.
+   */
+  export const EvictedSeatEpochs = 4
 
   /** Interval for long-running chain-state polls (ms). */
   export const PollIntervalMs = 3_000
@@ -105,5 +114,15 @@ export namespace TerminationScenarioConstants {
    */
   export function terminationDeadlineMs(): number {
     return ProtocolTiming.effectiveEpochsMs(EpochDurationSec, MissAccumulationEpochs)
+  }
+
+  /**
+   * Deadline for the seat drawn for the operator before its eviction to slide out of the missed
+   * chain's window (ms).
+   *
+   * @returns {@link EvictedSeatEpochs} effective epochs of {@link EpochDurationSec}.
+   */
+  export function evictedSeatDeadlineMs(): number {
+    return ProtocolTiming.effectiveEpochsMs(EpochDurationSec, EvictedSeatEpochs)
   }
 }

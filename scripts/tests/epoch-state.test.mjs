@@ -6,9 +6,14 @@ import {
   chainEpochConfigs,
   chainEpochDurations,
   chainEpochStates,
+  chainOutpostConsensus,
+  chainsToKeepDue,
   EpochStateRowLimit,
+  isCurrentEpochDecided,
+  isIdleChainState,
   kvRowValue,
-  lowestChainEpochIndex
+  lowestChainEpochIndex,
+  timePointMs
 } from "../common/epoch-state.mjs"
 
 /** A packed slug_name chain code, as a per-chain `sysio.epoch` row renders it. */
@@ -89,4 +94,63 @@ test("the epoch gate reads null while an expected chain has no row, or none is e
   Assert.equal(lowestChainEpochIndex(ethereumOnly, ["ETHEREUM", "SOLANA"]), null)
   Assert.equal(lowestChainEpochIndex(ethereumOnly, []), null)
   Assert.equal(lowestChainEpochIndex(null, ["ETHEREUM"]), null)
+})
+
+/** A zero `time_point`: no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+
+test("a time_point parses as UTC with or without a zone suffix; zero is the epoch; junk is null", () => {
+  Assert.equal(timePointMs("2026-10-01T00:00:00.000"), Date.UTC(2026, 9, 1))
+  Assert.equal(timePointMs("2026-10-01T00:00:00.000Z"), Date.UTC(2026, 9, 1))
+  Assert.equal(timePointMs("2026-10-01T02:00:00.000+02:00"), Date.UTC(2026, 9, 1))
+  Assert.equal(timePointMs(NoTraffic), 0)
+  ;["", "invalid", null, undefined, 5].forEach(cell => Assert.equal(timePointMs(cell), null))
+})
+
+test("a started chain with a zero due_at is idle; traffic, genesis or no row is not", () => {
+  Assert.equal(isIdleChainState({ current_epoch_index: 3, due_at: NoTraffic }), true)
+  Assert.equal(isIdleChainState({ current_epoch_index: 3, due_at: "2026-10-01T00:01:00.000" }), false)
+  Assert.equal(isIdleChainState({ current_epoch_index: 0, due_at: NoTraffic }), false)
+  Assert.equal(isIdleChainState(undefined), false)
+})
+
+test("a due_at that is absent or does not parse is unknown traffic, never idle", () => {
+  Assert.equal(isIdleChainState({ current_epoch_index: 3 }), false)
+  Assert.equal(isIdleChainState({ current_epoch_index: 3, due_at: "not a time" }), false)
+  Assert.equal(isIdleChainState({ current_epoch_index: 3, due_at: 0 }), false)
+  Assert.deepEqual(chainsToKeepDue({ ETHEREUM: { current_epoch_index: 3 } }, ["ETHEREUM"]), [])
+})
+
+test("outpcons rows are keyed by chain with a numeric decided epoch", () => {
+  const consensus = chainOutpostConsensus([
+    { key: { chain_code: EthereumCode }, value: { chain_code: EthereumCode, epoch_index: "4" } },
+    { chain_code: SolanaCode, epoch_index: 2 },
+    { chain_code: "bogus", epoch_index: 1 },
+    { chain_code: EthereumCode }
+  ])
+  Assert.deepEqual(Object.keys(consensus).sort(), ["ETHEREUM", "SOLANA"])
+  Assert.equal(consensus.ETHEREUM.epoch_index, 4)
+  Assert.equal(consensus.SOLANA.epoch_index, 2)
+})
+
+test("a chain's current epoch is decided once outpcons records its winner, or a later one", () => {
+  Assert.equal(isCurrentEpochDecided({ current_epoch_index: 4 }, { epoch_index: 4 }), true)
+  Assert.equal(isCurrentEpochDecided({ current_epoch_index: 4 }, { epoch_index: 5 }), true)
+  Assert.equal(isCurrentEpochDecided({ current_epoch_index: 4 }, { epoch_index: 3 }), false)
+  Assert.equal(isCurrentEpochDecided({ current_epoch_index: 1 }, undefined), false)
+  Assert.equal(isCurrentEpochDecided(undefined, { epoch_index: 3 }), false)
+})
+
+test("the gate keeps due every expected idle, unpaused chain and no other", () => {
+  const states = {
+    ETHEREUM: { current_epoch_index: 3, due_at: NoTraffic },
+    SOLANA: { current_epoch_index: 5, due_at: NoTraffic, is_paused: true }
+  }
+  Assert.deepEqual(chainsToKeepDue(states, ["ETHEREUM", "SOLANA"]), ["ETHEREUM"])
+  Assert.deepEqual(chainsToKeepDue({ ...states, SOLANA: { current_epoch_index: 5, due_at: NoTraffic } }, ["SOLANA", "ETHEREUM"]), [
+    "SOLANA",
+    "ETHEREUM"
+  ])
+  Assert.deepEqual(chainsToKeepDue({ ETHEREUM: { current_epoch_index: 3, due_at: "2026-10-01T00:01:00.000" } }, ["ETHEREUM"]), [])
+  Assert.deepEqual(chainsToKeepDue({}, ["ETHEREUM"]), [])
 })

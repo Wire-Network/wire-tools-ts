@@ -318,6 +318,15 @@ export namespace ClusterManager {
    * produced by `wire-cluster-tool create` — flow-run clusters are ephemeral
    * and never persist `cluster-state.json` / `cluster-keys.json`.
    *
+   * The relaunch epoch gate WRITES to the depot on a local cluster: epochs are
+   * depot-paced and an idle chain never advances, so the gate gives every idle
+   * chain traffic through the keep-due pump (`EpochAdvanceSteps.keepChainsDue`
+   * pushing `sysio.epoch::notetraffic`, signed `sysio.msgch@active` through the
+   * unlocked kiod wallet — the key behind `sysio@active`) and waits for each to
+   * advance. An external-outpost cluster (`config.externalOutposts`) skips the
+   * gate, so `run` writes nothing there: its success condition is head-block
+   * advance alone.
+   *
    * @param config - The loaded `cluster-config.json`.
    * @throws If the cluster is still running, ports have been reclaimed since
    *   resolve, or the post-start liveness checks (production resume, epoch
@@ -422,10 +431,14 @@ export namespace ClusterManager {
       return
     }
 
+    // Depot-paced epochs: an idle chain never advances, so the gate gives every
+    // idle chain traffic (the keep-due pump's `sysio.epoch::notetraffic`, signed
+    // `sysio.msgch@active` — a write, made on a local cluster only; the external
+    // branch above returned before it) and waits for each to advance.
     log.info("[cluster] verifying every outpost chain's epoch-advance liveness")
     const startIndices = await Steps.contracts.sysio.epoch.readCurrentEpochIndices(ctx)
     try {
-      await Steps.epochAdvance.awaitEpochIndicesAdvanced(ctx, startIndices)
+      await Steps.epochAdvance.awaitEpochIndicesAdvanced(ctx, startIndices, controller.signal)
     } catch (error) {
       log.error(
         `[cluster] epoch-advance liveness check failed: ${error instanceof Error ? error.message : String(error)}`

@@ -40,13 +40,16 @@ function boundaryMs(index: number): number {
 /** One chain's consensus reading at `index`, on the fixture rows' boundaries ({@link chainRow}). */
 function consensusReading(
   index: number,
-  paused: boolean
+  paused: boolean,
+  decided = false
 ): WireEconomicClockTool.ConsensusReading {
   return {
     epochIndex: index,
     epochStartMs: GridStartMs,
-    nextEpochStartMs: GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond,
-    paused
+    trafficSinceMs: GridStartMs,
+    dueAtMs: GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+    paused,
+    decided
   }
 }
 
@@ -90,7 +93,10 @@ function economyRow(index: number): SysioContracts.SysioEpochEconomicStateType {
   }
 }
 
-/** One chain's whole `epochstate` row at consensus epoch `index`. */
+/** A zero `time_point` as the chain renders it: no traffic. */
+const NoTraffic = "1970-01-01T00:00:00.000"
+
+/** One chain's whole `epochstate` row at consensus epoch `index`, with traffic since its start. */
 function chainRow(
   chain: Constants.OutpostChainCodename,
   index: number,
@@ -100,10 +106,62 @@ function chainRow(
     chain_code: SlugName.from(chain),
     current_epoch_index: index,
     current_epoch_start: stamp(GridStartMs),
-    next_epoch_start: stamp(GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond),
+    traffic_since: stamp(GridStartMs),
+    due_at: stamp(GridStartMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond),
     current_batch_op_group: 0,
     batch_op_groups: [],
-    is_paused: paused
+    is_paused: paused,
+    previous_group: []
+  }
+}
+
+/** The `outpcons` read of a depot that has accepted no winner on any chain yet. */
+const NoAcceptedWinner: PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType> = {
+  [Held]: undefined,
+  [Running]: undefined
+}
+
+/** No chain's current epoch was ever disputed. */
+const NoCurrentDisputes: PerOutpostChain<SysioContracts.SysioChalgDisputeEntryType> = {
+  [Held]: undefined,
+  [Running]: undefined
+}
+
+/** One chain's `outpcons` row, recording the accepted winner of its epoch `index`. */
+function outpostConsensusRow(
+  chain: Constants.OutpostChainCodename,
+  index: number
+): SysioContracts.SysioMsgchOutpostConsensusEntryType {
+  return {
+    chain_code: SlugName.from(chain),
+    epoch_index: index,
+    consensus_reached: true,
+    winning_checksum: "",
+    envelope_digest: "",
+    message_tip: "",
+    previous_epoch_index: 0,
+    previous_winning_checksum: ""
+  }
+}
+
+/** One `disputes` row on `chain`'s epoch `index`. */
+function disputeRow(
+  chain: Constants.OutpostChainCodename,
+  index: number,
+  status: SysioContracts.SysioChalgDisputestatus
+): SysioContracts.SysioChalgDisputeEntryType {
+  return {
+    id: 1,
+    chain_code: SlugName.from(chain),
+    epoch_index: index,
+    status,
+    winning_checksum: "",
+    opened_at: stamp(GridStartMs),
+    deadline: stamp(GridStartMs),
+    candidates: [],
+    network_gen: 0,
+    electorate: [],
+    quorum: 0
   }
 }
 
@@ -134,6 +192,9 @@ function clockContext(
     economy = jest.spyOn(Steps.contracts.sysio.epoch, "readEconomyState"),
     consensus = jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates"),
     info = jest.spyOn(ctx.wire, "getInfo")
+  // No chain has an accepted winner or a dispute, so no epoch reads as decided.
+  jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+  jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockResolvedValue(undefined)
   reads.forEach(([economyState, consensusState, headMs]) => {
     economy.mockResolvedValueOnce(economyState)
     consensus.mockResolvedValueOnce(consensusState)
@@ -195,36 +256,158 @@ describe("WireEconomicClockTool", () => {
       )
     })
 
-    it("reads each chain's consensus from its own row: index, boundaries and pause", () => {
+    it("reads each chain's consensus from its own row: index, start, traffic, due and pause", () => {
       const solanaStartMs = GridStartMs + 7 * ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+        trafficSinceMs = solanaStartMs + 90 * ProtocolTiming.MsPerSecond,
         running = {
           ...chainRow(Running, 3, false),
           current_epoch_start: stamp(solanaStartMs),
-          next_epoch_start: stamp(solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond)
+          traffic_since: stamp(trafficSinceMs),
+          due_at: stamp(trafficSinceMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond)
         }
       expect(
-        WireEconomicClockTool.toConsensusReadings({
-          [Held]: chainRow(Held, 8, true),
-          [Running]: running
-        })
+        WireEconomicClockTool.toConsensusReadings(
+          {
+            [Held]: chainRow(Held, 8, true),
+            [Running]: running
+          },
+          NoAcceptedWinner,
+          NoCurrentDisputes
+        )
       ).toEqual({
         [Held]: consensusReading(8, true),
         [Running]: {
           epochIndex: 3,
           epochStartMs: solanaStartMs,
-          nextEpochStartMs: solanaStartMs + 2 * ConsensusDurationSec * ProtocolTiming.MsPerSecond,
-          paused: false
+          trafficSinceMs,
+          dueAtMs: trafficSinceMs + ConsensusDurationSec * ProtocolTiming.MsPerSecond,
+          paused: false,
+          decided: false
         }
+      })
+    })
+
+    it("reads an idle chain's zero traffic and due as NoTrafficMs, and marks it idle", () => {
+      const idle = { ...chainRow(Running, 3, false), traffic_since: NoTraffic, due_at: NoTraffic },
+        readings = WireEconomicClockTool.toConsensusReadings(
+          { [Held]: chainRow(Held, 8, false), [Running]: idle },
+          NoAcceptedWinner,
+          NoCurrentDisputes
+        )
+      expect(readings[Running].trafficSinceMs).toBe(Steps.contracts.sysio.epoch.NoTrafficMs)
+      expect(readings[Running].dueAtMs).toBe(Steps.contracts.sysio.epoch.NoTrafficMs)
+      expect(WireEconomicClockTool.isIdleReading(readings[Running])).toBe(true)
+      expect(WireEconomicClockTool.isIdleReading(readings[Held])).toBe(false)
+      expect(WireEconomicClockTool.describeConsensusReading(readings[Running])).toBe(
+        `3${WireEconomicClockTool.IdleMark}`
+      )
+    })
+
+    it("never reads a chain before its genesis advance as idle", () => {
+      const genesis = { ...consensusReading(0, false), trafficSinceMs: 0, dueAtMs: 0 }
+      expect(WireEconomicClockTool.isIdleReading(genesis)).toBe(false)
+      expect(WireEconomicClockTool.describeConsensusReading(genesis)).toBe("0")
+    })
+
+    describe("a chain's current epoch is decided", () => {
+      const { DISPUTE_STATUS_OPEN: Open, DISPUTE_STATUS_RESOLVED: Resolved } =
+          SysioContracts.SysioChalgDisputestatus,
+        states = { [Held]: chainRow(Held, 8, false), [Running]: chainRow(Running, 3, false) },
+        decided = (
+          outpostConsensus: PerOutpostChain<SysioContracts.SysioMsgchOutpostConsensusEntryType>,
+          currentDisputes: PerOutpostChain<SysioContracts.SysioChalgDisputeEntryType> = NoCurrentDisputes
+        ): PerOutpostChain<boolean> => {
+          const readings = WireEconomicClockTool.toConsensusReadings(states, outpostConsensus, currentDisputes)
+          return { [Held]: readings[Held].decided, [Running]: readings[Running].decided }
+        },
+        accepted = { [Held]: outpostConsensusRow(Held, 8), [Running]: outpostConsensusRow(Running, 3) }
+
+      it("once outpcons records the winner of that epoch", () => {
+        expect(decided(accepted)).toEqual({ [Held]: true, [Running]: true })
+      })
+
+      it("not while outpcons records the winner of an earlier epoch, or none", () => {
+        expect(decided({ [Held]: outpostConsensusRow(Held, 7), [Running]: undefined })).toEqual({
+          [Held]: false,
+          [Running]: false
+        })
+      })
+
+      it("not while a dispute on that epoch is open, but again once it is resolved", () => {
+        expect(decided(accepted, { [Held]: disputeRow(Held, 8, Open), [Running]: undefined })).toEqual({
+          [Held]: false,
+          [Running]: true
+        })
+        expect(decided(accepted, { [Held]: disputeRow(Held, 8, Resolved), [Running]: undefined })).toEqual({
+          [Held]: true,
+          [Running]: true
+        })
+      })
+
+      it("whatever open dispute is read for another chain or another epoch", () => {
+        expect(
+          decided(accepted, { [Held]: disputeRow(Held, 7, Open), [Running]: disputeRow(Held, 3, Open) })
+        ).toEqual({ [Held]: true, [Running]: true })
       })
     })
 
     it("toConsensusReadings refuses a chain without an epochstate row", () => {
       expect(() =>
-        WireEconomicClockTool.toConsensusReadings({
-          [Held]: undefined,
-          [Running]: chainRow(Running, 3, false)
-        })
+        WireEconomicClockTool.toConsensusReadings(
+          {
+            [Held]: undefined,
+            [Running]: chainRow(Running, 3, false)
+          },
+          NoAcceptedWinner,
+          NoCurrentDisputes
+        )
       ).toThrow(new RegExp(`epochstate has no ${Held} row`))
+    })
+
+    it("readConsensusReadings reads epochstate and outpcons, then each chain's current-epoch dispute", async () => {
+      const ctx = fixtureContext()
+      jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue({
+        [Held]: chainRow(Held, 6, true),
+        [Running]: chainRow(Running, 4, false)
+      })
+      jest
+        .spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus")
+        .mockResolvedValue({ [Held]: outpostConsensusRow(Held, 6), [Running]: outpostConsensusRow(Running, 4) })
+      const epochDispute = jest
+        .spyOn(Steps.contracts.sysio.chalg, "readEpochDispute")
+        .mockImplementation(async (_ctx, chain, epochIndex) =>
+          chain === Running
+            ? disputeRow(Running, epochIndex, SysioContracts.SysioChalgDisputestatus.DISPUTE_STATUS_OPEN)
+            : undefined
+        )
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).resolves.toEqual({
+        [Held]: consensusReading(6, true, true),
+        [Running]: consensusReading(4, false, false)
+      })
+      expect(epochDispute).toHaveBeenCalledTimes(2)
+      expect(epochDispute).toHaveBeenCalledWith(ctx, Held, 6)
+      expect(epochDispute).toHaveBeenCalledWith(ctx, Running, 4)
+    })
+
+    it("readConsensusReadings reads no dispute for a chain without an epochstate row, and refuses it", async () => {
+      const ctx = fixtureContext()
+      jest
+        .spyOn(Steps.contracts.sysio.epoch, "readEpochStates")
+        .mockResolvedValue({ [Held]: chainRow(Held, 6, false), [Running]: undefined })
+      jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+      const epochDispute = jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockResolvedValue(undefined)
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).rejects.toThrow(
+        new RegExp(`epochstate has no ${Running} row`)
+      )
+      expect(epochDispute).toHaveBeenCalledTimes(1)
+    })
+
+    it("readConsensusReadings fails with the read that fails", async () => {
+      const ctx = fixtureContext()
+      jest.spyOn(Steps.contracts.sysio.epoch, "readEpochStates").mockResolvedValue(consensusRow(6))
+      jest.spyOn(Steps.contracts.sysio.msgch, "readOutpostConsensus").mockResolvedValue(NoAcceptedWinner)
+      jest.spyOn(Steps.contracts.sysio.chalg, "readEpochDispute").mockRejectedValue(new Error("dispute read failed"))
+      await expect(WireEconomicClockTool.readConsensusReadings(ctx)).rejects.toThrow(/dispute read failed/)
     })
 
     it("describes one chain's consensus for the log, marking a paused chain", () => {
@@ -301,11 +484,25 @@ describe("WireEconomicClockTool", () => {
       expect(step.input).toEqual({
         kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
         count: 3,
-        observationName: "clocks"
+        observationName: "clocks",
+        keepDueChains: []
       })
       expect(step.runner).toBe(
         WireEconomicClockTool.runAwaitEconomicEpochsOpened
       )
+    })
+
+    it("carries the chains it keeps due", () => {
+      const step = WireEconomicClockTool.planAwaitEconomicEpochsOpened(
+        Report.Actor.BatchOperator,
+        "economic-epochs",
+        "await",
+        {},
+        2,
+        "clocks",
+        [Running]
+      )
+      expect(step.input.keepDueChains).toEqual([Running])
     })
 
     it.each([0, -1, 1.5])("refuses to await %s economic epochs", count => {
@@ -328,12 +525,14 @@ describe("WireEconomicClockTool", () => {
         [economyRow(5), consensusRow(11), boundaryMs(5) + CrankLagMs],
         [economyRow(6), consensusRow(13), boundaryMs(6) + CrankLagMs]
       ])
+      const notetraffic = jest.spyOn(Steps.contracts.sysio.epoch, "runNotetraffic")
       await WireEconomicClockTool.runAwaitEconomicEpochsOpened(
         ctx,
         {
           kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
           count: 1,
-          observationName: "clocks"
+          observationName: "clocks",
+          keepDueChains: []
         },
         signal
       )
@@ -343,6 +542,39 @@ describe("WireEconomicClockTool", () => {
         start: reading(5, 11),
         ticks: [reading(6, 13)]
       })
+      expect(notetraffic).not.toHaveBeenCalled()
+    })
+
+    it("keeps its chains due through the economic wait", async () => {
+      const ctx = clockContext([
+          [economyRow(5), consensusRow(11), boundaryMs(5) + CrankLagMs],
+          [economyRow(5), consensusRow(11), boundaryMs(5) + 2 * CrankLagMs],
+          [economyRow(6), consensusRow(12), boundaryMs(6) + CrankLagMs]
+        ]),
+        keepingDue = jest
+          .spyOn(Steps.epochAdvance, "pollUntilKeepingDue")
+          .mockImplementation(async (_ctx, _chains, _label, predicate) => {
+            while (!(await predicate())) {
+              /* each failed check would pump; the reads advance the fixture */
+            }
+          })
+      await WireEconomicClockTool.runAwaitEconomicEpochsOpened(
+        ctx,
+        {
+          kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
+          count: 1,
+          observationName: "clocks",
+          keepDueChains: [Held, Running]
+        },
+        signal
+      )
+      expect(keepingDue).toHaveBeenCalledTimes(1)
+      expect(keepingDue.mock.calls[0][0]).toBe(ctx)
+      expect(keepingDue.mock.calls[0][1]).toEqual([Held, Running])
+      expect(keepingDue.mock.calls[0][6]).toBe(signal)
+      expect(
+        ctx.outputs.assert(WireEconomicClockTool.observationKey("clocks")).ticks
+      ).toEqual([reading(6, 12)])
     })
 
     it("an aborted await reads nothing", async () => {
@@ -354,7 +586,8 @@ describe("WireEconomicClockTool", () => {
           {
             kind: "WireEconomicClockTool.AwaitEconomicEpochsOpenedInput",
             count: 1,
-            observationName: "clocks"
+            observationName: "clocks",
+            keepDueChains: []
           },
           AbortSignal.abort()
         )
@@ -663,6 +896,24 @@ describe("WireEconomicClockTool", () => {
       ).toThrow(new RegExp(`spans no whole 90 s ${Held} consensus epoch`))
     })
 
+    it("bounds the consensus epochs a window can hold by the chain's minimum", () => {
+      const minimumMs = ConsensusDurationSec * ProtocolTiming.MsPerSecond
+      expect(WireEconomicClockTool.consensusAdvanceUpperBound(minimumMs - 1, ConsensusDurationSec)).toBe(1)
+      expect(WireEconomicClockTool.consensusAdvanceUpperBound(minimumMs, ConsensusDurationSec)).toBe(2)
+      expect(WireEconomicClockTool.consensusAdvanceUpperBound(480_000, ConsensusDurationSec)).toBe(9)
+    })
+
+    it("refuses consensus advancing faster than its minimum allows", () => {
+      expect(() =>
+        WireEconomicClockTool.assertConsensusAdvanced(
+          reading(1, 2),
+          reading(5, 12),
+          Held,
+          ConsensusDurationSec
+        )
+      ).toThrow(/allows at most 9/)
+    })
+
     it("refuses consensus advancing fewer epochs than the bound", () => {
       expect(() =>
         WireEconomicClockTool.assertConsensusAdvanced(
@@ -718,6 +969,70 @@ describe("WireEconomicClockTool", () => {
       }
       await expect(step.runner(ctx, held, signal)).rejects.toThrow(/was paused/)
     })
+  })
+})
+
+describe("WireEconomicClockTool.assertDueAt", () => {
+  const MinimumSec = ConsensusDurationSec,
+    TrafficWaitSec = ConsensusDurationSec / 2,
+    MinimumMs = MinimumSec * ProtocolTiming.MsPerSecond,
+    TrafficWaitMs = TrafficWaitSec * ProtocolTiming.MsPerSecond,
+    StartMs = GridStartMs,
+    /** The chain's `epochcfg` row: its minimum and the contract's default traffic wait (half). */
+    Config: SysioContracts.SysioEpochEpochConfigType = {
+      chain_code: String(SlugName.from(Held)),
+      epoch_duration_sec: MinimumSec,
+      traffic_wait_sec: TrafficWaitSec,
+      late_window_sec: TrafficWaitSec,
+      operators_per_epoch: 3,
+      batch_operator_minimum_active: 9,
+      batch_op_groups: 3,
+      epoch_retention_envelope_log_count: 2
+    }
+
+  /** The chain at epoch 4, started at `StartMs`, with the given traffic and due time. */
+  function dueReading(trafficSinceMs: number, dueAtMs: number): WireEconomicClockTool.ConsensusReading {
+    return { epochIndex: 4, epochStartMs: StartMs, trafficSinceMs, dueAtMs, paused: false, decided: true }
+  }
+
+  it("passes a chain with traffic due one minimum after its start", () => {
+    // Traffic before the start, or early in the epoch.
+    WireEconomicClockTool.assertDueAt(dueReading(StartMs - 5_000, StartMs + MinimumMs), Config, Held)
+    WireEconomicClockTool.assertDueAt(dueReading(StartMs + 7_000, StartMs + MinimumMs), Config, Held)
+  })
+
+  it("passes a chain whose late traffic makes it due one traffic wait after the traffic", () => {
+    const lateMs = StartMs + MinimumMs - 1_000
+    WireEconomicClockTool.assertDueAt(dueReading(lateMs, lateMs + TrafficWaitMs), Config, Held)
+  })
+
+  it("passes an idle chain with neither traffic nor a due_at", () => {
+    WireEconomicClockTool.assertDueAt(
+      dueReading(Steps.contracts.sysio.epoch.NoTrafficMs, Steps.contracts.sysio.epoch.NoTrafficMs),
+      Config,
+      Held
+    )
+  })
+
+  it("fails a due_at off the rule", () => {
+    const lateMs = StartMs + MinimumMs - 1_000
+    // Due one minimum after the start, as if the late traffic waited nothing; then one full
+    // minimum after the traffic, the rule before the traffic wait.
+    ;[StartMs + MinimumMs, lateMs + MinimumMs].forEach(dueAtMs =>
+      expect(() => WireEconomicClockTool.assertDueAt(dueReading(lateMs, dueAtMs), Config, Held)).toThrow(
+        /ETHEREUM epoch 4 is not due at the later of its start plus its 60 s minimum and its traffic plus its 30 s wait/
+      )
+    )
+  })
+
+  it("fails an idle chain carrying a due_at", () => {
+    expect(() =>
+      WireEconomicClockTool.assertDueAt(
+        dueReading(Steps.contracts.sysio.epoch.NoTrafficMs, StartMs + MinimumMs),
+        Config,
+        Held
+      )
+    ).toThrow(/ETHEREUM epoch 4 has no traffic yet is due at/)
   })
 })
 

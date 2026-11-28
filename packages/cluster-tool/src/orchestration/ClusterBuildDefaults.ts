@@ -1472,11 +1472,13 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // Bootstrap success gate. LOCAL mode watches the depot's own epoch advance
-    // past the bootstrap epoch; EXTERNAL mode has no local chain to advance an
-    // epoch on, so it proves the depot is producing blocks (head advance) AND
-    // that the bootstrap actually queued an outbound envelope for every
-    // registered outpost.
+    // Bootstrap success gate. LOCAL mode watches each outpost chain's genesis
+    // epoch become decided: the outpost answered the bootstrap envelope and the
+    // depot accepted its reply, a full OPP round trip that needs no traffic (a
+    // depot-paced chain with none stays in epoch 1). EXTERNAL mode has no local
+    // outpost to answer, so it proves the depot is producing blocks (head
+    // advance) AND that the bootstrap actually queued an outbound envelope for
+    // every registered outpost.
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
@@ -1523,14 +1525,14 @@ export namespace ClusterBuildDefaults {
     } else {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
-        "EpochAdvance",
-        "Verify every outpost chain's epoch advances past the bootstrap epoch"
+        "EpochDecided",
+        "Verify every outpost chain's genesis epoch is decided (an OPP round trip)"
       ).push(
         ...OutpostChainCodenames.map(chain =>
-          Steps.epochAdvance.planAwaitEpochAdvanced<C>(
+          Steps.epochAdvance.planAwaitEpochDecided<C>(
             Actor.Sysio,
-            `verify-epoch-advance-${chain.toLowerCase()}`,
-            `the ${chain} current_epoch_index reaches ${Steps.epochAdvance.BootstrapAdvanceTargetIndex}`,
+            `verify-epoch-decided-${chain.toLowerCase()}`,
+            `the ${chain} epoch ${Steps.epochAdvance.BootstrapDecidedEpochIndex} is decided`,
             {},
             chain
           )
@@ -1817,9 +1819,11 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
-   * One outpost chain's `sysio.epoch::setconfig` data: the chain's consensus epoch duration,
-   * and the schedule shape derived from the batch-operator topology (every chain is sized the
-   * same, since every bootstrapped batch operator serves every chain).
+   * One outpost chain's `sysio.epoch::setconfig` data: the chain's consensus epoch duration, its
+   * traffic wait and late-delivery window at the contract default (half the minimum,
+   * `EpochContractSteps.DefaultShareOfMinimumSec`), and the schedule shape derived from the
+   * batch-operator topology (every chain is sized the same, since every bootstrapped batch
+   * operator serves every chain).
    *
    * The shape itself comes from {@link BatchOperatorSchedule.resolve} — the ONE
    * place it is derived and validated, shared with
@@ -1847,6 +1851,8 @@ export namespace ClusterBuildDefaults {
     return {
       chain_code: chain,
       epoch_duration_sec: config.outpostEpochDurationSec[chain],
+      traffic_wait_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
+      late_window_sec: Steps.contracts.sysio.epoch.DefaultShareOfMinimumSec,
       operators_per_epoch: operatorsPerEpoch,
       batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,
@@ -1856,22 +1862,22 @@ export namespace ClusterBuildDefaults {
   }
 
   /**
-   * Assert the `sysio.opreg::setconfig` window this bootstrap installs holds both eviction rails at
-   * every outpost chain's `sysio.epoch::setconfig` schedule, the rule both setters enforce. A resident
-   * batch operator is on duty once every `batch_op_groups` epochs, so the window holds
-   * `terminate_window_ms` over that interval duties; they must reach
-   * `terminate_max_consecutive_misses + 1` and `terminate_min_pct_samples`.
+   * Assert the `sysio.opreg::setconfig` window this bootstrap installs holds the percent rail's sample
+   * at every outpost chain's `sysio.epoch::setconfig` schedule, the rule both setters enforce. A
+   * resident batch operator is on duty once every `batch_op_groups` epochs, each at least
+   * `epoch_duration_sec` long, so the window holds at most `terminate_window_ms` over that interval
+   * duties; they must reach `terminate_min_pct_samples`. The consecutive rail counts missed duty
+   * epochs whatever their age, so it puts no bound on the window.
    *
    * Exported (a pure value helper, not a Step) so the rule is unit-testable without standing up a
    * cluster.
    *
    * @param config - The resolved cluster config (topology, epoch and termination overrides).
-   * @throws If a chain's schedule leaves the window short of either rail.
+   * @throws If a chain's schedule leaves the window short of the percent rail's sample.
    */
   export function assertTerminationWindow(config: ClusterConfig): void {
     const {
       terminate_window_ms: windowMs,
-      terminate_max_consecutive_misses: maxConsecutiveMisses,
       terminate_min_pct_samples: minimumPercentSamples
     } = operatorRegistryConfig(config)
     OutpostChainCodenames.forEach(chain => {
@@ -1883,10 +1889,6 @@ export namespace ClusterBuildDefaults {
           epochDurationSec * batchOpGroups * ProtocolTiming.MsPerSecond,
         duties = Math.floor(Number(windowMs) / dutyIntervalMs),
         schedule = `the ${chain} schedule (${batchOpGroups} groups of ${epochDurationSec} s epochs)`
-      Assert.ok(
-        duties >= maxConsecutiveMisses + 1,
-        `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_max_consecutive_misses + 1 (${maxConsecutiveMisses + 1})`
-      )
       Assert.ok(
         duties >= minimumPercentSamples,
         `ClusterBuildDefaults: terminate_window_ms ${windowMs} holds ${duties} duty rotations of ${schedule}, fewer than terminate_min_pct_samples (${minimumPercentSamples})`

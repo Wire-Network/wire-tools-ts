@@ -101,8 +101,19 @@ export namespace EthereumSyndicationTool {
   export const LiqEthTokenCodename = "LIQETH"
   /** liqETH's chain-native decimals — the pool's `liqTokenPrecision`. */
   export const LiqEthTokenPrecision = 18
+  /** Wei a liqETH transfer may move short of its value (never over): the token moves floored shares. */
+  export const LiqEthShareRoundingLossWei = 1n
   /** Confirmations every write waits for. */
   export const Confirmations = 1
+  /**
+   * Percent of its `eth_estimateGas` result every write adds to its gas limit. The estimate runs in the latest
+   * block, and a write mined in the next one can need more: a syndication sent the block after the previous one
+   * ran the outpost's `OPP.exitSendMode` out of gas at its bare estimate. Raising it pads every write this tool
+   * sends.
+   */
+  export const GasLimitHeadroomPercent = 20n
+  /** Denominator of {@link GasLimitHeadroomPercent}. */
+  export const PercentScale = 100n
 
   /** `SyndicationPool` functions the tool encodes, by ABI name. */
   export enum PoolFunction {
@@ -593,8 +604,27 @@ export namespace EthereumSyndicationTool {
   }
 
   /**
-   * Send `request` from `signer` with an explicitly drawn nonce and wait for
-   * it to mine — the ONE submission path for this tool's runners.
+   * The gas limit a write is sent with: its estimate plus {@link GasLimitHeadroomPercent}, rounded up.
+   *
+   * @param estimate - The write's `eth_estimateGas` result.
+   * @returns The padded gas limit.
+   * @throws If `estimate` is not positive.
+   */
+  export function gasLimitWithHeadroom(estimate: bigint): bigint {
+    Assert.ok(
+      estimate > 0n,
+      `EthereumSyndicationTool.gasLimitWithHeadroom: estimate must be positive, got ${estimate}`
+    )
+    return (
+      estimate +
+      (estimate * GasLimitHeadroomPercent + PercentScale - 1n) / PercentScale
+    )
+  }
+
+  /**
+   * Send `request` from `signer` with an explicitly drawn nonce and a gas limit
+   * padded over its estimate ({@link gasLimitWithHeadroom}), and wait for it to
+   * mine — the ONE submission path for this tool's runners.
    *
    * @param signer - The signing wallet (connected).
    * @param request - The call to send.
@@ -607,7 +637,9 @@ export namespace EthereumSyndicationTool {
     label: string
   ): Promise<void> {
     const nonce = await resolveLatestNonce(signer),
-      response = await signer.sendTransaction({ ...request, nonce }),
+      transaction = { ...request, nonce },
+      gasLimit = gasLimitWithHeadroom(await signer.estimateGas(transaction)),
+      response = await signer.sendTransaction({ ...transaction, gasLimit }),
       receipt = await response.wait(Confirmations)
     Assert.ok(
       receipt?.status === 1,
@@ -911,7 +943,10 @@ export namespace EthereumSyndicationTool {
     }
   }
 
-  /** Verify the pool's payment against the actual token transfer in its receipt. */
+  /**
+   * Verify the pool's payment against the actual token transfer in its receipt: its value is the
+   * payment's `nativeAmount`, or up to {@link LiqEthShareRoundingLossWei} below it.
+   */
   async function assertDesyndicationTransfer<C extends ClusterBuildContext>(
     source: EthereumOutpostSource<C>,
     pool: ReturnType<typeof loadSyndicationPool>,
@@ -927,6 +962,7 @@ export namespace EthereumSyndicationTool {
       tokenAddress = ethers.getAddress(await token.getAddress()),
       poolAddress = ethers.getAddress(await pool.getAddress()),
       transferTopic = token.interface.getEvent(LiqEthEvent.Transfer).topicHash,
+      nativeAmount = BigInt(payment.args.nativeAmount),
       transfers = receipt.logs
         .filter(
           event =>
@@ -939,7 +975,9 @@ export namespace EthereumSyndicationTool {
             ethers.getAddress(event.args.from) === poolAddress &&
             ethers.getAddress(event.args.to) ===
               ethers.getAddress(payment.args.recipient) &&
-            BigInt(event.args.value) === BigInt(payment.args.nativeAmount)
+            BigInt(event.args.value) <= nativeAmount &&
+            nativeAmount - BigInt(event.args.value) <=
+              LiqEthShareRoundingLossWei
         )
     Assert.strictEqual(
       transfers.length,

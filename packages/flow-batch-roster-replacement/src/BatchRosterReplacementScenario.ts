@@ -1,22 +1,30 @@
 import Assert from "node:assert"
 
-import { PublicKey } from "@solana/web3.js"
+import {
+  MessageAccountKeys,
+  PublicKey,
+  type VersionedTransactionResponse
+} from "@solana/web3.js"
 import { PublicKey as SdkPublicKey } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { OperatorType, OperatorStatus } from "@wireio/opp-typescript-models"
+import type { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  Constants,
   DefaultBatchOperatorGroupCount,
   EthereumRoundTripScenario,
   EthereumOutpostBootstrapper,
   loadOutpostContract,
   EthereumSyndicationTool,
+  mapSeries,
   OperatorDaemonTool,
   outputKey,
-  pollUntil,
   ProtocolTiming,
   Report,
+  SolanaClient,
   SolanaOutpostBootstrapper,
+  Steps,
   SolanaOutpostProgramTool,
   SyndicationScenario,
   verifyStep,
@@ -72,6 +80,19 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
       "AdmitReplacement",
       "Bond the replacement and start its actual relay daemon"
     ).push(
+      verifyStep(
+        Actor.Sysio,
+        "record-roster-sent",
+        "record the roster hash each outpost was last queued (sysio.epoch::rostersent) before the replacement is admitted",
+        async ctx => {
+          ctx.outputs.set(
+            BatchRosterReplacementScenario.RosterHashesBefore,
+            BatchRosterReplacementScenario.rosterHashes(
+              await Steps.contracts.sysio.epoch.readRostersSent(ctx)
+            )
+          )
+        }
+      ),
       ...WireCollateralTool.planDeposit(
         Actor.BatchOperator,
         "bond-replacement",
@@ -92,11 +113,22 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
       verifyStep(
         Actor.BatchOperator,
         "both-outposts-consumed-replacement",
-        "Ethereum authorizes the replacement for its next delivery; Solana installed its live key and group",
-        async ctx => {
-          await pollUntil(
+        "the depot queued the changed roster to both outposts by itself (rostersent, never erased by the pump); Ethereum authorizes the replacement for its next delivery; Solana installed its live key and group",
+        async (ctx, signal) => {
+          // The pump gives traffic with notetraffic, which leaves rostersent alone, so every roster the
+          // outposts receive here was queued by the depot's own diff against rostersent: a row erased
+          // mid-wait (a resendroster) would mask a roster-propagation regression and fails at once.
+          const rosterHashesBefore = ctx.outputs.assert(
+            BatchRosterReplacementScenario.RosterHashesBefore
+          )
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            BatchRosterReplacementScenario.OutpostChains,
             "replacement installed by both real outposts",
             async () => {
+              BatchRosterReplacementScenario.assertRosterSentKept(
+                await Steps.contracts.sysio.epoch.readRostersSent(ctx)
+              )
               const operator = ctx.keyStore.assertOperator(
                   BatchRosterReplacementScenario.Label
                 ),
@@ -122,7 +154,12 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
               )
             },
             ProtocolTiming.DoubleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
+          )
+          BatchRosterReplacementScenario.assertRostersRequeued(
+            rosterHashesBefore,
+            await Steps.contracts.sysio.epoch.readRostersSent(ctx)
           )
           ctx.outputs.set(
             BatchRosterReplacementScenario.EthereumEpochBefore,
@@ -156,70 +193,79 @@ export class BatchRosterReplacementScenario extends EthereumRoundTripScenario {
         Actor.BatchOperator,
         "replacement-relayed-ethereum",
         "the replacement submitted an accepted Ethereum envelope after roster consumption",
-        async ctx => {
-          const inbound = BatchRosterReplacementScenario.inbound(ctx),
-            last = Number(await inbound.nextEpochIndex()),
-            first = ctx.outputs.assert(
-              BatchRosterReplacementScenario.EthereumEpochBefore
-            )
-          let delivered = false
-          for (let epoch = first; epoch < last; epoch++) {
-            const digest = await inbound.epochDeliveries(
-              epoch,
-              BatchRosterReplacementScenario.ethereumAddress(ctx)
-            )
-            const accepted = await inbound.getInboundEnvelope(epoch)
-            if (
-              BatchRosterReplacementScenario.isAcceptedEthereumDelivery(
-                epoch,
-                digest,
-                accepted
-              )
-            )
-              delivered = true
-          }
-          Assert.ok(delivered, "replacement never delivered on Ethereum")
-        }
+        async (ctx, signal) => {
+          // The replacement's group comes on duty only as Ethereum advances, so the wait keeps
+          // Ethereum due with governance traffic until one of its epochs carries an accepted
+          // delivery by the replacement.
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.ETHEREUM_CHAIN_CODENAME],
+            "replacement accepted on Ethereum",
+            async () => {
+              const inbound = BatchRosterReplacementScenario.inbound(ctx),
+                last = Number(await inbound.nextEpochIndex()),
+                first = ctx.outputs.assert(
+                  BatchRosterReplacementScenario.EthereumEpochBefore
+                )
+              let delivered = false
+              for (let epoch = first; epoch < last; epoch++) {
+                const digest = await inbound.epochDeliveries(
+                  epoch,
+                  BatchRosterReplacementScenario.ethereumAddress(ctx)
+                )
+                const accepted = await inbound.getInboundEnvelope(epoch)
+                if (
+                  BatchRosterReplacementScenario.isAcceptedEthereumDelivery(
+                    epoch,
+                    digest,
+                    accepted
+                  )
+                )
+                  delivered = true
+              }
+              return delivered
+            },
+            ProtocolTiming.SingleHopBudgetMs,
+            SyndicationScenario.PollMs,
+            signal
+          )
+        },
+        SyndicationScenario.VerifyOptions
       ),
       verifyStep(
         Actor.BatchOperator,
         "replacement-relayed-solana",
-        "the replacement recorded the canonical vote for a fully dispatched post-roster Solana envelope",
-        async ctx => {
-          await pollUntil(
+        "the replacement's own terminal epoch_in delivered a post-roster Solana envelope the outpost accepted and fully dispatched",
+        async (ctx, signal) => {
+          await Steps.epochAdvance.pollUntilKeepingDue(
+            ctx,
+            [Constants.SOLANA_CHAIN_CODENAME],
             "replacement accepted on Solana",
             async () => {
               const config =
                   await BatchRosterReplacementScenario.solanaConfig(ctx),
-                accepted =
-                  await BatchRosterReplacementScenario.solanaInbound(ctx),
                 first = ctx.outputs.assert(
                   BatchRosterReplacementScenario.SolanaEpochBefore
-                )
-              for (const record of accepted.envelopes.filter(
-                record =>
-                  record.epochIndex >= first &&
-                  record.epochIndex < config.nextEpochIndex
-              )) {
-                const deliveries =
-                  await BatchRosterReplacementScenario.solanaDeliveries(
-                    ctx,
-                    record.epochIndex
+                ),
+                settled = (
+                  await BatchRosterReplacementScenario.solanaInbound(ctx)
+                ).envelopes
+                  .map(record => record.epochIndex)
+                  .filter(
+                    epoch => epoch >= first && epoch < config.nextEpochIndex
                   )
-                if (
-                  deliveries &&
-                  BatchRosterReplacementScenario.isAcceptedSolanaDelivery(
-                    deliveries,
-                    record,
-                    BatchRosterReplacementScenario.solanaAddress(ctx)
-                  )
+              if (settled.length === 0) return false
+              // The relay reaps a settled epoch's EpochDeliveries tally within seconds, so the
+              // delivery is read from the replacement's own transactions, which outlive it.
+              const delivered =
+                await BatchRosterReplacementScenario.readSolanaDeliveredEpochs(
+                  ctx
                 )
-                  return true
-              }
-              return false
+              return settled.some(epoch => delivered.includes(epoch))
             },
             ProtocolTiming.SingleHopBudgetMs,
-            SyndicationScenario.PollMs
+            SyndicationScenario.PollMs,
+            signal
           )
         },
         SyndicationScenario.VerifyOptions
@@ -244,6 +290,72 @@ export namespace BatchRosterReplacementScenario {
     "BatchRosterReplacement.solanaEpoch",
     "first replacement Solana delivery epoch"
   )
+  /** The two real outposts the replacement must reach, in the order the flow checks them. */
+  export const OutpostChains = [
+    Constants.ETHEREUM_CHAIN_CODENAME,
+    Constants.SOLANA_CHAIN_CODENAME
+  ] as const
+  /** One value per outpost chain the replacement must reach. */
+  export type PerChain<T> = Record<(typeof OutpostChains)[number], T>
+  /**
+   * The roster hash each outpost was last queued (`sysio.epoch::rostersent`) before the
+   * replacement was admitted; absent for a chain no roster had been queued to.
+   */
+  export const RosterHashesBefore = outputKey<PerChain<string>>(
+    "BatchRosterReplacement.rosterHashesBefore",
+    "each outpost's last-queued roster hash before the replacement is admitted"
+  )
+  /**
+   * Each outpost chain's last-queued roster hash from one `rostersent` read — pure.
+   * @param rows - Each chain's `rostersent` row (`EpochContractSteps.readRostersSent`).
+   * @returns Each chain's `roster_hash`, absent for a chain without a row.
+   */
+  export function rosterHashes(
+    rows: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): PerChain<string> {
+    return Object.fromEntries(
+      OutpostChains.map(chain => [chain, rows[chain]?.roster_hash])
+    ) as PerChain<string>
+  }
+  /**
+   * Every outpost chain still has its `rostersent` row — pure. Only governance `resendroster`
+   * erases one, and the keep-due pump never pushes it, so a missing row means something re-shipped
+   * the roster regardless of a diff and would mask a roster-propagation regression.
+   * @param rows - Each chain's `rostersent` row.
+   * @throws When a chain has no row.
+   */
+  export function assertRosterSentKept(
+    rows: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): void {
+    OutpostChains.forEach(chain =>
+      Assert.ok(
+        rows[chain] != null,
+        `sysio.epoch::rostersent lost its ${chain} row: the roster was resent rather than queued by its diff`
+      )
+    )
+  }
+  /**
+   * The depot queued the changed roster to every outpost by itself — pure: each chain's
+   * `rostersent` row is present (never erased, {@link assertRosterSentKept}) and its hash differs
+   * from the one recorded before the replacement was admitted, so an advance's own diff found the
+   * roster changed and queued it.
+   * @param before - Each chain's hash before the admission ({@link RosterHashesBefore}).
+   * @param after - Each chain's `rostersent` row now.
+   * @throws When a row is missing or a chain's roster hash did not change.
+   */
+  export function assertRostersRequeued(
+    before: Readonly<PerChain<string>>,
+    after: Readonly<PerChain<SysioContracts.SysioEpochRosterSentType>>
+  ): void {
+    assertRosterSentKept(after)
+    OutpostChains.forEach(chain =>
+      Assert.notStrictEqual(
+        after[chain].roster_hash,
+        before[chain],
+        `the depot never queued a changed roster to the ${chain} outpost: rostersent still holds ${before[chain]}`
+      )
+    )
+  }
   /** Accepted Ethereum audit metadata decoded by the deployed ABI. */
   export interface AcceptedEthereumEnvelope {
     epochIndex: bigint
@@ -259,11 +371,6 @@ export namespace BatchRosterReplacementScenario {
   export interface RegistryGroup {
     memberCount: number
     members: PublicKey[]
-  }
-  /** One actual recorded Solana operator vote. */
-  export interface SolanaOperatorDelivery {
-    operator: PublicKey
-    envelopeHash: number[]
   }
   /** Fully dispatched Solana destination cursor. */
   export interface SolanaConfigView {
@@ -373,39 +480,98 @@ export namespace BatchRosterReplacementScenario {
     epochIndex: number
     checksum: number[]
   }
-  /** Actual on-chain votes; chunk staging and stale retries do not write these records. */
-  export interface SolanaDeliveries {
+  /** The outpost's delivery instruction (`epoch_in`), as the deployed program's coder names it. */
+  export const EpochInMethodName = "epochIn"
+  /** The {@link EpochInMethodName} account that signs the delivery. */
+  export const EpochInOperatorAccount = "operator"
+  /** Newest signatures of the replacement's Solana key the delivery read decodes: one RPC page. */
+  export const SolanaSignatureScanLimit = 1_000
+  /** `epoch_in`'s arguments the delivery read consumes, as the deployed program's coder decodes them. */
+  export interface EpochInArguments {
     epochIndex: number
-    consensusReached: boolean
-    consensusHash: number[]
-    deliveries: SolanaOperatorDelivery[]
+    chunkIndex: number
+    totalChunks: number
   }
   /**
-   * Only the replacement's canonical consensus vote proves accepted delivery.
-   * @param deliveries - The epoch’s actual recorded Solana votes and consensus state.
-   * @param accepted - The canonical accepted envelope audit record.
-   * @param signer - The replacement’s Solana signing key.
-   * @returns Whether the replacement’s canonical vote matches accepted consensus.
+   * The epochs `signer` delivered in one confirmed transaction: its instructions to the program,
+   * decoded by the program's own coder, that are a terminal `epoch_in` (`chunkIndex ==
+   * totalChunks`, the call that records a delivery; data chunks only stage bytes) with `signer`
+   * as the `operator` account.
+   * @param response - The confirmed transaction.
+   * @param program - The deployed outpost program.
+   * @param signer - The replacement's Solana signing key.
+   * @returns The delivered epochs.
    */
-  export function isAcceptedSolanaDelivery(
-    deliveries: SolanaDeliveries,
-    accepted: EnvelopeRecord,
+  export function deliveredEpochsOf(
+    response: VersionedTransactionResponse,
+    program: ReturnType<typeof SolanaOutpostProgramTool.loadReadOnlyProgram>,
     signer: PublicKey
-  ): boolean {
-    return (
-      deliveries.epochIndex === accepted.epochIndex &&
-      deliveries.consensusReached &&
-      Buffer.from(deliveries.consensusHash).equals(
-        Buffer.from(accepted.checksum)
-      ) &&
-      deliveries.deliveries.some(
-        delivery =>
-          delivery.operator.equals(signer) &&
-          Buffer.from(delivery.envelopeHash).equals(
-            Buffer.from(accepted.checksum)
-          )
-      )
+  ): number[] {
+    const epochIn = program.idl.instructions.find(
+      instruction => instruction.name === EpochInMethodName
     )
+    Assert.ok(epochIn, `the outpost IDL has no ${EpochInMethodName} instruction`)
+    const { message } = response.transaction,
+      keys = new MessageAccountKeys(
+        message.staticAccountKeys,
+        response.meta.loadedAddresses
+      ),
+      operatorAccount = epochIn.accounts.findIndex(
+        account => account.name === EpochInOperatorAccount
+      )
+    return message.compiledInstructions
+      .filter(
+        instruction =>
+          keys.get(instruction.programIdIndex)?.equals(program.programId) &&
+          keys.get(instruction.accountKeyIndexes[operatorAccount])?.equals(signer)
+      )
+      .map(instruction =>
+        SolanaOutpostProgramTool.decodeInstruction(
+          program,
+          Buffer.from(instruction.data)
+        )
+      )
+      .filter(decoded => decoded?.name === EpochInMethodName)
+      .map(decoded => decoded.data as EpochInArguments)
+      .filter(call => call.chunkIndex === call.totalChunks)
+      .map(call => call.epochIndex)
+  }
+  /**
+   * The epochs the replacement delivered on Solana, from its own successful transactions (the
+   * newest {@link SolanaSignatureScanLimit}), which outlive each settled epoch's reaped
+   * `EpochDeliveries` tally.
+   * @param ctx - The live cluster context and its deployed chain clients.
+   * @returns The delivered epochs.
+   * @throws When a confirmed transaction of the replacement is unavailable.
+   */
+  export async function readSolanaDeliveredEpochs(
+    ctx: ClusterBuildContext
+  ): Promise<number[]> {
+    const { connection } = ctx.solana,
+      program = SolanaOutpostProgramTool.loadReadOnlyProgram(
+        connection,
+        ctx.config.solanaPath
+      ),
+      signer = solanaAddress(ctx),
+      signatures = (
+        await connection.getSignaturesForAddress(
+          signer,
+          { limit: SolanaSignatureScanLimit },
+          SolanaClient.ConfirmationStatus.confirmed
+        )
+      ).filter(info => info.err == null),
+      delivered = await mapSeries(signatures, async info => {
+        const response = await connection.getTransaction(info.signature, {
+          commitment: SolanaClient.ConfirmationStatus.confirmed,
+          maxSupportedTransactionVersion: 0
+        })
+        Assert.ok(
+          response != null,
+          `Solana transaction ${info.signature} of the replacement is unavailable`
+        )
+        return deliveredEpochsOf(response, program, signer)
+      })
+    return delivered.flat()
   }
   /**
    * Read the destination's fully-dispatched epoch cursor using its own account coder.
@@ -440,24 +606,7 @@ export namespace BatchRosterReplacementScenario {
     return value
   }
   /**
-   * Read one epoch's actual recorded votes, not successful chunk staging transactions.
-   * @param ctx - The live cluster context and its deployed chain clients.
-   * @param epoch - The inbound epoch whose accepted delivery must be proved.
-   * @returns The recorded epoch votes, or undefined when no delivery exists.
-   */
-  export async function solanaDeliveries(
-    ctx: ClusterBuildContext,
-    epoch: number
-  ): Promise<SolanaDeliveries> {
-    const index = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT)
-    index.writeUInt32LE(epoch)
-    return readSolanaAccount<SolanaDeliveries>(ctx, "epochDeliveries", [
-      Buffer.from(SolanaOutpostBootstrapper.PdaSeed.EpochDeliveries),
-      index
-    ])
-  }
-  /**
-   * Load an account through the deployed IDL; absent epoch votes remain absent evidence.
+   * Load an account through the deployed IDL; an absent account reads as undefined.
    * @param ctx - The live cluster context and its deployed chain clients.
    * @param accountName - The value used by this scenario.
    * @param seeds - The value used by this scenario.

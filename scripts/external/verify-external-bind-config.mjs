@@ -31,6 +31,22 @@
  *                config), so the fleet dials itself over loopback-equivalent DNS
  *                and dials `anvil` / `solana` by their aliases.
  *
+ * Epochs are depot-paced: a chain advances only once it has traffic and its
+ * minimum duration has passed, so a resumed cluster with nothing queued never
+ * advances by itself. The default (outposts-in) epoch gate therefore gives every
+ * idle outpost chain traffic — one `sysio.epoch::notetraffic` (traffic since now)
+ * per idle chain, pushed by `clio` in the depot container — and passes once every
+ * chain has advanced: the depot shipped an envelope to each outpost and the
+ * outpost's reply decided the epoch (see `depot-epoch-gate.mjs`).
+ *
+ * The epoch gate WRITES, so it needs the depot wallet to sign: `notetraffic` is
+ * declared by `sysio.msgch@active`, whose authority is `sysio@active`, and the
+ * push is signed through the kiod wallet `wire-cluster-tool run` unlocked inside
+ * the depot container. That wallet must hold the key behind `sysio@active` — the
+ * cluster's initial key on a cluster `create` made locally. A cluster whose
+ * governance was handed off has no such key in its wallet; verify it with
+ * `--exclude-outposts` (the head gate, which writes nothing).
+ *
  * Why external-outpost mode: `ClusterManager.run` only SKIPS spawning a local
  * anvil/solana (and only skips the OPP epoch-advance gate, gating success on
  * head-block advance instead) when `cluster-config.json.externalOutposts != null`.
@@ -59,12 +75,8 @@ import Fs from "node:fs"
 import Os from "node:os"
 import { argv, chalk, echo, path, sleep, $ } from "zx"
 
-import {
-  chainEpochDurations,
-  chainEpochStates,
-  EpochStateRowLimit,
-  lowestChainEpochIndex
-} from "../common/epoch-state.mjs"
+import { chainEpochDurations } from "../common/epoch-state.mjs"
+import { keepDepotChainsDue, readDepotEpoch } from "./depot-epoch-gate.mjs"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -90,7 +102,8 @@ const DefaultImageTag = "wire-external-outposts:latest"
 const DefaultHeadAdvanceBlocks = 2
 /** Default budget (seconds) for the depot to come up AND the gate to pass —
  *  sized for the image build + solana warmup + the ~270s a resumed cluster can
- *  need to restart OPP circulation before `current_epoch_index` advances. */
+ *  need, from the traffic the gate injects, to restart OPP
+ *  circulation before every chain's `current_epoch_index` advances. */
 const DefaultStartupTimeoutSeconds = 600
 /** Seconds between head-block polls. */
 const PollIntervalSeconds = 5
@@ -210,8 +223,9 @@ const startupTimeoutSeconds = numberFlag("startup-timeout-seconds", DefaultStart
 const imageTag = argv["image-tag"] != null ? String(argv["image-tag"]) : DefaultImageTag
 const keepUp = argv["keep-up"] === true
 // Default: outposts IN — load the cloned outpost state so OPP circulates and the
-// gate is EPOCH ADVANCE. `--exclude-outposts` opts out to fresh chains + a depot
-// HEAD-BLOCK gate. Operators are ALWAYS included either way.
+// gate is EPOCH ADVANCE, with notetraffic keeping every idle chain due.
+// `--exclude-outposts` opts out to fresh chains + a depot HEAD-BLOCK gate.
+// Operators are ALWAYS included either way.
 const excludeOutposts = argv["exclude-outposts"] === true
 
 // Validate the external cluster directory + its required files.
@@ -606,29 +620,48 @@ async function readDepotHead(composeFile) {
 }
 
 /**
- * Read the LOWEST `current_epoch_index` of the cluster's outpost chains
- * ({@link expectedChains}) via `clio` inside the depot container: each outpost
- * chain runs its own consensus epoch (one `sysio.epoch::epochstate` row per
- * chain), so the epoch gate advances only once every chain's epoch has. v6
- * promoted `epochstate` to a KV table — the fields live under `.value` (see
- * cluster-state-active-probing.md).
+ * Run `clio` INSIDE the depot container against the depot producer (dialing the
+ * nodeop alias, which resolves to the container itself) — the runner
+ * `depot-epoch-gate.mjs` reads and pushes through. Never throws on a non-zero exit.
  * @param {string} composeFile the generated compose file path.
- * @return {Promise<number|null>} the lowest chain's current_epoch_index, or null
- *   when unreachable or any of the cluster's chains has no row yet.
+ * @return {import("./depot-epoch-gate.mjs").DepotClio} the runner.
  */
-async function readDepotEpoch(composeFile) {
-  try {
-    const result = await $({
+function depotClio(composeFile) {
+  return args =>
+    $({
       nothrow: true
-    })`docker compose -f ${composeFile} -p ${projectName} exec -T depot ${containerClio} -u http://${depotIp}:${producerHttpPort} get table sysio.epoch epochstate -S sysio.epoch -l ${EpochStateRowLimit}`.timeout(
+    })`docker compose -f ${composeFile} -p ${projectName} exec -T depot ${containerClio} -u http://${depotIp}:${producerHttpPort} ${args}`.timeout(
       ClioProbeTimeout
     )
-    if (result.exitCode !== 0) return null
-    return lowestChainEpochIndex(chainEpochStates(JSON.parse(result.stdout).rows ?? []), expectedChains)
-  } catch (error) {
-    echo(chalk.dim(`epochstate read failed: ${error instanceof Error ? error.message : String(error)}`))
-    return null
-  }
+}
+
+/** The depot kiod wallet `wire-cluster-tool run` unlocked: it signs the epoch gate's traffic. */
+const depotWalletUrl = `http://${bindConfig.kiod.address}:${bindConfig.kiod.port}`
+
+/**
+ * One epoch-gate reading ({@link readDepotEpoch}): the lowest outpost chain's
+ * epoch index, and a `keepDue` that gives the chains idle in that same snapshot
+ * traffic ({@link keepDepotChainsDue}) — which the gate calls only while the
+ * reading leaves it unsatisfied.
+ * @param {string} composeFile the generated compose file path.
+ * @return {Promise<{ value: number | null, keepDue: () => Promise<unknown> } | null>}
+ *   the reading, or null when the depot is unreachable.
+ */
+async function readEpochGate(composeFile) {
+  const clio = depotClio(composeFile),
+    reading = await readDepotEpoch(clio, expectedChains)
+  return reading == null
+    ? null
+    : { value: reading.index, keepDue: () => keepDepotChainsDue(clio, reading.idleChains, depotWalletUrl) }
+}
+
+/**
+ * One head-gate reading ({@link readDepotHead}); the head gate never writes.
+ * @param {string} composeFile the generated compose file path.
+ * @return {Promise<{ value: number | null, keepDue: () => Promise<unknown> }>} the reading.
+ */
+async function readHeadGate(composeFile) {
+  return { value: await readDepotHead(composeFile), keepDue: async () => [] }
 }
 
 /**
@@ -664,11 +697,11 @@ async function dumpDiagnostics(composeFile) {
 // Main
 // ---------------------------------------------------------------------------
 
-// The success gate: EPOCH ADVANCE of every outpost chain by default (outposts loaded → OPP circulates),
-// or depot HEAD BLOCKS under --exclude-outposts.
+// The success gate: EPOCH ADVANCE of every outpost chain by default (outposts loaded, every idle
+// chain given traffic → OPP circulates), or depot HEAD BLOCKS under --exclude-outposts.
 const gate = excludeOutposts
-  ? { name: "head", unit: "blocks", threshold: headAdvanceBlocks, read: readDepotHead }
-  : { name: "epoch", unit: "epochs", threshold: 1, read: readDepotEpoch }
+  ? { name: "head", unit: "blocks", threshold: headAdvanceBlocks, read: readHeadGate }
+  : { name: "epoch", unit: "epochs", threshold: 1, read: readEpochGate }
 
 echo(chalk.bold.green(`\nVerifying external cluster in Docker: ${clusterName}`))
 echo(`  cluster-path:  ${clusterPath}`)
@@ -705,7 +738,8 @@ try {
   let latest = null
   while (Date.now() < deadline) {
     await sleep(PollIntervalSeconds * 1000)
-    const value = await gate.read(composeFile)
+    const reading = await gate.read(composeFile)
+    const value = reading?.value ?? null
     const elapsed = Math.round((Date.now() - (deadline - startupTimeoutSeconds * 1000)) / 1000)
     if (value == null) {
       echo(chalk.dim(`  t=${elapsed}s  depot ${gate.name} not answering yet...`))
@@ -724,6 +758,8 @@ try {
       )
       break
     }
+    // Unsatisfied on this reading: keep the chains it saw idle due (epoch gate only).
+    await reading.keepDue()
   }
 
   if (!passed) {

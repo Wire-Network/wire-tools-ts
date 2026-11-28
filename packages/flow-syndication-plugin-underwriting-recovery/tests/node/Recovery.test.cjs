@@ -14,6 +14,7 @@ const {
   SolanaOutpostProgramTool,
   SolanaOutpostTarget,
   StepExtraRecorder,
+  Steps,
   SyndicationScenario,
   WireSyndicationTool
 } = require("@wireio/cluster-tool")
@@ -186,15 +187,26 @@ test("offline observations reject a running provider, mutation and premature bon
   await Assert.rejects(Recovery.assertStillUnbonded(ctx), /before recovery/)
 })
 
+/** Every chain idle; the keep-due pump's notetraffic pushes are captured. */
+function capturePump() {
+  const idle = { current_epoch_index: 9, due_at: "1970-01-01T00:00:00.000", is_paused: false }
+  mock.method(Steps.contracts.sysio.epoch, "readEpochStates", async () => ({ ETHEREUM: idle, SOLANA: idle }))
+  return mock.method(Steps.contracts.sysio.epoch, "runNotetraffic", async () => undefined)
+}
+
 test("pruning verification saves the authenticated newer checkpoint before restart", async () => {
-  const { ctx, holder } = fixture()
+  const { ctx, holder } = fixture(),
+    push = capturePump(),
+    signal = new AbortController().signal
   await Recovery.verifyOriginal(ctx)
   holder.log = prunedLog()
-  await Recovery.verifyPruned(ctx)
+  await Recovery.verifyPruned(ctx, signal)
   Assert.deepEqual(ctx.outputs.assert(PrunedCheckpoint), checkpoint)
   Assert.deepEqual(ctx.outputs.assert(PrunedSourceLog), holder.log)
+  // Already pruned: the wait gave no chain traffic.
+  Assert.equal(push.mock.callCount(), 0)
   holder.request.bonded = "1"
-  await Assert.rejects(Recovery.verifyPruned(ctx), /before recovery/)
+  await Assert.rejects(Recovery.verifyPruned(ctx, signal), /before recovery/)
 })
 
 test("a failed source read is retried at the slower pruning cadence", async () => {
@@ -206,8 +218,9 @@ test("a failed source read is retried at the slower pruning cadence", async () =
     if (++attempts === 1) throw new Error("temporary source RPC read failure")
     return { owner: programId, data: Buffer.of(1) }
   })
+  const push = capturePump()
   mock.timers.enable({ apis: ["setTimeout"] })
-  const pending = Recovery.verifyPruned(ctx)
+  const pending = Recovery.verifyPruned(ctx, new AbortController().signal)
   await new Promise(resolve => setImmediate(resolve))
   Assert.equal(attempts, 1)
   mock.timers.tick(Constants.PruningPollMs - 1)
@@ -217,6 +230,8 @@ test("a failed source read is retried at the slower pruning cadence", async () =
   await pending
   Assert.equal(attempts, 2)
   Assert.deepEqual(ctx.outputs.assert(PrunedCheckpoint), checkpoint)
+  // The failed read left the Solana chain short of pruning, so the wait kept it due once.
+  Assert.deepEqual(push.mock.calls.map(call => call.arguments[1].data.chain_code), [SyndicationScenario.Chain])
   Assert.ok(Constants.PruningPollMs > SyndicationScenario.PollMs)
 })
 

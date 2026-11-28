@@ -53,12 +53,6 @@ export namespace SlashingScenarioConstants {
   export const LongPollIntervalMs = 3_000
   /** Interval for the tight epoch-boundary poll (ms). */
   export const BoundaryPollIntervalMs = 1_000
-  /**
-   * Margin past `next_epoch_start` (in CHAIN time) before injecting the
-   * divergent deliveries, so the dispute-opening deliver lands comfortably
-   * after the epoch boundary even if block production lags.
-   */
-  export const EpochBoundaryMarginMs = 2_000
 
   /**
    * The three batch operators whose divergent deliveries form the split. The
@@ -172,17 +166,8 @@ export namespace SlashingScenarioConstants {
 
   /** Row ceiling for `sysio.opreg::operators` reads (bootstrap ops + underwriters + dispute ops). */
   export const OperatorTableReadLimit = 100
-  /** Row ceiling for `sysio.chalg::disputes` reads. */
-  export const DisputeTableReadLimit = 100
   /** Row ceiling for `sysio.msgch::outpcons` reads (one row per active outpost). */
   export const OutpostConsensusTableReadLimit = 100
-  /**
-   * Row ceiling for `sysio.msgch::envelopes` reads. The depot keeps each outpost's
-   * deliveries for its current and previous epoch only, one row per delivering
-   * group member, so the table stays far below this; a read that reports more rows
-   * is refused, since a truncated read could miss the row it looks for.
-   */
-  export const EnvelopeTableReadLimit = 100
 
   /**
    * Frozen := the epoch index held across ≥ this many consecutive settle polls
@@ -195,55 +180,62 @@ export namespace SlashingScenarioConstants {
   export const SettlePollIntervalEpochRatio = 0.75
 
   /**
-   * Share of an epoch that must remain before the contested chain's next boundary,
-   * in chain time, when the dispute operators' ACTIVE flips start. An advance never
-   * lands before the boundary, so all three flips land between the same two
-   * advances unless they take longer than this.
+   * Share of a minimum epoch that must remain, in chain time, before the contested
+   * chain is due when the dispute operators' ACTIVE flips start. An advance never
+   * lands before the chain is due and an idle chain is never due, so all three flips
+   * land between the same two advances unless they take longer than this.
    */
   export const ActivationHeadroomEpochRatio = 0.5
   /**
-   * Epochs budgeted for the contested chain's clock to reach
-   * {@link activationHeadroomMs} short of its next boundary: the rest of the epoch
-   * then live, and the next one if it opened late.
+   * Epochs budgeted for the contested chain to be idle or leave
+   * {@link activationHeadroomMs} before it is due: the epoch then live, if traffic
+   * already made it due, and the next.
    */
   export const ActivationHeadroomEpochBudget = 2
   /** Epochs budgeted for a dispute operator to flip OPERATOR_STATUS_ACTIVE after `processbatch`. */
   export const ActiveEpochBudget = 2
   /**
    * Epochs budgeted, from the moment all three dispute operators are ACTIVE, for
-   * the contested chain's natural advances to make them its sole active group:
-   * the epoch then live runs out and its advance seats them as the tail, then the
-   * bootstrapped group ahead of them relays one more epoch and its consensus
-   * advances it again.
+   * the contested chain's advances to make them its sole active group: the
+   * keep-due traffic the await gives it makes it due within one minimum of each
+   * epoch's start, so one advance seats them as the tail and the next, once the
+   * bootstrapped group ahead of them has relayed its epoch, brings them on duty;
+   * one more for the traffic's own landing.
    */
-  export const GroupEpochBudget = DisputeBatchOperatorGroupCount
+  export const GroupEpochBudget = DisputeBatchOperatorGroupCount + 1
   /** Epochs budgeted for the epoch index to settle (freeze) on the dispute-operators-owned epoch. */
   export const SettleEpochBudget = 6
-  /** Epochs budgeted for the chain head-block time to pass `next_epoch_start`. */
-  export const BoundaryEpochBudget = 2
   /**
-   * Epochs budgeted for the dispute row to appear. CI-load timing margin: the
-   * dispute opens on the 3rd divergent deliver's inline `evalcons` once it
-   * lands past `next_epoch_start`. Under CI load the deliver txns + epoch
-   * boundary can lag, so the dispute row can appear a little late — 4 epochs
-   * (2 raced the boundary and flaked, e.g. run 28108464932). The poll returns
-   * the instant the row appears, so a wider ceiling adds no wall-clock to the
-   * happy path.
+   * Epochs budgeted for the dispute row to appear. The dispute opens in the
+   * transaction of the 3rd divergent delivery, the one after which no version
+   * can still win, through its inline `evalcons`. Under CI load the delivery
+   * transactions can land late. The poll returns the instant the row appears,
+   * so a wider ceiling adds no wall-clock to the happy path.
    */
   export const DisputeOpenEpochBudget = 4
   /** Epochs budgeted for the vote tally to resolve the dispute. */
   export const ResolveEpochBudget = 2
   /** Epochs budgeted for the epoch to unpause after resolution. */
   export const UnpauseEpochBudget = 2
-  /** Epochs budgeted for the post-resolution advance to slash a non-canonical deliverer. */
-  export const SlashPropagationEpochs = 8
+  /**
+   * Epochs budgeted for a non-canonical deliverer to read SLASHED once the dispute
+   * has resolved. The resolving `chkdispute` transaction slashes it, so the poll
+   * normally returns on its first read.
+   */
+  export const SlashEpochBudget = 1
+  /**
+   * Epochs budgeted, from the traffic the resolution gives the contested chain
+   * (`sysio.msgch::resolvedisp`), for the chain to fall due: its traffic wait, at most
+   * one minimum, plus the delivery extension.
+   */
+  export const ContestedDueEpochBudget = 1
 
-  /** Chain-clock headroom before the contested chain's next boundary the ACTIVE flips start with (ms). */
+  /** Chain-clock headroom before the contested chain is due that the ACTIVE flips start with (ms). */
   export function activationHeadroomMs(): number {
     return EpochDurationSec * ActivationHeadroomEpochRatio * MsPerSecond
   }
 
-  /** Deadline for the contested chain's clock to leave {@link activationHeadroomMs} before its boundary (ms). */
+  /** Deadline for the contested chain to be idle or leave {@link activationHeadroomMs} before it is due (ms). */
   export function activationHeadroomDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
@@ -286,15 +278,6 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for the chain clock to pass the epoch boundary (ms). */
-  export function boundaryDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      BoundaryEpochBudget *
-      MsPerSecond
-    )
-  }
-
   /** Deadline for the OPEN dispute row to appear (ms). */
   export function disputeOpenDeadlineMs(): number {
     return (
@@ -322,11 +305,20 @@ export namespace SlashingScenarioConstants {
     )
   }
 
-  /** Deadline for a non-canonical deliverer to flip SLASHED (ms). */
+  /** Deadline for a non-canonical deliverer to read SLASHED once the dispute has resolved (ms). */
   export function slashDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      SlashPropagationEpochs *
+      SlashEpochBudget *
+      MsPerSecond
+    )
+  }
+
+  /** Deadline for the contested chain to fall due after the resolution's traffic (ms). */
+  export function contestedDueDeadlineMs(): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ContestedDueEpochBudget *
       MsPerSecond
     )
   }

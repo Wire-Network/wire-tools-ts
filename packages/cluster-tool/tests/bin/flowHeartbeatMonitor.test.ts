@@ -140,17 +140,19 @@ describe("flow heartbeat expected refusals", () => {
 const EpochStart = "2026-10-01T00:00:00.000"
 const EpochStartMs = Date.UTC(2026, 9, 1)
 
+/** One beat: the chain's epoch, the artifact total, the time since its start, and whether it was due a whole beat. */
 interface HeartbeatFixture {
   epoch: number
   total: number
   elapsedMs: number
   currentStart?: string
-  nextStart?: string
+  /** Whether the chain has been due for at least a beat (the zero-growth gate). Default true. */
+  overdue?: boolean
 }
 
+/** The growth gate's knobs. */
 interface GrowthOptions {
   durationSeconds?: number
-  configuredSeconds?: number
   expectEpochFreeze?: boolean
 }
 
@@ -166,16 +168,15 @@ function growthResults(beats: HeartbeatFixture[], options: GrowthOptions = {}) {
       const { oppGrowthBailReason, firstEpochGrowthDeadlineMs } = await import(process.argv[1]);
       const options = JSON.parse(process.argv[3]);
       const duration = options.durationSeconds ?? 60;
-      const configured = options.configuredSeconds ?? duration;
       let previousTotal = 0, deadline = null;
       const results = JSON.parse(process.argv[2]).map(beat => {
         deadline ??= firstEpochGrowthDeadlineMs({
           current_epoch_index: beat.epoch,
-          current_epoch_start: beat.currentStart === undefined ? process.argv[4] : beat.currentStart,
-          next_epoch_start: beat.nextStart
-        }, duration, configured);
+          current_epoch_start: beat.currentStart === undefined ? process.argv[4] : beat.currentStart
+        }, duration);
         const reason = oppGrowthBailReason(beat.epoch >= 1, beat.total - previousTotal, beat.total,
-          Number(process.argv[5]) + beat.elapsedMs, deadline, options.expectEpochFreeze);
+          Number(process.argv[5]) + beat.elapsedMs, deadline, options.expectEpochFreeze,
+          beat.overdue === false ? [] : ["ETHEREUM"]);
         previousTotal = beat.total;
         return { reason, deadline };
       });
@@ -236,7 +237,7 @@ describe("first post-bootstrap artifact growth", () => {
     ).toContain("zero growth")
   })
 
-  it("honors the configured duration and an explicit duration override", () => {
+  it("honors the chain's monitored minimum duration", () => {
     expect(
       growthResults([{ epoch: 1, total: 0, elapsedMs: 90000 }], {
         durationSeconds: 120
@@ -244,27 +245,25 @@ describe("first post-bootstrap artifact growth", () => {
     ).toBeNull()
     expect(
       growthResults([{ epoch: 1, total: 0, elapsedMs: 30000 }], {
-        configuredSeconds: 60,
         durationSeconds: 30
       })[0].reason
     ).toContain("zero growth")
   })
 
-  it("recovers the start from next_epoch_start and applies the override to that start", () => {
-    const result = growthResults(
-      [
-        {
-          epoch: 1,
-          total: 0,
-          elapsedMs: 30000,
-          currentStart: null,
-          nextStart: "2026-10-01T00:01:00.000Z"
-        }
-      ],
-      { configuredSeconds: 60, durationSeconds: 30 }
-    )[0]
-    expect(result.deadline).toBe(EpochStartMs + 30000)
-    expect(result.reason).toContain("zero growth")
+  it("never bails an idle cluster: zero growth with no chain overdue is healthy", () => {
+    expect(
+      growthResults([
+        { epoch: 1, total: 2, elapsedMs: 30000 },
+        { epoch: 1, total: 2, elapsedMs: 600000, overdue: false },
+        { epoch: 3, total: 2, elapsedMs: 900000, overdue: false }
+      ]).map(result => result.reason)
+    ).toEqual([null, null, null])
+  })
+
+  it("fails closed when epoch 1 has no start at all", () => {
+    expect(
+      growthResults([{ epoch: 1, total: 0, elapsedMs: 1000, currentStart: null }])[0].reason
+    ).toContain("zero growth")
   })
 
   it("fails closed when epoch 1 has no usable timestamp", () => {
@@ -301,6 +300,17 @@ describe("first post-bootstrap artifact growth", () => {
     expect(help).toContain("--expect-freeze")
     expect(help).toContain("Default FATAL")
     expect(help).toContain("growth=first-epoch-boundary")
+    expect(help).toContain("idle is never a stall")
+  })
+
+  it("documents the head-advance and undecided-epoch bails, and that a freeze never silences the head", () => {
+    const help = execFileSync(process.execPath, [MonitorScript, "--help"], {
+      encoding: "utf8"
+    })
+    expect(help).toContain("depot head block frozen across a beat")
+    expect(help).toContain("undecided past")
+    expect(help).toContain("u = current epoch still undecided")
+    expect(help).toContain("head-advance bails still fire")
   })
 })
 

@@ -677,12 +677,43 @@ describe("EthereumSyndicationTool", () => {
         expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
       })
 
+      it("tolerates liqETH share rounding of one wei below the payment, the whole loss allowed", async () => {
+        expect(EthereumSyndicationTool.LiqEthShareRoundingLossWei).toBe(1n)
+        const payment = await EthereumSyndicationTool.readDesyndicationPayment(
+          context(
+            loggingRunner(
+              [desyndicatedLog(7n, 120, 1)],
+              [],
+              [
+                transferLog(
+                  PoolAddress,
+                  holder,
+                  NetReturn * 10n ** 9n -
+                    EthereumSyndicationTool.LiqEthShareRoundingLossWei
+                )
+              ]
+            )
+          ),
+          7n
+        )
+        // The payment reports the event's amount; only the transfer may fall short.
+        expect(payment.nativeAmount).toBe(NetReturn * 10n ** 9n)
+      })
+
       it.each([
         ["missing", []],
         ["duplicate", [transferLog(), transferLog()]],
         ["wrong sender", [transferLog(holder)]],
         ["wrong recipient", [transferLog(PoolAddress, PoolAddress)]],
         ["wrong amount", [transferLog(PoolAddress, holder, 1n)]],
+        [
+          "two-wei-short",
+          [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n - 2n)]
+        ],
+        [
+          "one-wei-over",
+          [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n + 1n)]
+        ],
         [
           "wrong token",
           [transferLog(PoolAddress, holder, NetReturn * 10n ** 9n, PoolAddress)]
@@ -1297,23 +1328,30 @@ describe("EthereumSyndicationTool", () => {
       /** A 33-byte compressed key a flow might present instead of the holder's. */
       PresentedKey = `0x02${"ab".repeat(32)}`
 
+    /** The gas the signer double estimates for every write. */
+    const GasEstimate = 700_000n
+
     /**
      * A signer double satisfying the nonce helper — an address, a provider
-     * answering the count seed, and a submission that mines — so the runner's
-     * ONE `sendTransaction` can be inspected without a chain.
+     * answering the count seed, a gas estimate, and a submission that mines —
+     * so the runner's ONE `sendTransaction` can be inspected without a chain.
      */
     function fakeSigner() {
       const address = ethers.Wallet.createRandom().address,
+        estimateGas = jest.fn((_request: ethers.TransactionRequest) =>
+          Promise.resolve(GasEstimate)
+        ),
         sendTransaction = jest.fn((_request: ethers.TransactionRequest) =>
           Promise.resolve({ wait: () => Promise.resolve({ status: 1 }) })
         ),
         signer = {
           provider: { getTransactionCount: () => Promise.resolve(0) },
           getAddress: () => Promise.resolve(address),
+          estimateGas,
           sendTransaction
         } as unknown as ethers.Wallet
       jest.spyOn(EthereumFundingTool, "signer").mockReturnValue(signer)
-      return { sendTransaction }
+      return { estimateGas, sendTransaction }
     }
 
     it("derives the PERSISTED holder's compressed key when the input carries none", async () => {
@@ -1343,6 +1381,9 @@ describe("EthereumSyndicationTool", () => {
         )
       expect(request.to).toBe(PoolAddress)
       expect(request.nonce).toBe(0)
+      expect(request.gasLimit).toBe(
+        EthereumSyndicationTool.gasLimitWithHeadroom(GasEstimate)
+      )
       expect(amount).toBe(5n)
       expect(pubkey).toBe(holderKey)
       expect(ethers.computeAddress(pubkey)).toBe(HolderPair.address)
@@ -1368,6 +1409,44 @@ describe("EthereumSyndicationTool", () => {
       expect(pubkey).toBe(PresentedKey)
     })
 
+    it("estimates the write it sends, at the nonce it sends it with", async () => {
+      const { estimateGas, sendTransaction } = fakeSigner()
+      await EthereumSyndicationTool.runSyndicate(
+        context(),
+        {
+          kind: "EthereumSyndicationTool.SyndicateInput",
+          walletName: HolderWalletName,
+          amount: 5n
+        },
+        signal
+      )
+      expect(estimateGas).toHaveBeenCalledTimes(1)
+      const [estimated] = estimateGas.mock.calls[0],
+        [sent] = sendTransaction.mock.calls[0]
+      expect(estimated.gasLimit).toBeUndefined()
+      expect(sent).toEqual({
+        ...estimated,
+        gasLimit: EthereumSyndicationTool.gasLimitWithHeadroom(GasEstimate)
+      })
+    })
+
+    it("sends nothing when the estimate fails", async () => {
+      const { estimateGas, sendTransaction } = fakeSigner()
+      estimateGas.mockRejectedValue(new Error("execution reverted"))
+      await expect(
+        EthereumSyndicationTool.runSyndicate(
+          context(),
+          {
+            kind: "EthereumSyndicationTool.SyndicateInput",
+            walletName: HolderWalletName,
+            amount: 5n
+          },
+          signal
+        )
+      ).rejects.toThrow(/execution reverted/)
+      expect(sendTransaction).not.toHaveBeenCalled()
+    })
+
     it("propagates a reverted syndicate", async () => {
       const { sendTransaction } = fakeSigner()
       sendTransaction.mockResolvedValue({
@@ -1384,6 +1463,27 @@ describe("EthereumSyndicationTool", () => {
           signal
         )
       ).rejects.toThrow(/planSyndicate: reverted \(status=0\)/)
+    })
+  })
+
+  describe("gasLimitWithHeadroom", () => {
+    it("pads an estimate by the headroom percent", () => {
+      expect(EthereumSyndicationTool.gasLimitWithHeadroom(700_000n)).toBe(
+        840_000n
+      )
+    })
+
+    it("rounds the headroom up, so even the smallest estimate gains gas", () => {
+      expect(EthereumSyndicationTool.gasLimitWithHeadroom(1n)).toBe(2n)
+      expect(EthereumSyndicationTool.gasLimitWithHeadroom(736_696n)).toBe(
+        884_036n
+      )
+    })
+
+    it("refuses an estimate that is not positive", () => {
+      expect(() => EthereumSyndicationTool.gasLimitWithHeadroom(0n)).toThrow(
+        /estimate must be positive, got 0/
+      )
     })
   })
 
